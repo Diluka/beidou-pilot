@@ -313,9 +313,11 @@ class BridgeClient:
             return self._stop(before, 2), request_id, True
         return result, request_id, False
 
-    def run_script(self, path: Path, seconds: float | None = 30, timeout: float | None = None,
-                   cancel_file: Path | None = None) -> JsonObject:
-        """在DLL内执行受信本地Lua；None时限明确持续，控制器只等待与取消。"""
+    def run_script(self, path: Path | None = None, seconds: float | None = 30, timeout: float | None = None,
+                   cancel_file: Path | None = None, *, code: str | None = None) -> JsonObject:
+        """在DLL内执行受信Lua文件或源码；None时限明确持续，控制器只等待与取消。"""
+        if (path is None) == (code is None):
+            raise ClientError("invalid_bridge_options", "Lua文件与直接源码须且只能提供一项。")
         if (seconds is not None and not 0.001 <= seconds <= 0xFFFFFFFF / 1000
                 or timeout is not None and (not math.isfinite(timeout) or not timeout > 0)):
             raise ClientError("invalid_bridge_options", "脚本时限须为正数且不超过4294967.295秒；持续执行使用None。")
@@ -326,8 +328,11 @@ class BridgeClient:
                 raise ClientError("bridge_script_unsupported", "当前DLL未提供Lua脚本能力，未发布脚本请求。")
             script_id = uuid.uuid4().hex
             try:
-                source = path.read_bytes()
-                source.decode("utf-8")
+                if path is not None:
+                    source = path.read_bytes()
+                    source.decode("utf-8")
+                else:
+                    source = cast(str, code).encode("utf-8")
                 scripts = self.directory / "scripts"
                 scripts.mkdir(mode=0o700, exist_ok=True)
                 temporary = scripts / (script_id + ".tmp")
@@ -335,8 +340,9 @@ class BridgeClient:
                     handle.write(source)
                 temporary.replace(scripts / (script_id + ".lua"))
             except (OSError, UnicodeError) as error:
-                raise ClientError("invalid_script_file", "无法复制UTF-8本地Lua脚本，未发布执行请求。",
-                                  {"path": str(path), "reason": str(error)}) from error
+                raise ClientError("invalid_script_file" if path is not None else "invalid_script_source",
+                                  "无法准备UTF-8 Lua脚本，未发布执行请求。",
+                                  {"path": str(path) if path is not None else None, "reason": str(error)}) from error
             wait_seconds = timeout if timeout is not None else seconds + 2 if seconds is not None else None
             state, request_id, locally_cancelled = self._execute(
                 before, "script", round(seconds * 1000) if seconds is not None else 0,
@@ -348,7 +354,7 @@ class BridgeClient:
             cancelled = locally_cancelled or state["command"]["status"] == "cancelled"
             report: JsonObject = {
                 "source": "client-native-bridge", "request_id": request_id, "script_id": script_id,
-                "script_file": str(path), "seconds": seconds, "continuous": seconds is None,
+                "script_file": str(path) if path is not None else None, "seconds": seconds, "continuous": seconds is None,
                 "status": "cancelled" if cancelled else "completed", "cancelled": cancelled,
                 "reason": "cancel_requested" if locally_cancelled else state["command"]["reason"],
                 "elapsed_seconds": round(time.monotonic() - started, 4),

@@ -1,6 +1,8 @@
 """原生桥文件IPC的消费合同；不以协议对端替身证明游戏动作。"""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -8,7 +10,9 @@ import time
 import unittest
 
 from beidou_pilot.bridge import BridgeClient, BridgeSnapshot
+from beidou_pilot.cli import main
 from beidou_pilot.errors import ClientError
+from beidou_pilot.instances import InstancePaths
 
 
 class BridgeFiles:
@@ -71,6 +75,7 @@ class BridgeContract(unittest.TestCase):
         self.client = BridgeClient(self.files.root)
         self.path = self.files.root / "control.lua"
         self.path.write_text("game.sleep(0.1)\n", encoding="utf-8")
+        (self.files.root / "clientctl.py").touch()
 
     def publish_running(self, command: list[str]) -> None:
         self.files.state["command"] = {"id": command[3], "status": "running", "reason": None}
@@ -79,6 +84,66 @@ class BridgeContract(unittest.TestCase):
                                       "last_resume_us": 1.0, "max_resume_us": 1.0}
         self.files.state["held_keys"] = [39]
         self.files.publish()
+
+    def test_cli_preserves_inline_and_current_file_bytes_on_selected_instance(self) -> None:
+        code = 'game.log("中文 \\"引号\\"")\r\ngame.sleep(0)\n'
+        first_file = b'game.log("first")\r\n'
+        changed_file = 'game.log("文件已更新")\n'.encode("utf-8")
+        cases = [
+            ("beidou", "default", ["--code", code, "--seconds", "1.25"], code.encode("utf-8"), 1250, None),
+            ("headless", "alpha", ["--code", code, "--continuous"], code.encode("utf-8"), 0, None),
+            ("beidou", "default", [str(self.path)], first_file, 30000, str(self.path)),
+            ("headless", "alpha", [str(self.path), "--continuous"], changed_file, 0, str(self.path)),
+        ]
+        for backend, instance, arguments, expected_source, milliseconds, script_file in cases:
+            with self.subTest(backend=backend, arguments=arguments):
+                if script_file is not None:
+                    self.path.write_bytes(expected_source)
+                paths = InstancePaths(self.files.root, backend, instance)
+                self.files.directory = paths.bridge
+                paths.bridge.mkdir(parents=True, exist_ok=True)
+                paths.registration.parent.mkdir(parents=True, exist_ok=True)
+                paths.registration.write_text('{"run_id":"bridge-contract"}')
+                self.files.state["instance_id"] = backend + "-" + instance
+                self.files.publish()
+                (paths.bridge / "command.txt").unlink(missing_ok=True)
+
+                def peer() -> tuple[list[str], bytes]:
+                    command = self.files.command()
+                    source = (self.files.directory / "scripts" / (command[6] + ".lua")).read_bytes()
+                    self.publish_running(command)
+                    self.files.state["held_keys"] = []
+                    self.files.state["command"]["status"] = "completed"
+                    self.files.state["script"]["status"] = "completed"
+                    self.files.publish()
+                    return command, source
+
+                output = io.StringIO()
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    native = pool.submit(peer)
+                    with redirect_stdout(output):
+                        exit_code = main(["--root", str(self.files.root), "--backend", backend,
+                                          "--instance", instance, "--json", "script", "run", *arguments])
+                    command, published_source = native.result(3)
+                report = json.loads(output.getvalue())
+                self.assertEqual(0, exit_code, report)
+                self.assertEqual((0, backend, instance), (exit_code, report["backend"], report["instance"]))
+                self.assertEqual([1, backend + "-" + instance, "script", milliseconds],
+                                 [int(command[0]), command[1], command[4], int(command[5])])
+                self.assertEqual(expected_source, published_source)
+                self.assertEqual(script_file, report["data"]["script_file"])
+                self.assertEqual(milliseconds == 0, report["data"]["continuous"])
+                self.assertEqual("completed", report["data"]["status"])
+
+    def test_cli_rejects_missing_or_conflicting_script_inputs(self) -> None:
+        for arguments in (["run"], ["run", str(self.path), "--code", "game.sleep(0)"],
+                          ["status", str(self.path)], ["status", "--code", "game.sleep(0)"]):
+            with self.subTest(arguments=arguments):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exit_code = main(["--root", str(self.files.root), "--json", "script", *arguments])
+                self.assertEqual((2, "usage"), (exit_code, json.loads(output.getvalue())["error"]["code"]))
+        self.assertFalse((self.files.directory / "command.txt").exists())
 
     def test_scene_loading_pause_can_resume_within_the_script_deadline(self) -> None:
         def peer() -> str:
@@ -115,7 +180,7 @@ class BridgeContract(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=1) as pool:
             native = pool.submit(peer)
             with self.assertRaises(ClientError) as failure:
-                self.client.run_script(self.path, seconds=1, timeout=.04)
+                self.client.run_script(code="game.move('right', 1)", seconds=1, timeout=.04)
             native.result(2)
         self.assertEqual(failure.exception.code, "bridge_timeout")
         self.assertEqual(failure.exception.details["cleanup"]["held_keys"], [])
