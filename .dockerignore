@@ -1,5 +1,7 @@
 **
-!Dockerfile
+!docker/
+!docker/headless/
+!docker/headless/Dockerfile
 !LICENSE
 !NOTICE
 !headless/

@@ -45,12 +45,19 @@ class BinaryRegistrationContract(unittest.TestCase):
     def test_local_project_build_uses_registered_fingerprints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "runtime/client").mkdir(parents=True)
+            source = root / "external/client"
+            source.mkdir(parents=True)
+            (root / "config").mkdir()
             (root / "state").mkdir()
             contents = {"BeiDou.exe": b"client", "2ijl15.dll": b"proxy", "ijl15.dll": b"local-bridge"}
             digests = {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}
             for name, data in contents.items():
-                (root / "runtime/client" / name).write_bytes(data)
+                (source / name).write_bytes(data)
+            dll = root / "external/bridge.dll"
+            dll.write_bytes((source / "ijl15.dll").read_bytes())
+            (source / "ijl15.dll").write_bytes(b"original-source-dll")
+            (root / "config/resources.json").write_text(json.dumps({
+                "gui_client": "../external/client", "gui_dll": "../external/bridge.dll"}))
             manifest = {"schema_version": 1, "source": {"repository": "beidou-pilot"},
                         "target": {"executable_sha256": digests["BeiDou.exe"],
                                    "proxy_sha256": digests["2ijl15.dll"]},
@@ -60,11 +67,35 @@ class BinaryRegistrationContract(unittest.TestCase):
             with patch.multiple("beidou_pilot.binaries", CLIENT_SHA256=digests["BeiDou.exe"],
                                 PROXY_SHA256=digests["2ijl15.dll"]):
                 self.assertTrue(verify_binaries(root))
+                self.assertEqual(b"original-source-dll", (source / "ijl15.dll").read_bytes())
                 manifest["target"]["executable_sha256"] = "0" * 64
                 path.write_text(json.dumps(manifest))
                 with self.assertRaises(ClientError) as failure:
                     verify_binaries(root)
                 self.assertEqual("bridge_build_mismatch", failure.exception.code)
+
+
+class GuiRuntimePreparationContract(unittest.TestCase):
+    def test_runtime_replaces_dll_and_shares_data_without_changing_source(self) -> None:
+        prepare = Path(__file__).resolve().parents[2] / "docker/gui/prepare-client.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "client"
+            (source / "Data").mkdir(parents=True)
+            contents = {"BeiDou.exe": b"client", "ijl15.dll": b"original-dll",
+                        "2ijl15.dll": b"image-library", "config.ini": b"original-config",
+                        "Data/Map.img": b"resource"}
+            for name, data in contents.items():
+                (source / name).write_bytes(data)
+            bridge = Path(directory) / "bridge.dll"
+            bridge.write_bytes(b"selected-bridge")
+            runtime = Path(directory) / "runtime"
+            subprocess.run(["bash", str(prepare), str(source), str(runtime), str(bridge)],
+                           check=True, capture_output=True)
+            self.assertEqual(b"selected-bridge", (runtime / "ijl15.dll").read_bytes())
+            self.assertTrue((runtime / "Data").is_symlink())
+            self.assertEqual(source / "Data", (runtime / "Data").resolve())
+            (runtime / "config.ini").write_bytes(b"runtime-config")
+            self.assertEqual(contents, {name: (source / name).read_bytes() for name in contents})
 
 
 class SourceExportContract(unittest.TestCase):
@@ -89,6 +120,9 @@ class SourceExportContract(unittest.TestCase):
             self.assertFalse((output / "cli/config/resources.json").exists())
             self.assertFalse((output / "cli/beidou_pilot/engines/short_combat.py").exists())
             self.assertTrue((output / "shared/lua-runtime/Runtime.cpp").is_file())
+            self.assertTrue((output / "docker/compose.yaml").is_file())
+            self.assertTrue((output / "docker/headless/Dockerfile").is_file())
+            self.assertTrue((output / "docker/gui/prepare-client.sh").is_file())
             self.assertTrue((output / "shared/scripts/travel/move_to.lua").is_file())
             self.assertFalse((output / "beidou-pilot").exists())
             self.assertFalse((output / "beidou-ijl15/shared/control").exists())

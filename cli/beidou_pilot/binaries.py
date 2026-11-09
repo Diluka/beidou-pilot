@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .errors import ClientError
+from .resources import load_resources
 
 
 CLIENT_SHA256 = "1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df"
@@ -14,6 +15,7 @@ PROXY_SHA256 = "f991f9f77545b479758641dbf61c9bcd011008556ade775257b29e7282dc2558
 
 def verify_binaries(root: Path) -> bool:
     """桥接构建只支持固定 V17 EXE，返回是否已安装本地登记构建。"""
+    resources = load_resources(root)
     manifest_path = root / "state/agent-bridge-build.json"
     expected_dll = IJL_SHA256
     if manifest_path.is_file():
@@ -25,10 +27,11 @@ def verify_binaries(root: Path) -> bool:
         expected_dll = manifest.get("artifact", {}).get("sha256")
         if not isinstance(expected_dll, str) or len(expected_dll) != 64:
             raise ClientError("bridge_build_invalid", "桥接构建清单缺少 DLL SHA256。")
-    for name, expected in (("BeiDou.exe", CLIENT_SHA256), ("ijl15.dll", expected_dll),
-                           ("2ijl15.dll", PROXY_SHA256)):
-        with (root / "runtime/client" / name).open("rb") as stream:
+    for path, expected in ((resources.gui_client / "BeiDou.exe", CLIENT_SHA256),
+                           (resources.gui_dll, expected_dll),
+                           (resources.gui_client / "2ijl15.dll", PROXY_SHA256)):
+        with path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         if digest != expected:
-            raise ClientError("client_binary_mismatch", name + "与已登记客户端版本不符。")
+            raise ClientError("client_binary_mismatch", path.name + "与已登记客户端版本不符。")
     return manifest_path.is_file()

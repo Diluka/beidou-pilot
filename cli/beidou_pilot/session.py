@@ -197,7 +197,7 @@ def open_game(backend: Backend, *, channel: int = 1, character: str | None = Non
             workspace_server = (isinstance(requested, dict)
                                 and (requested.get("project"), requested.get("service"))
                                 == ("beidou-ms", "beidou-server-all"))
-        arguments = ["start", "--target", str(target_path), "--continuous"]
+        arguments = ["start", "--target", str(target_path)]
         if workspace_server:
             arguments.append("--workspace-server")
         backend.text("clientctl", *arguments)

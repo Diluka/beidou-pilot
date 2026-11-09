@@ -1,0 +1,61 @@
+name: beidou-pilot-gui
+
+services:
+  client:
+    image: ${CLIENT_IMAGE:-local/beidou-v17-client:intel}
+    build:
+      context: ./gui
+    pull_policy: never
+    init: true
+    restart: "no"
+    stop_grace_period: 10s
+    shm_size: 256mb
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    environment:
+      TARGET_IP: ${TARGET_IP:?请通过 beidou-pilot 核验并选择隔离目标}
+      RENDER_GID: ${RENDER_GID:?需要渲染设备的宿主组 ID}
+      RUN_ID: ${RUN_ID:?请通过 beidou-pilot 创建运行会话}
+      CLIENT_SECONDS: "0"
+    labels:
+      beidou.task: client-v17-maintained
+      beidou.client.root: ${CLIENT_ROOT:?需要 CLI 运行根目录}
+    networks:
+      - target
+    volumes:
+      - type: bind
+        source: ${BEIDOU_CLIENT_DIR:?需要原客户端目录}
+        target: /client
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${BEIDOU_IJL15_DLL:?需要选定的桥 DLL}
+        target: /overrides/ijl15.dll
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CLIENT_ROOT}/runtime/prefix
+        target: /work/prefix
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CLIENT_ROOT}/runtime/runs
+        target: /work/runs
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CLIENT_ROOT}/runtime/bridge
+        target: /work/bridge
+        bind:
+          create_host_path: false
+
+networks:
+  target:
+    external: true
+    name: ${TARGET_NETWORK:?需要已核验的隔离网络}
