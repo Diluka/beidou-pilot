@@ -79,6 +79,8 @@ GUI 容器在自己的网络命名空间启用 `net.ipv4.conf.all.route_localnet
 
 Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/runtime/runs`、`cli/runtime/bridge`。容器内 GUI 进程使用 `1000:1000`，这些目录须允许该身份读写。当前硬件路径需要 `/dev/dri/renderD128`，画面由容器内 `DISPLAY=:97` 的 Xvfb 和窗口管理器提供，VirtualGL 使用 EGL 渲染。
 
+需要 Wine 启动诊断时，可在启动命令前设置 `WINEDEBUG='+loaddll,+seh,+d3d8,+d3d'`；该值传入容器并在降权后保留，未指定时默认为 `-all`。日志写入所属运行目录的 `wine.log`，原始诊断保留在本地环境。
+
 准备权限为 `0600` 的 `cli/account.private.json`（含 `name`、`password`），以及已授权的隔离 target 和专用角色，然后使用统一入口：
 
 ```bash

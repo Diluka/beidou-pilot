@@ -18,4 +18,4 @@ ip6tables -P OUTPUT DROP
 ip6tables -A INPUT -i lo -j ACCEPT
 ip6tables -A OUTPUT -o lo -j ACCEPT
 exec setpriv --reuid 1000 --regid 1000 --groups "$RENDER_GID" --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs --reset-env \
-  env LANG=zh_CN.UTF-8 DISPLAY=:97 WINEPREFIX=/work/prefix WINEARCH=win32 RUN_ID="$RUN_ID" MAPLE_BRIDGE_DIR='Z:\work\bridge' /opt/beidou/bootstrap.sh
+  env LANG=zh_CN.UTF-8 DISPLAY=:97 WINEPREFIX=/work/prefix WINEARCH=win32 WINEDEBUG="${WINEDEBUG:--all}" RUN_ID="$RUN_ID" MAPLE_BRIDGE_DIR='Z:\work\bridge' /opt/beidou/bootstrap.sh

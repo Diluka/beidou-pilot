@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 077
 
-export DISPLAY=:97 WINEPREFIX=/work/prefix WINEARCH=win32 WINEDEBUG=-all
+export DISPLAY=:97 WINEPREFIX=/work/prefix WINEARCH=win32 WINEDEBUG="${WINEDEBUG:--all}"
 export WINEDLLOVERRIDES='ijl15=n,b;mscoree,mshtml='
 run_dir="/work/runs/$RUN_ID"
 mkdir -p -- "$run_dir" /work/prefix /work/bridge
