@@ -42,6 +42,7 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 
 ```bash
 ./cli/beidou-pilot --backend headless --instance worker-a --json walk right --seconds 0.2
+./cli/beidou-pilot --backend headless --instance worker-a --json script run --code 'game.log("你好，Lua"); game.sleep(0.1)' --seconds 20
 ./cli/beidou-pilot --backend headless --instance worker-a --json script run /path/control.lua --seconds 20
 ./cli/beidou-pilot --backend headless --instance worker-a --json script run /path/control.lua --continuous
 ```
@@ -53,9 +54,11 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | `move X`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单根绳梯或单个门户；不是通用寻路 |
 | `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点及近距拾取尝试 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
-| `script run FILE` | 装载受信UTF-8 Lua；默认限时，持续模式须明确声明 |
+| `script run FILE`、`script run --code CODE` | 文件或直接源码二选一，使用同一 Lua 执行链；默认限时，持续模式须明确声明 |
 | `stop`、`bridge stop` | 无其他活动动作控制者时清理遗留控制 |
 | `key KEYS --seconds N`、`skill ID` | 原版专属Lua扩展；无头明确拒绝 |
+
+`--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。CLI 不拼接、展开或改写源码。文件方式每次读取当前 UTF-8 内容。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
 
 移动和战斗参数只对当前场景有效。门户和部分规划依赖可选静态 WZ XML，资料不足时明确拒绝；换层、身份变化、低HP或未确认到达会停止后续动作。基础 `fight` 受转职节点限制，特殊任务、材料或职业技能策略应自行写Lua，没有未实现的占位选项。
 

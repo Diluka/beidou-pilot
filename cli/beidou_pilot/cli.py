@@ -49,7 +49,9 @@ def parser() -> Parser:
     q.add_argument("action", choices=["status", "stop"], nargs="?", default="status")
     q = command("script", "在客户端内运行Lua控制脚本，或只读当前脚本状态")
     q.add_argument("action", choices=["run", "status"])
-    q.add_argument("file", type=Path, nargs="?")
+    source = q.add_mutually_exclusive_group()
+    source.add_argument("file", type=Path, nargs="?", help="受信UTF-8 Lua文件")
+    source.add_argument("--code", help="直接执行受信Lua源码，与文件输入互斥")
     duration = q.add_mutually_exclusive_group()
     duration.add_argument("--seconds", type=float, default=30, help="客户端内脚本时限，默认30秒")
     duration.add_argument("--continuous", action="store_true", help="明确持续执行，Ctrl+C取消并等待放键")
@@ -277,15 +279,15 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
         if args.action == "status":
-            if args.file is not None:
-                raise ClientError("usage", "script status不接收脚本文件。")
+            if args.file is not None or args.code is not None:
+                raise ClientError("usage", "script status不接收脚本文件或源码。")
             state = bridge.snapshot()
             return {"source": "client-native-bridge", "supported": "script" in state,
                     "instance_id": state["instance_id"], "script": cast(JsonObject | None, state.get("script")),
                     "command": cast(JsonObject, state["command"]), "held_keys": state["held_keys"]}
-        if args.file is None:
-            raise ClientError("usage", "script run需要UTF-8本地Lua文件。")
-        return bridge.run_script(args.file, seconds=None if args.continuous else args.seconds)
+        if args.file is None and args.code is None:
+            raise ClientError("usage", "script run需要UTF-8本地Lua文件或--code源码。")
+        return bridge.run_script(args.file, seconds=None if args.continuous else args.seconds, code=args.code)
     if cmd == "open":
         from .headless import any_running as headless_running
         if backend.name == "headless":

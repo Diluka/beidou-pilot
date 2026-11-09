@@ -79,7 +79,7 @@ class NativeScriptContract(unittest.TestCase):
             process.communicate()
 
     def test_continuous_cli_sigterm_waits_for_script_stop_and_key_release(self) -> None:
-        process = self.start_cli("script", "run", str(self.path), "--continuous")
+        process = self.start_cli("script", "run", "--code", "game.move('right', 1)", "--continuous")
         try:
             command = self.files.command()
             self.assertEqual(command[4:6], ["script", "0"])
@@ -112,7 +112,7 @@ class NativeScriptContract(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=1) as pool:
             native = pool.submit(peer)
             with self.assertRaises(ClientError) as failure:
-                self.client.run_script(self.path, seconds=1)
+                self.client.run_script(code="error('deliberate failure')", seconds=1)
             native.result(2)
         self.assertEqual(failure.exception.code, "bridge_script_error")
         self.assertEqual(failure.exception.details["script"]["error"], "example.lua:2: deliberate failure")

@@ -6,14 +6,16 @@
 
 ## 启动与基本约定
 
-从项目根运行受信的 UTF-8 文本脚本：
+从项目根运行受信的 UTF-8 源码或文本脚本文件：
 
 ```bash
+./cli/beidou-pilot --backend headless --instance worker-a --json script run --code 'game.log("你好，Lua")' --seconds 20
 ./cli/beidou-pilot --backend headless --instance worker-a --json script run /path/control.lua --seconds 20
 # 需要持续执行时显式使用 --continuous
 ```
 
 - 脚本源必须是 UTF-8 纯文本，原生装载上限为1 MiB，不接受预编译字节码。自定义 `script run` 默认30秒，`--seconds` 可设为 `0.001..4294967.295` 秒；`--continuous` 表示无总期限。项目复合策略包装的单独预算范围不应当作所有用户脚本的运行时上限。
+- 文件与 `--code` 必须二选一。直接源码须按调用方 shell 的引号规则传为一个参数，CLI 保留传入的引号、中文和换行；文件每次读取当前内容。两者使用相同 `game` API 与执行链，可在现有实例中提交，无需重启或重新构建。直接源码结果的 `script_file` 为 `null`。
 - 每次脚本启动创建独立 Lua 状态，脚本返回、超时、错误或取消后由运行时释放控制。脚本结束不会关闭客户端容器。
 - 自定义脚本没有自动提供的 `options` 全局变量。可以自行声明 `local options = {...}`；项目的复合能力由 CLI 装载器在脚本前注入 `local options`，不能把这些文件当作无参数用户脚本直接运行。
 - `game.state()` 返回一次采样的 Lua 表拷贝；后续状态变化不会修改旧表。执行动作或等待后重新读取。连续读取可能得到同一 `seq`。
