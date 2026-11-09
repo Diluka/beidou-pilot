@@ -15,7 +15,7 @@ from typing import Iterator, cast
 from .backend import Backend, ClientError, JsonObject, JsonValue
 from .catalog import Catalog
 from . import dialogs
-from .rules import advancement
+from .rules import FIRST_JOB_LEVELS, advancement
 from .snapshot import collect, format_snapshot
 from . import __version__
 
@@ -151,6 +151,8 @@ def parser() -> Parser:
     q.add_argument("mob", help="当前地图怪物名或模板ID")
     q.add_argument("--seconds", type=float, default=60)
     q.add_argument("--until-level", type=int)
+    q.add_argument("--first-job", choices=FIRST_JOB_LEVELS,
+                   help="本次新手练级的首转路线；magician在8级停练，其余在10级停练")
     q.add_argument("--floor-y", type=int)
     q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"))
     q.add_argument("--retreat-x", type=int)
@@ -191,7 +193,10 @@ def control(backend: Backend, name: str) -> Iterator[None]:
 def status(backend: Backend) -> JsonObject:
     if backend.name == "headless":
         from .headless import status as native_status
-        return native_status(backend.root, backend.instance)
+        result = native_status(backend.root, backend.instance)
+        if result["stage"] == "IN_GAME":
+            result["advancement"] = advancement(cast(JsonObject, result["character"]))
+        return result
     stage = backend.read("stage")
     result: JsonObject = {"stage": stage["stage"], "running": stage["running"], "channel": stage.get("channel"),
                           "character": stage.get("character"), "unavailable": stage.get("unavailable", [])}
@@ -491,15 +496,28 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         bounds = args.bounds or floor_bounds(catalog.map(state["map_id"]), pos["x"], y)
         if bounds is None:
             raise ClientError("floor_unknown", "请用--bounds明确本次同层战斗范围。")
-        milestone = advancement(cast(JsonObject, char))
+        milestone = advancement(cast(JsonObject, char), args.first_job)
         if milestone and milestone["due"]:
             raise ClientError("advancement_due", "先完成当前阶段转职，再继续战斗。", milestone)
-        stop_level = args.until_level or (cast(int, milestone["level"]) if milestone else char["level"] + 1)
-        if milestone:
-            stop_level = min(stop_level, cast(int, milestone["level"]))
-        return lua_fight(backend, mob_id=mob_id, seconds=args.seconds, stop_level=stop_level,
-                         floor_y=y, bounds=(bounds[0], bounds[1]),
-                         retreat_x=args.retreat_x if args.retreat_x is not None else int(pos["x"]), loot=args.loot)
+        if args.until_level is not None:
+            stop_level = args.until_level
+            stop_level_source = "until_level"
+        elif milestone and milestone["level"] is None:
+            stop_level = min(FIRST_JOB_LEVELS.values())
+            if char["level"] >= stop_level:
+                raise ClientError("advancement_route_required", "已到首个转职检查点；请用--first-job选择路线，或用--until-level明确本次目标。", milestone)
+            stop_level_source = "first_job_checkpoint"
+        else:
+            stop_level = cast(int, milestone["level"]) if milestone else char["level"] + 1
+            stop_level_source = "advancement" if milestone else "next_level"
+        if milestone and milestone["level"] is not None:
+            if stop_level > cast(int, milestone["level"]):
+                stop_level = cast(int, milestone["level"])
+                stop_level_source = "advancement"
+        report = lua_fight(backend, mob_id=mob_id, seconds=args.seconds, stop_level=stop_level,
+                           floor_y=y, bounds=(bounds[0], bounds[1]),
+                           retreat_x=args.retreat_x if args.retreat_x is not None else int(pos["x"]), loot=args.loot)
+        return {**report, "advancement": milestone, "stop_level_source": stop_level_source}
     if cmd == "screenshot":
         name = args.name or datetime.now(timezone.utc).strftime("shot-%Y%m%dT%H%M%S-") + str(os.getpid())
         return backend.read("desktop", "screenshot", name, "--game-crop")

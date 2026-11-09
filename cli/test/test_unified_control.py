@@ -59,6 +59,51 @@ class UnifiedControlContract(unittest.TestCase):
                     self.assertEqual(options, control.call_args.kwargs)
                     desktop.assert_not_called()
 
+    def test_fight_passes_selected_first_job_or_explicit_target_to_lua(self) -> None:
+        cases = [
+            ("beidou", 0, 7, [], 8, "first_job_checkpoint"),
+            ("headless", 0, 7, ["--first-job", "magician"], 8, "advancement"),
+            ("beidou", 0, 8, ["--first-job", "warrior"], 10, "advancement"),
+            ("headless", 0, 8, ["--until-level", "10"], 10, "until_level"),
+            ("beidou", 0, 7, ["--first-job", "magician", "--until-level", "10"], 8, "advancement"),
+            ("headless", 100, 29, [], 30, "advancement"),
+        ]
+        for backend, job, level, options, expected_level, expected_source in cases:
+            with self.subTest(backend=backend, job=job, level=level, options=options):
+                self.files.state["character"].update(job=job, level=level)
+                self.files.state["monsters"] = []
+                output = io.StringIO()
+                with patch.object(BridgeClient, "snapshot", return_value=self.files.state):
+                    with patch("beidou_pilot.control_scripts.run_strategy",
+                               return_value={"status": "completed", "last_state": self.files.state}) as run:
+                        with redirect_stdout(output):
+                            exit_code = main(["--root", str(self.root), "--backend", backend, "--json",
+                                              "fight", "100100", "--bounds", "-200", "200", *options])
+                report = json.loads(output.getvalue())
+                self.assertEqual(0, exit_code, report)
+                self.assertEqual("combat/fight", run.call_args.args[1])
+                self.assertEqual(expected_level, run.call_args.args[2]["stop_level"])
+                self.assertEqual(expected_level, report["data"]["requested_level"])
+                self.assertEqual(expected_source, report["data"]["stop_level_source"])
+
+    def test_fight_stops_at_due_or_unselected_advancement_before_loading_lua(self) -> None:
+        cases = [(0, 8, [], "advancement_route_required"),
+                 (0, 8, ["--first-job", "magician"], "advancement_due"),
+                 (0, 10, ["--first-job", "warrior"], "advancement_due"),
+                 (100, 30, [], "advancement_due")]
+        for job, level, options, expected_error in cases:
+            with self.subTest(job=job, level=level, options=options):
+                self.files.state["character"].update(job=job, level=level)
+                self.files.state["monsters"] = []
+                output = io.StringIO()
+                with patch.object(BridgeClient, "snapshot", return_value=self.files.state):
+                    with patch("beidou_pilot.control_scripts.run_strategy") as run:
+                        with redirect_stdout(output):
+                            exit_code = main(["--root", str(self.root), "--json", "fight", "100100",
+                                              "--bounds", "-200", "200", *options])
+                self.assertEqual((2, expected_error), (exit_code, json.loads(output.getvalue())["error"]["code"]))
+                run.assert_not_called()
+
     def test_headless_multiple_items_use_the_common_consumable_workflow(self) -> None:
         with patch("beidou_pilot.items.use", return_value={"used": 2}) as use:
             with redirect_stdout(io.StringIO()):
@@ -115,6 +160,7 @@ class UnifiedControlContract(unittest.TestCase):
         self.assertEqual("time_limit", report["reason"])
 
     def test_cli_can_present_native_bridge_state_with_millisecond_timestamp(self) -> None:
+        self.files.state["character"].update(job=0, level=8)
         report = {"backend": "headless", "stage": "IN_GAME", "running": True,
                   "character": self.files.state["character"], "state": self.files.state}
         with patch("beidou_pilot.headless.status", return_value=report):
@@ -124,6 +170,8 @@ class UnifiedControlContract(unittest.TestCase):
             result = json.loads(output.getvalue())
         self.assertTrue(result["ok"])
         self.assertEqual(self.files.state["observed_at_ms"], result["data"]["state"]["observed_at_ms"])
+        self.assertIsNone(result["data"]["advancement"]["level"])
+        self.assertEqual(8, result["data"]["advancement"]["candidates"][0]["level"])
 
     def test_headless_reuse_rejects_a_different_explicit_target_or_actor(self) -> None:
         target = self.root / "target.json"

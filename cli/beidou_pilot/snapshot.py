@@ -124,7 +124,9 @@ def format_snapshot(value: JsonObject, *, interactive_only: bool = False) -> str
              f"{m['name']} ({m['id']}) | ({p['x']},{p['y']}) {value['facing']} | CH{value['channel']}",
              f"EXP {c['experience']} | 金币 {c['mesos']} | AP {c['ability_points']} SP {c['skill_points']}"]
     milestone = cast(JsonObject | None, value.get("advancement"))
-    if milestone and milestone["due"]:
+    if milestone and milestone["level"] is None:
+        lines.append("首转路线尚未选择：魔法师8级，战士、弓箭手、飞侠、海盗10级；fight默认在8级检查点停练，可用--first-job选择路线。")
+    elif milestone and milestone["due"]:
         lines.append(f"需要先完成 {milestone['level']} 级转职；连续战斗会在此节点停下。")
     dialog = cast(JsonObject, value["dialog"])
     if dialog["supported"] is False:

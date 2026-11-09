@@ -113,6 +113,17 @@ class SnapshotConsumerContract(unittest.TestCase):
         self.assertFalse(full["monsters"][0]["visible"])
         self.assertIn("画外", format_snapshot(full))
 
+    def test_beginner_snapshot_keeps_unknown_route_and_lists_first_job_nodes(self) -> None:
+        self.backend.name = "headless"
+        self.domains["observe"]["character"].update(job=0, level=8)
+        report = collect(self.backend)
+        self.assertIsNone(report["advancement"]["level"])
+        self.assertIsNone(report["advancement"]["due"])
+        self.assertEqual({"magician": 8, "warrior": 10, "bowman": 10, "thief": 10, "pirate": 10},
+                         {candidate["first_job"]: candidate["level"] for candidate in report["advancement"]["candidates"]})
+        self.assertIn("魔法师8级", format_snapshot(report))
+        self.assertIn("首转路线尚未选择", format_snapshot(report))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -60,7 +60,18 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 
 `--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。CLI 不拼接、展开或改写源码。文件方式每次读取当前 UTF-8 内容。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
 
-移动和战斗参数只对当前场景有效。门户和部分规划依赖可选静态 WZ XML，资料不足时明确拒绝；换层、身份变化、低HP或未确认到达会停止后续动作。基础 `fight` 受转职节点限制，特殊任务、材料或职业技能策略应自行写Lua，没有未实现的占位选项。
+移动和战斗参数只对当前场景有效。门户和部分规划依赖可选静态 WZ XML，资料不足时明确拒绝；换层、身份变化、低HP或未确认到达会停止后续动作。特殊任务、材料或职业技能策略应自行写Lua，没有未实现的占位选项。
+
+新手角色的职业路线由调用方选择。`fight --first-job magician` 默认在8级停练；`warrior`、`bowman`、`thief`、`pirate` 默认在10级停练。该参数只作用于本次命令，不保存角色计划，也不覆盖角色已经转职后的实际职业。已转职角色继续按30、70、120级节点停练。
+
+未知首转路线时，`status` 与 `snapshot` 的 `advancement.level/due` 为 `null`，`candidates` 列出各路线与等级。`fight` 未给 `--first-job` 和 `--until-level` 时，先以8级作为待选择路线的检查点；已到检查点则返回 `advancement_route_required`。调用方仍可用显式 `--until-level` 自主指定本次停级，不会仅因路线未知被限制在8级。
+
+明确的职业节点仍遵循既有上限语义：`--first-job magician --until-level 10` 实际停在8级；达到明确节点而尚未转职时返回 `advancement_due`。`fight` 结果保留 `requested_level`（实际传给Lua的停级值），增加 `advancement` 及 `stop_level_source`，后者为 `until_level`、`first_job_checkpoint`、`advancement` 或 `next_level`。停止和转职前的真实状态仍需核对角色观察，不能把装载成功视为到级停止。
+
+```bash
+./cli/beidou-pilot --backend beidou --json fight 100100 --bounds -200 200 --first-job magician
+./cli/beidou-pilot --backend headless --instance worker-a --json fight 100100 --bounds -200 200 --first-job warrior
+```
 
 无头 `use` 只接受数字ID和普通200类HP/MP药剂。按次数使用可不依赖XML，带HP/MP目标时需要资料已知恢复类型。原版已绑定恢复品走Lua，未绑定物品可走GUI；203类传送卷仅支持单次使用，不接受HP/MP目标。
 

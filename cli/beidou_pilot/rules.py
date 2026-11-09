@@ -3,10 +3,18 @@
 from .backend import JsonObject
 
 
-def advancement(character: JsonObject) -> JsonObject | None:
+FIRST_JOB_LEVELS = {"magician": 8, "warrior": 10, "bowman": 10, "thief": 10, "pirate": 10}
+
+
+def advancement(character: JsonObject, first_job: str | None = None) -> JsonObject | None:
     job, level = int(character["job"]), int(character["level"])
     if job == 0:
-        required = 10
+        if first_job is None:
+            return {"level": None, "due": None, "job": job, "first_job": None,
+                    "candidates": [{"first_job": name, "level": required}
+                                   for name, required in FIRST_JOB_LEVELS.items()]}
+        required = FIRST_JOB_LEVELS[first_job]
+        return {"level": required, "due": level >= required, "job": job, "first_job": first_job}
     elif job in (100, 200, 300, 400, 500):
         required = 30
     elif job in (110, 120, 130, 210, 220, 230, 310, 320, 410, 420, 510, 520):
