@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 077
 
-export DISPLAY=:97 WINEPREFIX=/work/prefix WINEARCH=win32 WINEDEBUG=-all
+export DISPLAY=:97 WINEPREFIX=/work/prefix WINEARCH=win32 WINEDEBUG="${WINEDEBUG:--all}"
 export WINEDLLOVERRIDES='ijl15=n,b;mscoree,mshtml='
 run_dir="/work/runs/$RUN_ID"
 mkdir -p -- "$run_dir" /work/prefix /work/bridge
@@ -43,7 +43,7 @@ wineboot -u >>"$run_dir/wine.log" 2>&1
 wine regedit /S /opt/beidou/chinese-fontlink.reg >>"$run_dir/wine.log" 2>&1
 
 cd /work/client
-/opt/VirtualGL/bin/vglrun -d egl wine BeiDou.exe >>"$run_dir/wine.log" 2>&1 &
+/opt/VirtualGL/bin/vglrun -d egl wine explorer /desktop=beidou,1920x1080 BeiDou.exe >>"$run_dir/wine.log" 2>&1 &
 game_pid=$!
 while true; do
   if ! kill -0 "$game_pid" 2>/dev/null; then
