@@ -9,6 +9,8 @@
 
 两个任务都从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库，无需安装 pip 依赖；编译器和系统库由 `docker/headless/Dockerfile` 的 builder 安装。
 
+[Windows 桥工作流](../.github/workflows/agent-bridge.yml) 另在 PR、`main` 推送和手动触发时执行 `Windows bridge build`。它在 Windows 2022 / VS2022 中从固定 Detours 源码构建 x86 库及桥 DLL，并上传含来源清单、日志和许可证的 `maple-agent-bridge-win32` 工件。构建与下载说明见[桥构建文档](../beidou-ijl15/docs/agent-bridge-build.md)。
+
 ## 本地复现
 
 从仓库根执行，先初始化依赖：
@@ -43,4 +45,4 @@ PR 当前提交的 `Python offline tests` 和 `Headless image build` 都必须�
 
 主分支的 `default` 规则已将这两项 GitHub Actions 检查设为必需检查，并要求分支与基线保持同步；原有禁止删除和非快进更新规则继续保留，没有设置绕过者。
 
-CI 的镜像检查覆盖无头镜像；GUI Wine/VirtualGL 镜像需按改动在本地构建验证，Windows DLL 构建单独验证。CI 不连接真实游戏或证明实际游戏效果。CI 通过后，按[验收约定](../AGENTS.md#验收方式)使用改动涉及的真实客户端进入游戏试用；纯文档、CI 等不改变客户端运行行为的改动，可以在 PR 说明游戏试用不适用及理由。
+CI 的镜像检查覆盖无头镜像；GUI Wine/VirtualGL 镜像需按改动在本地构建验证，Windows DLL 由独立工作流构建。CI 不连接真实游戏或证明实际游戏效果。CI 通过后，按[验收约定](../AGENTS.md#验收方式)使用改动涉及的真实客户端进入游戏试用；纯文档、CI 等不改变客户端运行行为的改动，可以在 PR 说明游戏试用不适用及理由。

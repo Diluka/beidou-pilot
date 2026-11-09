@@ -23,7 +23,7 @@ git submodule update --init --recursive
 
 - JSON使用官方 `single_include/nlohmann/json.hpp`。
 - Lua官方Git源码在仓库根，Runtime通过 `extern "C"` 引入C标准头；解释器、测试及聚合源不编入运行体。避免恢复发布归档的 `src/` 或 `lua.hpp` 假设。
-- Detours固定与本项目头接口匹配的官方快照，不用近似tag替换。Windows库从对应源码构建到其 `lib.X86/`；版本依据统一来源清单。
+- Detours固定与本项目头接口匹配的官方快照，不用近似tag替换。Windows桥构建将对应源码复制到忽略的 `beidou-ijl15/out/detours/`，生成其中的 `lib.X86/`，不改写子模块；版本依据统一来源清单。
 - 引擎内自带的NoLifeNx、GLFW和LZ4头保留上游树结构，随派生引擎维护，不拆成重复副本。运行时 `liblz4.so.1`由Docker构建环境提供，系统库二进制不进入源码。
 
 无头原生编译入口与目录变量见 [Dockerfile](../docker/headless/Dockerfile) 和 [Makefile](../headless/Makefile)；GUI 环境构建见 [GUI Dockerfile](../docker/gui/Dockerfile)，其基础镜像与 VirtualGL 版本由构建定义固定。Docker 定义与启动脚本集中在 `docker/`，运行资源与源码分发范围见 [ARCHITECTURE](ARCHITECTURE.md)。
