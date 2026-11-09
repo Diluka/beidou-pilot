@@ -36,3 +36,6 @@ class LuaRuntimeContract(unittest.TestCase):
 
     def test_raw_keys_stop_waits_for_its_release_and_preserves_successor(self) -> None:
         subprocess.run([str(self.executable), "raw-keys"], check=True, timeout=10)
+
+    def test_finished_tasks_release_lua_payloads_while_session_remains_active(self) -> None:
+        subprocess.run([str(self.executable), "lifecycle"], check=True, timeout=10)

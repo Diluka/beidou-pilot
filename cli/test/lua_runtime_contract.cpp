@@ -183,6 +183,41 @@ game.spawn("new", 20, function()
     game.stop()
 end)
 )lua";
+
+const char* lifecycle = R"lua(
+local function exercise(mode)
+    collectgarbage("collect")
+    local before = collectgarbage("count")
+    for index = 1, 20 do
+        local name = mode .. "_" .. index
+        game.spawn(name, 1, function()
+            local payload = string.rep("x", 1024 * 1024)
+            if mode == "cancel" then game.sleep(30)
+            elseif mode == "self_cancel" then game.cancel(name) end
+            return payload
+        end)
+        game.sleep(0)
+        if mode == "cancel" then assert(game.cancel(name)) end
+    end
+    collectgarbage("collect")
+    local growth = collectgarbage("count") - before
+    local ended = 0
+    for _, task in ipairs(game.tasks().tasks) do
+        if string.sub(task.name, 1, #mode + 1) == mode .. "_" then
+            assert(task.status == (mode == "return" and "completed" or "cancelled"))
+            ended = ended + 1
+        end
+    end
+    assert(ended == 20, "task_history_missing")
+    return growth
+end
+local cancelled = exercise("cancel")
+local returned = exercise("return")
+local self_cancelled = exercise("self_cancel")
+assert(cancelled < 512 and returned < 512 and self_cancelled < 512,
+    string.format("retained_task_payload_kib: cancel=%.1f return=%.1f self_cancel=%.1f",
+        cancelled, returned, self_cancelled))
+)lua";
 }
 
 int main(int argc, char** argv) {
@@ -190,11 +225,12 @@ int main(int argc, char** argv) {
     const bool cancel = std::string(argv[1]) == "cancel";
     const bool ordinary = std::string(argv[1]) == "single";
     const bool keys = std::string(argv[1]) == "raw-keys";
+    const bool lifetime = std::string(argv[1]) == "lifecycle";
     NativeBoundary native;
     MapleControl::Runtime runtime(native);
     std::string error;
-    Check(runtime.Start("runtime-contract", keys ? rawKeys : ordinary ? single : cancel ? cancelled : collaboration,
-                        5000, error), error);
+    Check(runtime.Start("runtime-contract", lifetime ? lifecycle : keys ? rawKeys : ordinary ? single
+                        : cancel ? cancelled : collaboration, 5000, error), error);
     bool cancellationSent = false;
     for (int tick = 0; tick < 200 && runtime.Running(); ++tick) {
         native.Advance();
@@ -216,6 +252,8 @@ int main(int argc, char** argv) {
         Check(status->control.owner.empty(), "session_cancel_retained_control_owner");
         for (const auto& task : status->tasks)
             Check(task.status == "cancelled" || task.status == "completed", "session_cancel_left_task_running");
+    } else if (lifetime) {
+        Check(status->status == "completed" && native.inputs.empty(), "task_lifecycle_contract_did_not_complete");
     } else if (keys) {
         Check(status->status == "completed", "raw_keys_handoff_did_not_complete");
         Check(native.inputs.size() == 3 && !native.inputs[0].interrupted && native.inputs[1].interrupted

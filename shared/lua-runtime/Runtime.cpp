@@ -156,6 +156,7 @@ struct Runtime::Impl {
     enum class WaitFor { None, Sleep, Action, RawKeys, Release, Control };
     struct Task {
         lua_State* coroutine = nullptr;
+        int reference = LUA_NOREF;
         TaskStatus report;
         WaitFor wait = WaitFor::None;
         std::uint64_t wakeAt = 0;
@@ -261,12 +262,19 @@ struct Runtime::Impl {
         }
     }
 
+    void ReleaseCoroutine(Task& task) {
+        luaL_unref(main, LUA_REGISTRYINDEX, task.reference);
+        task.reference = LUA_NOREF;
+        task.coroutine = nullptr;
+    }
+
     void FinishTask(Task& task, const char* status, const std::string& reason) {
         ReleaseControl(task, reason.c_str());
         task.finished = true;
         task.report.status = status;
         task.report.reason = reason;
         task.wait = WaitFor::None;
+        if (current != &task) ReleaseCoroutine(task);
     }
 
     Task& AddTask(const std::string& name, int priority, lua_State* source, int function) {
@@ -276,7 +284,7 @@ struct Runtime::Impl {
         task->report.status = "running";
         function = lua_absindex(source, function);
         task->coroutine = lua_newthread(main);
-        luaL_ref(main, LUA_REGISTRYINDEX);
+        task->reference = luaL_ref(main, LUA_REGISTRYINDEX);
         lua_pushvalue(source, function);
         lua_xmove(source, task->coroutine, 1);
         lua_sethook(task->coroutine, Budget, LUA_MASKCOUNT, 50000);
@@ -769,7 +777,8 @@ void Runtime::Tick(bool sceneChanged) {
         runtime.logBytes = 0;
         runtime.current = nullptr;
         if (runtime.finishing) break;
-        if (status == LUA_OK) runtime.FinishTask(*task, "completed", "script_returned");
+        if (task->finished) runtime.ReleaseCoroutine(*task);
+        else if (status == LUA_OK) runtime.FinishTask(*task, "completed", "script_returned");
         else if (status != LUA_YIELD) {
             const char* message = lua_tostring(task->coroutine, -1);
             task->report.error = message != nullptr ? message : "Lua runtime error";
