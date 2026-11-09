@@ -332,7 +332,8 @@ Value Shop() {
             items.Add(Value::Object({{"index", index}, {"item_id", id},
                 {"unit_price", priceUnknown ? Value{} : Value(rawPrice)}, {"raw_price", rawPrice},
                 {"quantity", At<std::int32_t>(records, record + (buying ? 0x30 : 0x34))},
-                {"bundle_quantity", At<std::int32_t>(records, record + 0x38)},
+                // The V17 sell handler (0x756A04) sends item counts without a buy-set multiplier.
+                {"bundle_quantity", buying ? At<std::int32_t>(records, record + 0x38) : 1},
                 {"inventory_type", buying ? Value{} : Value(id / 1000000)},
                 {"inventory_slot", buying ? Value{} : Value(At<std::int32_t>(records, record + 0x0C))}}));
         }
