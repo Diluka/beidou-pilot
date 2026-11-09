@@ -1,0 +1,79 @@
+beidou-pilot
+
+Project license
+---------------
+Unless a file or component states otherwise, original beidou-pilot code is
+licensed under the GNU Affero General Public License, version 3 only
+(SPDX: AGPL-3.0-only). See LICENSE.
+
+This project selects version 3 for the combined work. Upstream files offering
+AGPL-3.0-or-later retain that grant; the project-level notice does not change
+their original permissions.
+
+Third-party code retains its existing copyright notices and licenses. This
+notice does not replace or relicense any third-party component.
+
+Upstream sources and notices
+----------------------------
+- MapleStory-Client / continued Journey client:
+  https://github.com/ryantpayton/MapleStory-Client
+  Commit: cbb0fe27cf9683a12eca0a569121d8033cdc2a4d
+  AGPL-3.0-or-later. Preserve source copyright notices, including those of
+  Daniel Allendorf, Ryan Payton and other upstream contributors.
+  License: third_party/maplestory-client/LICENSE
+
+- NoLifeWzToNx:
+  https://github.com/ryantpayton/NoLifeWzToNx
+  Commit: 73bddde1214445795d0a5cd4c3d431fe15eb49eb
+  AGPL-3.0-or-later. Preserve Peter Atashian, Ryan Payton and other upstream
+  notices in third_party/nolifewztonx/.
+
+- NoLifeNx:
+  AGPL-3.0-or-later, as stated in its source headers.
+  Preserve Peter Atashian's copyright and license notices in
+  third_party/maplestory-client/includes/NoLifeNx/nlnx/.
+
+- BeiDou-ijl15 and the native bridge:
+  https://github.com/BeiDouMS/BeiDou-ijl15
+  License: beidou-ijl15/LICENSE
+  Preserve existing source notices; bridge sources marked
+  SPDX-License-Identifier: AGPL-3.0-or-later retain that designation.
+
+Separately licensed components
+------------------------------
+- Lua: MIT license, reproduced in full below; also retained in third_party/lua/lua.h
+- JSON for Modern C++: MIT license, third_party/json/LICENSE.MIT
+- Microsoft Detours: MIT license,
+  third_party/detours/LICENSE.md
+- GLFW: zlib/libpng license,
+  third_party/maplestory-client/includes/glfw-3.3.2.bin.WIN64/LICENSE.md
+- LZ4 headers: BSD-2-Clause license in
+  third_party/maplestory-client/includes/NoLifeNx/nlnx/includes/lz4_v1_8_2_win32/include/lz4.h
+
+External game resources
+-----------------------
+The original BeiDou game client, archives and game assets are external inputs.
+They are not included in this source project and are not covered by this
+project's software license.
+
+Lua copyright and MIT license
+-----------------------------
+Copyright (C) 1994-2026 Lua.org, PUC-Rio.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

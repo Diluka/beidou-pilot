@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""beidou-pilot CLI 入口。"""
+from beidou_pilot.cli import main
+
+raise SystemExit(main())

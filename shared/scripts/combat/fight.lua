@@ -1,0 +1,61 @@
+-- 同层有界战斗，全部实时判断在客户端内部运行。
+local initial = game.state()
+assert(initial.ready, "not_ready")
+local deadline = game.time() + options.seconds
+local combat_until = deadline - math.min(5, options.seconds / 4)
+local attacks = 0
+local heal_at = 0
+while game.time() < combat_until do
+    local s = game.state()
+    assert(s.ready and s.instance_id == initial.instance_id and s.character.id == initial.character.id
+           and s.map_id == initial.map_id and s.scene_generation == initial.scene_generation, "fight_context_changed")
+    assert(s.character.hp > 0, "dead")
+    if s.character.level >= options.stop_level then break end
+    assert(s.position.x >= options.min_x and s.position.x <= options.max_x, "outside_safe_x")
+    assert(math.abs(s.position.y - options.floor_y) <= 45, "wrong_floor")
+    if s.character.hp < s.character.max_hp * 0.6 then
+        local potion = nil
+        for _, preferred in ipairs({2000013, 2000000}) do
+            for _, item in ipairs(s.inventory or {}) do
+                if item.quantity and item.quantity > 0 and item.item_id == preferred then potion = item.item_id; break end
+            end
+            if potion then break end
+        end
+        assert(potion, "no_hp_potion")
+        if game.time() >= heal_at then game.use_item(potion); heal_at = game.time() + 0.7 end
+        game.sleep(0.05)
+    else
+        local target = nil
+        for _, mob in ipairs(s.monsters or {}) do
+            if mob.active and mob.template_id == options.mob_id and mob.x >= options.min_x and mob.x <= options.max_x
+               and math.abs(mob.y - options.floor_y) <= 45 then
+                if not target or math.abs(mob.x - s.position.x) < math.abs(target.x - s.position.x) then target = mob end
+            end
+        end
+        if target then
+            local distance = target.x - s.position.x
+            if math.abs(distance) > 85 then
+                game.move(distance > 0 and "right" or "left", math.min(0.2, math.abs(distance) / 180))
+            else
+                game.face(distance >= 0 and "right" or "left")
+                local attack = game.attack()
+                if attack.dispatched then attacks = attacks + 1 end
+                game.sleep(0.25)
+                if options.loot then game.pickup() end
+            end
+        else
+            game.sleep(0.1)
+        end
+    end
+end
+game.stop()
+while game.time() < deadline do
+    local s = game.state()
+    if not s.ready or s.instance_id ~= initial.instance_id or s.character.id ~= initial.character.id
+       or s.map_id ~= initial.map_id or s.scene_generation ~= initial.scene_generation or s.character.hp <= 0 then return end
+    local distance = options.retreat_x - s.position.x
+    if math.abs(distance) <= 12 then break end
+    game.move(distance > 0 and "right" or "left", math.min(0.2, math.max(0.02, math.abs(distance) / 180)))
+end
+game.stop()
+game.log("attack_attempts=" .. attacks)

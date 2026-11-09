@@ -1,0 +1,38 @@
+{
+  "client": {
+    "repository": "https://github.com/ryantpayton/MapleStory-Client",
+    "commit": "cbb0fe27cf9683a12eca0a569121d8033cdc2a4d"
+  },
+  "converter": {
+    "repository": "https://github.com/ryantpayton/NoLifeWzToNx",
+    "commit": "73bddde1214445795d0a5cd4c3d431fe15eb49eb"
+  },
+  "json": {
+    "repository": "https://github.com/nlohmann/json",
+    "version": "v3.12.0",
+    "header_sha256": "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63",
+    "license": "MIT",
+    "commit": "55f93686c01528224f448c19128836e7df245f72",
+    "ref": "v3.12.0",
+    "management": "git-submodule",
+    "header": "single_include/nlohmann/json.hpp"
+  },
+  "lua": {
+    "repository": "https://github.com/lua/lua.git",
+    "version": "5.4.9",
+    "ref": "v5.4.9",
+    "commit": "312b9efaa1061c2c4cad08554dbc1351c3270eef",
+    "management": "git-submodule",
+    "license": "MIT",
+    "license_file": "NOTICE"
+  },
+  "detours": {
+    "repository": "https://github.com/microsoft/Detours.git",
+    "upstream_base_version": "4.0.1",
+    "commit": "404c153ff390cb14f1787c7feeb4908c6d79b0ab",
+    "management": "git-submodule",
+    "license": "MIT",
+    "license_sha256": "b301808b732cfaa60df2b4b422d78cd97d2a15058b207e7e33f0535ba5170dd6",
+    "header": "src/detours.h"
+  }
+}

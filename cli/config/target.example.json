@@ -1,0 +1,6 @@
+{
+  "project": "REPLACE_WITH_ISOLATED_COMPOSE_PROJECT",
+  "service": "app",
+  "network": "REPLACE_WITH_INTERNAL_VALIDATION_NETWORK",
+  "expected_image": "sha256:REPLACE_WITH_VERIFIED_APPLICATION_IMAGE"
+}

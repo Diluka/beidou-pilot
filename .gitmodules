@@ -1,0 +1,9 @@
+[submodule "json"]
+	path = third_party/json
+	url = https://github.com/nlohmann/json.git
+[submodule "lua"]
+	path = third_party/lua
+	url = https://github.com/lua/lua.git
+[submodule "detours"]
+	path = third_party/detours
+	url = https://github.com/microsoft/Detours.git

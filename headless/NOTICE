@@ -1,0 +1,5 @@
+This prototype derives from ryantpayton/MapleStory-Client at cbb0fe27cf9683a12eca0a569121d8033cdc2a4d (AGPL-3.0-or-later).
+Resource tooling derives from ryantpayton/NoLifeWzToNx at 73bddde1214445795d0a5cd4c3d431fe15eb49eb (AGPL-3.0-or-later).
+JSON for Modern C++ v3.12.0 is provided under the MIT License; see ../third_party/json/LICENSE.MIT.
+No original game assets or user credentials are included in the source delivery.
+Retain the upstream copyright notices and individual dependency licenses under ../third_party/.
