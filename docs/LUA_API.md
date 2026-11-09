@@ -16,7 +16,7 @@
 
 - 脚本源必须是 UTF-8 纯文本，原生装载上限为1 MiB，不接受预编译字节码。自定义 `script run` 默认30秒，`--seconds` 可设为 `0.001..4294967.295` 秒；`--continuous` 表示无总期限。项目复合策略包装的单独预算范围不应当作所有用户脚本的运行时上限。
 - 文件与 `--code` 必须二选一。直接源码须按调用方 shell 的引号规则传为一个参数，CLI 保留传入的引号、中文和换行；文件每次读取当前内容。两者使用相同 `game` API 与执行链，可在现有实例中提交，无需重启或重新构建。直接源码结果的 `script_file` 为 `null`。
-- 每次脚本启动创建独立 Lua 状态，脚本返回、超时、错误或取消后由运行时释放控制。脚本结束不会关闭客户端容器。
+- 每次脚本启动创建独立 Lua 状态，主任务名为 `main`。多个任务共享这次 Lua 状态；主任务返回后，已创建任务继续执行，全部任务结束且输入释放确认后脚本才结束。超时、脚本错误或外部取消会停止本次会话全部任务。脚本结束不会关闭客户端容器。
 - 自定义脚本没有自动提供的 `options` 全局变量。可以自行声明 `local options = {...}`；项目的复合能力由 CLI 装载器在脚本前注入 `local options`，不能把这些文件当作无参数用户脚本直接运行。
 - `game.state()` 返回一次采样的 Lua 表拷贝；后续状态变化不会修改旧表。执行动作或等待后重新读取。连续读取可能得到同一 `seq`。
 - 未知字段为 `nil`，在 Lua 表中等同于缺键。已知的 `false`、`0`、空表 `{}` 与未知不同；例如 `inventory == nil` 不能按没有物品处理。
@@ -30,6 +30,10 @@
 | `game.capabilities()` | 无 | 否 | [能力表](#能力表) |
 | `game.time()` | 无 | 否 | 单调时间，单位秒 |
 | `game.sleep(seconds)` | 默认 `0`，有限数且 `0 <= seconds <= 30` | 是，包括 `sleep(0)` | 无 |
+| `game.spawn(name, priority, fn)` | 会话内唯一名称，1..64字节且不含NUL，保留 `main`；优先级为有符号32位整数；`fn` 为函数 | 否 | 任务名 |
+| `game.acquire()` | 无，使用当前任务的优先级 | 新取得控制时让出；已持有时不让出 | 无 |
+| `game.cancel(name)` | 已创建的任务名 | 取消自身时结束当前任务 | 是否发生取消；已结束为 `false` |
+| `game.tasks()` | 无 | 否 | [任务与控制权快照](#任务与控制权) |
 | `game.move(direction, seconds)` | 方向 `left/right/up/down`；默认 `0.3`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | [动作结果](#动作结果) |
 | `game.face(direction)` | 只接受 `left/right` | 是 | 动作结果 |
 | `game.jump(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
@@ -43,6 +47,65 @@
 | `game.skill(skill_id)` | 原版可选；整数 `1..2147483647` | 否 | [技能结果](#原版直接技能) |
 
 动作函数的等待范围是原生输入释放或该动作的本地执行边界，不是服务器效果确认。一次函数调用也不保证只发生一次原生重复输入、只攻击一个目标或只拾取一个物品。
+
+## 任务与控制权
+
+`spawn` 创建由共享运行时调度的独立 Lua 任务。一个任务等待动作、控制权或 `sleep` 时，其他任务仍可调用 `state/time/log/tasks`，观察和判断。任务共享 Lua 全局变量与闭包，不开放用户自行创建协程的入口。
+
+普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
+
+优先级越大越先取得控制。高优先级任务请求接管时，旧任务立即停止派发冲突动作，运行时请求释放原生输入，确认释放后才授权新任务；等待释放期间其他任务仍可观察。相同优先级保持当前控制者，等待者按请求顺序取得控制。控制权跨 `sleep()` 保留，直到 `stop()`、任务完成、任务取消或更高优先级接管。
+
+被接管的有界动作仍返回标准动作结果，`reason="control_preempted"`；`dispatched` 保留本次动作是否已派发的事实，`effect` 仍是 `unknown`。运行时分别保存每项任务的结果。被接管任务再次 `acquire()` 后读取当前角色、场景、位置和目标，重新规划；运行时不排队重放旧动作，也不撤销已发生的动画、惯性、药品消耗或服务器效果。
+
+`game.stop()` 只释放当前任务拥有的控制，不结束任务。非控制者调用时不触碰其他任务输入；自己原有输入仍在交接释放时等待确认，否则返回 `dispatched=false`、`control_released=true`、`effect="unknown"`、`reason="control_not_owned"`，其中释放事实只针对调用任务。`game.cancel(name)` 停止指定任务；未知名称报错，已经结束则返回 `false`。停止旧任务不会释放后续控制者的输入。任务正常返回会释放自己仍持有的控制；任一 Lua 错误沿用 `script_error`，取消本次会话全部任务并等待放键。
+
+`game.tasks()` 返回一次快照，格式为：
+
+```lua
+{
+    tasks = {
+        {name = "main", priority = 0, status = "completed", wait = "none",
+         reason = "script_returned"},
+        {name = "chase", priority = 10, status = "waiting", wait = "control"},
+        {name = "retreat", priority = 20, status = "waiting", wait = "action"}
+    },
+    control = {
+        owner = "retreat", pending = "chase",
+        from = "chase", to = "retreat", reason = "priority_preempted"
+    }
+}
+```
+
+任务 `status` 为 `running/waiting/completed/cancelled`，`wait` 为 `none/sleep/action/raw_keys/release/control`；`reason/error` 已知时提供字符串。`control.owner` 是当前控制者，`pending` 是等待取得控制的首个任务，`from/to/reason` 记录最近一次交接；没有对应值时为 `nil`。CLI `script status` 的 `script.tasks` 和 `script.control` 提供相同状态，JSON 中未知文本为 `null`。旧桥未提供这些字段时，CLI 保留缺失事实。
+
+下面只演示同层追击坐标与撤退的协调。调用方依据已核实场景提供目标坐标、撤退坐标和触发秒数；实际策略还须核对角色、场景、安全范围和目标有效性。
+
+```lua
+local function start_pair(target_x, retreat_x, trigger_after)
+    local function approach(x)
+        while true do
+            game.acquire()
+            local s = game.state()
+            assert(s.ready and s.position and s.character.hp > 0, "not_ready")
+            local dx = x - s.position.x
+            if math.abs(dx) <= 12 then return end
+            -- 抢占后下一轮先重新取得控制和采样，不重放上次移动。
+            game.move(dx > 0 and "right" or "left", 0.1)
+        end
+    end
+
+    game.spawn("chase", 10, function() approach(target_x) end)
+    game.spawn("retreat", 20, function()
+        game.sleep(trigger_after)
+        approach(retreat_x)
+        game.stop()
+    end)
+end
+-- 在调用方脚本中以已确认的场景参数调用 start_pair。
+```
+
+运行期间可由已有 Lua 任务按条件调用 `spawn()` 补充逻辑。当前 CLI 仍由单个活动会话持有动作控制；它不接受向活动会话另行注入全新源码。需要提交另一份代码时，先结束原会话。
 
 ## 能力表
 
@@ -143,7 +206,7 @@ Lua 状态不含 `in_game/inGame`、`backend`、频道、任务、NPC、金币�
 - `move` 是方向输入，不是“走到坐标”；`up/down` 按原生状态用于攀爬、门户等。没有独立的 `game.climb` 函数。坐标到达、绳梯目标和转场确认由复合策略实现。
 - `face` 可能造成少量移动。共享层请求短动作，headless 直接设置方向，原版可能短按方向或已同向时无需派发；不能据此要求两端固定同样时长或位置完全不变。
 - `jump/attack/pickup` 的可选时间是输入持续时间，不是完整动画时长。攻击、空中运动和惯性可能在释放输入后继续。
-- `stop` 释放当前脚本控制后继续执行，不结束 Lua。结束脚本用 `return` 或自然运行完毕。其结果的 `dispatched=true` 表示释放请求，不表示向游戏服务器发出了动作。
+- `stop` 释放当前任务控制后继续执行，不结束任务或 Lua 会话。结束任务用 `return` 或自然运行完毕。其结果的 `dispatched=true` 表示释放请求，不表示向游戏服务器发出了动作。
 - 不要在 `game.keys` 持键期间立即接另一个语义动作；先用 `game.stop()` 等待释放，再开始新的独立动作。
 
 ### 单次用药
@@ -222,17 +285,19 @@ API 参数无效、后端能力缺失、原生状态或输入路线不可用时�
 | 参数错误 | 方向、时长、整数ID、键表或键名不合法；修正调用，不盲重放 |
 | 能力不支持 | `unsupported: raw_keys/skill/...`；执行前检查能力，不用“函数存在”判断 |
 | 原生前提不满足 | 如 `state_unavailable_or_dead`、`action_in_progress`、`item_not_in_inventory`、`inventory_unavailable`；重新观察真实状态与已发生效果 |
+| 任务控制前提不满足 | `control_not_owned`；动作任务先 `acquire()`，取得控制后重新采样和规划。重复任务名、未知取消名称或无效任务参数也会报错 |
 | 脚本执行错误 | API错误或 `assert/error` 导致脚本进入 `script_error`，保留错误文本并释放控制 |
 | 日志失败 | 超限会抛错；宿主写日志失败则取消为 `script_log_write_failed` |
 
 运行时在角色ID改变时取消为 `character_changed`，确认离开游戏时取消为 `left_game`，执行期限到达时为 `time_limit`；外部取消原因由调用方提供。场景代次变化会暂停当次调度，不会单凭换图自动取消脚本，脚本应决定是否允许转场并核对目的地。`ready=false`或HP为0也不直接等同于运行时自动取消；原生层可能先释放控制，后续动作会因前提不满足报错，脚本仍需主动检查。
 
-发生结束、错误或取消后，运行时先请求释放，等待原生确认后才发布终态。主机 CLI 另核对请求/实例身份和新鲜采样；控制释放无法确认时可能返回 `bridge_release_unconfirmed`。脚本没有自动重连或跨实例重放。
+任务级结束或取消只释放自己仍拥有的控制；会话结束、错误或外部取消先停止全部任务，等待原生释放确认后才发布会话终态。主机 CLI 另核对请求/实例身份和新鲜采样；控制释放无法确认时可能返回 `bridge_release_unconfirmed`。脚本没有自动重连或跨实例重放。
 
 ## 日志与预算
 
 - `game.log`单条最多4096字节，每次协程恢复期间累计最多65536字节，均按字符串字节数而非字符数计算。每次恢复结束后日志批量写入宿主的 `script-events.jsonl` 并清零累计；日志不作为函数返回或游戏效果ACK。
-- 运行时大约每50000条Lua VM指令让出一次，游戏更新继续。若在不能让出的原生调用中耗尽指令预算，会报错；不要依赖自动预算代替正常控制循环中的 `sleep`。
+- 子任务日志自动带 `[任务名] ` 前缀，`main` 日志保留原文，便于定位独立任务的实际推进。
+- 每项任务大约每50000条Lua VM指令让出一次，其他可运行任务与游戏更新继续。若在不能让出的原生调用中耗尽指令预算，会报错；不要依赖自动预算代替正常控制循环中的 `sleep`。
 - 这不提供任意原生C函数的CPU或内存隔离，脚本必须受信。使用 `game.time()`计算期限，`observed_at_ms`是Unix采样时间，二者不可相减。
 
 ## Lua 环境

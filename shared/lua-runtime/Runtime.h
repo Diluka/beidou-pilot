@@ -116,6 +116,23 @@ public:
     }
 };
 
+struct TaskStatus {
+    std::string name;
+    int priority = 0;
+    std::string status;
+    std::string wait;
+    std::string reason;
+    std::string error;
+};
+
+struct ControlStatus {
+    std::string owner;
+    std::string pending;
+    std::string from;
+    std::string to;
+    std::string reason;
+};
+
 struct Status {
     std::string id;
     std::string status;
@@ -125,6 +142,8 @@ struct Status {
     std::uint64_t budgetYields = 0;
     double lastResumeUs = 0;
     double maxResumeUs = 0;
+    std::vector<TaskStatus> tasks;
+    ControlStatus control;
 };
 
 class Runtime {

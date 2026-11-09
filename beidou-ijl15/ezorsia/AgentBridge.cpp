@@ -613,11 +613,29 @@ bool Publish(const MapleControl::State& state) {
     out << ",\"script\":";
     const auto* script = runtime.CurrentStatus();
     if (script == nullptr) out << "null";
-    else out << "{\"id\":" << Quote(script->id) << ",\"status\":" << Quote(script->status)
-        << ",\"reason\":" << (script->reason.empty() ? "null" : Quote(script->reason))
-        << ",\"error\":" << (script->error.empty() ? "null" : Quote(script->error))
-        << ",\"resumes\":" << script->resumes << ",\"budget_yields\":" << script->budgetYields
-        << ",\"last_resume_us\":" << script->lastResumeUs << ",\"max_resume_us\":" << script->maxResumeUs << '}';
+    else {
+        out << "{\"id\":" << Quote(script->id) << ",\"status\":" << Quote(script->status)
+            << ",\"reason\":" << (script->reason.empty() ? "null" : Quote(script->reason))
+            << ",\"error\":" << (script->error.empty() ? "null" : Quote(script->error))
+            << ",\"resumes\":" << script->resumes << ",\"budget_yields\":" << script->budgetYields
+            << ",\"last_resume_us\":" << script->lastResumeUs << ",\"max_resume_us\":" << script->maxResumeUs
+            << ",\"tasks\":[";
+        bool taskSeparator = false;
+        for (const auto& task : script->tasks) {
+            if (taskSeparator) out << ',';
+            out << "{\"name\":" << Quote(task.name) << ",\"priority\":" << task.priority
+                << ",\"status\":" << Quote(task.status) << ",\"wait\":" << Quote(task.wait)
+                << ",\"reason\":" << (task.reason.empty() ? "null" : Quote(task.reason))
+                << ",\"error\":" << (task.error.empty() ? "null" : Quote(task.error)) << '}';
+            taskSeparator = true;
+        }
+        const auto& control = script->control;
+        out << "],\"control\":{\"owner\":" << (control.owner.empty() ? "null" : Quote(control.owner))
+            << ",\"pending\":" << (control.pending.empty() ? "null" : Quote(control.pending))
+            << ",\"from\":" << (control.from.empty() ? "null" : Quote(control.from))
+            << ",\"to\":" << (control.to.empty() ? "null" : Quote(control.to))
+            << ",\"reason\":" << (control.reason.empty() ? "null" : Quote(control.reason)) << "}}";
+    }
     out << ",\"last_skill\":";
     if (haveSkillResult) out << "{\"skill_id\":" << lastSkillId << ",\"native_result\":" << lastSkillResult << '}';
     else out << "null";
