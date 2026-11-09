@@ -115,6 +115,9 @@ class NativeObservationContract(unittest.TestCase):
             with patch("beidou_pilot.observations.verify_binaries", return_value=True):
                 session = active_session(self.root, "beidou")
         self.assertEqual("first-launch", session.run_id)
+        session.run_dir.mkdir(parents=True)
+        (session.run_dir / "renderer.log").write_text(
+            "OpenGL renderer string: Mesa Intel(R) Graphics (ADL GT2)\n")
         with patch("beidou_pilot.observations.active_session", return_value=None):
             self.assertEqual("STOPPED", read_stage(self.root)["stage"])
         with patch("beidou_pilot.observations.active_session", return_value=session):
@@ -123,6 +126,7 @@ class NativeObservationContract(unittest.TestCase):
                     stage = read_stage(self.root)
         self.assertEqual("STARTING", stage["stage"])
         self.assertTrue(stage["running"])
+        self.assertEqual("intel", stage["renderer"])
 
     def test_backend_forwards_selected_backend_to_observation_engine(self) -> None:
         with patch("beidou_pilot.backend.subprocess.run") as run:

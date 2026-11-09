@@ -12,7 +12,7 @@
 
 - 角色控制策略写在 `shared/scripts/` 或用户Lua中；Python仅做参数、装载/取消和结果投影。不增加宏DSL、JSON动作预设、Python逐帧反馈/多轨控制或已退役的直接按键/技能桥入口。桌面模块只承担原版GUI必需原语。
 
-- 客户端运行实例统一为Docker容器，后台常驻到显式关闭；根Dockerfile是无头镜像唯一构建定义。宿主不直接运行游戏客户端，不维护宿主PID查杀或进程期限兼容。Docker负责进程/资源生命周期，桥仍负责单次Lua取消、放键和游戏效果确认。游戏资源、私密profile与桥目录外置挂载，不进入镜像或构建上下文。
+- 客户端运行实例统一为Docker容器，后台常驻到显式关闭；Docker相关定义统一放在`docker/`：`docker/headless/Dockerfile`是无头镜像唯一构建定义，`docker/gui/Dockerfile`构建原版GUI环境，`docker/compose.yaml`负责GUI容器装配。根`.dockerignore`按无头构建上下文保留。宿主不直接运行游戏客户端，不维护宿主PID查杀或进程期限兼容。Docker负责进程/资源生命周期，桥仍负责单次Lua取消、放键和游戏效果确认。游戏资源、私密profile与桥目录外置挂载，不进入镜像或构建上下文。
 
 ## 需求收集与需求池
 
@@ -43,7 +43,7 @@
 ## 验收方式
 
 - 验收顺序为先通过 CI，再使用真实客户端进入游戏试用，核对需求对应的实际结果。两步分别给出结论，所有适用的验收项满足后才能合并。
-- [CI 工作流](.github/workflows/ci.yml)执行现有 Python 离线测试和根 `Dockerfile` 的无头镜像构建，建设需求见 [#1](https://github.com/Diluka/beidou-pilot/issues/1)，复现与查看结果见 [CI 文档](docs/CI.md)；PR 当前提交的 `Python offline tests` 与 `Headless image build` 两项必需检查须全部成功。本地测试或构建成功不能记为 CI 通过；缺失或跳过的必需检查也不能记为通过。
+- [CI 工作流](.github/workflows/ci.yml)执行现有 Python 离线测试和 `docker/headless/Dockerfile` 的无头镜像构建，建设需求见 [#1](https://github.com/Diluka/beidou-pilot/issues/1)，复现与查看结果见 [CI 文档](docs/CI.md)；PR 当前提交的 `Python offline tests` 与 `Headless image build` 两项必需检查须全部成功。本地测试或构建成功不能记为 CI 通过；缺失或跳过的必需检查也不能记为通过。
 - 真实试用使用包含本次 PR 改动的客户端构建及脚本，在已授权的专用角色和隔离目标中实际登录入图，执行用户故事对应的操作，核对预期效果及受影响的既有行为。登录成功只证明能入图；移动、战斗、取消等需求还需验证对应的实际游戏效果。
 - 按改动涉及的客户端验收：无头功能由无头客户端真实入图执行，GUI 功能使用原版 GUI 试用；影响两端的共享行为覆盖两端，不能用另一端的结果代替。GUI 保持一名明确操作者，沿用容器与实例身份隔离约定。
 - 纯文档、CI 等不改变客户端运行行为的改动，可以在需求验收标准和 PR 中说明游戏试用“不适用”及理由，验收对应的流程结果；是否适用以实际影响为准，影响客户端构建产物或运行行为的改动仍需验证对应的真实路径。

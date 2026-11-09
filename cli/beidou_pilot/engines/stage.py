@@ -32,7 +32,7 @@ def read_stage(root: Path | None = None, backend: str | None = None) -> JsonObje
             path = observer.session.run_dir / filename
             if path.is_file():
                 with path.open(errors="replace") as stream:
-                    hardware = re.search(r'(?:GL_RENDERER:|renderer=).*?(Intel|llvmpipe|softpipe|swrast)',
+                    hardware = re.search(r'(?:GL_RENDERER:|renderer=|OpenGL renderer string:).*?(Intel|llvmpipe|softpipe|swrast)',
                                          stream.read(262144), re.IGNORECASE)
                 if hardware:
                     report["renderer"] = "intel" if hardware[1].lower() == "intel" else "software"

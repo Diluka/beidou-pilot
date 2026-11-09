@@ -5,7 +5,8 @@
 ```bash
 ./cli/beidou-pilot --help
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
-docker build -t local/beidou-pilot:local .
+docker build -f docker/headless/Dockerfile -t local/beidou-pilot:local .
+docker build -t local/beidou-v17-client:intel docker/gui
 serena memories check
 ```
 

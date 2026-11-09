@@ -65,6 +65,29 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 
 ## 原版 GUI
 
+从项目根构建独立 GUI 镜像：
+
+```bash
+docker build -t local/beidou-v17-client:intel docker/gui
+```
+
+在 `cli/config/resources.json` 配置 `gui_client` 为匹配 V17 的原客户端目录、`gui_dll` 为已构建的桥接 DLL；配置文件和原资源均不入库。默认镜像名为 `local/beidou-v17-client:intel`，可用 `CLIENT_IMAGE` 选择已准备的 GUI 镜像。把对应工件的 `manifest.json` 复制到 `cli/state/agent-bridge-build.json`，供 EXE、`2ijl15.dll` 与桥接 DLL 的版本核验；桥 DLL 继续从 `gui_dll` 指定的外部位置读取。
+
+CLI 使用 [Compose](../docker/compose.yaml) 的 `client` 服务，并从资源配置和已核验 target 注入客户端路径、目标网络及本次 `RUN_ID`。原客户端只读挂到 `/client`，选定 DLL 只读挂到 `/overrides/ijl15.dll`；容器内 `/work/client` 是可写运行副本，其中 `Data/` 继续读取只读源，外部 `ijl15.dll` 不被覆盖。`2ijl15.dll` 仍需保留。
+
+Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/runtime/runs`、`cli/runtime/bridge`。容器内 GUI 进程使用 `1000:1000`，这些目录须允许该身份读写。当前硬件路径需要 `/dev/dri/renderD128`，画面由容器内 `DISPLAY=:97` 的 Xvfb 和窗口管理器提供，VirtualGL 使用 EGL 渲染。
+
+准备权限为 `0600` 的 `cli/account.private.json`（含 `name`、`password`），以及已授权的隔离 target 和专用角色，然后使用统一入口：
+
+```bash
+./cli/beidou-pilot --backend beidou --json doctor
+./cli/beidou-pilot --backend beidou --json open --target /external/target.json
+./cli/beidou-pilot --backend beidou --json snapshot
+./cli/beidou-pilot --backend beidou --json close
+```
+
+构建成功、环境检查通过和实际登录入图分别记录；涉及观察或动作时，还需核对对应的游戏结果。GUI 输入只允许一名明确操作者。
+
 以下操作不由无头端提供，CLI会明确报不支持：
 
 | 命令组 | 用途 |

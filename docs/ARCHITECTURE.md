@@ -8,6 +8,7 @@
 | `shared/scripts/` | 按travel/combat/recovery分类的复合能力，examples保存少量公共API示例 |
 | `shared/lua-runtime/` | 两端共用的Lua调度、预算、状态模型与game API，独立于具体客户端 |
 | `headless/src/` | 无渲染登录、网络与游戏更新宿主、共享桥适配 |
+| `docker/` | 无头与 GUI 镜像构建定义、GUI Compose、资源装配和容器启动脚本 |
 | `beidou-ijl15/` | 北斗客户端 `ijl15.dll` 工程，新增桥直接实现共同契约，保留必要原生逻辑 |
 | `third_party/` | 固定上游依赖与包含本地适配的派生引擎/资源转换器 |
 | `cli/test/` | 客户端离线合同测试 |
@@ -22,7 +23,7 @@ Python 负责参数、静态资料规划、脚本装载/取消和最终结果。
 
 容器启停与动作输入使用独立的锁。一个实例的 Lua、取消或关闭不向另一实例派发控制；同一目标的同一角色禁止被多个实例同时接管。真实断线或原生错误保留退出事实，不自动重连、重放或把旧动作转交新进程。
 
-根 [Dockerfile](../Dockerfile) 是无头镜像构建入口，builder 内完成编译，运行层执行原生客户端主进程并接收 SIGTERM。CLI 是 Docker 与桥的调用方，不启动宿主游戏进程。原版 GUI 仍运行在独立 Wine 容器中。
+[无头 Dockerfile](../docker/headless/Dockerfile) 是无头镜像唯一构建入口，builder 内完成编译，运行层执行原生客户端主进程并接收 SIGTERM。[GUI Dockerfile](../docker/gui/Dockerfile) 构建独立 Wine/VirtualGL 环境，[Compose](../docker/compose.yaml) 定义 GUI 的资源挂载、设备和网络。两端构建定义与 GUI 启动脚本统一放在 `docker/`；根 `.dockerignore` 对应无头镜像使用的项目根构建上下文。CLI 负责目标与实例核验、Docker 调用和桥控制，不启动宿主游戏进程。
 
 ## 外部资源与配置
 
@@ -45,10 +46,16 @@ python3 headless/tools/prepare_resources.py \
 | --- | --- |
 | `headless_resources` | 外部 NX 目录，只读挂载到无头容器 `/data`，可由多个实例共享 |
 | `metadata_root` | 可选 WZ XML，用于名称、物品分类及地形规划；缺失资料保留未知 |
+| `gui_client` | 匹配 V17 的外部原客户端目录，只读挂载到 GUI 容器 `/client` |
+| `gui_dll` | 已构建的桥接 `ijl15.dll`，只读挂载到 GUI 容器 `/overrides/ijl15.dll` |
 
 未配置时只使用本项目默认目录，不自动搜索其他工作区。资源路径配置不含账号且不入库。每实例的私密 profile 单独只读挂载，桥目录独立可写；target 和 profile 的字段及入口见 [CLI](CLI.md)。
 
-原版 GUI 需要匹配 V17 的独立运行副本、Wine/VirtualGL 环境、prefix 和构建登记。原始北斗客户端始终是外部只读输入，不能把 GUI 可写运行副本直接链接到原资源。DLL 构建还需 Windows/MSVC、SDK 及匹配 Detours 库；这些材料不由无头 Dockerfile 提供。
+原版 GUI 在容器私有目录 `/work/client` 组装运行副本：复制原客户端的运行文件，`Data/` 链接到只读 `/client/Data`，再用选定的 `gui_dll` 替换运行副本中的 `ijl15.dll`。原客户端目录保持只读，不能用硬链接或可写链接替代独立运行文件。图片库 `2ijl15.dll` 仍是桥接 DLL 的运行依赖，必须保留。
+
+Wine prefix、日志与桥目录分别外置到 `cli/runtime/prefix`、`cli/runtime/runs`、`cli/runtime/bridge`，这些目录需要允许容器内 `1000:1000` 读写。GUI 使用 `DISPLAY=:97` 的 Xvfb/窗口管理器、VirtualGL EGL 和 `/dev/dri/renderD128`；硬件与真实游戏效果分别验收。CLI 从同一份资源配置取得挂载路径并核验 EXE、图片库和所选 DLL，桥构建清单登记在 `cli/state/agent-bridge-build.json`。
+
+DLL 构建仍需 Windows/MSVC、SDK 及匹配 Detours 库；这些材料不由客户端运行镜像提供。GUI 准备和统一 CLI 操作见 [CLI](CLI.md#原版-gui)。
 
 ## 两端能力
 

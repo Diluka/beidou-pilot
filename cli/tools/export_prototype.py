@@ -35,16 +35,17 @@ def export_prototype(workspace: Path, output: Path) -> ExportSummary:
                 files[path] = destination / path.relative_to(source)
 
     files[workspace / "cli/beidou-pilot"] = Path("cli/beidou-pilot")
-    for name in ["LICENSE", "NOTICE", "Dockerfile", ".dockerignore", ".gitignore", "README.md", "AGENTS.md"]:
+    for name in ["LICENSE", "NOTICE", ".dockerignore", ".gitignore", "README.md", "AGENTS.md"]:
         files[workspace / name] = Path(name)
-    for name in ["clientctl.py", "runtime-ui.py", "build.sh", "config/target.example.json", "config/resources.example.json"]:
+    for name in ["clientctl.py", "runtime-ui.py", "config/target.example.json", "config/resources.example.json"]:
         files[workspace / "cli" / name] = Path("cli") / name
     tree(workspace / "cli/beidou_pilot", Path("cli/beidou_pilot"), {".py"})
     tree(workspace / "cli/tools", Path("cli/tools"), {".py"})
     tree(workspace / "cli/test", Path("cli/test"), {".py"})
-    for name in ["Dockerfile", "entrypoint.sh", "chinese-fontlink.reg"]:
-        files[workspace / "cli/environment" / name] = Path("cli/environment") / name
-    for name in ["Makefile", "build.sh", "agent", "LICENSE", "NOTICE", "Settings"]:
+    for name in ["compose.yaml", "headless/Dockerfile", "gui/Dockerfile", "gui/entrypoint.sh",
+                 "gui/bootstrap.sh", "gui/prepare-client.sh", "gui/chinese-fontlink.reg"]:
+        files[workspace / "docker" / name] = Path("docker") / name
+    for name in ["Makefile", "agent", "LICENSE", "NOTICE", "Settings"]:
         files[workspace / "headless" / name] = Path("headless") / name
     tree(workspace / "headless/src", Path("headless/src"), {".cpp", ".h"})
     for name in ["prepare_resources.py", "img_directory_to_nx.cpp"]:

@@ -180,7 +180,8 @@ class InstanceContract(unittest.TestCase):
                     {"Id": "new-alpha", "State": {"Running": True}}]):
                 with patch("beidou_pilot.headless.docker", side_effect=docker):
                     with patch("beidou_pilot.headless.load_resources", return_value=ResourcePaths(
-                            resources, resources, None)):
+                            metadata_root=resources, headless_resources=resources,
+                            gui_client=resources, gui_dll=resources / "ijl15.dll", config_file=None)):
                         with patch.object(BridgeClient, "snapshot", return_value=sampled):
                             opened = open_game(self.root, target=target, profile=profile, instance="alpha")
         self.assertTrue(opened["ready"])
@@ -276,7 +277,8 @@ class InstanceContract(unittest.TestCase):
         with patch("beidou_pilot.headless.subprocess.run", side_effect=plan):
             with patch("beidou_pilot.headless.docker", side_effect=docker):
                 with patch("beidou_pilot.headless.load_resources", return_value=ResourcePaths(
-                        resources, resources, None)):
+                        metadata_root=resources, headless_resources=resources,
+                        gui_client=resources, gui_dll=resources / "ijl15.dll", config_file=None)):
                     with ThreadPoolExecutor(max_workers=2) as pool:
                         pending = [pool.submit(attempt, instance) for instance in ("alpha", "beta")]
                         results = [future.result(timeout=3) for future in pending]

@@ -6,6 +6,7 @@
 
 ```text
 cli/             命令入口、实例管理、观察、测试
+docker/          两个镜像的构建定义、GUI Compose 与启动脚本
 headless/        无头客户端宿主和适配器
 beidou-ijl15/    原版客户端 DLL 工程和适配器
 shared/
@@ -22,13 +23,19 @@ third_party/     上游依赖
 
 ```bash
 git submodule update --init --recursive
-docker build -t local/beidou-pilot:local .
+docker build -f docker/headless/Dockerfile -t local/beidou-pilot:local .
 ./cli/beidou-pilot --help
 ```
 
-编译在 Docker builder 中完成。运行镜像只带客户端、必要动态库和许可证；北斗原客户端、NX、账号和运行状态都由外部提供。
+无头编译在 Docker builder 中完成，运行镜像只带客户端、必要动态库和许可证。原版 GUI 使用独立 Wine/VirtualGL 镜像，按需从项目根构建：
 
-把 [resources.example.json](cli/config/resources.example.json) 复制为 `cli/config/resources.json`，配置外部 `headless_resources`。已有匹配 NX 可直接复用；从原始客户端转换、可选 WZ XML 及 GUI 前置条件见[架构与支持范围](docs/ARCHITECTURE.md)。
+```bash
+docker build -t local/beidou-v17-client:intel docker/gui
+```
+
+两个镜像的定义与 GUI 的 [Compose](docker/compose.yaml)、启动脚本统一放在 `docker/`；北斗原客户端、NX、账号和运行状态由外部提供。
+
+把 [resources.example.json](cli/config/resources.example.json) 复制为 `cli/config/resources.json`，配置所用后端的外部路径：无头端使用 `headless_resources`，GUI 使用 `gui_client` 和 `gui_dll`。GUI 将原客户端只读挂到 `/client`，在容器内准备运行副本并替换 DLL，保留源目录不变。已有匹配 NX 可直接复用；资源转换、可选 WZ XML 及 GUI 前置条件见[架构与支持范围](docs/ARCHITECTURE.md)。
 
 ## 操作实例
 

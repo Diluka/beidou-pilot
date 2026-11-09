@@ -32,4 +32,4 @@ jobs:
         with:
           submodules: recursive
       - name: Build headless image
-        run: docker build --tag local/beidou-pilot:ci .
+        run: docker build --file docker/headless/Dockerfile --tag local/beidou-pilot:ci .

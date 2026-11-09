@@ -1,4 +1,6 @@
 {
   "metadata_root": "/external/maple/wz-xml",
-  "headless_resources": "/external/maple/headless-nx"
+  "headless_resources": "/external/maple/headless-nx",
+  "gui_client": "/external/maple/BeiDou-Client",
+  "gui_dll": "/external/maple/agent-bridge/ijl15.dll"
 }

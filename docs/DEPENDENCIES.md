@@ -26,7 +26,7 @@ git submodule update --init --recursive
 - Detours固定与本项目头接口匹配的官方快照，不用近似tag替换。Windows库从对应源码构建到其 `lib.X86/`；版本依据统一来源清单。
 - 引擎内自带的NoLifeNx、GLFW和LZ4头保留上游树结构，随派生引擎维护，不拆成重复副本。运行时 `liblz4.so.1`由Docker构建环境提供，系统库二进制不进入源码。
 
-原生编译入口与目录变量见 [Dockerfile](../Dockerfile) 和 [Makefile](../headless/Makefile)；运行资源与源码分发范围见 [ARCHITECTURE](ARCHITECTURE.md)。
+无头原生编译入口与目录变量见 [Dockerfile](../docker/headless/Dockerfile) 和 [Makefile](../headless/Makefile)；GUI 环境构建见 [GUI Dockerfile](../docker/gui/Dockerfile)，其基础镜像与 VirtualGL 版本由构建定义固定。Docker 定义与启动脚本集中在 `docker/`，运行资源与源码分发范围见 [ARCHITECTURE](ARCHITECTURE.md)。
 
 ## 许可与外部资产
 
