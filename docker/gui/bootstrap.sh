@@ -28,7 +28,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 0' TERM INT
 
-Xvfb :97 -screen 0 1280x720x24 -nolisten tcp >"$run_dir/xvfb.log" 2>&1 &
+Xvfb :97 -screen 0 1920x1080x24 -nolisten tcp >"$run_dir/xvfb.log" 2>&1 &
 xvfb_pid=$!
 desktop_pids+=("$xvfb_pid")
 until xdpyinfo >/dev/null 2>&1; do
@@ -43,7 +43,7 @@ wineboot -u >>"$run_dir/wine.log" 2>&1
 wine regedit /S /opt/beidou/chinese-fontlink.reg >>"$run_dir/wine.log" 2>&1
 
 cd /work/client
-/opt/VirtualGL/bin/vglrun -d egl wine BeiDou.exe >>"$run_dir/wine.log" 2>&1 &
+/opt/VirtualGL/bin/vglrun -d egl wine explorer /desktop=beidou,1920x1080 BeiDou.exe >>"$run_dir/wine.log" 2>&1 &
 game_pid=$!
 while true; do
   if ! kill -0 "$game_pid" 2>/dev/null; then
