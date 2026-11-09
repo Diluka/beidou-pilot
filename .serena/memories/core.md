@@ -1,6 +1,6 @@
 # 项目导航与边界
 
-- `AGENTS.md`是维护约定入口；正式架构/支持边界见docs/ARCHITECTURE.md，命令见docs/CLI.md，写Lua脚本的接口参考见docs/LUA_API.md，桥执行契约见docs/CONTROL.md，依赖见docs/DEPENDENCIES.md。
+- `AGENTS.md`是维护约定入口，统一维护需求入池、sub-issue拆分、自主验收与合并、真实客户端试用规则；正式架构/支持边界见docs/ARCHITECTURE.md，命令见docs/CLI.md，写Lua脚本的接口参考见docs/LUA_API.md，桥执行契约见docs/CONTROL.md，依赖见docs/DEPENDENCIES.md，CI检查与复现见docs/CI.md。
 - 运行实例由Docker容器拥有；Lua动作返回/取消保持实例，close独立结束容器。不能让动作锁挡住活动Lua期间的实例关闭。
 - Python角色控制入口统一经过Lua；原生适配器仍保留底层输入/技能原语，不把Python API退役写成底层能力被删除。GUI尚无Lua接口的桌面流程按正式支持边界保留。
 - Serena保存开发知识；玩家性格、长期目标/记忆和模型属于后续bot中心。游戏资产、账号与运行数据不进入项目记忆或镜像。
