@@ -75,6 +75,8 @@ docker build -t local/beidou-v17-client:intel docker/gui
 
 CLI 使用 [Compose](../docker/compose.yaml) 的 `client` 服务，并从资源配置和已核验 target 注入客户端路径、目标网络及本次 `RUN_ID`。原客户端只读挂到 `/client`，选定 DLL 只读挂到 `/overrides/ijl15.dll`；容器内 `/work/client` 是可写运行副本，其中 `Data/` 继续读取只读源，外部 `ijl15.dll` 不被覆盖。`2ijl15.dll` 仍需保留。
 
+GUI 容器在自己的网络命名空间启用 `net.ipv4.conf.all.route_localnet=1`，让原客户端访问 `127.0.0.1` 的游戏端口时，经既有 DNAT/MASQUERADE 连接已核验目标；目标地址与端口过滤仍由容器入口配置。
+
 Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/runtime/runs`、`cli/runtime/bridge`。容器内 GUI 进程使用 `1000:1000`，这些目录须允许该身份读写。当前硬件路径需要 `/dev/dri/renderD128`，画面由容器内 `DISPLAY=:97` 的 Xvfb 和窗口管理器提供，VirtualGL 使用 EGL 渲染。
 
 准备权限为 `0600` 的 `cli/account.private.json`（含 `name`、`password`），以及已授权的隔离 target 和专用角色，然后使用统一入口：
