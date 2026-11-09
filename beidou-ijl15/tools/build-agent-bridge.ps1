@@ -32,6 +32,20 @@ $msbuildVersion = ((& $msbuild -nologo -version) | Select-Object -Last 1).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify MSBuild.' }
 
 New-Item -ItemType Directory -Force 'out' | Out-Null
+$detours = Join-Path (Get-Location) 'out/detours'
+New-Item -ItemType Directory -Force $detours | Out-Null
+Copy-Item '../third_party/detours/src' $detours -Recurse -Force
+Copy-Item '../third_party/detours/system.mak' $detours -Force
+$vcvars = Join-Path $vsRoot 'VC/Auxiliary/Build/vcvarsall.bat'
+Push-Location (Join-Path $detours 'src')
+try {
+    & $env:ComSpec /d /c "call `"$vcvars`" x86 >nul && nmake /nologo DETOURS_TARGET_PROCESSOR=X86 clean all" |
+        Tee-Object -FilePath (Join-Path $detours 'build.log')
+    if ($LASTEXITCODE -ne 0) { throw "Detours build failed with exit code $LASTEXITCODE." }
+} finally {
+    Pop-Location
+}
+
 # BOM-marked UTF-8 files keep their encoding; unmarked upstream headers are GBK.
 # The client interprets narrow Chinese strings in CP936, including on this runner.
 $previousCl = [Environment]::GetEnvironmentVariable('CL')
@@ -77,8 +91,10 @@ if (Test-Path 'out/Release/ijl15.pdb') {
 }
 Copy-Item LICENSE "$package/LICENSE"
 Copy-Item 'out/build.log' "$package/build.log"
-$luaSource = (Get-Content -Raw '../third_party/UPSTREAM.json' | ConvertFrom-Json).lua
+$upstream = Get-Content -Raw '../third_party/UPSTREAM.json' | ConvertFrom-Json
 Copy-Item '../NOTICE' "$package/NOTICE"
+Copy-Item '../third_party/detours/LICENSE.md' "$package/Detours-LICENSE.md"
+Copy-Item (Join-Path $detours 'build.log') "$package/detours-build.log"
 $exports | Set-Content -Encoding utf8 "$package/exports.txt"
 $dependencies | Set-Content -Encoding utf8 "$package/dependencies.txt"
 
@@ -114,15 +130,21 @@ $manifest = [ordered]@{
         windows_sdk_version = $sdkVersion
         source_charset_without_bom = 'CP936'
         execution_charset = 'CP936'
-        detours_lib_sha256 = (Get-FileHash '../third_party/detours/lib.X86/detours.lib' -Algorithm SHA256).Hash.ToLowerInvariant()
+        detours_lib_sha256 = (Get-FileHash (Join-Path $detours 'lib.X86/detours.lib') -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     dependencies = [ordered]@{
         lua = [ordered]@{
-            version = $luaSource.version
-            source_url = $luaSource.repository
-            commit_sha = $luaSource.commit
-            license = $luaSource.license
+            version = $upstream.lua.version
+            source_url = $upstream.lua.repository
+            commit_sha = $upstream.lua.commit
+            license = $upstream.lua.license
             linkage = 'compiled-as-C-into-ijl15'
+        }
+        detours = [ordered]@{
+            source_url = $upstream.detours.repository
+            commit_sha = $upstream.detours.commit
+            license = $upstream.detours.license
+            linkage = 'static-x86'
         }
     }
     ci = [ordered]@{
