@@ -15,4 +15,5 @@ evidence/
 /cli/config/target.json
 /cli/account.private.json
 /headless/resources/
+/beidou-ijl15/out/
 /LOCAL.md
