@@ -220,8 +220,156 @@ assert(cancelled < 512 and returned < 512 and self_cancelled < 512,
 )lua";
 }
 
+
+MapleControl::TaskStatus LatestTask(MapleControl::Runtime& runtime, const std::string& name) {
+    const auto* status = runtime.CurrentStatus();
+    for (auto task = status->tasks.rbegin(); task != status->tasks.rend(); ++task)
+        if (task->name == name) return *task;
+    Check(false, "task_missing: " + name);
+    return {};
+}
+
+void Advance(MapleControl::Runtime& runtime, NativeBoundary& native, int count) {
+    for (int tick = 0; tick < count; ++tick) {
+        native.Advance();
+        runtime.Tick();
+    }
+}
+
+void LiveTaskChanges() {
+    NativeBoundary native;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("live-session", R"lua(
+local hidden = "local_only"
+observations = 0
+game.spawn("watch", 1, function()
+    while true do observations = observations + 1; game.sleep(0) end
+end)
+game.spawn("chase", 10, function()
+    game.acquire()
+    game.move("right", 10)
+    while true do game.sleep(0) end
+end)
+)lua", 5000, error), error);
+    Advance(runtime, native, 3);
+    Check(native.active && runtime.CurrentStatus()->control.owner == "chase", "initial_owner_missing");
+    const auto original = LatestTask(runtime, "chase");
+    MapleControl::TaskChange change;
+    change.requestId = "append";
+    change.scriptId = "live-session";
+    change.name = "added";
+    change.priority = 1;
+    change.source = R"lua(
+assert(hidden == nil and observations > 0, "injected_source_scope_wrong")
+local before = observations
+game.sleep(0)
+assert(observations > before, "original_observer_stopped")
+for _, task in ipairs(game.tasks().tasks) do assert(task.revision > 0) end
+)lua";
+    auto result = runtime.ManageTask(change);
+    Check(result.status == "completed" && result.changed && result.revision > original.revision,
+          "task_append_not_installed");
+    Advance(runtime, native, 3);
+    Check(LatestTask(runtime, "added").status == "completed" && native.active,
+          "new_task_or_original_action_did_not_continue");
+    change.operation = MapleControl::TaskOperation::Replace;
+    change.name = "chase";
+    change.expectedRevision = original.revision;
+    change.requestId = "invalid-replacement";
+    change.source = "local = invalid";
+    result = runtime.ManageTask(change);
+    Check(result.status == "rejected" && result.reason == "task_load_error" && !result.error.empty(),
+          "invalid_replacement_not_rejected");
+    Check(native.active && !native.ReleasePending() && native.inputs.size() == 1 &&
+          runtime.CurrentStatus()->control.owner == "chase" && LatestTask(runtime, "chase").revision == original.revision,
+          "compile_error_changed_original_owner");
+    change.requestId = "replace";
+    change.priority = 10;
+    change.source = "game.acquire(); game.move('left', 10); while true do game.sleep(0) end";
+    result = runtime.ManageTask(change);
+    Check(result.status == "pending" && native.ReleasePending(), "replacement_skipped_release_ack");
+    const auto rejected = runtime.ManageTask(change);
+    Check(rejected.reason == "task_management_busy" && runtime.CurrentTaskChange()->requestId == "replace",
+          "rejected_request_overwrote_pending_replacement");
+    Advance(runtime, native, 2);
+    Check(native.inputs.size() == 1 && runtime.Running(), "replacement_started_before_release_ack");
+    Advance(runtime, native, 2);
+    const auto replacement = LatestTask(runtime, "chase");
+    Check(replacement.revision > original.revision && native.inputs.size() == 2 && native.active &&
+          native.inputs.back().direction == "left", "replacement_not_started");
+    result = *runtime.CurrentTaskChange();
+    Check(result.status == "completed" && result.controlReleased && result.revision == replacement.revision,
+          "replacement_result_missing");
+    change.operation = MapleControl::TaskOperation::Stop;
+    change.requestId = "late-stop";
+    result = runtime.ManageTask(change);
+    Check(result.reason == "task_revision_mismatch" && native.active && !native.ReleasePending(),
+          "old_revision_stopped_replacement");
+    change.scriptId = "old-session";
+    change.expectedRevision = replacement.revision;
+    result = runtime.ManageTask(change);
+    Check(result.reason == "script_session_mismatch" && native.active, "old_session_changed_task");
+    change.scriptId = "live-session";
+    change.requestId = "stop";
+    result = runtime.ManageTask(change);
+    Check(result.status == "pending" && native.ReleasePending(), "stop_skipped_own_release_ack");
+    Advance(runtime, native, 3);
+    result = *runtime.CurrentTaskChange();
+    Check(result.status == "completed" && result.changed && result.controlReleased && runtime.Running(),
+          "target_stop_cancelled_other_tasks");
+    Check(LatestTask(runtime, "watch").status == "waiting", "observer_stopped_with_target");
+    result = runtime.ManageTask(change);
+    Check(result.status == "completed" && !result.changed, "terminal_stop_not_idempotent");
+    change.operation = MapleControl::TaskOperation::Add;
+    change.name = "failing";
+    change.requestId = "runtime-error";
+    change.source = "error('injected-runtime-error')";
+    Check(runtime.ManageTask(change).status == "completed", "valid_error_source_not_compiled");
+    Advance(runtime, native, 3);
+    Check(!runtime.Running() && runtime.CurrentStatus()->reason == "script_error" &&
+          runtime.CurrentStatus()->error.find("injected-runtime-error") != std::string::npos,
+          "injected_runtime_error_did_not_preserve_session_error_semantics");
+}
+
+void LastTaskReplacement() {
+    NativeBoundary native;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("last-session", R"lua(
+game.spawn("only", 10, function()
+    game.acquire(); game.move("right", 10)
+end)
+)lua", 5000, error), error);
+    Advance(runtime, native, 3);
+    MapleControl::TaskChange change;
+    change.requestId = "last-replacement";
+    change.scriptId = "last-session";
+    change.name = "only";
+    change.operation = MapleControl::TaskOperation::Replace;
+    change.expectedRevision = LatestTask(runtime, "only").revision;
+    change.priority = 10;
+    change.source = "game.acquire(); game.move('left', 10)";
+    Check(runtime.ManageTask(change).status == "pending", "last_task_replacement_not_pending");
+    Advance(runtime, native, 2);
+    Check(runtime.Running(), "last_task_replacement_ended_session_early");
+    Advance(runtime, native, 2);
+    Check(native.inputs.size() == 2 && native.active && runtime.Running(), "last_replacement_not_installed");
+    change.requestId = "cancelled-replacement";
+    change.expectedRevision = LatestTask(runtime, "only").revision;
+    change.source = "game.acquire(); game.move('right', 10)";
+    Check(runtime.ManageTask(change).status == "pending", "second_replacement_not_pending");
+    runtime.Cancel("contract_cancel");
+    Check(runtime.CurrentTaskChange()->status == "cancelled", "session_cancel_left_pending_replacement");
+    Advance(runtime, native, 3);
+    Check(!runtime.Running() && native.Released() && native.inputs.size() == 2,
+          "replacement_installed_after_session_cancel");
+}
+
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
+    if (std::string(argv[1]) == "live-changes") { LiveTaskChanges(); return 0; }
+    if (std::string(argv[1]) == "last-replacement") { LastTaskReplacement(); return 0; }
     const bool cancel = std::string(argv[1]) == "cancel";
     const bool ordinary = std::string(argv[1]) == "single";
     const bool keys = std::string(argv[1]) == "raw-keys";

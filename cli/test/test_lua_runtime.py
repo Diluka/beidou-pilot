@@ -39,3 +39,9 @@ class LuaRuntimeContract(unittest.TestCase):
 
     def test_finished_tasks_release_lua_payloads_while_session_remains_active(self) -> None:
         subprocess.run([str(self.executable), "lifecycle"], check=True, timeout=10)
+
+    def test_live_task_changes_preserve_compile_errors_and_targeted_identity(self) -> None:
+        subprocess.run([str(self.executable), "live-changes"], check=True, timeout=10)
+
+    def test_last_task_replacement_waits_for_release_and_obeys_session_cancel(self) -> None:
+        subprocess.run([str(self.executable), "last-replacement"], check=True, timeout=10)

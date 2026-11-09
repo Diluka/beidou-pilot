@@ -118,11 +118,36 @@ public:
 
 struct TaskStatus {
     std::string name;
+    std::uint64_t revision = 0;
     int priority = 0;
     std::string status;
     std::string wait;
     std::string reason;
     std::string error;
+};
+
+enum class TaskOperation { Add, Replace, Stop };
+
+struct TaskChange {
+    std::string requestId;
+    std::string scriptId;
+    std::string name;
+    TaskOperation operation = TaskOperation::Add;
+    std::uint64_t expectedRevision = 0;
+    int priority = 0;
+    std::string source;
+};
+
+struct TaskChangeResult {
+    std::string requestId;
+    std::string scriptId;
+    std::string name;
+    std::string status;
+    std::string reason;
+    std::string error;
+    std::uint64_t revision = 0;
+    bool changed = false;
+    bool controlReleased = false;
 };
 
 struct ControlStatus {
@@ -158,6 +183,8 @@ public:
     // Call after the host has updated native state and key-release facts.
     void Tick(bool sceneChanged = false);
     void Cancel(const std::string& reason);
+    TaskChangeResult ManageTask(const TaskChange& change);
+    const TaskChangeResult* CurrentTaskChange() const;
     bool Running() const;
     const Status* CurrentStatus() const;
 

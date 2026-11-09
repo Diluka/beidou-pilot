@@ -120,6 +120,8 @@ class SourceExportContract(unittest.TestCase):
             self.assertFalse((output / "cli/config/resources.json").exists())
             self.assertFalse((output / "cli/beidou_pilot/engines/short_combat.py").exists())
             self.assertTrue((output / "shared/lua-runtime/Runtime.cpp").is_file())
+            self.assertTrue((output / "cli/test/lua_runtime_contract.cpp").is_file())
+            self.assertTrue((output / "cli/test/task_transport_contract.cpp").is_file())
             self.assertTrue((output / "docker/compose.yaml").is_file())
             self.assertTrue((output / "docker/headless/Dockerfile").is_file())
             self.assertTrue((output / "docker/gui/prepare-client.sh").is_file())
