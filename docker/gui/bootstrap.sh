@@ -28,7 +28,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 0' TERM INT
 
-Xvfb :97 -screen 0 1920x1080x24 -nolisten tcp >"$run_dir/xvfb.log" 2>&1 &
+Xvfb :97 -screen 0 1280x720x24 -nolisten tcp >"$run_dir/xvfb.log" 2>&1 &
 xvfb_pid=$!
 desktop_pids+=("$xvfb_pid")
 until xdpyinfo >/dev/null 2>&1; do

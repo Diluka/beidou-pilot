@@ -77,7 +77,7 @@ CLI 使用 [Compose](../docker/compose.yaml) 的 `client` 服务，并从资源�
 
 GUI 容器在自己的网络命名空间启用 `net.ipv4.conf.all.route_localnet=1`，让原客户端访问 `127.0.0.1` 的游戏端口时，经既有 DNAT/MASQUERADE 连接已核验目标；目标地址与端口过滤仍由容器入口配置。
 
-Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/runtime/runs`、`cli/runtime/bridge`。容器内 GUI 进程使用 `1000:1000`，这些目录须允许该身份读写。当前硬件路径需要 `/dev/dri/renderD128`，画面由容器内 `DISPLAY=:97` 的 Xvfb 和窗口管理器提供，VirtualGL 使用 EGL 渲染。
+Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/runtime/runs`、`cli/runtime/bridge`。容器内 GUI 进程使用 `1000:1000`，这些目录须允许该身份读写。当前硬件路径需要 `/dev/dri/renderD128`，画面由容器内 `DISPLAY=:97` 的 Xvfb 和窗口管理器提供；Xvfb 使用 `1280x720x24`，匹配当前客户端初始化尺寸，VirtualGL 使用 EGL 渲染。
 
 需要 Wine 启动诊断时，可在启动命令前设置 `WINEDEBUG='+loaddll,+seh,+d3d8,+d3d'`；该值传入容器并在降权后保留，未指定时默认为 `-all`。日志写入所属运行目录的 `wine.log`，原始诊断保留在本地环境。
 
