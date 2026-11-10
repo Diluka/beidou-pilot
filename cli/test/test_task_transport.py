@@ -22,6 +22,7 @@ class TaskTransportContract(unittest.TestCase):
             "g++", "-std=c++20", "-O0", f"-I{lua}", f"-I{root / 'shared/lua-runtime'}",
             f"-I{root / 'third_party/json/single_include'}",
             str(root / "shared/lua-runtime/Runtime.cpp"),
+            str(root / "shared/lua-runtime/Observation.cpp"),
             str(root / "shared/lua-runtime/TaskTransport.cpp"),
             str(root / "cli/test/task_transport_contract.cpp"), *map(str, sorted(build.glob("*.o"))),
             "-lm", "-ldl", "-o", str(cls.executable),

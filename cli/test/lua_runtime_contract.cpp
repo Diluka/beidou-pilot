@@ -91,6 +91,33 @@ public:
     MapleControl::ActionResult result;
 };
 
+// Native domain values are fixtures; the real Runtime owns Lua projection and lifecycle checks.
+class ObservationBoundary final : public NativeBoundary {
+public:
+    MapleControl::Observation ObserveDomain(const std::string& domain) const override {
+        queries.push_back(domain);
+        using MapleControl::Value;
+        if (domain == "stage")
+            return {"ok", Value::Object({{"stage", state.ready ? "IN_GAME" : "STARTING"}}), {}};
+        if (domain == "scene")
+            return {"ok", Value::Object({{"map_id", state.mapId}, {"npcs", Value::Array({
+                Value::Object({{"object_id", 3}, {"name", npcName}, {"x", 12.5}, {"y", -4}})
+            })}}), {}};
+        if (domain == "character")
+            return {"ok", Value::Object({{"mesos", 0}, {"skills", Value::Object({
+                {"2000001", Value::Object({{"level", 1}, {"master_level", {}}})}
+            })}, {"unavailable", Value::Array()}}), {}};
+        if (domain == "quests")
+            return {"ok", Value::Object({{"source", "character_data_snapshot"}, {"live_updates", false},
+                {"quests", Value::Array({Value::Object({{"quest_id", 1037}, {"progress", "001"}})})}}), {}};
+        if (domain == "shop") return {"unavailable", {}, "native_shop_read_unavailable"};
+        return {"unsupported", {}, "unsupported_observation_domain"};
+    }
+
+    mutable std::vector<std::string> queries;
+    std::string npcName = "向导";
+};
+
 // The native callback re-enters the real scheduler; it does not model NPCs.
 class ReentrantBoundary final : public NativeBoundary {
 public:
@@ -498,8 +525,95 @@ end)
     }
 }
 
+void DomainObservations() {
+    ObservationBoundary native;
+    native.state.observedAtMs = 1000;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("domain-observations", R"lua(
+assert(game.state().in_game)
+game.sleep(0)
+local character = game.observe("character")
+assert(character.status == "ok" and character.source == "client-native-api" and character.readonly)
+assert(character.backend == "contract" and character.instance_id == "contract-instance")
+assert(character.character_id == 1 and character.map_id == 50000 and character.scene_generation == 1)
+assert(character.ready and character.in_game and character.observed_at_ms == 1000)
+assert(character.data.mesos == 0 and character.data.skills["2000001"].level == 1)
+assert(character.data.skills["2000001"].master_level == nil and #character.data.unavailable == 0)
+local quests = game.observe("quests")
+assert(quests.data.source == "character_data_snapshot" and quests.data.live_updates == false)
+assert(quests.data.quests[1].quest_id == 1037 and quests.data.quests[1].progress == "001")
+assert(quests.data.source_updated_at_ms == nil)
+local old = game.observe("scene")
+assert(old.data.npcs[1].name == "向导" and old.data.npcs[1].x == 12.5 and old.data.npcs[1].y == -4)
+assert(tostring(old.data.npcs[1].object_id) == "3" and math.type(old.data.npcs[1].x) == "float")
+old.data.npcs[1].name = "仅修改脚本副本"
+assert(game.observe("scene").data.npcs[1].name == "向导")
+game.sleep(0)
+local current = game.observe("scene")
+assert(current.seq > old.seq and current.observed_at_ms == 2000)
+assert(current.scene_generation == 2 and current.map_id == 50001 and current.data.map_id == 50001)
+assert(current.data.npcs[1].name == "新场景向导")
+assert(old.scene_generation == 1 and old.map_id == 50000 and old.observed_at_ms == 1000)
+assert(old.data.npcs[1].name == "仅修改脚本副本")
+)lua", 5000, error), error);
+    Advance(runtime, native, 1);
+    Check(native.queries.empty(), "domain_sampling_was_not_on_demand");
+    Advance(runtime, native, 1);
+    Check(native.queries.size() == 4, "unexpected_domain_reads_before_next_scene");
+    native.state.mapId = 50001;
+    native.state.sceneGeneration = 2;
+    native.state.observedAtMs = 2000;
+    native.npcName = "新场景向导";
+    Advance(runtime, native, 5);
+    const auto* status = runtime.CurrentStatus();
+    Check(!runtime.Running() && status->status == "completed" && status->error.empty(), status->error);
+    Check(native.queries.size() == 5 && native.inputs.empty(), "domain_reads_dispatched_or_repeated_actions");
+}
+
+void DomainAvailability() {
+    ObservationBoundary native;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("domain-availability", R"lua(
+local ui = game.observe("ui")
+assert(ui.status == "unsupported" and ui.data == nil and ui.error == "unsupported_observation_domain")
+local shop = game.observe("shop")
+assert(shop.status == "unavailable" and shop.data == nil and shop.error == "native_shop_read_unavailable")
+game.sleep(0)
+local scene = game.observe("scene")
+assert(scene.status == "unavailable" and scene.error == "native_client_not_in_game" and scene.data == nil)
+assert(not scene.ready and scene.in_game and scene.map_id == nil and scene.character_id == nil)
+assert(game.observe("stage").data.stage == "STARTING")
+game.sleep(0)
+game.observe("scene")
+error("query_resumed_for_another_character")
+)lua", 5000, error), error);
+    Advance(runtime, native, 1);
+    Check(native.queries.size() == 2, "supported_and_unavailable_queries_not_dispatched");
+    native.state.ready = native.state.mapKnown = native.state.characterKnown = false;
+    Advance(runtime, native, 1);
+    Check(native.queries == std::vector<std::string>({"ui", "shop", "stage"}),
+          "unready_scene_reused_native_domain_data");
+    native.state.ready = native.state.characterKnown = true;
+    native.state.character.id = 2;
+    Advance(runtime, native, 5);
+    const auto* status = runtime.CurrentStatus();
+    Check(!runtime.Running() && status->status == "cancelled" && status->reason == "character_changed"
+          && status->error.empty(), "old_character_observation_task_not_cancelled");
+    Check(native.queries.size() == 3, "queried_domains_after_character_changed");
+    Check(runtime.Start("invalid-domain", "game.observe('missing')", 5000, error), error);
+    Advance(runtime, native, 5);
+    status = runtime.CurrentStatus();
+    Check(!runtime.Running() && status->reason == "script_error"
+          && status->error.find("invalid option") != std::string::npos, "unknown_domain_was_not_rejected");
+    Check(native.queries.size() == 3 && native.inputs.empty(), "invalid_domain_reached_native_collector");
+}
+
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
+    if (std::string(argv[1]) == "domain-observations") { DomainObservations(); return 0; }
+    if (std::string(argv[1]) == "domain-availability") { DomainAvailability(); return 0; }
     if (std::string(argv[1]) == "live-changes") { LiveTaskChanges(); return 0; }
     if (std::string(argv[1]) == "last-replacement") { LastTaskReplacement(); return 0; }
     if (std::string(argv[1]) == "reentrant-callbacks") { ReentrantCallbacks(); return 0; }

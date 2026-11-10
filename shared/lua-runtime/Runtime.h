@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #pragma once
 
+#include "Observation.h"
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -97,6 +99,9 @@ public:
     virtual ~Adapter() = default;
     virtual const char* Backend() const = 0;
     virtual const State& Observe() const = 0;
+    virtual Observation ObserveDomain(const std::string&) const {
+        return {"unsupported", {}, "unsupported_observation_domain"};
+    }
     virtual bool Supports(ActionKind kind) const = 0;
     virtual bool Begin(const Action& action, std::string& error) = 0;
     virtual ActionResult Result() const = 0;

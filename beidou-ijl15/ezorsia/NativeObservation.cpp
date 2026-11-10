@@ -3,93 +3,18 @@
 #include "NativeObservation.h"
 
 #include <array>
-#include <cmath>
+#include <chrono>
 #include <cstring>
-#include <iomanip>
 #include <sstream>
 
 namespace NativeObservation {
 namespace {
-std::string Quote(const std::string& value) {
-    std::ostringstream out;
-    out << '"';
-    for (unsigned char byte : value) {
-        if (byte == '"' || byte == '\\') out << '\\' << byte;
-        else if (byte < 32) out << "\\u00" << std::hex << std::setfill('0')
-            << std::setw(2) << static_cast<unsigned int>(byte) << std::dec;
-        else out << byte;
-    }
-    out << '"';
-    return out.str();
-}
-
 std::uint64_t UnixMs() {
     FILETIME time{};
     GetSystemTimeAsFileTime(&time);
     const auto ticks = (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
     return (ticks - 116444736000000000ULL) / 10000;
 }
-}
-
-Value Value::Object(std::initializer_list<std::pair<std::string, Value>> values) {
-    Value result;
-    result.kind = Kind::Object;
-    result.object = values;
-    return result;
-}
-
-Value Value::Array(std::initializer_list<Value> values) {
-    Value result;
-    result.kind = Kind::Array;
-    result.array = values;
-    return result;
-}
-
-Value& Value::operator[](const std::string& key) {
-    if (kind == Kind::Null) kind = Kind::Object;
-    for (auto& entry : object) if (entry.first == key) return entry.second;
-    object.emplace_back(key, Value{});
-    return object.back().second;
-}
-
-void Value::Add(Value value) {
-    if (kind == Kind::Null) kind = Kind::Array;
-    array.push_back(std::move(value));
-}
-
-std::string Value::Dump() const {
-    switch (kind) {
-    case Kind::Null: return "null";
-    case Kind::Boolean: return boolean ? "true" : "false";
-    case Kind::String: return Quote(text);
-    case Kind::Number: {
-        if (!std::isfinite(number)) return "null";
-        std::ostringstream out;
-        out << std::setprecision(17) << number;
-        return out.str();
-    }
-    case Kind::Array: {
-        std::string out = "[";
-        bool separator = false;
-        for (const auto& entry : array) {
-            if (separator) out += ',';
-            out += entry.Dump();
-            separator = true;
-        }
-        return out + ']';
-    }
-    case Kind::Object: {
-        std::string out = "{";
-        bool separator = false;
-        for (const auto& entry : object) {
-            if (separator) out += ',';
-            out += Quote(entry.first) + ':' + entry.second.Dump();
-            separator = true;
-        }
-        return out + '}';
-    }
-    }
-    return "null";
 }
 
 void Copy(std::uintptr_t address, void* output, std::size_t size) {
@@ -157,6 +82,31 @@ std::uint32_t SecureValue(std::uintptr_t address) {
     return result;
 }
 
+MapleControl::Observation Collect(const std::string& domain) {
+    using Collector = Value (*)();
+    const std::pair<const char*, Collector> collectors[]{
+        {"stage", Stage}, {"scene", Scene}, {"inventory", Inventory}, {"character", Character},
+        {"quests", Quests}, {"hotkeys", Hotkeys}, {"dialog", Dialog}, {"ui", Ui}, {"shop", Shop}
+    };
+    Collector selected = nullptr;
+    for (const auto& entry : collectors) if (domain == entry.first) selected = entry.second;
+    MapleControl::Observation result;
+    if (selected != nullptr) {
+        const auto started = std::chrono::steady_clock::now();
+        try {
+            result.data = selected();
+            result.data["read_seconds"] = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - started).count();
+        }
+        catch (const ReadError& failure) { result.status = "unavailable"; result.error = failure.what(); }
+    }
+    else {
+        result.status = "unsupported";
+        result.error = "unsupported observation domain";
+    }
+    return result;
+}
+
 void Tick(const std::string& directory, const std::string& instance,
     const std::string& run, std::uint64_t generation, std::uint64_t sequence) {
     const std::string path = directory + "\\observation-request.txt";
@@ -174,25 +124,11 @@ void Tick(const std::string& directory, const std::string& instance,
     if (!complete || length == 512 || !(request >> protocol >> target >> id >> domain) ||
         request >> extra || protocol != 1 || target != instance || id.size() != 32 ||
         id.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) return;
-    using Collector = Value (*)();
-    const std::pair<const char*, Collector> collectors[]{
-        {"stage", Stage}, {"scene", Scene}, {"inventory", Inventory}, {"character", Character},
-        {"quests", Quests}, {"hotkeys", Hotkeys}, {"dialog", Dialog}, {"ui", Ui}, {"shop", Shop}
-    };
-    Collector selected = nullptr;
-    for (const auto& entry : collectors) if (domain == entry.first) selected = entry.second;
-    Value data;
-    std::string status = selected == nullptr ? "unsupported" : "ok";
-    std::string error;
-    if (selected != nullptr) {
-        try { data = selected(); }
-        catch (const ReadError& failure) { status = "unavailable"; error = failure.what(); }
-    }
-    else error = "unsupported observation domain";
+    const auto observation = Collect(domain);
     const auto output = Value::Object({{"protocol", 1}, {"instance_id", instance}, {"run_id", run},
         {"request_id", id}, {"domain", domain}, {"seq", sequence}, {"scene_generation", generation},
-        {"observed_at_ms", UnixMs()}, {"status", status}, {"data", data},
-        {"error", error.empty() ? Value{} : Value(error)}}).Dump();
+        {"observed_at_ms", UnixMs()}, {"status", observation.status}, {"data", observation.data},
+        {"error", observation.error.empty() ? Value{} : Value(observation.error)}}).Dump();
     const std::string temporary = directory + "\\observation.tmp";
     const HANDLE file = CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
