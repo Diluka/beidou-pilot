@@ -71,6 +71,16 @@ int main() {
               && host.dialogue.choices[0].text == "Pick" && host.dialogue.choices[1].id == 12,
           "native_menu_choices_or_page_revision_lost");
 
+    // The real dimensional-mirror type inserts an int before text; only its header is supported.
+    const std::vector<int8_t> special{4, 69, 47, 0, 0, 14, 0, 0, 0, 0, 0, 4, 0, 't', 'e', 'x', 't'};
+    ms::InPacket unsupported(special.data(), special.size());
+    ms::NpcDialogueHandler handler;
+    const ms::PacketHandler& receiver = handler;
+    receiver.handle(unsupported);
+    Check(host.dialogue.open && host.dialogue.npc_id == 12101 && host.dialogue.type == 14 && !host.dialogue.text_known
+              && !host.dialogue.choices_complete && host.dialogue.text.empty(),
+          "unsupported_native_layout_was_parsed_as_an_empty_text_page");
+
     ms::TalkToNPCPacket(42).dispatch();
     Check(sent == std::vector<int8_t>({58, 0, 42, 0, 0, 0}), "npc_request_did_not_use_object_id");
     ms::NpcTalkMorePacket(0, -1).dispatch();

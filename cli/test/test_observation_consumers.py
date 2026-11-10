@@ -12,6 +12,7 @@ from beidou_pilot.snapshot import collect, format_snapshot
 from beidou_pilot.stats import read_character
 from beidou_pilot.travel import portal
 from beidou_pilot import dialogs
+from beidou_pilot.cli import concise
 
 
 class ObservationConsumerContract(unittest.TestCase):
@@ -135,6 +136,33 @@ class SnapshotConsumerContract(unittest.TestCase):
         full = collect(self.backend, all_entities=True)
         self.assertFalse(full["monsters"][0]["visible"])
         self.assertIn("画外", format_snapshot(full))
+
+    def test_unsupported_dialog_keeps_unknown_text_and_operations_without_dispatch(self) -> None:
+        self.backend.name = "headless"
+        self.domains["dialog"].update(dialog_open=True, npc_id=9010022, dialog_type=14, speaker=0,
+                                     npc_object_id=44,
+                                     dialog_reference="native-1:3:1", text_known=False,
+                                     lines=None, choices=None, buttons=None,
+                                     unavailable=["dialogue_response_type_not_supported"])
+        self.domains["scene"]["npcs"] = [{"object_id": 44, "template_id": 9010022,
+                                           "name": "镜子", "x": .5, "y": 0}]
+        report = collect(self.backend)
+        for field in ("lines", "choices", "buttons"):
+            self.assertIsNone(report["dialog"][field])
+            self.assertIsNone(concise({"dialog": self.domains["dialog"]})["dialog"][field])
+        self.assertEqual(14, report["dialog"]["type"])
+        self.assertEqual(0, report["dialog"]["speaker"])
+        self.assertFalse(report["dialog"]["text_known"])
+        self.assertFalse(any(target["kind"] in {"choice", "button"} for target in report["refs"].values()))
+        self.assertIn("对话正文：未知", format_snapshot(report))
+        self.assertIn("对话选项：未知", format_snapshot(report))
+        with patch("beidou_pilot.dialogs.run_source") as run:
+            for operation in (lambda: dialogs.act(self.backend, "next"),
+                              lambda: dialogs.talk(self.backend, "9010022")):
+                with self.assertRaises(ClientError) as failure:
+                    operation()
+                self.assertEqual("unsupported_capability", failure.exception.code)
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

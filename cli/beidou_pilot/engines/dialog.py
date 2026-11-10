@@ -111,10 +111,10 @@ class DialogSnapshot(TypedDict):
     root_rect: NotRequired[DialogRect | None]
     game_geometry: NotRequired[GameGeometry | None]
     window_position_source: NotRequired[str | None]
-    buttons: list[DialogButton]
+    buttons: list[DialogButton] | None
     text_tokens: NotRequired[list[DialogTextToken]]
-    lines: list[str]
-    choices: list[DialogChoice]
+    lines: list[str] | None
+    choices: list[DialogChoice] | None
     unavailable: list[str]
     not_covered: list[str]
     npc_object_id: NotRequired[int | None]
@@ -122,6 +122,8 @@ class DialogSnapshot(TypedDict):
     page_revision: NotRequired[int]
     response_pending: NotRequired[bool]
     closed_by: NotRequired[str | None]
+    text_known: NotRequired[bool]
+    speaker: NotRequired[int | None]
 
 
 def read_dialog() -> DialogSnapshot:

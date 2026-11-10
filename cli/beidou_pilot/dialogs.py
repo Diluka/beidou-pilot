@@ -51,12 +51,18 @@ def act(backend: Backend, action: str, selector: str | None = None, *, seconds: 
     raw = backend.read("dialog")
     if raw["dialog_open"] is not True:
         raise ClientError("no_dialog", "当前没有已识别的NPC对话。")
-    dialog: JsonObject = {"open": raw["dialog_open"], "reference": raw.get("dialog_reference"), "choices": raw["choices"],
-                          "buttons": [{**a, "action": BUTTONS.get(cast(int, a["control_id"]), str(a["control_id"]))}
-                                      for a in cast(list[JsonObject], raw["buttons"])]}
+    dialog: JsonObject = {"open": raw["dialog_open"], "reference": raw.get("dialog_reference"),
+                          "npc_id": raw["npc_id"], "type": raw["dialog_type"],
+                          "text_known": raw.get("text_known"), "unavailable": raw.get("unavailable"),
+                          "lines": raw["lines"], "choices": raw["choices"],
+                          "buttons": None if raw["buttons"] is None else [
+                              {**a, "action": BUTTONS.get(cast(int, a["control_id"]), str(a["control_id"]))}
+                              for a in cast(list[JsonObject], raw["buttons"])]}
     if selector and selector.startswith("@"):
         snapshot = collect(backend, all_entities=True)
         dialog = cast(JsonObject, snapshot["dialog"])
+    if dialog["lines"] is None or dialog["choices"] is None or dialog["buttons"] is None:
+        raise ClientError("unsupported_capability", "当前对话页的正文或操作布局未知，未发送响应。", {"dialog": dialog})
     if action == "select":
         target = choose(cast(list[JsonObject], dialog["choices"]), cast(str, selector))
     else:
@@ -112,6 +118,8 @@ def talk(backend: Backend, selector: str) -> JsonObject:
     npc = choose(cast(list[JsonObject], state.get("npcs", [])), selector, "name")
     current = cast(JsonObject, state["dialog"])
     if current["open"]:
+        if backend.name == "headless" and any(current[field] is None for field in ("lines", "choices", "buttons")):
+            raise ClientError("unsupported_capability", "当前NPC页的正文或操作布局未知，未确认可用对话。", {"dialog": current})
         if current["npc_id"] == npc["template_id"] and (
                 backend.name != "headless" or current["npc_object_id"] == npc["object_id"]):
             return {"status": "already_open", "dialog": current}

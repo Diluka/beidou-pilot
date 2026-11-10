@@ -28,6 +28,7 @@ namespace ms
 		uint8_t speaker = 0;
 		bool previous = false;
 		bool next = false;
+		bool text_known = false;
 		std::string text;
 		std::vector<NpcChoice> choices;
 		bool choices_complete = true;

@@ -88,17 +88,24 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
     offer.update(open=dialog["dialog_open"], npc_id=dialog["npc_id"],
                  npc_object_id=dialog.get("npc_object_id"), reference=dialog.get("dialog_reference"),
                  page_revision=dialog.get("page_revision"), response_pending=dialog.get("response_pending"),
-                 closed_by=dialog.get("closed_by"), type=dialog["dialog_type"], lines=dialog["lines"])
+                 closed_by=dialog.get("closed_by"), type=dialog["dialog_type"], lines=dialog["lines"],
+                 speaker=dialog.get("speaker"), text_known=dialog.get("text_known"), unavailable=dialog.get("unavailable"))
     fingerprint: JsonValue = [dialog.get("dialog_reference"), dialog["npc_id"], dialog["dialog_type"], dialog["lines"]]
-    for original in cast(list[JsonObject], dialog["choices"]):
-        value = dict(original)
-        value["ref"] = reference("c", [fingerprint, value["link_id"]], {"kind": "choice", **value})
-        cast(list[JsonObject], offer["choices"]).append(value)
-    for original in cast(list[JsonObject], dialog["buttons"]):
-        value: JsonObject = {"control_id": original["control_id"], "root_rect": original.get("root_rect"),
-                             "action": BUTTONS.get(cast(int, original["control_id"]), str(original["control_id"]))}
-        value["ref"] = reference("b", [fingerprint, value["control_id"]], {"kind": "button", **value})
-        cast(list[JsonObject], offer["buttons"]).append(value)
+    if dialog["choices"] is None:
+        offer["choices"] = None
+    else:
+        for original in cast(list[JsonObject], dialog["choices"]):
+            value = dict(original)
+            value["ref"] = reference("c", [fingerprint, value["link_id"]], {"kind": "choice", **value})
+            cast(list[JsonObject], offer["choices"]).append(value)
+    if dialog["buttons"] is None:
+        offer["buttons"] = None
+    else:
+        for original in cast(list[JsonObject], dialog["buttons"]):
+            value: JsonObject = {"control_id": original["control_id"], "root_rect": original.get("root_rect"),
+                                 "action": BUTTONS.get(cast(int, original["control_id"]), str(original["control_id"]))}
+            value["ref"] = reference("b", [fingerprint, value["control_id"]], {"kind": "button", **value})
+            cast(list[JsonObject], offer["buttons"]).append(value)
     items = cast(list[JsonObject], inventory["items"])
     for item in items:
         item["name"] = catalog.item_name(cast(int, item["item_id"]))
@@ -136,9 +143,18 @@ def format_snapshot(value: JsonObject, *, interactive_only: bool = False) -> str
         lines.append("对话状态：未知。")
     elif dialog["open"]:
         lines.append(f"对话 NPC {dialog['npc_id']} (type {dialog['type']})")
-        lines += [str(line) for line in cast(list[JsonValue], dialog["lines"])]
-        lines += [f"  {a['ref']} {a['text']}" for a in cast(list[JsonObject], dialog["choices"])]
-        lines += [f"  {a['ref']} [{a['action']}]" for a in cast(list[JsonObject], dialog["buttons"])]
+        if dialog["lines"] is None:
+            lines.append("对话正文：未知。")
+        else:
+            lines += [str(line) for line in cast(list[JsonValue], dialog["lines"])]
+        if dialog["choices"] is None:
+            lines.append("对话选项：未知，当前页面不支持响应。")
+        else:
+            lines += [f"  {a['ref']} {a['text']}" for a in cast(list[JsonObject], dialog["choices"])]
+        if dialog["buttons"] is None:
+            lines.append("对话按钮：未知，当前页面不支持响应。")
+        else:
+            lines += [f"  {a['ref']} [{a['action']}]" for a in cast(list[JsonObject], dialog["buttons"])]
     for group, label in (("npcs", "NPC"), ("monsters", "怪物"), ("drops", "掉落")):
         if interactive_only and group == "monsters":
             continue

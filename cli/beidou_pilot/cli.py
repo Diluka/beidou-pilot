@@ -772,11 +772,16 @@ def concise(result: JsonObject) -> JsonObject:
             "npc_id": dialog["npc_id"],
             "type": dialog["dialog_type"],
             "lines": dialog["lines"],
-            "choices": [{"id": x["link_id"], "text": x["text"]} for x in cast(list[JsonObject], dialog["choices"])],
-            "buttons": [
+            "choices": None
+            if dialog["choices"] is None
+            else [{"id": x["link_id"], "text": x["text"]} for x in cast(list[JsonObject], dialog["choices"])],
+            "buttons": None
+            if dialog["buttons"] is None
+            else [
                 dialogs.BUTTONS.get(cast(int, x["control_id"]), str(x["control_id"]))
                 for x in cast(list[JsonObject], dialog["buttons"])
             ],
+            **{key: dialog[key] for key in ("text_known", "speaker", "response_pending", "closed_by") if key in dialog},
         }
     state = result.get("state")
     if isinstance(state, dict) and "character" in state:

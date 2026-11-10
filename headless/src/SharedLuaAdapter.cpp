@@ -647,7 +647,9 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
         } else if (request.kind == MapleControl::ActionKind::Talk
                    || request.kind == MapleControl::ActionKind::Respond) {
             if (dialogue.open && dialogue.revision > request.pageRevision) {
-                if (dialogue.npc_id == request.npcId) {
+                if (!dialogue.text_known) {
+                    result.reason = "unsupported_dialogue_type";
+                } else if (dialogue.npc_id == request.npcId) {
                     result.effect = "confirmed";
                     result.reason =
                         request.kind == MapleControl::ActionKind::Talk ? "dialogue_opened" : "dialogue_page_changed";
@@ -899,10 +901,13 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                 {"response_pending", page.response_pending},
                 {"closed_by", !page.open && !page.closed_by.empty() ? Json(page.closed_by) : Json(nullptr)},
                 {"speaker", page.open ? Json(page.speaker) : Json(nullptr)},
-                {"lines", page.open ? Json::array({page.text}) : Json::array()},
-                {"choices", std::move(choices)},
+                {"text_known", page.open && page.text_known},
+                {"lines", !page.open        ? Json::array()
+                          : page.text_known ? Json::array({page.text})
+                                            : Json(nullptr)},
+                {"choices", page.open && (!supported || !page.choices_complete) ? Json(nullptr) : std::move(choices)},
                 {"choices_complete", page.open && supported ? Json(page.choices_complete) : Json(nullptr)},
-                {"buttons", std::move(buttons)},
+                {"buttons", page.open && !supported ? Json(nullptr) : std::move(buttons)},
                 {"camera_viewport", nullptr},
                 {"unavailable",
                  page.open && !supported ? Json::array({"dialogue_response_type_not_supported"}) : Json::array()},

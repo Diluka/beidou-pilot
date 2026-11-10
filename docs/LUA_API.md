@@ -303,7 +303,7 @@ end
 
 这四个动作的确认期限默认3秒，范围为 `0 < seconds <= 30`。先从当前 `scene` 取得NPC的 `object_id`，并传入同次规划对应的 `game.state().scene_generation`。`game.talk` 核对当前场景与NPC，再派发一次正常对话请求；NPC模板ID来自响应，`npc_object_id` 只表示本地明确请求与该响应匹配时可追踪的OID，不伪装为服务器页内字段。
 
-`game.observe("dialog")` 返回当前页。`dialog_reference` 是绑定本实例、场景和页代次的不透明引用，不解析其格式。每次新页都重新取得引用；`game.respond(ref, action, selection, seconds)` 只对该页当前可用的按钮或选项提交一次响应，旧页引用拒绝。普通文本、是/否、菜单和接受/拒绝页的原始类型为 `0/1/4/12`。输入框、造型选择等其他页面不猜操作；未覆盖字段列在 `not_covered`。
+`game.observe("dialog")` 返回当前页。`dialog_reference` 是绑定本实例、场景和页代次的不透明引用，不解析其格式。每次新页都重新取得引用；`game.respond(ref, action, selection, seconds)` 只对该页当前可用的按钮或选项提交一次响应，旧页引用拒绝。普通文本、是/否、菜单和接受/拒绝页的原始类型为 `0/1/4/12`。输入框、造型选择等其他页面不猜操作；例如类型14采用不同布局，只保留NPC、原始类型和speaker头信息，`text_known=false`、`lines/choices/buttons=nil`，不把未知正文或操作当成空菜单。未覆盖字段列在 `not_covered`。
 
 响应后旧页按正常客户端语义失活，新页或动作恢复消息用于判断本地交互结果。`response_pending=true` 表示尚在等待；`closed_by` 保留关闭来源，不能把本地关闭、输入恢复或 `effect="confirmed"` 当成任务完成或奖励到账。无确认时保持 `unknown`，不重放响应。
 

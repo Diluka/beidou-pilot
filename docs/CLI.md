@@ -121,7 +121,7 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 
 这些ID是普通新手场景示例，执行前仍需确认当前角色、场景、前置和授权。`--reward-choice` 仅用于交付，表示正常任务可选奖励中的0基序号，不是物品ID；省略时不填默认选择，复杂奖励场景未完整覆盖。有新请求时，CLI只在Lua完成且原生结果 `effect="confirmed"` 时报告确认；同一目标对话已打开时可直接复用。未知结果报未确认且不重放。确认任务状态不等于奖励到账，仍核对当前背包、金币或经验变化。
 
-无头对话没有屏幕矩形；`dialog_reference` 与快照中的选项引用绑定当前实例、场景和页面代次，翻页后旧引用失效。同一NPC模板的本地对象ID仅在明确请求追踪时提供。对话关闭可能来自本地响应与动作恢复消息，不能据此认定任务或消费已完成。`dialog advance` 目前仍为GUI流程；无头多页策略在Lua中有界组织。
+无头未支持页的正文、选项和按钮为 `null`，`text_known=false`；快照保留未知，CLI不对该页发送响应。无头对话没有屏幕矩形；`dialog_reference` 与快照中的选项引用绑定当前实例、场景和页面代次，翻页后旧引用失效。同一NPC模板的本地对象ID仅在明确请求追踪时提供。对话关闭可能来自本地响应与动作恢复消息，不能据此认定任务或消费已完成。`dialog advance` 目前仍为GUI流程；无头多页策略在Lua中有界组织。
 
 无头任务观察合并登录完整包和同会话任务增量，`live_updates=true`，当前 `live_update_kinds` 为 `not_started/started/completed`。原始进度串不解码；可接任务推断与关联进度保持未知，`linked_progress=null`。不靠重登刷新代替持续观察。
 

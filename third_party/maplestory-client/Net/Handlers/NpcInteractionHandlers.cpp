@@ -35,12 +35,17 @@ namespace ms
 		int32_t npcid = recv.read_int();
 		int8_t msgtype = recv.read_byte(); // 0 - textonly, 1 - yes/no, 4 - selection, 12 - accept/decline
 		int8_t speaker = recv.read_byte();
-		std::string text = recv.read_string();
-
 		int16_t style = 0;
-
+#ifdef HEADLESS
+		const bool supported = msgtype == 0 || msgtype == 1 || msgtype == 4 || msgtype == 12;
+		// Other native types can insert fields before the text; do not parse them as ordinary pages.
+		std::string text = supported ? recv.read_string() : std::string{};
+		if (msgtype == 0) style = recv.read_short();
+#else
+		std::string text = recv.read_string();
 		if (msgtype == 0 && recv.length() > 0)
 			style = recv.read_short();
+#endif
 
 #ifdef HEADLESS
 		auto& host = headless_state();
@@ -55,9 +60,10 @@ namespace ms
 		page.speaker = static_cast<uint8_t>(speaker);
 		page.previous = (style & 0xff) != 0;
 		page.next = (style & 0xff00) != 0;
+		page.text_known = supported;
 		page.text = std::move(text);
 		page.choices.clear();
-		page.choices_complete = true;
+		page.choices_complete = supported;
 		page.closed_by.clear();
 		if (msgtype == 4)
 		{

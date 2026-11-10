@@ -219,7 +219,7 @@ class InstanceContract(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertTrue(report["data"]["connected"])
         self.assertEqual(sampled["capabilities"], report["data"]["native_actions"])
-        self.assertEqual(["character", "inventory", "quests", "scene", "stage"],
+        self.assertEqual(["character", "dialog", "inventory", "quests", "scene", "stage"],
                          report["data"]["observation_domains"])
 
     def test_concurrent_open_cannot_start_the_same_character_twice(self) -> None:
