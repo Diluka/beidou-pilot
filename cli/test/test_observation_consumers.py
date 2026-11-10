@@ -80,7 +80,11 @@ class SnapshotConsumerContract(unittest.TestCase):
 
     def test_headless_keeps_common_state_and_refs_without_inventing_ui_visibility(self) -> None:
         self.backend.name = "headless"
+        self.domains["observe"].update(dead=True, revive_requestable=True)
+        self.domains["observe"]["character"]["hp"] = 0
         report = collect(self.backend)
+        self.assertIs(report["dead"], True)
+        self.assertIs(report["revive_requestable"], True)
         self.assertNotIn("dialog", [call.args[0] for call in self.backend.read.call_args_list])
         self.assertFalse(report["dialog"]["supported"])
         self.assertIsNone(report["dialog"]["open"])

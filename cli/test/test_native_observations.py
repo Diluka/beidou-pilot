@@ -166,6 +166,15 @@ class NativeObservationContract(unittest.TestCase):
         self.assertTrue(stage["running"])
         self.assertEqual("intel", stage["renderer"])
 
+    def test_engine_module_uses_source_package_before_an_old_runtime_copy(self) -> None:
+        engines = self.root / "beidou_pilot/engines"
+        engines.mkdir(parents=True)
+        (engines.parent / "__init__.py").write_text("")
+        (engines / "__init__.py").write_text("")
+        (engines / "observe.py").write_text('print("stale runtime engine loaded")\n')
+        help_text = Backend(self.root, "headless").text("observe", "--help")
+        self.assertIn("--interval", help_text)
+
     def test_backend_forwards_selected_backend_to_observation_engine(self) -> None:
         with patch("beidou_pilot.backend.subprocess.run") as run:
             run.return_value.stdout = '{"quests": []}'
