@@ -44,3 +44,13 @@ class HuntLuaContract(unittest.TestCase):
 
     def test_falling_character_can_attack_before_landing(self) -> None:
         subprocess.run([str(self.executable), str(self.contract), "fall", str(self.strategy)], check=True, timeout=5)
+
+    def test_continuous_slope_reaches_its_real_edge_before_hunting_below(self) -> None:
+        subprocess.run([str(self.executable), str(self.contract), "slope", str(self.strategy)], check=True, timeout=5)
+
+    def test_gui_attack_lock_turns_without_attack_and_uses_combat_progress(self) -> None:
+        for scenario in ("gui-lock", "gui-turn-stalled"):
+            with self.subTest(scenario=scenario):
+                subprocess.run(
+                    [str(self.executable), str(self.contract), scenario, str(self.strategy)], check=True, timeout=5
+                )

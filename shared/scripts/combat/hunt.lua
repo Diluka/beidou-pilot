@@ -1,12 +1,21 @@
 -- 单场景连续狩猎。地形是原客户端静态资料，实时目标与动作由本端观察决定。
 local started = game.time()
 local deadline = options.seconds and started + math.max(0, options.seconds - 0.25) or math.huge
-local platforms, edges = {}, {}
+local platforms, segments, by_id, edges = {}, {}, {}, {}
+local terrain_left, terrain_right = math.huge, -math.huge
+local function segment_height(segment, x)
+    return segment.y1 + (segment.y2 - segment.y1) * (x - segment.left) / (segment.right - segment.left)
+end
 local function height(platform, x)
-    return platform.y1 + (platform.y2 - platform.y1) * (x - platform.left) / (platform.right - platform.left)
+    for _, segment in ipairs(platform.segments) do
+        if x <= segment.right then return segment_height(segment, x) end
+    end
+    return segment_height(platform.segments[#platform.segments], x)
 end
 local function inside(platform, x) return math.max(platform.left, math.min(platform.right, x)) end
 for _, foothold in ipairs(options.terrain.footholds) do
+    terrain_left = math.min(terrain_left, foothold.x1, foothold.x2)
+    terrain_right = math.max(terrain_right, foothold.x1, foothold.x2)
     if foothold.x1 ~= foothold.x2 then
         local left, right = math.min(foothold.x1, foothold.x2), math.max(foothold.x1, foothold.x2)
         local y1, y2 = foothold.y1, foothold.y2
@@ -16,27 +25,51 @@ for _, foothold in ipairs(options.terrain.footholds) do
         local raw = { left = left, right = right, y1 = y1, y2 = y2 }
         left, right = math.max(left, options.min_x), math.min(right, options.max_x)
         if left < right then
-            platforms[#platforms + 1] = { left = left, right = right, y1 = height(raw, left), y2 = height(raw, right) }
+            local segment = {
+                id = foothold.id,
+                prev = foothold.prev,
+                next = foothold.next,
+                left = left,
+                right = right,
+                y1 = segment_height(raw, left),
+                y2 = segment_height(raw, right),
+            }
+            segments[#segments + 1], by_id[segment.id] = segment, segment
         end
     end
 end
-table.sort(platforms, function(a, b) return a.y1 == b.y1 and a.left < b.left or a.y1 < b.y1 end)
-local merged = {}
-for _, platform in ipairs(platforms) do
-    local previous = merged[#merged]
-    if
-        previous
-        and previous.y1 == previous.y2
-        and platform.y1 == platform.y2
-        and previous.y1 == platform.y1
-        and platform.left <= previous.right + 1
-    then
-        previous.right = math.max(previous.right, platform.right)
-    else
-        merged[#merged + 1] = platform
+-- 原始段的接缝不是落边。只合并直接相连、端点相同的非竖直地面，保留各段高度。
+local assigned = {}
+for _, segment in ipairs(segments) do
+    if not assigned[segment.id] then
+        local parts, cursor = { segment }, 1
+        assigned[segment.id] = true
+        while cursor <= #parts do
+            local part = parts[cursor]
+            cursor = cursor + 1
+            for _, id in ipairs({ part.prev, part.next }) do
+                local neighbor = by_id[id]
+                if neighbor and not assigned[id] then
+                    local joins_right = part.right == neighbor.left and part.y2 == neighbor.y1
+                    local joins_left = part.left == neighbor.right and part.y1 == neighbor.y2
+                    if joins_right or joins_left then
+                        assigned[id], parts[#parts + 1] = true, neighbor
+                    end
+                end
+            end
+        end
+        table.sort(parts, function(a, b) return a.left < b.left end)
+        local first, last = parts[1], parts[#parts]
+        platforms[#platforms + 1] = {
+            left = first.left,
+            right = last.right,
+            y1 = first.y1,
+            y2 = last.y2,
+            segments = parts,
+        }
     end
 end
-platforms = merged
+table.sort(platforms, function(a, b) return a.y1 == b.y1 and a.left < b.left or a.y1 < b.y1 end)
 for i in ipairs(platforms) do
     edges[i] = {}
 end
@@ -64,7 +97,8 @@ for i, a in ipairs(platforms) do
     for _, direction in ipairs({ -1, 1 }) do
         local edge_x = direction == -1 and a.left or a.right
         local x, below, below_y = edge_x + direction * 12, nil, math.huge
-        if x >= options.min_x and x <= options.max_x then
+        -- 仅为静态落边候选预留角色空间，不将地图原始极限当作可站立的实时边界。
+        if x >= options.min_x and x <= options.max_x and x >= terrain_left + 30 and x <= terrain_right - 30 then
             for j, b in ipairs(platforms) do
                 if j ~= i and x >= b.left and x <= b.right then
                     local y = height(b, x)
@@ -172,15 +206,6 @@ local function try_attack(s, direction, seconds)
     if not target then return false end
     local dx = target.x - s.position.x
     local facing = dx >= 0 and "Right" or "Left"
-    if not direction and s.facing ~= facing then
-        assert(s.facing, "hunt_facing_unavailable")
-        game.face(dx >= 0 and "right" or "left")
-        s = current_state()
-        if s.facing ~= facing then
-            game.sleep(0.05)
-            return true
-        end
-    end
     if
         attack_target_id ~= target.object_id
         or last_experience ~= s.character.experience
@@ -191,6 +216,17 @@ local function try_attack(s, direction, seconds)
     attack_target_id, last_experience, last_target_hp = target.object_id, s.character.experience, target.hp_percent
     combat_since = combat_since or game.time()
     assert(game.time() - combat_since < 20, "hunt_combat_progress_unconfirmed")
+    if s.facing ~= facing then
+        assert(s.facing, "hunt_facing_unavailable")
+        -- 原生攻击动画可能锁住转向。保留移动意图、暂不加攻击，再按新采样决定出手。
+        if direction then
+            game.move(direction, seconds)
+        else
+            game.face(dx >= 0 and "right" or "left")
+        end
+        game.sleep(0.05)
+        return true
+    end
     local before = game.time()
     local result = game.attack(seconds, direction, options.skill_id)
     attempts = attempts + 1
@@ -206,10 +242,11 @@ local function try_attack(s, direction, seconds)
 end
 local function move_x(s, x, allow_attack)
     local dx = x - s.position.x
-    if math.abs(dx) <= 4 then return false end
+    if math.abs(dx) <= 4 then return false, false end
     local direction, seconds = dx > 0 and "right" or "left", math.min(0.12, math.max(0.02, math.abs(dx) / 150))
-    if not allow_attack or not try_attack(s, direction, seconds) then game.move(direction, seconds) end
-    return true
+    local attack_intent = allow_attack and try_attack(s, direction, seconds) or false
+    if not attack_intent then game.move(direction, seconds) end
+    return true, attack_intent
 end
 local target_id, travel, airborne_since = nil, nil, nil
 local visited, patrol_direction = {}, 1
@@ -377,19 +414,24 @@ while game.time() < deadline do
                 local dx = target.x - s.position.x
                 -- 移动到交战距离和当前能否出手分别判断；同一窗口可以保持两个输入。
                 if math.abs(dx) > options.attack_range * 0.6 then
-                    if
-                        not approach
-                        or math.abs(s.position.x - approach.x) + math.abs(s.position.y - approach.y) > 2
-                    then
-                        approach = { x = s.position.x, y = s.position.y, at = game.time() }
-                    end
-                    assert(game.time() - approach.at < 3, "hunt_chase_stalled")
                     local before = game.time()
-                    if
-                        not move_x(s, target.x - (dx > 0 and 1 or -1) * options.attack_range * 0.6, true)
-                        and not try_attack(s, nil, 0.12)
-                    then
-                        game.sleep(0.05)
+                    local moving, attack_intent =
+                        move_x(s, target.x - (dx > 0 and 1 or -1) * options.attack_range * 0.6, true)
+                    if not moving then
+                        attack_intent = try_attack(s, nil, 0.12)
+                        if not attack_intent then game.sleep(0.05) end
+                    end
+                    if attack_intent then
+                        -- 射程内的原生动画可以锁位移，此时只以战斗进展判定，不强求走近。
+                        approach = nil
+                    else
+                        if
+                            not approach
+                            or math.abs(s.position.x - approach.x) + math.abs(s.position.y - approach.y) > 2
+                        then
+                            approach = { x = s.position.x, y = s.position.y, at = game.time() }
+                        end
+                        assert(game.time() - approach.at < 3, "hunt_chase_stalled")
                     end
                     move_seconds = move_seconds + game.time() - before
                 else
