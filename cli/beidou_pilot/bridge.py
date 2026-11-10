@@ -293,7 +293,8 @@ class BridgeClient:
                 raise ClientError("bridge_command_rejected", "原生桥拒绝了本次请求。", details)
             if (command["id"] == request_id and state["seq"] > before["seq"]
                     and (command["status"] in ("completed", "cancelled")
-                         or wait_for_start and command["status"] == "running")):
+                         or (wait_for_start and command["status"] == "running"
+                             and state["script"] is not None and state["script"]["error"] is None))):
                 return state
             if cancel_file is not None and cancel_file.exists():
                 return None

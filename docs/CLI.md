@@ -54,6 +54,8 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 
 `events watch` 首行是 `event="events_ready"` 及基线游标，随后每条 `event="client_event"` 的 `data` 保存完整原生事件，`cursor` 指向该条。无游标时从订阅时刻之后开始；给定游标时先输出就绪，再补发保留区内的后续事件。已有未处理邀请须另读当前邀请观察，不能把历史事件当成仍有效。默认持续监听，可用 `--seconds` 有界退出；`--interval` 默认为0.025秒，范围为0.01至1秒。中断监听只结束读者，不取消 Lua 或关闭客户端。
 
+绑定身份后的持续监听遇到暂时过期或时钟偏差造成的 `stale_bridge_state` 时，保留游标等待新鲜采样，不投递旧文件中的事件。同一不可用期间只输出一条 `event="events_unavailable"` 流诊断；恢复后输出 `events_ready` 并从原游标继续。首次基线尚未建立时诊断中的 `cursor=null`。这些流诊断不代表新邀请；等待仍遵守 `--seconds` 和取消。单次 `events read` 保留明确失败，身份、协议及其他错误仍使监听退出。
+
 原生保留最近128条事件，每个读者独立持有游标。落后于保留区返回 `events_gap`，须重新观察当前事实；身份变化返回 `events_identity_changed` 并停止，不跟随后继实例。旧桥及无头尚未提供邀请事件时返回 `unsupported_capability`；原生报告事件发布失败时返回 `events_unavailable`，不把旧文件当成正常事件流。事件通知不代表游戏操作完成：`invitation.opened` 提示发现邀请，`invitation.closed` 只表示该邀请不再可响应；`invitation.observation_unavailable` 表示本端未能继续观察。接受、拒绝及社交关系结果须经当前原生邀请与成员事实确认。
 
 ## GUI 社交邀请

@@ -108,7 +108,9 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-    def arguments(self, messages: list[JsonObject], delivery: str = "steer") -> argparse.Namespace:
+    def arguments(
+        self, messages: list[JsonObject], delivery: str = "steer", *, initial_ready: bool = True
+    ) -> argparse.Namespace:
         cli = self.root / "client-cli"
         cli.with_suffix(".json").write_text(json.dumps(messages), encoding="utf-8")
         cli.write_text(
@@ -118,8 +120,12 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
             "path.with_suffix('.argv').write_text(json.dumps(sys.argv[1:]))\n"
             "assert sys.argv[1:11] == ['--root', str(path.parent), '--backend', 'beidou', '--instance', 'default', '--json', 'events', 'watch', '--interval']\n"
             "cursor={'instance_id':'client','run_id':'run','seq':0}\n"
-            "print(json.dumps({'event':'events_ready','backend':'beidou','instance':'default','instance_id':'client','run_id':'run','cursor':cursor}),flush=True)\n"
-            "for item in json.loads(path.with_suffix('.json').read_text()): print(json.dumps(item),flush=True)\n",
+            + (
+                "print(json.dumps({'event':'events_ready','backend':'beidou','instance':'default','instance_id':'client','run_id':'run','cursor':cursor}),flush=True)\n"
+                if initial_ready
+                else ""
+            )
+            + "for item in json.loads(path.with_suffix('.json').read_text()): print(json.dumps(item),flush=True)\n",
             encoding="utf-8",
         )
         cli.chmod(0o700)
@@ -205,6 +211,43 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
             [method for method, _ in peer.calls if method.startswith("turn/")],
         )
         self.assertEqual(1, sum(report["event"] == "event_delivered" for report in reports))
+
+    async def test_stale_stream_diagnostics_preserve_cursor_and_do_not_wake_model(self) -> None:
+        peer = CodexPeer(active=False)
+        metadata: JsonObject = {
+            "backend": "beidou",
+            "instance": "default",
+            "instance_id": "client",
+            "run_id": "run",
+        }
+        ready: JsonObject = {
+            "event": "events_ready",
+            **metadata,
+            "cursor": {"instance_id": "client", "run_id": "run", "seq": 0},
+        }
+        unavailable: JsonObject = {
+            "event": "events_unavailable",
+            **metadata,
+            "cursor": None,
+            "error": {"code": "stale_bridge_state", "message": "采样暂未更新", "details": {"age_seconds": 2}},
+        }
+        current_cursor: JsonObject = {"instance_id": "client", "run_id": "run", "seq": 1}
+        args = self.arguments(
+            [
+                unavailable,
+                ready,
+                self.message(1),
+                {**unavailable, "cursor": current_cursor},
+                {**ready, "cursor": current_cursor},
+            ],
+            initial_ready=False,
+        )
+        reports = await self.consume(peer, args)
+        self.assertEqual(["turn/start"], [method for method, _ in peer.calls if method.startswith("turn/")])
+        diagnostics = [report for report in reports if report["event"] == "events_unavailable"]
+        self.assertEqual([None, current_cursor], [report["cursor"] for report in diagnostics])
+        self.assertEqual({"age_seconds": 2}, diagnostics[0]["error"]["details"])
+        self.assertEqual(current_cursor, json.loads((args.state / "cursor.json").read_text())["cursor"])
 
 
 if __name__ == "__main__":

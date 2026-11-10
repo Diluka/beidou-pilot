@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from beidou_pilot.bridge import BridgeClient, BridgeSnapshot
 from beidou_pilot.cli import main
@@ -241,6 +242,36 @@ class BridgeContract(unittest.TestCase):
         self.assertEqual("script_session_mismatch", failure.exception.code)
         self.assertEqual([39], self.client.snapshot()["held_keys"])
         self.assertFalse((self.files.directory / "command.txt").exists())
+
+    def test_async_start_waits_for_native_error_cleanup_before_reporting_failure(self) -> None:
+        original_snapshot = BridgeClient.snapshot
+        error_published = False
+
+        def native_snapshot(client: BridgeClient, max_age: float = 1) -> BridgeSnapshot:
+            nonlocal error_published
+            if (self.files.directory / "command.txt").exists():
+                command = self.files.command()
+                if not error_published:
+                    self.publish_running(command)
+                    self.files.state["script"]["error"] = "invitation-test-error"
+                    error_published = True
+                else:
+                    self.files.state["held_keys"] = []
+                    self.files.state["command"]["status"] = "completed"
+                    self.files.state["script"]["status"] = "completed"
+                self.files.publish()
+            return original_snapshot(client, max_age)
+
+        output = io.StringIO()
+        with patch.object(BridgeClient, "snapshot", native_snapshot), redirect_stdout(output):
+            exit_code = main(["--root", str(self.files.root), "--json", "script", "start",
+                              "--code", "game.move('right', 1); error('invitation-test-error')"])
+        report = json.loads(output.getvalue())
+        self.assertEqual((2, "bridge_script_error"), (exit_code, report["error"]["code"]))
+        details = report["error"]["details"]
+        self.assertEqual(("completed", [], "invitation-test-error"),
+                         (details["status"], details["last_state"]["held_keys"], details["script"]["error"]))
+        self.assertEqual("script", self.files.command()[4])
 
     def test_busy_rejection_does_not_stop_another_owner(self) -> None:
         def peer() -> None:

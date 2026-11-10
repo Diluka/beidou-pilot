@@ -142,8 +142,6 @@ class EventReader:
             raise ClientError("invalid_events_options", "事件监听时长须为正数。")
         if not math.isfinite(interval) or not 0.01 <= interval <= 1:
             raise ClientError("invalid_events_options", "事件读取间隔须为 0.01 至 1 秒。")
-        first = self.read(cursor)
-        current = cursor or EventCursor(*self.identity, cast(int, first["last_seq"]))
         metadata: JsonObject = {
             "backend": self.backend,
             "instance": self.instance,
@@ -151,13 +149,34 @@ class EventReader:
             "run_id": self.identity[1],
         }
         deadline = time.monotonic() + seconds if seconds is not None else None
-        yield {"event": "events_ready", **metadata, "cursor": current.document()}
-        pending = cast(list[JsonObject], first["events"]) if cursor is not None else []
-        while True:
-            for event in pending:
-                current = EventCursor(*self.identity, cast(int, event["seq"]))
-                yield {"event": "client_event", **metadata, "cursor": current.document(), "data": event}
+        current = cursor
+        ready = False
+        unavailable = False
+        while deadline is None or time.monotonic() < deadline:
+            try:
+                report = self.read(current)
+            except ClientError as error:
+                if error.code != "stale_bridge_state":
+                    raise
+                if not unavailable:
+                    yield {
+                        "event": "events_unavailable",
+                        **metadata,
+                        "cursor": current.document() if current is not None else None,
+                        "error": {"code": error.code, "message": error.message, "details": error.details},
+                    }
+                unavailable = True
+            else:
+                pending = cast(list[JsonObject], report["events"]) if current is not None else []
+                if current is None:
+                    current = EventCursor(*self.identity, cast(int, report["last_seq"]))
+                if not ready or unavailable:
+                    yield {"event": "events_ready", **metadata, "cursor": current.document()}
+                    ready = True
+                unavailable = False
+                for event in pending:
+                    current = EventCursor(*self.identity, cast(int, event["seq"]))
+                    yield {"event": "client_event", **metadata, "cursor": current.document(), "data": event}
             if deadline is not None and time.monotonic() >= deadline:
                 return
             time.sleep(interval if deadline is None else min(interval, max(0, deadline - time.monotonic())))
-            pending = cast(list[JsonObject], self.read(current)["events"])

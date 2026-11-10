@@ -253,21 +253,37 @@ async def run(args: argparse.Namespace) -> None:
             report = cast(JsonObject, value)
             if report.get("ok") is False:
                 error = cast(JsonObject, report["error"])
-                raise AppServerError(cast(str, error["code"]), cast(str, error["message"]))
-            if report.get("event") not in {"events_ready", "client_event"}:
+                raise AppServerError(cast(str, error["code"]), cast(str, error["message"]), error.get("details"))
+            if report.get("event") not in {"events_ready", "client_event", "events_unavailable"}:
                 raise ValueError("客户端事件监听返回未知消息。")
-            next_cursor = EventCursor.parse(report.get("cursor"))
             if (
                 report.get("backend") != args.backend
                 or report.get("instance") != args.instance
-                or report.get("instance_id") != next_cursor.instance_id
-                or report.get("run_id") != next_cursor.run_id
+                or not isinstance(report.get("instance_id"), str)
+                or not isinstance(report.get("run_id"), str)
                 or (
                     cursor is not None
-                    and (cursor.instance_id, cursor.run_id) != (next_cursor.instance_id, next_cursor.run_id)
+                    and (cursor.instance_id, cursor.run_id) != (report["instance_id"], report["run_id"])
                 )
             ):
                 raise ValueError("客户端事件身份已变化，未投递到 Codex。")
+            if report["event"] == "events_unavailable":
+                diagnostic_cursor = EventCursor.parse(report["cursor"]) if report.get("cursor") is not None else None
+                error = report.get("error")
+                if (
+                    diagnostic_cursor != cursor
+                    or not isinstance(error, dict)
+                    or not isinstance(error.get("code"), str)
+                    or not isinstance(error.get("message"), str)
+                ):
+                    raise ValueError("客户端事件健康诊断的游标或错误信息无效。")
+                if error["code"] != "stale_bridge_state":
+                    raise AppServerError(cast(str, error["code"]), cast(str, error["message"]), error.get("details"))
+                emit("events_unavailable", {"thread_id": args.thread, **report})
+                continue
+            next_cursor = EventCursor.parse(report.get("cursor"))
+            if (report["instance_id"], report["run_id"]) != (next_cursor.instance_id, next_cursor.run_id):
+                raise ValueError("客户端事件游标与原生身份不一致，未投递到 Codex。")
             if report["event"] == "client_event":
                 event = ClientEvent.parse(report)
                 if cursor is not None and next_cursor.seq <= cursor.seq:

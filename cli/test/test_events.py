@@ -1,6 +1,7 @@
 """真实共享事件发布器与 CLI 消费合同；不代替游戏邀请效果验收。"""
 
 from contextlib import redirect_stdout
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import io
 import json
@@ -11,6 +12,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from beidou_pilot.cli import main
@@ -157,6 +159,9 @@ int main(int argc, char** argv) {
         try:
             self.assertTrue(select.select([process.stdout], [], [], 3)[0], "监听器未及时报告订阅就绪")
             self.assertEqual(json.loads(process.stdout.readline())["event"], "events_ready")
+            self.files.publish(age=2)
+            self.assertTrue(select.select([process.stdout], [], [], 3)[0], "监听器未报告采样暂不可用")
+            self.assertEqual(json.loads(process.stdout.readline())["event"], "events_unavailable")
             process.send_signal(signal.SIGTERM)
             output, errors = process.communicate(timeout=3)
             self.assertEqual(process.returncode, 130, errors)
@@ -168,6 +173,41 @@ int main(int argc, char** argv) {
             if process.poll() is None:
                 process.kill()
             process.communicate()
+
+    def test_watch_waits_for_fresh_sample_without_repeating_diagnostics_or_advancing_cursor(self) -> None:
+        stream = self.reader.watch(seconds=0.5, interval=0.01)
+        ready = next(stream)
+        self.files.publish(age=2)
+        with self.assertRaises(ClientError) as failure:
+            self.reader.read(self.origin)
+        self.assertEqual(failure.exception.code, "stale_bridge_state")
+        unavailable = next(stream)
+        self.assertEqual(unavailable["event"], "events_unavailable")
+        self.assertEqual(unavailable["cursor"], ready["cursor"])
+        self.emit()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            waiting = pool.submit(next, stream)
+            time.sleep(0.03)
+            self.assertFalse(waiting.done(), "旧采样期间不能投递事件或反复输出异常诊断")
+            self.files.publish()
+            resumed = waiting.result(timeout=1)
+        self.assertEqual((resumed["event"], resumed["cursor"]), ("events_ready", ready["cursor"]))
+        event = next(stream)
+        self.assertEqual((event["event"], event["cursor"]["seq"]), ("client_event", 1))
+        self.files.state["run_id"] = "successor-run"
+        (self.files.root / "state/maple-session.json").write_text('{"run_id":"successor-run"}')
+        self.files.publish()
+        with self.assertRaises(ClientError) as failure:
+            next(stream)
+        self.assertEqual(failure.exception.code, "events_identity_changed")
+
+    def test_watch_deadline_applies_while_initial_sample_is_temporarily_invalid(self) -> None:
+        self.files.publish(age=-1)
+        started = time.monotonic()
+        reports = list(self.reader.watch(seconds=0.03, interval=0.01))
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertEqual([report["event"] for report in reports], ["events_unavailable"])
+        self.assertIsNone(reports[0]["cursor"])
 
     def test_slow_reader_gets_explicit_gap_from_native_retention(self) -> None:
         self.emit(129)

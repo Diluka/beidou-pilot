@@ -62,7 +62,9 @@ def parser() -> Parser:
     source.add_argument("--code", help="直接执行受信Lua源码，与文件输入互斥")
     duration = q.add_mutually_exclusive_group()
     duration.add_argument("--seconds", type=float, default=30, help="客户端内脚本时限，默认30秒")
-    duration.add_argument("--continuous", action="store_true", help="明确持续执行，Ctrl+C取消并等待放键")
+    duration.add_argument(
+        "--continuous", action="store_true", help="明确持续执行；run由Ctrl+C取消，start须script cancel"
+    )
     q = command("task", "向活动Lua会话新增、替换或停止独立任务，或查询管理结果")
     q.add_argument("action", choices=["add", "replace", "stop", "result"])
     q.add_argument("name", help="任务名称；result操作填写管理request_id")
