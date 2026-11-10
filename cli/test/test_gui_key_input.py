@@ -47,3 +47,6 @@ class GuiKeyInputContract(unittest.TestCase):
 
     def test_cancelled_or_returned_pending_requests_keep_dispatched_false(self) -> None:
         subprocess.run([str(self.executable), "undispatched"], check=True, timeout=10)
+
+    def test_skills_wait_for_consumed_direction_and_preserve_native_rejection(self) -> None:
+        subprocess.run([str(self.executable), "skill-consumption"], check=True, timeout=10)

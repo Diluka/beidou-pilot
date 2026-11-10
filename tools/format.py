@@ -14,6 +14,9 @@ SOURCES = {
         "harness/**/*.py",
         "cli/beidou_pilot/cli.py",
         "cli/beidou_pilot/control_scripts.py",
+        "cli/beidou_pilot/hunting.py",
+        "cli/beidou_pilot/hunt_terrain.py",
+        "cli/beidou_pilot/nx.py",
         "cli/beidou_pilot/task_management.py",
         "cli/test/test_unified_control.py",
         "cli/test/test_task_management.py",
@@ -22,6 +25,10 @@ SOURCES = {
         "cli/test/test_gui_key_input.py",
         "cli/test/test_native_item_use.py",
         "cli/test/test_native_observations.py",
+        "cli/test/test_hunting.py",
+        "cli/test/test_hunt_terrain.py",
+        "cli/test/test_hunt_lua.py",
+        "cli/test/test_catalog_resources.py",
     ),
     "clang-format": (
         "shared/lua-runtime/*.cpp",
@@ -32,11 +39,12 @@ SOURCES = {
         "beidou-ijl15/ezorsia/AgentBridge.h",
         "beidou-ijl15/ezorsia/NativeKeyInput.h",
         "beidou-ijl15/ezorsia/NativeItemUse.h",
+        "beidou-ijl15/ezorsia/NativeSkillUse.h",
         "beidou-ijl15/ezorsia/NativeObservation.cpp",
         "beidou-ijl15/ezorsia/NativeObservation.h",
         "cli/test/*_contract.cpp",
     ),
-    "stylua": ("shared/scripts/examples/*.lua",),
+    "stylua": ("shared/scripts/examples/*.lua", "shared/scripts/combat/hunt.lua", "cli/test/hunt_contract.lua"),
 }
 
 

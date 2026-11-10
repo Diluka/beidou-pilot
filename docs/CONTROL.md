@@ -29,11 +29,16 @@ shared/scripts/
   travel/enter_portal.lua  门户接近、进入及转场确认
   travel/_common.lua       旅行能力实际复用的检查与对齐
   combat/fight.lua         目标选择、战斗、补给、拾取与撤退
+  combat/hunt.lua          单场景可达找怪、跨平台巡猎与移动攻击同窗
   recovery/recover.lua     按次数或HP/MP目标用药并确认效果
   examples/               少量公共API示例，不由正式能力加载
 ```
 
 基础操作是 `game` API 的积木，不创建逐一转发脚本。策略当前是初步脚手架，已有参数、时序和流程需按实际情况迭代，局部维护约定见 [shared/scripts/AGENTS.md](../shared/scripts/AGENTS.md)。执行期限、取消与放键由公共运行时提供；`_common.lua`不是操作入口，不预建未来能力目录。
+
+`hunt` 从当前配置的同源 XML/NX 装载地形，实时选怪、路径和动作全部在 Lua 中执行。移动意图与攻击意图分别判断，`game.attack(seconds, direction, skill_id)` 可在同一输入窗口保持方向与普攻或指定技能；原生动画和物理仍决定实际动作。绳梯、相连平台、有限台阶和落层按当前现场确认，未知或无进展的路段停止。狩猎固定启动时的实例、角色、地图和场景代次，不穿门户、不在新场景续跑。
+
+限时狩猎与 `--continuous` 共用脚本执行链；Ctrl+C/SIGTERM 取消并等待所属输入释放。无头桥 `held_actions` 展示语义输入，GUI `held_keys` 展示实际持键；两者都不能当作命中或服务器确认。经验变化及已知的服务端目标 HP 百分比下降用于判断实际进展，尝试计数不代表命中。`hunt` 的移动和攻击计时可能重叠，不能相加当作总耗时。
 
 ## 脚本 API 入口
 

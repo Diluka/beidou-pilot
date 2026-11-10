@@ -1,7 +1,11 @@
 {
   "client": {
     "repository": "https://github.com/ryantpayton/MapleStory-Client",
-    "commit": "cbb0fe27cf9683a12eca0a569121d8033cdc2a4d"
+    "commit": "cbb0fe27cf9683a12eca0a569121d8033cdc2a4d",
+    "local_adaptations": [
+      "HEADLESS/Linux and BeiDou integration retained in the vendored source.",
+      "Native Combat::use_move admission results and server monster HP update sequence exposed for shared Lua consumers."
+    ]
   },
   "converter": {
     "repository": "https://github.com/ryantpayton/NoLifeWzToNx",

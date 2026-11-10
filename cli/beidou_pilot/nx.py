@@ -31,7 +31,7 @@ def read_nx(path: Path, parts: tuple[str | None, ...]) -> ET.Element | None:
                 length = struct.unpack_from("<H", data, offset)[0]
                 if offset + 2 + length > len(data):
                     raise ValueError("NX string is truncated")
-                return data[offset + 2:offset + 2 + length].decode("utf-8")
+                return data[offset + 2 : offset + 2 + length].decode("utf-8")
 
             @cache
             def node(index):
@@ -67,16 +67,19 @@ def read_nx(path: Path, parts: tuple[str | None, ...]) -> ET.Element | None:
                     attributes.update(x=str(x), y=str(y))
                 elif kind == 5:
                     attributes.update(width=str((value >> 32) & 0xFFFF), height=str(value >> 48))
-                element = ET.Element(("imgdir", "long", "double", "string", "vector", "canvas", "sound")[kind],
-                                     attributes)
+                element = ET.Element(
+                    ("imgdir", "long", "double", "string", "vector", "canvas", "sound")[kind], attributes
+                )
                 element.extend(tree(entry) for entry in range(start, start + count))
                 return element
 
             selected = select(0, parts)
             return tree(selected) if selected is not None else None
     except OSError as error:
-        raise ClientError("metadata_unreadable", "本地 NX 无法读取。",
-                          {"path": str(path), "reason": str(error)}) from error
+        raise ClientError(
+            "metadata_unreadable", "本地 NX 无法读取。", {"path": str(path), "reason": str(error)}
+        ) from error
     except (ValueError, struct.error) as error:
-        raise ClientError("metadata_unreadable", "本地 NX 不是可读取的 PKG4 资料。",
-                          {"path": str(path), "reason": str(error)}) from error
+        raise ClientError(
+            "metadata_unreadable", "本地 NX 不是可读取的 PKG4 资料。", {"path": str(path), "reason": str(error)}
+        ) from error

@@ -116,6 +116,79 @@ bool SharedLuaAdapter::Supports(MapleControl::ActionKind) const {
     return true;
 }
 
+bool SharedLuaAdapter::SupportsSkill() const {
+    return true;
+}
+
+bool SharedLuaAdapter::SupportsMonsterHpPercent() const {
+    return true;
+}
+
+bool SharedLuaAdapter::Skill(std::uint32_t id, MapleControl::SkillResult& skill, std::string& error) {
+    if (id != 1001004 && id != 1001005) {
+        error = "unsupported: skill_type";
+        return false;
+    }
+    if (!state.ready || state.character.values[6] == 0) {
+        error = "state_unavailable_or_dead";
+        return false;
+    }
+    if (!Released()) {
+        error = "action_in_progress";
+        return false;
+    }
+    using Move = ms::SpecialMove;
+    const auto reason = ms::Stage::get().get_combat().use_move(static_cast<std::int32_t>(id));
+    skill.nativeResult = static_cast<int>(reason);
+    skill.dispatched = reason == Move::FBR_NONE;
+    switch (reason) {
+    case Move::FBR_NONE:
+        skill.reason = "skill_dispatched";
+        break;
+    case Move::FBR_WEAPONTYPE:
+        skill.reason = "native_skill_weapon_mismatch";
+        break;
+    case Move::FBR_HPCOST:
+        skill.reason = "native_skill_insufficient_hp";
+        break;
+    case Move::FBR_MPCOST:
+        skill.reason = "native_skill_insufficient_mp";
+        break;
+    case Move::FBR_BULLETCOST:
+        skill.reason = "native_skill_insufficient_ammunition";
+        break;
+    case Move::FBR_COOLDOWN:
+        skill.reason = "native_skill_cooldown";
+        break;
+    case Move::FBR_NOT_LEARNED:
+        skill.reason = "native_skill_not_learned";
+        break;
+    case Move::FBR_JOB:
+        skill.reason = "native_skill_job_mismatch";
+        break;
+    case Move::FBR_ATTACKING:
+        skill.reason = "native_attacking";
+        break;
+    case Move::FBR_CLIMBING:
+        skill.reason = "native_climbing";
+        break;
+    case Move::FBR_SITTING:
+        skill.reason = "native_sitting";
+        break;
+    case Move::FBR_NO_WEAPON:
+        skill.reason = "native_no_weapon";
+        break;
+    case Move::FBR_SKILL_STATE:
+        skill.reason = "native_skill_state_not_allowed";
+        break;
+    case Move::FBR_OTHER:
+        skill.reason = "native_skill_not_allowed";
+        break;
+    }
+    lastSkill = LastSkill{id, skill};
+    return true;
+}
+
 MapleControl::ActionResult SharedLuaAdapter::Result() const {
     return result;
 }
@@ -195,6 +268,8 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
         projected.x = p.x();
         projected.y = p.y();
         projected.active = mob.is_active() && mob.is_alive();
+        projected.hpSequence = mob.get_hp_update_sequence();
+        if (projected.hpSequence != 0) projected.hpPercent = mob.get_hp_percent();
         state.monsters.push_back(std::move(projected));
     }
     for (int type = 1; type <= 5; ++type) {
@@ -373,37 +448,47 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
         } else if (action.kind == Kind::Jump)
             key = ms::KeyAction::JUMP;
         else if (action.kind == Kind::Attack) {
-            if (!player.can_attack()) {
+            if (!action.direction.empty()) player.set_direction(action.direction == "right");
+            if (action.skillId != 0) {
+                result.skillRequested = true;
+                if (!Skill(action.skillId, result.skill, error)) return false;
+                result.reason = result.skill.reason;
+            } else if (action.direction.empty() && !player.can_attack()) {
                 result.controlReleased = true;
                 result.settled = state.settled;
                 result.reason = "native_attack_not_allowed";
                 return true;
+            } else {
+                key = ms::KeyAction::ATTACK;
             }
-            key = ms::KeyAction::ATTACK;
+            if (!action.direction.empty())
+                heldActions.push_back(action.direction == "left" ? ms::KeyAction::LEFT : ms::KeyAction::RIGHT);
         } else if (action.kind == Kind::Pickup)
             key = ms::KeyAction::PICKUP;
-        if (key == ms::KeyAction::LENGTH) {
+        if (key == ms::KeyAction::LENGTH && !(action.kind == Kind::Attack && action.skillId != 0)) {
             error = "unsupported: action";
             return false;
         }
-        heldAction = key;
-        stage.send_key(ms::KeyType::ACTION, key, true);
-        ++inputEvents;
+        if (key != ms::KeyAction::LENGTH) heldActions.push_back(key);
+        for (const auto held : heldActions) {
+            stage.send_key(ms::KeyType::ACTION, held, true);
+            ++inputEvents;
+        }
     }
-    result.dispatched = true;
+    result.dispatched = !result.skillRequested || result.skill.dispatched || !heldActions.empty();
     result.controlReleased = false;
     active = true;
     actionUntilMs = MonotonicMs() + action.durationMs;
-    if (!heldAction && !equipmentChange && !reviveCharacter) ApplyRelease();
+    if (heldActions.empty() && !equipmentChange && !reviveCharacter && action.kind != Kind::Attack) ApplyRelease();
     return true;
 }
 
 void SharedLuaAdapter::ApplyRelease() {
-    if (heldAction) {
-        ms::Stage::get().send_key(ms::KeyType::ACTION, *heldAction, false);
-        heldAction.reset();
+    for (const auto held : heldActions) {
+        ms::Stage::get().send_key(ms::KeyType::ACTION, held, false);
         ++inputEvents;
     }
+    heldActions.clear();
     if (equipmentChange && result.reason == "equipment_change_requested")
         result.reason = "equipment_confirmation_stopped";
     equipmentChange.reset();
@@ -601,7 +686,10 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                                 {"name", monster.name.empty() ? Json(nullptr) : Json(monster.name)},
                                 {"x", monster.x},
                                 {"y", monster.y},
-                                {"active", monster.active}});
+                                {"active", monster.active},
+                                {"hp_percent", monster.hpSequence != 0 ? Json(monster.hpPercent) : Json(nullptr)},
+                                {"hp_sequence", monster.hpSequence != 0 ? Json(monster.hpSequence) : Json(nullptr)},
+                                {"hp_source", monster.hpSequence != 0 ? Json("server_mob_hp") : Json(nullptr)}});
         }
         Json npcs = Json::array();
         for (const auto& entry : *stage.get_npcs().get_npcs()) {
@@ -813,6 +901,7 @@ Json SharedLuaAdapter::StateDocument() const {
         {"revive_requestable", FactValue(state.reviveRequestable)},
         {"map_id", state.mapKnown ? Json(state.mapId) : Json(nullptr)},
         {"held_keys", Json::array()},
+        {"held_actions", Json::array()},
         {"command",
          {{"id", commandId.empty() ? Json(nullptr) : Json(commandId)},
           {"status", commandStatus},
@@ -835,13 +924,51 @@ Json SharedLuaAdapter::StateDocument() const {
           {"revive", true},
           {"stop", true},
           {"raw_keys", false},
-          {"skill", false}}},
+          {"skill", true},
+          {"monster_hp_percent", true}}},
         {"action_result",
          {{"dispatched", result.dispatched},
           {"control_released", result.controlReleased},
           {"settled", FactValue(result.settled)},
           {"effect", result.effect},
           {"reason", result.reason}}}};
+    if (lastSkill)
+        document["last_skill"] = {{"skill_id", lastSkill->id},
+                                  {"native_result", lastSkill->result.nativeResult},
+                                  {"dispatched", lastSkill->result.dispatched},
+                                  {"reason", lastSkill->result.reason}};
+    if (result.skillRequested) {
+        document["action_result"]["skill_dispatched"] = result.skill.dispatched;
+        document["action_result"]["skill_native_result"] = result.skill.nativeResult;
+        document["action_result"]["skill_reason"] = result.skill.reason;
+    }
+    for (const auto key : heldActions) {
+        switch (key) {
+        case ms::KeyAction::LEFT:
+            document["held_actions"].push_back("Left");
+            break;
+        case ms::KeyAction::RIGHT:
+            document["held_actions"].push_back("Right");
+            break;
+        case ms::KeyAction::UP:
+            document["held_actions"].push_back("Up");
+            break;
+        case ms::KeyAction::DOWN:
+            document["held_actions"].push_back("Down");
+            break;
+        case ms::KeyAction::ATTACK:
+            document["held_actions"].push_back("Attack");
+            break;
+        case ms::KeyAction::JUMP:
+            document["held_actions"].push_back("Jump");
+            break;
+        case ms::KeyAction::PICKUP:
+            document["held_actions"].push_back("Pickup");
+            break;
+        default:
+            break;
+        }
+    }
     document["character"] = nullptr;
     if (state.characterKnown) {
         Json character = {{"id", state.character.id}, {"name", state.character.name}};
@@ -861,7 +988,10 @@ Json SharedLuaAdapter::StateDocument() const {
                                         {"name", mob.name.empty() ? Json(nullptr) : Json(mob.name)},
                                         {"x", mob.x},
                                         {"y", mob.y},
-                                        {"active", mob.active}});
+                                        {"active", mob.active},
+                                        {"hp_percent", mob.hpSequence != 0 ? Json(mob.hpPercent) : Json(nullptr)},
+                                        {"hp_sequence", mob.hpSequence != 0 ? Json(mob.hpSequence) : Json(nullptr)},
+                                        {"hp_source", mob.hpSequence != 0 ? Json("server_mob_hp") : Json(nullptr)}});
     document["inventory"] = state.inventoryKnown ? Json::array() : Json(nullptr);
     for (const auto& item : state.inventory)
         document["inventory"].push_back({{"inventory_type", item.inventoryType},

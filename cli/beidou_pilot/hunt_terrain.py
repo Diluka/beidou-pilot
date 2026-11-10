@@ -18,12 +18,15 @@ def load_hunt_terrain(client_root: Path, map_id: int) -> JsonObject:
             "地图没有可用的自身地形；不推断链接地图或空地形。",
             {"map_id": map_id, "source": source, "link": link},
         )
-    for entries, required in ((footholds, ("id", "x1", "x2", "y1", "y2", "prev", "next")),
-                              (ropes, ("index", "x", "y1", "y2"))):
+    for entries, required in (
+        (footholds, ("id", "x1", "x2", "y1", "y2", "prev", "next")),
+        (ropes, ("index", "x", "y1", "y2")),
+    ):
         if not isinstance(entries, list) or any(
             not isinstance(entry, dict) or any(type(entry.get(field)) is not int for field in required)
             for entry in entries
         ):
-            raise ClientError("hunt_terrain_invalid", "地图地形坐标或连接字段不完整。",
-                              {"map_id": map_id, "source": source})
+            raise ClientError(
+                "hunt_terrain_invalid", "地图地形坐标或连接字段不完整。", {"map_id": map_id, "source": source}
+            )
     return {"map_id": map_id, "footholds": footholds, "ropes": ropes, "source": source}

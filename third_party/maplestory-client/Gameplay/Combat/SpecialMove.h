@@ -36,7 +36,14 @@ namespace ms
 			FBR_MPCOST,
 			FBR_BULLETCOST,
 			FBR_COOLDOWN,
-			FBR_OTHER
+			FBR_OTHER,
+			FBR_NOT_LEARNED,
+			FBR_JOB,
+			FBR_ATTACKING,
+			FBR_CLIMBING,
+			FBR_SITTING,
+			FBR_NO_WEAPON,
+			FBR_SKILL_STATE
 		};
 
 		virtual ~SpecialMove() {}

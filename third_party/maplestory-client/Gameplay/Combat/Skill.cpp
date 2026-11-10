@@ -277,11 +277,14 @@ namespace ms
 
 	SpecialMove::ForbidReason Skill::can_use(int32_t level, Weapon::Type weapon, const Job& job, uint16_t hp, uint16_t mp, uint16_t bullets) const
 	{
-		if (level <= 0 || level > SkillData::get(skillid).get_masterlevel())
+		if (level <= 0)
+			return FBR_NOT_LEARNED;
+
+		if (level > SkillData::get(skillid).get_masterlevel())
 			return FBR_OTHER;
 
 		if (job.can_use(skillid) == false)
-			return FBR_OTHER;
+			return FBR_JOB;
 
 		const SkillData::Stats stats = SkillData::get(skillid).get_stats(level);
 

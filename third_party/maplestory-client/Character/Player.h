@@ -65,6 +65,7 @@ namespace ms
 		bool is_attacking() const;
 		// Return whether the player can attack or not
 		bool can_attack() const;
+		SpecialMove::ForbidReason attack_forbid_reason() const;
 		// Return whether the player can use a skill or not
 		SpecialMove::ForbidReason can_use(const SpecialMove& move) const;
 		// Create an attack struct using the player's stats

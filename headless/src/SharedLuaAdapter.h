@@ -29,6 +29,9 @@ public:
     const MapleControl::State& Observe() const override;
     MapleControl::Observation ObserveDomain(const std::string& domain) const override;
     bool Supports(MapleControl::ActionKind kind) const override;
+    bool SupportsSkill() const override;
+    bool SupportsMonsterHpPercent() const override;
+    bool Skill(std::uint32_t id, MapleControl::SkillResult& result, std::string& error) override;
     bool Begin(const MapleControl::Action& action, std::string& error) override;
     MapleControl::ActionResult Result() const override;
     void Release() override;
@@ -63,7 +66,14 @@ private:
 
     std::optional<EquipmentChange> equipmentChange;
     std::optional<std::uint32_t> reviveCharacter;
-    std::optional<ms::KeyAction::Id> heldAction;
+    std::vector<ms::KeyAction::Id> heldActions;
+
+    struct LastSkill {
+        std::uint32_t id;
+        MapleControl::SkillResult result;
+    };
+
+    std::optional<LastSkill> lastSkill;
     std::uint64_t currentTick = 0;
     std::uint64_t releaseTick = 0;
     std::uint64_t actionUntilMs = 0;

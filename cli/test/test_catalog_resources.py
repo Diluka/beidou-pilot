@@ -50,16 +50,17 @@ def _write_nx(path: Path, tree: dict[str, _NxValue]) -> None:
             kind, payload = 5, struct.pack("<IHH", 0, value.width, value.height)
         records.append((name, start, count, kind, payload))
 
-    strings = list(dict.fromkeys(
-        [name for name, *_ in records] + [value for *_, value in records if isinstance(value, str)]
-    ))
+    strings = list(
+        dict.fromkeys([name for name, *_ in records] + [value for *_, value in records if isinstance(value, str)])
+    )
     string_ids = {value: index for index, value in enumerate(strings)}
     string_table = 52 + len(records) * 20
     string_data = string_table + len(strings) * 8
     encoded = [value.encode("utf-8") for value in strings]
     bitmap_table = string_data + sum(2 + len(value) for value in encoded)
-    blob = bytearray(struct.pack("<IIQIQIQIQ", 0x34474B50, len(records), 52,
-                                 len(strings), string_table, 1, bitmap_table, 0, 0))
+    blob = bytearray(
+        struct.pack("<IIQIQIQIQ", 0x34474B50, len(records), 52, len(strings), string_table, 1, bitmap_table, 0, 0)
+    )
     for name, start, count, kind, payload in records:
         blob.extend(struct.pack("<IIHH", string_ids[name], start, count, kind))
         blob.extend(struct.pack("<II", string_ids[payload], 0) if isinstance(payload, str) else payload)
@@ -80,35 +81,78 @@ class CatalogResourceContract(unittest.TestCase):
         self.nx = self.root / "nx"
         self.nx.mkdir()
         (self.root / "config").mkdir()
-        (self.root / "config/resources.json").write_text(json.dumps({
-            "metadata_root": str(self.root / "xml"), "headless_resources": str(self.nx),
-        }))
-        _write_nx(self.nx / "String.nx", {
-            "Map.img": {"maple": {"50000": {"mapName": "蜗牛树林", "streetName": "彩虹岛"}}},
-            "Mob.img": {"100100": {"name": "绿蜗牛"}},
-            "Npc.img": {"2003": {"name": "罗宾"}},
-            "Consume.img": {"2000000": {"name": "红色药水"}},
-            "Eqp.img": {"Eqp": {"Weapon": {"1322005": {"name": "木棍"}}}},
-        })
-        _write_nx(self.nx / "Map002.nx", {"Map": {"Map0": {"000050000.img": {
-            "info": {"returnMap": 1000000},
-            "portal": {"0": {"pn": "east", "pt": 2, "tm": 1000000, "tn": "west", "x": 1430, "y": 269}},
-            "ladderRope": {"1": {"l": 0, "uf": 1, "x": 262, "y1": -23, "y2": 333}},
-            "foothold": {"1": {"0": {"5": {"x1": 90, "x2": 180, "y1": 335, "y2": 335,
-                                                     "prev": 4, "next": 8}}}},
-            "life": {"0": {"type": "n", "id": "2003", "x": 167, "y": 335},
-                     "1": {"type": "m", "id": "100100", "x": 500, "y": -25}},
-        }}}})
-        _write_nx(self.nx / "Item.nx", {"Consume": {"0200.img": {"02000000": {
-            "info": {"price": 50}, "spec": {"hp": 50},
-        }}}})
-        _write_nx(self.nx / "Character.nx", {"Weapon": {"01322005.img": {
-            "info": {"reqLevel": 0, "reqSTR": 0, "attackSpeed": 5, "price": 50},
-        }}})
+        (self.root / "config/resources.json").write_text(
+            json.dumps(
+                {
+                    "metadata_root": str(self.root / "xml"),
+                    "headless_resources": str(self.nx),
+                }
+            )
+        )
+        _write_nx(
+            self.nx / "String.nx",
+            {
+                "Map.img": {"maple": {"50000": {"mapName": "蜗牛树林", "streetName": "彩虹岛"}}},
+                "Mob.img": {"100100": {"name": "绿蜗牛"}},
+                "Npc.img": {"2003": {"name": "罗宾"}},
+                "Consume.img": {"2000000": {"name": "红色药水"}},
+                "Eqp.img": {"Eqp": {"Weapon": {"1322005": {"name": "木棍"}}}},
+            },
+        )
+        _write_nx(
+            self.nx / "Map002.nx",
+            {
+                "Map": {
+                    "Map0": {
+                        "000050000.img": {
+                            "info": {"returnMap": 1000000},
+                            "portal": {"0": {"pn": "east", "pt": 2, "tm": 1000000, "tn": "west", "x": 1430, "y": 269}},
+                            "ladderRope": {"1": {"l": 0, "uf": 1, "x": 262, "y1": -23, "y2": 333}},
+                            "foothold": {
+                                "1": {"0": {"5": {"x1": 90, "x2": 180, "y1": 335, "y2": 335, "prev": 4, "next": 8}}}
+                            },
+                            "life": {
+                                "0": {"type": "n", "id": "2003", "x": 167, "y": 335},
+                                "1": {"type": "m", "id": "100100", "x": 500, "y": -25},
+                            },
+                        }
+                    }
+                }
+            },
+        )
+        _write_nx(
+            self.nx / "Item.nx",
+            {
+                "Consume": {
+                    "0200.img": {
+                        "02000000": {
+                            "info": {"price": 50},
+                            "spec": {"hp": 50},
+                        }
+                    }
+                }
+            },
+        )
+        _write_nx(
+            self.nx / "Character.nx",
+            {
+                "Weapon": {
+                    "01322005.img": {
+                        "info": {"reqLevel": 0, "reqSTR": 0, "attackSpeed": 5, "price": 50},
+                    }
+                }
+            },
+        )
         _write_nx(self.nx / "Mob.nx", {"0100100.img": {"info": {"level": 1, "maxHP": 8, "exp": 3}}})
-        _write_nx(self.nx / "Npc.nx", {"0002003.img": {
-            "info": {}, "stand": {"0": _Canvas(40, 60, {"origin": _Vector(20, 50)})},
-        }})
+        _write_nx(
+            self.nx / "Npc.nx",
+            {
+                "0002003.img": {
+                    "info": {},
+                    "stand": {"0": _Canvas(40, 60, {"origin": _Vector(20, 50)})},
+                }
+            },
+        )
 
     def test_consumers_read_nx_names_properties_geometry_and_actual_sources(self) -> None:
         catalog = Catalog(self.root)
@@ -119,11 +163,23 @@ class CatalogResourceContract(unittest.TestCase):
         weapon = catalog.item(1322005)
 
         self.assertEqual(("蜗牛树林", "彩虹岛"), (map_data["name"], map_data["street_name"]))
-        self.assertEqual({"index": 0, "name": "east", "x": 1430, "y": 269, "type": 2,
-                          "target_map_id": 1000000, "target_name": "west", "script": None}, map_data["portals"][0])
+        self.assertEqual(
+            {
+                "index": 0,
+                "name": "east",
+                "x": 1430,
+                "y": 269,
+                "type": 2,
+                "target_map_id": 1000000,
+                "target_name": "west",
+                "script": None,
+            },
+            map_data["portals"][0],
+        )
         self.assertEqual({"index": 1, "l": 0, "uf": 1, "x": 262, "y1": -23, "y2": 333}, map_data["ropes"][0])
-        self.assertEqual({"id": 5, "x1": 90, "x2": 180, "y1": 335, "y2": 335, "prev": 4, "next": 8},
-                         map_data["footholds"][0])
+        self.assertEqual(
+            {"id": 5, "x1": 90, "x2": 180, "y1": 335, "y2": 335, "prev": 4, "next": 8}, map_data["footholds"][0]
+        )
         self.assertEqual(("罗宾", "绿蜗牛"), (map_data["npcs"][0]["name"], map_data["monsters"][0]["name"]))
         self.assertEqual("绿蜗牛", monster["name"])
         self.assertEqual({"level": 1, "maxHP": 8, "exp": 3}, monster["info"])
@@ -132,14 +188,20 @@ class CatalogResourceContract(unittest.TestCase):
         self.assertEqual(("红色药水", {"hp": 50}, 50), (potion["name"], potion["spec"], potion["price"]))
         self.assertEqual(("木棍", {"reqLevel": 0, "reqSTR": 0}), (weapon["name"], weapon["requirements"]))
 
-        for result, files in ((map_data, ("Map002.nx", "String.nx")), (monster, ("Mob.nx", "String.nx")),
-                              (npc, ("Npc.nx", "String.nx")), (potion, ("Item.nx", "String.nx")),
-                              (weapon, ("Character.nx", "String.nx"))):
+        for result, files in (
+            (map_data, ("Map002.nx", "String.nx")),
+            (monster, ("Mob.nx", "String.nx")),
+            (npc, ("Npc.nx", "String.nx")),
+            (potion, ("Item.nx", "String.nx")),
+            (weapon, ("Character.nx", "String.nx")),
+        ):
             with self.subTest(id=result["id"]):
                 paths = {str(self.nx / filename) for filename in files}
                 self.assertEqual(paths, set(result["metadata_source"]))
-                self.assertEqual({path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in paths},
-                                 {entry["path"]: entry["sha256"] for entry in result["metadata_sources"]})
+                self.assertEqual(
+                    {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in paths},
+                    {entry["path"]: entry["sha256"] for entry in result["metadata_sources"]},
+                )
                 self.assertEqual("local-official-nx", result["source_kind"])
                 self.assertIsNone(result["resource_version"])
 
@@ -164,8 +226,9 @@ class CatalogResourceContract(unittest.TestCase):
     def test_xml_names_override_nx_while_properties_keep_their_nx_source(self) -> None:
         source = self.root / "xml/String.wz/Mob.img.xml"
         source.parent.mkdir(parents=True)
-        source.write_text('<imgdir name="Mob.img"><imgdir name="100100">'
-                          '<string name="name" value="XML蜗牛"/></imgdir></imgdir>')
+        source.write_text(
+            '<imgdir name="Mob.img"><imgdir name="100100"><string name="name" value="XML蜗牛"/></imgdir></imgdir>'
+        )
 
         result = Catalog(self.root).monster(100100)
 
@@ -176,15 +239,37 @@ class CatalogResourceContract(unittest.TestCase):
         self.assertIsNone(result["resource_version"])
 
     def test_map_sources_exclude_unrelated_names_previously_read_by_the_catalog(self) -> None:
-        _write_nx(self.nx / "Map002.nx", {"Map": {"Map0": {"000050000.img": {
-            "info": {}, "foothold": {"1": {"0": {"5": {
-                "x1": 90, "x2": 180, "y1": 335, "y2": 335, "prev": 0, "next": 0,
-            }}}},
-        }}}})
+        _write_nx(
+            self.nx / "Map002.nx",
+            {
+                "Map": {
+                    "Map0": {
+                        "000050000.img": {
+                            "info": {},
+                            "foothold": {
+                                "1": {
+                                    "0": {
+                                        "5": {
+                                            "x1": 90,
+                                            "x2": 180,
+                                            "y1": 335,
+                                            "y2": 335,
+                                            "prev": 0,
+                                            "next": 0,
+                                        }
+                                    }
+                                }
+                            },
+                        }
+                    }
+                }
+            },
+        )
         unrelated = self.root / "xml/String.wz/Npc.img.xml"
         unrelated.parent.mkdir(parents=True)
-        unrelated.write_text('<imgdir name="Npc.img"><imgdir name="2003">'
-                             '<string name="name" value="XML罗宾"/></imgdir></imgdir>')
+        unrelated.write_text(
+            '<imgdir name="Npc.img"><imgdir name="2003"><string name="name" value="XML罗宾"/></imgdir></imgdir>'
+        )
         catalog = Catalog(self.root)
         self.assertEqual("XML罗宾", catalog.npc_name(2003))
 
@@ -193,5 +278,4 @@ class CatalogResourceContract(unittest.TestCase):
         self.assertEqual([], result["npcs"])
         self.assertEqual([], result["monsters"])
         self.assertEqual("local-official-nx", result["source_kind"])
-        self.assertEqual({str(self.nx / "Map002.nx"), str(self.nx / "String.nx")},
-                         set(result["metadata_source"]))
+        self.assertEqual({str(self.nx / "Map002.nx"), str(self.nx / "String.nx")}, set(result["metadata_source"]))

@@ -39,7 +39,7 @@ namespace ms
 		void update();
 
 		// Make the player use a special move
-		void use_move(int32_t move_id);
+		SpecialMove::ForbidReason use_move(int32_t move_id);
 
 		// Add an attack to the attack queue
 		void push_attack(const AttackResult& attack);
