@@ -28,7 +28,7 @@ git submodule update --init --recursive
 
 无头原生编译入口与目录变量见 [Dockerfile](../docker/headless/Dockerfile) 和 [Makefile](../headless/Makefile)；GUI 环境构建见 [GUI Dockerfile](../docker/gui/Dockerfile)，其基础镜像与 VirtualGL 版本由构建定义固定。Docker 定义与启动脚本集中在 `docker/`，运行资源与源码分发范围见 [ARCHITECTURE](ARCHITECTURE.md)。
 
-游戏 AI 镜像使用官方 Node Bookworm slim 与标准 npm 安装固定 Codex，完整保留 npm 平台包；缺失的 Codex 根许可从同版发行 tag 补齐，安装说明见[容器说明](../docker/harness/README.md)。GUI 继续安装上游发布的 VirtualGL deb，使用可读的 Wine 镜像日期 tag。三类镜像保留清楚的版本/tag 与许可，采用包管理器默认校验，不再另写镜像 digest、下载或许可 hash 检查。
+游戏 AI 镜像使用官方 Node Bookworm slim 与标准 npm 安装固定 Codex，完整保留 npm 平台包；缺失的 Codex 根许可从同版发行 tag 补齐，安装说明见[容器说明](https://github.com/Diluka/beidou-pilot/blob/main/docker/harness/README.md)。GUI 继续安装上游发布的 VirtualGL deb，使用可读的 Wine 镜像日期 tag。三类镜像保留清楚的版本/tag 与许可，采用包管理器默认校验，不再另写镜像 digest、下载或许可 hash 检查。
 
 ## 许可与外部资产
 
