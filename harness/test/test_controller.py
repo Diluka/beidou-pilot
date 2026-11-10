@@ -261,6 +261,31 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], self.game.codes)
         self.assertEqual("paused", self.controller.mode)
 
+    async def test_late_completion_preserves_the_resumed_turn_and_its_control(self) -> None:
+        await self.controller.initialize()
+        self.pumps.append(asyncio.create_task(self.controller.events()))
+        await self.controller.message("执行当前任务")
+        await self.controller.control("pause")
+        await self.controller.control("resume")
+        self.assertEqual("turn-2", self.controller.status()["turn_id"])
+        await self.server.events.put({"method": "turn/completed", "params": {
+            "threadId": "game-thread", "turn": {"id": "turn-1", "status": "interrupted"}}})
+        await self.wait_until(self.server.events.empty)
+        status = self.controller.status()
+        self.assertEqual(("turn-2", "running"), (status["turn_id"], status["mode"]))
+        await self.controller.message("补充观察当前任务")
+        steer = [params for method, params in self.server.calls if method == "turn/steer"][-1]
+        self.assertEqual("turn-2", steer["expectedTurnId"])
+        await self.controller.control("pause")
+        interrupted = [params for method, params in self.server.calls if method == "turn/interrupt"][-1]
+        self.assertEqual("turn-2", interrupted["turnId"])
+        await self.controller.control("resume")
+        await self.server.events.put({"method": "turn/completed", "params": {
+            "threadId": "game-thread", "turn": {"id": "turn-3", "status": "completed"}}})
+        await self.wait_until(self.server.events.empty)
+        status = self.controller.status()
+        self.assertEqual((None, "ready"), (status["turn_id"], status["mode"]))
+
     async def test_read_only_surface_rejects_lua_and_never_cancels_another_operator(self) -> None:
         read_only = Controller(self.server, self.game, self.state, "gpt-6-luna", "只观察角色", "核对现状",
                                {**self.binding, "read_only": True}, read_only=True)

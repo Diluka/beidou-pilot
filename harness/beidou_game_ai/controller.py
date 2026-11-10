@@ -294,11 +294,14 @@ class Controller:
                     self.emit("usage", {"token_usage": params["tokenUsage"], "cost": None})
                 elif method == "turn/completed":
                     completed = cast(JsonObject, params["turn"])
-                    self.turn_id = None
-                    if self.mode == "running":
-                        self.mode = "ready"
+                    current = completed["id"] == self.turn_id
+                    if current:
+                        self.turn_id = None
+                        if self.mode == "running":
+                            self.mode = "ready"
                     self.emit("turn_completed", {"turn_id": completed["id"], "status": completed["status"],
-                        "elapsed_seconds": round(time.monotonic() - self._turn_started, 4), "error": completed.get("error")})
+                        "elapsed_seconds": round(time.monotonic() - self._turn_started, 4) if current else None,
+                        "error": completed.get("error")})
                 elif method == "serverRequest/resolved":
                     self.questions.pop(cast(int | str, params["requestId"]), None)
                 elif method == "transport/closed":

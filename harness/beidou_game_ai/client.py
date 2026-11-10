@@ -113,7 +113,7 @@ class GameClient:
             await self._bridge()
             if self._cancel_requested:
                 return {"status": "cancelled", "cancelled": True, "reason": "cancel_requested"}
-            return await self._call("script", "run", "--code", code, "--seconds", str(seconds), controlled=True)
+            return await self._call("script", "run", "--code=" + code, "--seconds", str(seconds), controlled=True)
         except GameClientError as error:
             self._script_error = error
             raise

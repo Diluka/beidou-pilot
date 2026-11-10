@@ -18,6 +18,7 @@ import signal
 import sys
 import time
 
+sys.path.insert(0, __CLI_SOURCE__)
 arguments = sys.argv[1:]
 root = Path(arguments[arguments.index("--root") + 1])
 command = arguments[arguments.index("--json") + 1:]
@@ -45,7 +46,8 @@ elif command == ["snapshot"]:
     result({"stage": "IN_GAME", "character": {"level": 8}, "position": {"x": 3, "y": 4}})
 elif command[:2] == ["script", "run"]:
     state = json.loads(path.read_text())
-    code = command[command.index("--code") + 1]
+    from beidou_pilot.cli import parser
+    code = parser().parse_args(arguments).code
     if code in ("hold", "fail_release"):
         def interrupt(number, frame):
             (root / "cancel-requested").write_text(str(os.getpid()))
@@ -71,7 +73,7 @@ elif command[:2] == ["script", "run"]:
         while True:
             time.sleep(0.005)
     else:
-        result({"status": "completed", "cancelled": False, "last_state": state})
+        result({"status": "completed", "cancelled": False, "last_state": state, "parsed_code": code})
 else:
     raise SystemExit("unexpected command")
 '''
@@ -83,7 +85,8 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.cli = self.root / "fake-cli"
-        self.cli.write_text("#!" + sys.executable + "\n" + FAKE_CLI)
+        self.cli.write_text("#!" + sys.executable + "\n" + FAKE_CLI.replace(
+            "__CLI_SOURCE__", repr(str(Path(__file__).resolve().parents[2] / "cli"))))
         self.cli.chmod(0o700)
         (self.root / "status.json").write_text('{"running":true,"stage":"IN_GAME"}')
         self.path = self.root / "bridge.json"
@@ -107,9 +110,10 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(observation["running"])
         self.assertEqual(("native-alpha", "run-a", "IN_GAME"),
                          (observation["instance_id"], observation["run_id"], observation["snapshot"]["stage"]))
-        code = 'game.log("中文")\n'
+        code = '--观察\n' + r'game.log("中文：\"ok\"")' + '\n'
         report = await self.client.run_lua(code, 1.25)
         self.assertEqual("completed", report["status"])
+        self.assertEqual(code, report["parsed_code"])
         status = await self.client.script_status()
         self.assertEqual(("run-a", [], None), (status["run_id"], status["held_keys"], status["script"]))
         prefix = ["--root", str(self.root), "--backend", "headless", "--instance", "alpha", "--json"]
@@ -118,7 +122,7 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
             arguments = call["arguments"]
             self.assertEqual(prefix, arguments[:len(prefix)])
             commands.append(arguments[len(prefix):])
-        self.assertIn(["script", "run", "--code", code, "--seconds", "1.25"], commands)
+        self.assertIn(["script", "run", "--code=" + code, "--seconds", "1.25"], commands)
         self.assertNotIn(["close"], commands)
         self.assertFalse(self.client.running)
 
