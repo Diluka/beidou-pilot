@@ -546,6 +546,7 @@ assert(quests.data.quests[1].quest_id == 1037 and quests.data.quests[1].progress
 assert(quests.data.source_updated_at_ms == nil)
 local old = game.observe("scene")
 assert(old.data.npcs[1].name == "向导" and old.data.npcs[1].x == 12.5 and old.data.npcs[1].y == -4)
+assert(tostring(old.data.npcs[1].object_id) == "3" and math.type(old.data.npcs[1].x) == "float")
 old.data.npcs[1].name = "仅修改脚本副本"
 assert(game.observe("scene").data.npcs[1].name == "向导")
 game.sleep(0)

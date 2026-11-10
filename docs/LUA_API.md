@@ -224,7 +224,7 @@ end
 | `data` | table 或 nil | 原生领域对象；读取失败或不支持时为 nil |
 | `error` | string 或 nil | 本次失败原因；成功时通常为 nil |
 
-`status="ok"` 不保证所有字段完整。继续按需要检查 `unavailable`、`not_covered`、checksum、`skills_complete` 等原生说明；空集合只代表相应已知范围内没有记录。原生 JSON 的 `null` 投影为 Lua `nil`，数组使用从1开始的索引，对象键保留原文。领域内 ID、数量与坐标以 Lua 数值提供；技能和背包容量对象的键仍是字符串，例如 `data.skills["2000001"]`、`data.capacities["2"]`。
+`status="ok"` 不保证所有字段完整。继续按需要检查 `unavailable`、`not_covered`、checksum、`skills_complete` 等原生说明；空集合只代表相应已知范围内没有记录。原生 JSON 的 `null` 投影为 Lua `nil`，数组使用从1开始的索引，对象键保留原文。可表示的整数以 Lua integer 提供，坐标等小数保留浮点值；技能和背包容量对象的键仍是字符串，例如 `data.skills["2000001"]`、`data.capacities["2"]`。
 
 `data` 保留原生字段，与同一实例 CLI 领域查询在可比采样下含义一致。CLI 对来源的重命名、派生校验汇总与桌面坐标投影属于外部投影：Lua 中领域原生 `data.source` 对应 CLI 保留的 `data_source`；GUI 的 `root_rect/game_geometry` 保持 `nil`，已有 `game_rect` 等游戏区坐标照常提供。`dialog_open=nil` 表示未知，不能按关闭处理；商店未知单价也不能按零使用。
 

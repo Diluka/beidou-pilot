@@ -149,7 +149,14 @@ void PushValue(lua_State* lua, const Value& value) {
     switch (value.Type()) {
     case Value::Kind::Null: lua_pushnil(lua); break;
     case Value::Kind::Boolean: lua_pushboolean(lua, value.Boolean()); break;
-    case Value::Kind::Number: lua_pushnumber(lua, value.Number()); break;
+    case Value::Kind::Number: {
+        const auto number = value.Number();
+        const auto minimum = static_cast<double>(std::numeric_limits<lua_Integer>::min());
+        if (number >= minimum && number < -minimum && std::trunc(number) == number)
+            lua_pushinteger(lua, static_cast<lua_Integer>(number));
+        else lua_pushnumber(lua, number);
+        break;
+    }
     case Value::Kind::String:
         lua_pushlstring(lua, value.Text().data(), value.Text().size());
         break;
