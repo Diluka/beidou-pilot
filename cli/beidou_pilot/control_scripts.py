@@ -65,8 +65,13 @@ def action(
         raise ClientError("invalid_direction", "朝向须为left或right。")
     if not math.isfinite(seconds) or not 0.001 <= seconds <= 30:
         raise ClientError("invalid_action_duration", "单次动作时间须为0.001至30秒。")
-    if name == "use_item" and (item_id is None or not 1 <= item_id <= 0x7FFFFFFF or item_id // 10000 != 200):
-        raise ClientError("invalid_item", "原生恢复动作仅支持普通200类HP/MP药品。")
+    if name == "use_item" and (
+        item_id is None
+        or not 1 <= item_id <= 0x7FFFFFFF
+        or item_id // 10000 != 200
+        and not (backend.name == "headless" and item_id // 10000 == 201)
+    ):
+        raise ClientError("invalid_item", "原生用物支持200类药品；无头端另支持201类食品。")
     if name not in {"move", "face", "jump", "attack", "pickup", "use_item", "stop"}:
         raise ClientError("unsupported_capability", "当前没有这个共同动作。")
     if name == "move":

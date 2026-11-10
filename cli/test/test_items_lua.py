@@ -75,6 +75,38 @@ class ItemUseContract(unittest.TestCase):
         self.assertEqual("healing_metadata_missing", failure.exception.code)
         self.bridge.run_script.assert_not_called()
 
+    def test_headless_task_food_consumption_at_full_resources_preserves_unknown_recovery(self) -> None:
+        self.backend.name = "headless"
+        self.backend.paths = InstancePaths(self.root, "headless")
+        self.character.update(hp=100, mp=30)
+        self.inventory["items"] = [{"inventory_type": 2, "slot": 1, "item_id": 2010000, "quantity": 1}]
+        self.complete(2010000, 0, hp=100)
+        result = use(self.backend, 2010000)
+        self.assertEqual(1, result["used"])
+        self.assertEqual("count_reached", result["reason"])
+        self.assertEqual("consumption", result["effect"])
+        self.assertTrue(result["effect_confirmed"])
+        self.assertIsNone(result["recovery_confirmed"])
+        self.assertFalse(result["healing_metadata_known"])
+        self.assertTrue(result["metadata_unavailable"])
+        self.assertEqual("native_lua", result["input_method"])
+        self.focus.assert_not_called()
+        self.backend.desktop.assert_not_called()
+
+    def test_headless_food_rejects_unrequested_multiple_consumption(self) -> None:
+        self.backend.name = "headless"
+        with self.assertRaises(ClientError) as failure:
+            use(self.backend, 2010000, count=2)
+        self.assertEqual("invalid_food_options", failure.exception.code)
+        self.bridge.run_script.assert_not_called()
+
+    def test_headless_other_consumables_are_explicitly_unsupported(self) -> None:
+        self.backend.name = "headless"
+        with self.assertRaises(ClientError) as failure:
+            use(self.backend, 2030000)
+        self.assertEqual("unsupported_capability", failure.exception.code)
+        self.bridge.run_script.assert_not_called()
+
     def test_bound_food_remains_a_gui_consumable(self) -> None:
         self.metadata(2010001, '<int name="hp" value="50"/>')
         before = {**self.inventory, "items": [{"slot": 1, "item_id": 2010001, "quantity": 2}]}

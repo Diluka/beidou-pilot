@@ -263,8 +263,8 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     } else if (action.kind == Kind::Face) {
         player.set_direction(action.direction == "right");
     } else if (action.kind == Kind::UseItem) {
-        if (action.itemId / 10000 != 200) {
-            error = "unsupported: ordinary HP/MP potion required";
+        if (action.itemId / 10000 != 200 && action.itemId / 10000 != 201) {
+            error = "unsupported: ordinary potion or food required";
             return false;
         }
         if (player.get_inventory().get_total_item_count(action.itemId) <= 0) {
