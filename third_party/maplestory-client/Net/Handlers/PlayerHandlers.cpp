@@ -54,6 +54,7 @@ namespace ms
 		{
 			dialogue.response_pending = false;
 			dialogue.closed_by = "enable_actions_after_request";
+			++dialogue.revision;
 		}
 #endif
 

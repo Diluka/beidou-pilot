@@ -22,6 +22,9 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
+#include <nlnx/nx.hpp>
+#include <nlnx/node.hpp>
 #include <sstream>
 #include <unistd.h>
 
@@ -161,6 +164,9 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.dead = state.reviveRequestable = Fact::Unknown;
     if (!state.ready) {
         state.settled = Fact::Unknown;
+        interaction.ResetContext({state.instanceId, 0, state.sceneGeneration});
+        npcTargets.clear();
+        shownDialogueRevision.reset();
         return;
     }
     auto& stage = ms::Stage::get();
@@ -237,6 +243,125 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
         drop.landed = nativeDrop.is_landed() ? Fact::True : Fact::False;
         state.drops.push_back(drop);
     }
+    CaptureInteraction();
+}
+
+void SharedLuaAdapter::CaptureInteraction() {
+    if (interaction.ResetContext({state.instanceId, state.character.id, state.sceneGeneration})) {
+        npcTargets.clear();
+        shownDialogueRevision.reset();
+    }
+    std::set<std::int32_t> current;
+    for (const auto& entry : *ms::Stage::get().get_npcs().get_npcs()) {
+        const auto& npc = static_cast<const ms::Npc&>(*entry.second);
+        if (!npc.is_active()) continue;
+        const auto oid = npc.get_oid();
+        const auto templateId = npc.get_template_id();
+        current.insert(oid);
+        auto existing = npcTargets.find(oid);
+        if (existing != npcTargets.end() && existing->second.templateId == templateId) continue;
+        if (existing != npcTargets.end()) interaction.RemoveTarget(existing->second.reference);
+        npcTargets[oid] = {templateId, interaction.RegisterTarget([this, oid, templateId](std::string& error) {
+                               return OpenNpc(oid, templateId, error);
+                           })};
+    }
+    for (auto target = npcTargets.begin(); target != npcTargets.end();) {
+        if (current.count(target->first)) {
+            ++target;
+            continue;
+        }
+        interaction.RemoveTarget(target->second.reference);
+        target = npcTargets.erase(target);
+    }
+    const auto& dialogue = ms::headless_state().dialogue;
+    if (shownDialogueRevision && *shownDialogueRevision == dialogue.revision) return;
+    shownDialogueRevision = dialogue.revision;
+    if (!dialogue.open && !dialogue.response_pending) {
+        interaction.ClosePage();
+        return;
+    }
+    const auto npcId = dialogue.open ? dialogue.npc_id : dialogue.requested_npc_id;
+    const auto name = nl::nx::String["Npc.img"][npcId]["name"].get_string();
+    InteractionPage page;
+    page.source = dialogue.open ? "server" : "client";
+    page.title = name.empty() ? "NPC对话" : name;
+    if (dialogue.open && dialogue.text_known) page.text = dialogue.text;
+    const bool controlsKnown = dialogue.open && dialogue.text_known && dialogue.choices_complete;
+    if (controlsKnown) page.controls = std::vector<InteractionControl>{};
+    interaction.BeginPage(std::move(page));
+    if (!controlsKnown) return;
+    const auto revision = dialogue.revision;
+    interaction.AddControl("button", "结束", Fact::True, [this, revision, type = dialogue.type](std::string& error) {
+        return RespondNpc(revision, type == 4 ? 0 : -1, std::nullopt, error);
+    });
+    if (dialogue.type == 0) {
+        if (dialogue.previous)
+            interaction.AddControl("button", "上一页", Fact::True, [this, revision](std::string& error) {
+                return RespondNpc(revision, 0, std::nullopt, error);
+            });
+        if (dialogue.next)
+            interaction.AddControl("button", "下一页", Fact::True, [this, revision](std::string& error) {
+                return RespondNpc(revision, 1, std::nullopt, error);
+            });
+        if (!dialogue.previous && !dialogue.next)
+            interaction.AddControl("button", "确认", Fact::True, [this, revision](std::string& error) {
+                return RespondNpc(revision, 1, std::nullopt, error);
+            });
+    } else if (dialogue.type == 1 || dialogue.type == 12) {
+        interaction.AddControl("button", "是", Fact::True, [this, revision](std::string& error) {
+            return RespondNpc(revision, 1, std::nullopt, error);
+        });
+        interaction.AddControl("button", "否", Fact::True, [this, revision](std::string& error) {
+            return RespondNpc(revision, 0, std::nullopt, error);
+        });
+    } else if (dialogue.type == 4) {
+        for (const auto& choice : dialogue.choices)
+            interaction.AddControl(
+                "option", choice.text, Fact::True,
+                [this, revision, id = choice.id](std::string& error) { return RespondNpc(revision, 1, id, error); });
+    }
+}
+
+bool SharedLuaAdapter::OpenNpc(std::int32_t objectId, std::int32_t npcId, std::string& error) {
+    const auto& dialogue = ms::headless_state().dialogue;
+    if (dialogue.open || dialogue.response_pending || interaction.CurrentPage() != nullptr) {
+        error = "interaction_busy";
+        return false;
+    }
+    auto target = ms::Stage::get().get_npcs().get_npcs()->get(objectId);
+    if (!target || !target->is_active() || static_cast<const ms::Npc&>(*target).get_template_id() != npcId) {
+        error = "stale_interaction_reference";
+        return false;
+    }
+    auto& pending = ms::headless_state().dialogue;
+    ++pending.revision;
+    pending.requested_npc_id = npcId;
+    pending.object_id = objectId;
+    pending.response_pending = true;
+    pending.closed_by.clear();
+    ms::TalkToNPCPacket(objectId).dispatch();
+    CaptureInteraction();
+    return true;
+}
+
+bool SharedLuaAdapter::RespondNpc(std::uint64_t revision, std::int8_t response, std::optional<std::int32_t> selection,
+                                  std::string& error) {
+    auto& dialogue = ms::headless_state().dialogue;
+    if (!dialogue.open || dialogue.revision != revision) {
+        error = "stale_interaction_reference";
+        return false;
+    }
+    const auto type = dialogue.type;
+    dialogue.open = false;
+    dialogue.response_pending = true;
+    dialogue.closed_by = "local_response";
+    ++dialogue.revision;
+    if (selection)
+        ms::NpcTalkMorePacket(*selection).dispatch();
+    else
+        ms::NpcTalkMorePacket(type, response).dispatch();
+    CaptureInteraction();
+    return true;
 }
 
 bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& error) {
@@ -257,119 +382,11 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     auto& player = stage.get_player();
     result = {};
     result.reason = "native_action_dispatched";
-    if (action.kind == Kind::Talk || action.kind == Kind::QuestStart || action.kind == Kind::QuestComplete) {
-        if (action.sceneGeneration != state.sceneGeneration) {
-            error = "npc_scene_changed";
+    if (action.kind == Kind::Activate) {
+        if (!interaction.Activate(action.reference, {state.instanceId, state.character.id, state.sceneGeneration},
+                                  error))
             return false;
-        }
-        auto target = stage.get_npcs().get_npcs()->get(static_cast<int32_t>(action.objectId));
-        if (!target || !target->is_active()) {
-            error = "npc_not_in_current_scene";
-            return false;
-        }
-        const auto& npc = static_cast<const ms::Npc&>(*target);
-        auto& dialogue = ms::headless_state().dialogue;
-        if (action.kind == Kind::Talk && dialogue.open && dialogue.npc_id == npc.get_template_id() && dialogue.object_id
-            && *dialogue.object_id == static_cast<int32_t>(action.objectId)) {
-            result.effect = "confirmed";
-            result.reason = "already_open";
-            result.controlReleased = true;
-            result.settled = state.settled;
-            return true;
-        }
-        if (dialogue.open || dialogue.response_pending) {
-            error = dialogue.open ? "npc_dialogue_blocks_request" : "npc_response_pending";
-            return false;
-        }
-        if (action.kind == Kind::Talk) {
-            ++dialogue.revision;
-            dialogue.requested_npc_id = npc.get_template_id();
-            dialogue.object_id = static_cast<int32_t>(action.objectId);
-            dialogue.response_pending = true;
-            dialogue.closed_by.clear();
-            ms::TalkToNPCPacket(static_cast<int32_t>(action.objectId)).dispatch();
-            result.reason = "npc_talk_requested";
-        } else {
-            const auto& quests = player.get_quests();
-            const bool complete = action.kind == Kind::QuestComplete;
-            if ((complete && quests.get_completed().count(action.questId))
-                || (!complete && quests.get_started().count(action.questId))) {
-                result.effect = "confirmed";
-                result.reason = complete ? "already_completed" : "already_started";
-                result.controlReleased = true;
-                result.settled = state.settled;
-                return true;
-            }
-            if (complete && !quests.get_started().count(action.questId)) {
-                error = "quest_not_started";
-                return false;
-            }
-            if (!complete && quests.get_completed().count(action.questId)) {
-                error = "quest_already_completed";
-                return false;
-            }
-            const auto position = player.get_position();
-            ms::QuestActionPacket(complete, static_cast<int16_t>(action.questId), npc.get_template_id(), position.x(),
-                                  position.y(), action.rewardChoice)
-                .dispatch();
-            result.reason = complete ? "quest_complete_requested" : "quest_start_requested";
-        }
-        npcInteraction = {action.kind,       state.character.id,    state.sceneGeneration,
-                          dialogue.revision, npc.get_template_id(), action.questId};
-    } else if (action.kind == Kind::Respond) {
-        auto& dialogue = ms::headless_state().dialogue;
-        const auto reference =
-            state.instanceId + ":" + std::to_string(state.sceneGeneration) + ":" + std::to_string(dialogue.revision);
-        if (!dialogue.open || dialogue.scene_generation != state.sceneGeneration
-            || action.dialogReference != reference) {
-            error = "stale_dialogue_reference";
-            return false;
-        }
-        int8_t response = 0;
-        bool allowed = false;
-        if (action.response == "end"
-            && (dialogue.type == 0 || dialogue.type == 1 || dialogue.type == 4 || dialogue.type == 12)) {
-            response = dialogue.type == 4 ? 0 : -1;
-            allowed = true;
-        } else if (dialogue.type == 0) {
-            if (action.response == "next" && dialogue.next) {
-                response = 1;
-                allowed = true;
-            } else if (action.response == "back" && dialogue.previous) {
-                response = 0;
-                allowed = true;
-            } else if (action.response == "confirm" && !dialogue.next && !dialogue.previous) {
-                response = 1;
-                allowed = true;
-            }
-        } else if (dialogue.type == 1 || dialogue.type == 12) {
-            if (action.response == "yes") {
-                response = 1;
-                allowed = true;
-            } else if (action.response == "no") {
-                response = 0;
-                allowed = true;
-            }
-        } else if (dialogue.type == 4 && action.response == "select" && dialogue.choices_complete) {
-            allowed = std::any_of(dialogue.choices.begin(), dialogue.choices.end(),
-                                  [&](const ms::NpcChoice& choice) { return choice.id == action.selection; });
-        }
-        if (!allowed) {
-            error = "dialogue_response_unavailable";
-            return false;
-        }
-        const auto type = dialogue.type;
-        dialogue.open = false;
-        dialogue.response_pending = true;
-        dialogue.closed_by = "local_response";
-        ++dialogue.revision;
-        npcInteraction = {action.kind,       state.character.id, state.sceneGeneration,
-                          dialogue.revision, dialogue.npc_id,    0};
-        if (action.response == "select")
-            ms::NpcTalkMorePacket(action.selection).dispatch();
-        else
-            ms::NpcTalkMorePacket(type, response).dispatch();
-        result.reason = "dialogue_response_requested";
+        result.reason = "control_activated";
     } else if (action.kind == Kind::Revive) {
         if (state.character.values[6] > 0) {
             result.effect = "confirmed";
@@ -517,7 +534,7 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     result.controlReleased = false;
     active = true;
     actionUntilMs = MonotonicMs() + action.durationMs;
-    if (!heldAction && !equipmentChange && !reviveCharacter && !npcInteraction) ApplyRelease();
+    if (!heldAction && !equipmentChange && !reviveCharacter) ApplyRelease();
     return true;
 }
 
@@ -530,11 +547,6 @@ void SharedLuaAdapter::ApplyRelease() {
     if (equipmentChange && result.reason == "equipment_change_requested")
         result.reason = "equipment_confirmation_stopped";
     equipmentChange.reset();
-    if (npcInteraction
-        && (result.reason == "npc_talk_requested" || result.reason == "dialogue_response_requested"
-            || result.reason == "quest_start_requested" || result.reason == "quest_complete_requested"))
-        result.reason = "npc_confirmation_stopped";
-    npcInteraction.reset();
     if (reviveCharacter && result.reason == "revive_requested") result.reason = "revive_confirmation_stopped";
     reviveCharacter.reset();
     active = false;
@@ -637,54 +649,7 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
             commandReason = "stopped";
         }
     }
-    if (active && npcInteraction) {
-        const auto& request = *npcInteraction;
-        const auto& dialogue = ms::headless_state().dialogue;
-        if (!state.ready || state.character.id != request.characterId || state.character.values[6] == 0
-            || state.sceneGeneration != request.sceneGeneration) {
-            result.reason = "npc_context_changed";
-            ApplyRelease();
-        } else if (request.kind == MapleControl::ActionKind::Talk
-                   || request.kind == MapleControl::ActionKind::Respond) {
-            if (dialogue.open && dialogue.revision > request.pageRevision) {
-                if (!dialogue.text_known) {
-                    result.reason = "unsupported_dialogue_type";
-                } else if (dialogue.npc_id == request.npcId) {
-                    result.effect = "confirmed";
-                    result.reason =
-                        request.kind == MapleControl::ActionKind::Talk ? "dialogue_opened" : "dialogue_page_changed";
-                } else
-                    result.reason = "npc_dialogue_identity_mismatch";
-                ApplyRelease();
-            } else if (!dialogue.open && !dialogue.response_pending
-                       && dialogue.closed_by == "enable_actions_after_request") {
-                if (request.kind == MapleControl::ActionKind::Respond) {
-                    result.effect = "confirmed";
-                    result.reason = "dialogue_closed";
-                } else
-                    result.reason = "npc_dialogue_not_opened";
-                ApplyRelease();
-            } else if (MonotonicMs() >= actionUntilMs) {
-                result.reason = "dialogue_not_confirmed";
-                ApplyRelease();
-            }
-        } else {
-            const auto& quests = ms::Stage::get().get_player().get_quests();
-            const bool complete = request.kind == MapleControl::ActionKind::QuestComplete;
-            if ((complete && quests.get_completed().count(request.questId))
-                || (!complete && quests.get_started().count(request.questId))) {
-                result.effect = "confirmed";
-                result.reason = complete ? "quest_completed" : "quest_started";
-                ApplyRelease();
-            } else if (dialogue.open && dialogue.revision > request.pageRevision) {
-                result.reason = "quest_dialogue_required";
-                ApplyRelease();
-            } else if (MonotonicMs() >= actionUntilMs) {
-                result.reason = "quest_not_confirmed";
-                ApplyRelease();
-            }
-        }
-    } else if (active && reviveCharacter) {
+    if (active && reviveCharacter) {
         if (!state.ready || state.character.id != *reviveCharacter) {
             result.reason = "revive_context_changed";
             ApplyRelease();
@@ -756,7 +721,7 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                 {"unavailable", state.ready ? Json::array() : Json::array({"native_client_not_ready"})}};
     }
     if (domain != "scene" && domain != "inventory" && domain != "character" && domain != "quests"
-        && domain != "dialog") {
+        && domain != "interaction") {
         status = "unsupported";
         error = "unsupported_observation_domain";
         return nullptr;
@@ -787,6 +752,7 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
             npcs.push_back({{"object_id", npc.get_oid()},
                             {"template_id", npc.get_template_id()},
                             {"name", npc.get_name()},
+                            {"ref", npcTargets.at(npc.get_oid()).reference},
                             {"x", position.x()},
                             {"y", position.y()}});
         }
@@ -866,52 +832,30 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                  Json::array({"skill_names", "skill_requirements", "skill_effects", "skill_expirations",
                               "master_level_when_absent_from_client_records", "original_client_secure_checksums"})}};
     }
-    if (domain == "dialog") {
-        const auto& page = ms::headless_state().dialogue;
-        const bool supported = page.type == 0 || page.type == 1 || page.type == 4 || page.type == 12;
-        Json choices = Json::array();
-        Json buttons = Json::array();
-        if (page.open && supported) {
-            buttons.push_back({{"control_id", 2}, {"root_rect", nullptr}});
-            if (page.type == 0) {
-                if (page.previous) buttons.push_back({{"control_id", 8192}, {"root_rect", nullptr}});
-                if (page.next) buttons.push_back({{"control_id", 8193}, {"root_rect", nullptr}});
-                if (!page.previous && !page.next) buttons.push_back({{"control_id", 1}, {"root_rect", nullptr}});
-            } else if (page.type == 1 || page.type == 12) {
-                buttons.push_back({{"control_id", 6}, {"root_rect", nullptr}});
-                buttons.push_back({{"control_id", 7}, {"root_rect", nullptr}});
-            } else if (page.choices_complete) {
-                for (const auto& choice : page.choices)
-                    choices.push_back({{"link_id", choice.id},
-                                       {"text", choice.text},
-                                       {"token_indices", Json::array()},
-                                       {"root_rect", nullptr}});
-            }
+    if (domain == "interaction") {
+        const auto* page = interaction.CurrentPage();
+        if (page == nullptr) return {{"page", nullptr}, {"unavailable", Json::array()}, {"not_covered", Json::array()}};
+        Json controls = nullptr;
+        if (page->controls) {
+            controls = Json::array();
+            for (const auto& control : *page->controls)
+                controls.push_back({{"role", control.role},
+                                    {"text", control.text},
+                                    {"enabled", FactValue(control.enabled)},
+                                    {"ref", control.ref}});
         }
-        return {{"dialog_open", page.open},
-                {"script_dialog_open", page.open},
-                {"npc_id", page.open ? Json(page.npc_id) : Json(nullptr)},
-                {"npc_object_id", page.open && page.object_id ? Json(*page.object_id) : Json(nullptr)},
-                {"npc_object_id_source", page.open && page.object_id ? Json("local_request") : Json(nullptr)},
-                {"dialog_type", page.open ? Json(page.type) : Json(nullptr)},
-                {"dialog_reference", page.open ? Json(state.instanceId + ":" + std::to_string(state.sceneGeneration)
-                                                      + ":" + std::to_string(page.revision))
-                                               : Json(nullptr)},
-                {"page_revision", page.revision},
-                {"response_pending", page.response_pending},
-                {"closed_by", !page.open && !page.closed_by.empty() ? Json(page.closed_by) : Json(nullptr)},
-                {"speaker", page.open ? Json(page.speaker) : Json(nullptr)},
-                {"text_known", page.open && page.text_known},
-                {"lines", !page.open        ? Json::array()
-                          : page.text_known ? Json::array({page.text})
-                                            : Json(nullptr)},
-                {"choices", page.open && (!supported || !page.choices_complete) ? Json(nullptr) : std::move(choices)},
-                {"choices_complete", page.open && supported ? Json(page.choices_complete) : Json(nullptr)},
-                {"buttons", page.open && !supported ? Json(nullptr) : std::move(buttons)},
-                {"camera_viewport", nullptr},
-                {"unavailable",
-                 page.open && !supported ? Json::array({"dialogue_response_type_not_supported"}) : Json::array()},
-                {"not_covered", Json::array({"screen_geometry", "dialogue_input_types", "reward_choice_layouts"})}};
+        Json unavailable = Json::array();
+        if (page->source == "server" && !page->text)
+            unavailable.push_back("interaction_page_layout_not_supported");
+        else if (page->source == "server" && !page->controls)
+            unavailable.push_back("interaction_controls_not_supported");
+        return {{"page",
+                 {{"source", page->source},
+                  {"title", page->title},
+                  {"text", page->text ? Json(*page->text) : Json(nullptr)},
+                  {"controls", std::move(controls)}}},
+                {"unavailable", std::move(unavailable)},
+                {"not_covered", Json::array()}};
     }
     const auto& quests = player.get_quests();
     std::map<std::uint16_t, Json> entries;
@@ -1053,10 +997,7 @@ Json SharedLuaAdapter::StateDocument() const {
           {"equip", true},
           {"unequip", true},
           {"revive", true},
-          {"talk", true},
-          {"respond", true},
-          {"quest_start", true},
-          {"quest_complete", true},
+          {"activate", true},
           {"stop", true},
           {"raw_keys", false},
           {"skill", false}}},

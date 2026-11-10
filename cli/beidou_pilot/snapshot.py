@@ -28,7 +28,8 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
         result.update(stage="TRANSITION", unavailable=observation["unavailable"])
         return result
     scene = backend.read("scene")
-    dialog = backend.read("dialog")
+    dialog = None if backend.name == "headless" else backend.read("dialog")
+    interaction = backend.read("interaction") if backend.name == "headless" else None
     inventory = backend.read("inventory", "--type", "1", "--type", "2", "--type", "3", "--type", "4", "--type", "5", "--equipped")
     quests = backend.read("quests")
     character_data = backend.read("character")
@@ -46,9 +47,9 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
     character["skills"] = character_data.get("skills", {})
     refs: JsonObject = {}
     client = cast(JsonObject, observation["client"])
-    scope = [client["container_id"], client["run_id"], observation["instance_id"], observation["scene_generation"], character["id"], map_id,
+    scope = [client["container_id"], client["run_id"], observation["instance_id"], character["id"], map_id,
              stage.get("world_id"), stage.get("channel")]
-    viewport = cast(JsonObject | None, dialog["camera_viewport"])
+    viewport = None if dialog is None else cast(JsonObject | None, dialog["camera_viewport"])
 
     def reference(kind: str, identity: JsonValue, target: JsonObject) -> str:
         digest = hashlib.sha256(json.dumps([scope, kind, identity], sort_keys=True).encode()).hexdigest()[:10]
@@ -79,28 +80,21 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
             entity["visible"] = visible
             entity["dx"] = x - cast(int | float, player["x"])
             entity["dy"] = y - cast(int | float, player["y"])
-            entity["ref"] = reference(prefix, original["object_id"], {"kind": group, **entity})
+            entity["ref"] = (original.get("ref") if group == "npcs" and backend.name == "headless"
+                             else reference(prefix, original["object_id"], {"kind": group, **entity}))
             entities[group].append(entity)
         entities[group].sort(key=lambda item: abs(cast(int | float, item["dx"])) + abs(cast(int | float, item["dy"])))
 
-    offer: JsonObject = {"supported": True, "open": None, "npc_id": None,
+    offer: JsonObject = {"supported": dialog is not None, "open": None, "npc_id": None,
                          "type": None, "lines": [], "choices": [], "buttons": []}
-    offer.update(open=dialog["dialog_open"], npc_id=dialog["npc_id"],
-                 npc_object_id=dialog.get("npc_object_id"), reference=dialog.get("dialog_reference"),
-                 page_revision=dialog.get("page_revision"), response_pending=dialog.get("response_pending"),
-                 closed_by=dialog.get("closed_by"), type=dialog["dialog_type"], lines=dialog["lines"],
-                 speaker=dialog.get("speaker"), text_known=dialog.get("text_known"), unavailable=dialog.get("unavailable"))
-    fingerprint: JsonValue = [dialog.get("dialog_reference"), dialog["npc_id"], dialog["dialog_type"], dialog["lines"]]
-    if dialog["choices"] is None:
-        offer["choices"] = None
-    else:
+    if dialog is not None:
+        offer.update(open=dialog["dialog_open"], npc_id=dialog["npc_id"],
+                     type=dialog["dialog_type"], lines=dialog["lines"])
+        fingerprint: JsonValue = [dialog["npc_id"], dialog["dialog_type"], dialog["lines"]]
         for original in cast(list[JsonObject], dialog["choices"]):
             value = dict(original)
             value["ref"] = reference("c", [fingerprint, value["link_id"]], {"kind": "choice", **value})
             cast(list[JsonObject], offer["choices"]).append(value)
-    if dialog["buttons"] is None:
-        offer["buttons"] = None
-    else:
         for original in cast(list[JsonObject], dialog["buttons"]):
             value: JsonObject = {"control_id": original["control_id"], "root_rect": original.get("root_rect"),
                                  "action": BUTTONS.get(cast(int, original["control_id"]), str(original["control_id"]))}
@@ -113,16 +107,19 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
     equipped = cast(list[JsonObject], inventory.get("equipped", []))
     for item in equipped:
         item["name"] = catalog.item_name(cast(int, item["item_id"]))
-    result.update(observed_at=observation["observed_at"], scene_generation=observation["scene_generation"],
-                  map={"id": map_id, "name": catalog.map_name(map_id)},
+    result.update(observed_at=observation["observed_at"], map={"id": map_id, "name": catalog.map_name(map_id)},
                   character=character, position=player, facing=scene["player_facing"],
-                  advancement=advancement(character), dialog=offer, viewport=viewport, **entities, inventory=items,
+                  advancement=advancement(character), viewport=viewport, **entities, inventory=items,
                   equipped=equipped, quests=quests["quests"],
                   quest_observation={key: quests[key] for key in ("data_source", "live_updates", "live_update_kinds", "not_covered") if key in quests},
                   refs=refs)
+    if interaction is not None:
+        result["interaction"] = {"page": interaction["page"]}
+    else:
+        result["dialog"] = offer
     if debug:
         result["raw"] = {"stage": stage, "observation": observation, "scene": scene,
-                         "dialog": dialog, "inventory": inventory, "quests": quests, "character": character_data}
+                         "dialog": dialog, "interaction": interaction, "inventory": inventory, "quests": quests, "character": character_data}
     return result
 
 
@@ -136,29 +133,35 @@ def format_snapshot(value: JsonObject, *, interactive_only: bool = False) -> str
     milestone = cast(JsonObject | None, value.get("advancement"))
     if milestone and milestone["due"]:
         lines.append(f"需要先完成 {milestone['level']} 级转职；连续战斗会在此节点停下。")
-    dialog = cast(JsonObject, value["dialog"])
-    if dialog["supported"] is False:
-        lines.append("对话状态：客户端不支持观察。")
-    elif dialog["open"] is None:
-        lines.append("对话状态：未知。")
-    elif dialog["open"]:
-        lines.append(f"对话 NPC {dialog['npc_id']} (type {dialog['type']})")
-        if dialog["lines"] is None:
-            lines.append("对话正文：未知。")
+    if "interaction" in value:
+        page = cast(JsonObject | None, cast(JsonObject, value["interaction"])["page"])
+        if page is None:
+            lines.append("当前没有交互页面。")
         else:
+            lines.append(f"交互页面：{page['title']}")
+            lines.append(cast(str, page["text"]) if page["text"] is not None else "交互正文：未知。")
+            if page["controls"] is None:
+                lines.append("交互控件：未知。")
+            else:
+                for control in cast(list[JsonObject], page["controls"]):
+                    enabled = "可用" if control["enabled"] is True else "不可用" if control["enabled"] is False else "启用状态未知"
+                    lines.append(f"  {control['ref']} [{control['role']}] {control['text']} ({enabled})")
+    else:
+        dialog = cast(JsonObject, value["dialog"])
+        if dialog["supported"] is False:
+            lines.append("对话状态：客户端不支持观察。")
+        elif dialog["open"] is None:
+            lines.append("对话状态：未知。")
+        elif dialog["open"]:
+            lines.append(f"对话 NPC {dialog['npc_id']} (type {dialog['type']})")
             lines += [str(line) for line in cast(list[JsonValue], dialog["lines"])]
-        if dialog["choices"] is None:
-            lines.append("对话选项：未知，当前页面不支持响应。")
-        else:
             lines += [f"  {a['ref']} {a['text']}" for a in cast(list[JsonObject], dialog["choices"])]
-        if dialog["buttons"] is None:
-            lines.append("对话按钮：未知，当前页面不支持响应。")
-        else:
             lines += [f"  {a['ref']} [{a['action']}]" for a in cast(list[JsonObject], dialog["buttons"])]
     for group, label in (("npcs", "NPC"), ("monsters", "怪物"), ("drops", "掉落")):
         if interactive_only and group == "monsters":
             continue
         for a in cast(list[JsonObject], value[group]):
             suffix = " (可见性未知)" if a["visible"] is None else (" (画外)" if a["visible"] is False else "")
-            lines.append(f"  {a['ref']} {label} {a['name']} ({a['x']},{a['y']}){suffix}")
+            target = a["ref"] if a["ref"] is not None else "引用未知"
+            lines.append(f"  {target} {label} {a['name']} ({a['x']},{a['y']}){suffix}")
     return "\n".join(lines)

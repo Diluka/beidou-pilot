@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "HeadlessState.h"
+#include "Interaction.h"
 #include "IO/UI.h"
 #include "Net/Handlers/NpcInteractionHandlers.h"
 #include "Net/Packets/NpcInteractionPackets.h"
@@ -80,6 +81,43 @@ int main() {
     Check(host.dialogue.open && host.dialogue.npc_id == 12101 && host.dialogue.type == 14 && !host.dialogue.text_known
               && !host.dialogue.choices_complete && host.dialogue.text.empty(),
           "unsupported_native_layout_was_parsed_as_an_empty_text_page");
+
+    Interaction ui;
+    const Interaction::Context context{"native-controls", 6, 9};
+    ui.ResetContext(context);
+    int handled = 0;
+    const auto target = ui.RegisterTarget([&](std::string&) {
+        ui.BeginPage({"server", "NPC", std::string("first"), std::vector<InteractionControl>{}});
+        ui.AddControl("button", "Next", MapleControl::Fact::True,
+                      [&, owned = std::string("callback remains alive")](std::string&) {
+                          ui.BeginPage({"server", "NPC", std::string("second"), std::vector<InteractionControl>{}});
+                          handled += owned.empty() ? 0 : 1;
+                          return true;
+                      });
+        return true;
+    });
+    std::string error;
+    Check(ui.Activate(target, context, error) && ui.CurrentPage() && ui.CurrentPage()->text == "first",
+          "native_target_did_not_open_its_client_page");
+    const auto next = ui.CurrentPage()->controls->front().ref;
+    Check(ui.Activate(next, context, error) && handled == 1 && ui.CurrentPage()->text == "second",
+          "control_did_not_finish_when_it_replaced_its_own_page");
+    Check(!ui.Activate(next, context, error) && error == "stale_interaction_reference" && handled == 1,
+          "old_page_reference_activated_a_new_page");
+    for (const auto enabled : {MapleControl::Fact::False, MapleControl::Fact::Unknown}) {
+        ui.AddControl("button", "Unavailable", enabled, [&](std::string&) {
+            ++handled;
+            return true;
+        });
+        const auto reference = ui.CurrentPage()->controls->back().ref;
+        Check(!ui.Activate(reference, context, error) && handled == 1, "disabled_or_unknown_control_was_activated");
+    }
+    ui.BeginPage({"server", "Unsupported", std::nullopt, std::nullopt});
+    Check(!ui.CurrentPage()->text && !ui.CurrentPage()->controls, "unknown_page_content_was_invented");
+    ui.ResetContext({"native-controls", 6, 10});
+    Check(!ui.CurrentPage() && !ui.Activate(target, {"native-controls", 6, 10}, error)
+              && error == "stale_interaction_reference",
+          "old_scene_target_survived_context_change");
 
     ms::TalkToNPCPacket(42).dispatch();
     Check(sent == std::vector<int8_t>({58, 0, 42, 0, 0, 0}), "npc_request_did_not_use_object_id");

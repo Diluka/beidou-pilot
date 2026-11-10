@@ -38,7 +38,7 @@ python3 cli/clientctl.py plan --target /external/target.json
 
 ## 观察、选择能力并核对结果
 
-先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`，参数及输出见 [CLI](CLI.md#启动观察与关闭)。`capabilities` 的 `native_actions` 来自有效在线桥，离线为 `null`；具体领域还需检查响应的支持状态、来源和时效。未知值保持未知；无头任务已合并正常增量，但原始进度串与未核实的任务关联仍不推断，具体支持范围查领域响应与[Lua API](LUA_API.md#按需领域观察)。
+先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`，参数及输出见 [CLI](CLI.md#启动观察与关闭)。`capabilities` 的 `native_actions` 来自有效在线桥，离线为 `null`；具体领域还需检查响应的支持状态、来源和时效。未知值保持未知；无头任务已合并正常增量，但原始进度串和关联语义不推断，具体范围查当前领域响应。
 
 在已确认安全区域，先选择一项有界动作并比较前后观察。下面只适用于已核实右侧可安全短移的场景：
 
@@ -64,7 +64,7 @@ GUI 遇到上述界面时先截图；现有根桌面点击及 `python3 cli/beido
 CLIENT_ROOT=/external/client-cli python3 cli/beidou_pilot/engines/desktop.py scroll down --ticks 1
 ```
 
-滚轮作用于当前鼠标所在控件，须先按当次画面定位，再有界滚动并重新截图确认。该路径不代表 CLI 已自动识别首次流程，也不补齐无头能力。无头普通NPC对话与明确任务ID接交见[CLI使用说明](CLI.md#无头npc与任务)；输入框、复杂奖励和其他能力仍按[两端能力表](ARCHITECTURE.md#两端能力)与当前响应判断。
+滚轮作用于当前鼠标所在控件，须先按当次画面定位，再有界滚动并重新截图确认。该路径不代表 CLI 已自动识别首次流程，也不补齐无头能力。无头新增交互按[当前页面与控件引用](CLI.md#无头控件交互)操作；普通本地任务页面及完整接交仍见 [#48](https://github.com/Diluka/beidou-pilot/issues/48) 与[两端能力表](ARCHITECTURE.md#两端能力)。
 
 ## 停止、下线与交接
 

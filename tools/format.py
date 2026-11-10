@@ -28,6 +28,8 @@ SOURCES = {
         "shared/lua-runtime/*.h",
         "headless/src/SharedLuaAdapter.cpp",
         "headless/src/SharedLuaAdapter.h",
+        "headless/src/Interaction.cpp",
+        "headless/src/Interaction.h",
         "beidou-ijl15/ezorsia/AgentBridge.cpp",
         "beidou-ijl15/ezorsia/AgentBridge.h",
         "beidou-ijl15/ezorsia/NativeKeyInput.h",

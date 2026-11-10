@@ -111,10 +111,10 @@ def parser() -> Parser:
     q.add_argument("id", nargs="?", type=int)
     q = command("talk", "按当前NPC名称、模板ID或引用打开对话")
     q.add_argument("target")
-    q = command("click", "操作当前快照引用，或点击根桌面坐标")
-    q.add_argument("target")
-    q.add_argument("y", nargs="?", type=int)
-    q.add_argument("--double", action="store_true")
+    q = command("click", "激活当前控件引用；GUI另可点击根桌面坐标")
+    q.add_argument("target", help="当前控件引用；GUI也接受既有引用或x坐标")
+    q.add_argument("y", nargs="?", type=int, help="仅GUI坐标点击")
+    q.add_argument("--double", action="store_true", help="仅GUI桌面双击")
     q = command("dialog", "读当前对话、选文字、下一页或确认")
     q.add_argument(
         "action",
@@ -125,12 +125,6 @@ def parser() -> Parser:
     q.add_argument("selector", nargs="?")
     q.add_argument("--accept", action="store_true", help="advance遇Yes/No时明确接受")
     q.add_argument("--seconds", type=float, default=20)
-    q = command("quest", "无头按明确任务ID与当前NPC接取或交付普通任务")
-    q.add_argument("action", choices=["start", "complete"])
-    q.add_argument("id", type=int)
-    q.add_argument("--npc", required=True, help="当前NPC名称、模板ID或快照引用")
-    q.add_argument("--reward-choice", type=int, help="交付时明确的奖励选择序号，不自动选取")
-    q.add_argument("--seconds", type=float, default=3, help="等待本次正常任务状态更新，0.001至30秒")
     q = command("batch", "从JSON文件或stdin执行一组CLI命令，任一步失败立即停止")
     q.add_argument("--file", type=Path)
     q = command("key", "通过Lua按住并释放原版客户端按键")
@@ -304,9 +298,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "snapshot",
         "watch",
         "inspect",
-        "talk",
-        "dialog",
-        "quest",
+        "click",
         "walk",
         "face",
         "jump",
@@ -346,7 +338,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             }:
                 raise
             state = None
-        domains = DOMAINS if backend.name == "beidou" else DOMAINS - {"hotkeys", "ui", "shop"}
+        domains = (
+            DOMAINS - {"interaction"} if backend.name == "beidou" else DOMAINS - {"hotkeys", "dialog", "ui", "shop"}
+        )
         return {
             "connected": state is not None,
             "ready": state["ready"] if state is not None else False,
@@ -530,10 +524,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         return backend.read(engine, *values)
     if cmd == "talk":
         return dialogs.talk(backend, args.target)
-    if cmd == "quest":
-        return dialogs.quest(
-            backend, args.action, args.id, args.npc, reward_choice=args.reward_choice, seconds=args.seconds
-        )
     if cmd == "dialog":
         if args.action == "read":
             return backend.read("dialog")
@@ -541,8 +531,16 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             return dialogs.advance(backend, accept=args.accept, seconds=args.seconds)
         if args.action == "select" and args.selector is None:
             raise ClientError("usage", "dialog select需要文字、索引或当前引用。")
-        return dialogs.act(backend, args.action, args.selector, seconds=args.seconds)
+        return dialogs.act(backend, args.action, args.selector)
     if cmd == "click":
+        if backend.name == "headless":
+            if args.y is not None or args.double:
+                raise ClientError("unsupported_capability", "无头端只激活当前原生控件引用，不提供桌面坐标或双击。")
+            from .control_scripts import _lua_literal, run_source
+
+            report = run_source(backend, "game.activate(" + _lua_literal(args.target) + ")\n", 3)
+            state = cast(JsonObject, report["last_state"])
+            return {**report, "action": "activate", "action_result": state["action_result"]}
         if args.y is not None:
             return backend.desktop(
                 [{"action": "double-click" if args.double else "click", "x": int(args.target), "y": args.y}]
@@ -772,16 +770,11 @@ def concise(result: JsonObject) -> JsonObject:
             "npc_id": dialog["npc_id"],
             "type": dialog["dialog_type"],
             "lines": dialog["lines"],
-            "choices": None
-            if dialog["choices"] is None
-            else [{"id": x["link_id"], "text": x["text"]} for x in cast(list[JsonObject], dialog["choices"])],
-            "buttons": None
-            if dialog["buttons"] is None
-            else [
+            "choices": [{"id": x["link_id"], "text": x["text"]} for x in cast(list[JsonObject], dialog["choices"])],
+            "buttons": [
                 dialogs.BUTTONS.get(cast(int, x["control_id"]), str(x["control_id"]))
                 for x in cast(list[JsonObject], dialog["buttons"])
             ],
-            **{key: dialog[key] for key in ("text_known", "speaker", "response_pending", "closed_by") if key in dialog},
         }
     state = result.get("state")
     if isinstance(state, dict) and "character" in state:

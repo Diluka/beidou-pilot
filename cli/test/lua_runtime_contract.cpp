@@ -144,9 +144,7 @@ class ConfirmationBoundary final : public NativeBoundary {
 public:
     bool Supports(MapleControl::ActionKind kind) const override {
         if (kind == MapleControl::ActionKind::Revive) return reviveSupported;
-        if (kind == MapleControl::ActionKind::Talk || kind == MapleControl::ActionKind::Respond
-            || kind == MapleControl::ActionKind::QuestStart || kind == MapleControl::ActionKind::QuestComplete)
-            return npcSupported;
+        if (kind == MapleControl::ActionKind::Activate) return activateSupported;
         return (kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip)
                || equipmentSupported;
     }
@@ -182,7 +180,7 @@ public:
     bool pending = false;
     bool equipmentSupported = true;
     bool reviveSupported = true;
-    bool npcSupported = true;
+    bool activateSupported = true;
 };
 
 // The native callback re-enters the real scheduler; it does not model NPCs.
@@ -827,70 +825,51 @@ game.revive()
           "unsupported_revive_reached_native_dispatch");
 }
 
-void NpcRequests() {
+void ActivationRequests() {
     ConfirmationBoundary native;
     MapleControl::Runtime runtime(native);
     std::string error;
-    Check(runtime.Start("npc-requests", R"lua(
-local caps = game.capabilities()
-assert(caps.talk and caps.respond and caps.quest_start and caps.quest_complete)
-assert(game.talk(42, 7, 1.25).effect == "confirmed")
-assert(game.respond("native:7:9", "select", 12, 0.5).effect == "confirmed")
-assert(game.quest_start(1040, 42, 7, 0.5).effect == "confirmed")
-local completed = game.quest_complete(1041, 42, 7, nil, 0.5)
-assert(completed.dispatched and completed.effect == "unknown" and completed.reason == "quest_not_confirmed")
+    Check(runtime.Start("activation", R"lua(
+assert(game.capabilities().activate)
+assert(game.talk == nil and game.respond == nil and game.quest_start == nil and game.quest_complete == nil)
+local result = game.activate("opaque-native-control")
+assert(result.dispatched and result.control_released and result.effect == "unknown")
+assert(result.reason == "control_activated")
 )lua",
-                        8000, error),
+                        3000, error),
           error);
     Advance(runtime, native, 2);
-    Check(native.pending && native.requests.size() == 1 && native.requests.back().kind == MapleControl::ActionKind::Talk
-              && native.requests.back().objectId == 42 && native.requests.back().sceneGeneration == 7
-              && native.requests.back().durationMs == 1250,
-          "npc_talk_context_or_deadline_lost");
-    native.Complete("confirmed", "dialogue_opened");
-    Advance(runtime, native, 2);
-    Check(native.pending && native.requests.size() == 2
-              && native.requests.back().kind == MapleControl::ActionKind::Respond
-              && native.requests.back().dialogReference == "native:7:9" && native.requests.back().response == "select"
-              && native.requests.back().selection == 12,
-          "npc_response_did_not_keep_current_page_and_choice");
-    native.Complete("confirmed", "dialogue_page_changed");
-    Advance(runtime, native, 2);
-    Check(native.pending && native.requests.size() == 3
-              && native.requests.back().kind == MapleControl::ActionKind::QuestStart
-              && native.requests.back().questId == 1040 && native.requests.back().objectId == 42
-              && native.requests.back().sceneGeneration == 7,
-          "quest_start_context_lost");
-    native.Complete("confirmed", "quest_started");
-    Advance(runtime, native, 2);
-    Check(native.pending && native.requests.size() == 4
-              && native.requests.back().kind == MapleControl::ActionKind::QuestComplete
-              && native.requests.back().questId == 1041 && !native.requests.back().rewardChoice,
-          "quest_complete_invented_a_reward_choice");
-    native.Complete("unknown", "quest_not_confirmed");
+    Check(native.pending && native.requests.size() == 1
+              && native.requests.back().kind == MapleControl::ActionKind::Activate
+              && native.requests.back().reference == "opaque-native-control",
+          "activation_reference_or_wait_lost");
+    native.Complete("unknown", "control_activated");
     Advance(runtime, native, 3);
-    Check(!runtime.Running() && runtime.CurrentStatus()->error.empty() && native.requests.size() == 4,
-          "unknown_quest_result_was_replayed_or_reported_successful");
-
-    native.npcSupported = false;
-    Check(runtime.Start("unsupported-npc", R"lua(
-local caps = game.capabilities()
-assert(not caps.talk and not caps.respond and not caps.quest_start and not caps.quest_complete)
-game.quest_start(1040,42,7)
+    Check(!runtime.Running() && runtime.CurrentStatus()->error.empty() && native.requests.size() == 1,
+          "activation_was_replayed_or_claimed_a_business_result");
+    Check(runtime.Start("activation-arguments", "game.activate('opaque-native-control', 3)", 3000, error), error);
+    Advance(runtime, native, 2);
+    Check(runtime.CurrentStatus()->error.find("activate accepts only a control reference") != std::string::npos
+              && native.requests.size() == 1,
+          "activation_accepted_protocol_or_budget_arguments");
+    native.activateSupported = false;
+    Check(runtime.Start("unsupported-activation", R"lua(
+assert(not game.capabilities().activate)
+game.activate("opaque-native-control")
 )lua",
                         3000, error),
           error);
     Advance(runtime, native, 3);
     Check(runtime.CurrentStatus()->reason == "script_error"
-              && runtime.CurrentStatus()->error.find("unsupported: quest_start") != std::string::npos
-              && native.requests.size() == 4,
-          "unsupported_npc_action_reached_native_dispatch");
+              && runtime.CurrentStatus()->error.find("unsupported: activate") != std::string::npos
+              && native.requests.size() == 1,
+          "unsupported_activation_reached_native_dispatch");
 }
 
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
-    if (std::string(argv[1]) == "npc-requests") {
-        NpcRequests();
+    if (std::string(argv[1]) == "activation-requests") {
+        ActivationRequests();
         return 0;
     }
     if (std::string(argv[1]) == "revive-requests") {

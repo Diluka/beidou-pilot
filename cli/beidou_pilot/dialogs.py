@@ -1,21 +1,17 @@
-"""按当前原生正文与选项交互；无头动作由共享 Lua 执行。"""
+"""按客户端当前正文、选项与投影坐标完成普通鼠标交互。"""
 
-import math
 import time
-from typing import Literal, cast
+from typing import cast
 
 from .backend import Backend, ClientError, JsonObject
 from .snapshot import BUTTONS, collect
 from .catalog import Catalog
-from .control_scripts import _lua_literal, run_source
 
 
 def choose(values: list[JsonObject], selector: str, field: str = "text") -> JsonObject:
     exact = [v for v in values if str(v.get(field, "")).strip() == selector.strip() or v.get("ref") == selector]
     if not exact and selector.isdecimal():
         exact = [v for v in values if v.get("link_id") == int(selector) or v.get("template_id") == int(selector)]
-    if not exact and selector.startswith("@"):
-        raise ClientError("stale_reference", "引用不属于当前场景或对话页面，请重新snapshot。", {"ref": selector})
     if not exact:
         exact = [v for v in values if selector in str(v.get(field, ""))]
     if len(exact) != 1:
@@ -37,32 +33,16 @@ def click_rect(backend: Backend, rect: JsonObject | None) -> JsonObject:
     return backend.desktop([{"action": "click", "x": x, "y": y}, {"action": "wait", "seconds": 0.4}])
 
 
-def _native_request(backend: Backend, source: str, seconds: float, error_code: str) -> JsonObject:
-    report = run_source(backend, source + "\n", seconds + 2)
-    result = cast(JsonObject, cast(JsonObject, report["last_state"])["action_result"])
-    projected: JsonObject = {**report, "action_result": result}
-    if report["status"] != "completed" or result["effect"] != "confirmed":
-        raise ClientError(error_code, "本次原生交互结果尚未确认，保留实际结果，未自动重试。", projected)
-    projected.update(confirmed=True, changed=result["dispatched"] is True)
-    return projected
-
-
-def act(backend: Backend, action: str, selector: str | None = None, *, seconds: float = 3) -> JsonObject:
+def act(backend: Backend, action: str, selector: str | None = None) -> JsonObject:
     raw = backend.read("dialog")
     if raw["dialog_open"] is not True:
         raise ClientError("no_dialog", "当前没有已识别的NPC对话。")
-    dialog: JsonObject = {"open": raw["dialog_open"], "reference": raw.get("dialog_reference"),
-                          "npc_id": raw["npc_id"], "type": raw["dialog_type"],
-                          "text_known": raw.get("text_known"), "unavailable": raw.get("unavailable"),
-                          "lines": raw["lines"], "choices": raw["choices"],
-                          "buttons": None if raw["buttons"] is None else [
-                              {**a, "action": BUTTONS.get(cast(int, a["control_id"]), str(a["control_id"]))}
-                              for a in cast(list[JsonObject], raw["buttons"])]}
+    dialog: JsonObject = {"open": raw["dialog_open"], "choices": raw["choices"],
+                          "buttons": [{**a, "action": BUTTONS.get(cast(int, a["control_id"]), str(a["control_id"]))}
+                                      for a in cast(list[JsonObject], raw["buttons"])]}
     if selector and selector.startswith("@"):
         snapshot = collect(backend, all_entities=True)
         dialog = cast(JsonObject, snapshot["dialog"])
-    if dialog["lines"] is None or dialog["choices"] is None or dialog["buttons"] is None:
-        raise ClientError("unsupported_capability", "当前对话页的正文或操作布局未知，未发送响应。", {"dialog": dialog})
     if action == "select":
         target = choose(cast(list[JsonObject], dialog["choices"]), cast(str, selector))
     else:
@@ -74,22 +54,11 @@ def act(backend: Backend, action: str, selector: str | None = None, *, seconds: 
             target = next((a for a in candidates if a["action"] == "confirm"), None)
         if target is None:
             raise ClientError("button_not_available", "当前页没有该按钮。", {"action": action, "buttons": candidates})
-    if backend.name == "headless":
-        if not math.isfinite(seconds) or not .001 <= seconds <= 30:
-            raise ClientError("invalid_dialog_options", "对话确认期限须为0.001至30秒。")
-        response = "select" if action == "select" else cast(str, target["action"])
-        selection = target["link_id"] if action == "select" else None
-        source = "game.respond(" + ",".join(_lua_literal(value) for value in
-                  (dialog["reference"], response, selection, seconds)) + ")"
-        report = _native_request(backend, source, seconds, "dialog_not_confirmed")
-        return {**report, "action": action, "target": target, "dialog": backend.read("dialog")}
     click_rect(backend, cast(JsonObject | None, target["root_rect"]))
     return {"action": action, "target": target, "dialog": backend.read("dialog"), "state": backend.read("observe")}
 
 
 def advance(backend: Backend, *, accept: bool = False, seconds: float = 20) -> JsonObject:
-    if backend.name == "headless":
-        raise ClientError("unsupported_capability", "无头端按当前页面显式响应；有界多页编排请使用Lua。")
     deadline = time.monotonic() + seconds
     pages: list[JsonObject] = []
     while time.monotonic() < deadline:
@@ -113,22 +82,12 @@ def advance(backend: Backend, *, accept: bool = False, seconds: float = 20) -> J
 
 def talk(backend: Backend, selector: str) -> JsonObject:
     state = collect(backend, all_entities=True)
-    if state["stage"] != "IN_GAME":
-        raise ClientError("not_ready", "当前角色与场景尚未就绪，未发起NPC交互。", state)
     npc = choose(cast(list[JsonObject], state.get("npcs", [])), selector, "name")
     current = cast(JsonObject, state["dialog"])
     if current["open"]:
-        if backend.name == "headless" and any(current[field] is None for field in ("lines", "choices", "buttons")):
-            raise ClientError("unsupported_capability", "当前NPC页的正文或操作布局未知，未确认可用对话。", {"dialog": current})
-        if current["npc_id"] == npc["template_id"] and (
-                backend.name != "headless" or current["npc_object_id"] == npc["object_id"]):
+        if current["npc_id"] == npc["template_id"]:
             return {"status": "already_open", "dialog": current}
         raise ClientError("dialog_blocks_talk", "请先结束当前NPC对话。", {"dialog": current})
-    if backend.name == "headless":
-        source = "game.talk(" + ",".join(_lua_literal(value) for value in
-                  (npc["object_id"], state["scene_generation"], 3)) + ")"
-        report = _native_request(backend, source, 3, "talk_not_confirmed")
-        return {**report, "status": "opened", "npc": npc, "dialog": backend.read("dialog")}
     existing_shop = backend.read("shop")
     if existing_shop.get("open"):
         if existing_shop.get("npc_id") == npc["template_id"]:
@@ -156,24 +115,3 @@ def talk(backend: Backend, selector: str) -> JsonObject:
             return {"status": "shop_opened", "npc": npc, "shop": shop}
         raise ClientError("talk_not_confirmed", "未确认目标NPC对话，已停止点击。", {"npc": npc, "dialog": d})
     return {"status": "opened", "npc": npc, "dialog": d}
-
-
-def quest(backend: Backend, action: Literal["start", "complete"], quest_id: int, npc_selector: str, *,
-          reward_choice: int | None = None, seconds: float = 3) -> JsonObject:
-    if backend.name != "headless":
-        raise ClientError("unsupported_capability", "明确任务ID的原生接交仅由无头端提供。")
-    if (not 1 <= quest_id <= 32767 or not math.isfinite(seconds) or not .001 <= seconds <= 30
-            or reward_choice is not None and (action == "start" or not 0 <= reward_choice <= 32767)):
-        raise ClientError("invalid_quest_options", "任务ID须为1至32767，期限为0.001至30秒；奖励选择仅用于交付且须为0至32767。")
-    state = collect(backend, all_entities=True)
-    if state["stage"] != "IN_GAME":
-        raise ClientError("not_ready", "当前角色与场景尚未就绪，未请求任务接交。", state)
-    npc = choose(cast(list[JsonObject], state.get("npcs", [])), npc_selector, "name")
-    arguments = [quest_id, npc["object_id"], state["scene_generation"]]
-    if action == "complete":
-        arguments.append(reward_choice)
-    arguments.append(seconds)
-    source = "game.quest_" + action + "(" + ",".join(_lua_literal(value) for value in arguments) + ")"
-    report = _native_request(backend, source, seconds, "quest_not_confirmed")
-    return {**report, "action": action, "quest_id": quest_id, "npc": npc,
-            "quests": backend.read("quests", "--quest-id", str(quest_id))}
