@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "Runtime.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -15,7 +17,7 @@ void Check(bool condition, const std::string& message) {
 }
 
 // The fixture owns sampled state and input consumption, not Lua scheduling.
-class NativeBoundary final : public MapleControl::Adapter {
+class NativeBoundary : public MapleControl::Adapter {
 public:
     struct Input {
         std::string direction;
@@ -87,6 +89,59 @@ public:
     int remaining = 0;
     int releasing = 0;
     MapleControl::ActionResult result;
+};
+
+// The native callback re-enters the real scheduler; it does not model NPCs.
+class ReentrantBoundary final : public NativeBoundary {
+public:
+    bool RawKeys(const std::vector<std::string>& keys, std::uint32_t duration, std::string& error) override {
+        Check(keys == std::vector<std::string>{"space"}, "unexpected_reentrant_key");
+        MapleControl::Action action;
+        action.kind = MapleControl::ActionKind::Jump;
+        action.durationMs = duration;
+        if (!Begin(action, error)) return false;
+        ++rawCallbacks;
+        Callback();
+        return true;
+    }
+
+    void Release() override {
+        NativeBoundary::Release();
+        ++releaseCallbacks;
+        if (acknowledgeRelease)
+            while (ReleasePending()) NativeBoundary::Advance();
+        Callback();
+    }
+
+    bool Logs(const std::string&, const std::vector<std::string>& lines) override {
+        for (const auto& line : lines)
+            if (line.find("observer_tick") != std::string::npos) ++observerLogs;
+        return true;
+    }
+
+    void Callback() {
+        const auto resumes = runtime->CurrentStatus()->resumes;
+        const auto taskCount = runtime->CurrentStatus()->tasks.size();
+        runtime->Tick();
+        const auto* status = runtime->CurrentStatus();
+        Check(status->error.empty(), "native_callback_resumed_active_thread: " + status->error);
+        Check(status->resumes == resumes, "native_callback_advanced_coroutine_twice");
+        MapleControl::TaskChange change;
+        change.requestId = "native-callback-management";
+        change.scriptId = status->id;
+        change.name = "nested";
+        change.source = "error('unexpected_nested_task')";
+        const auto result = runtime->ManageTask(change);
+        Check(result.status == "rejected" && result.reason == "task_management_busy",
+              "native_callback_mutated_running_tasks: " + result.reason);
+        Check(runtime->CurrentStatus()->tasks.size() == taskCount, "native_callback_added_task");
+    }
+
+    MapleControl::Runtime* runtime = nullptr;
+    bool acknowledgeRelease = false;
+    int rawCallbacks = 0;
+    int releaseCallbacks = 0;
+    int observerLogs = 0;
 };
 
 const char* collaboration = R"lua(
@@ -366,10 +421,89 @@ end)
           "replacement_installed_after_session_cancel");
 }
 
+void ReentrantCallbacks() {
+    for (const bool press : {true, false}) {
+        ReentrantBoundary native;
+        MapleControl::Runtime runtime(native);
+        native.runtime = &runtime;
+        std::string error;
+        Check(runtime.Start(press ? "reentrant-press" : "reentrant-release",
+                            press ? "game.press('space',0.08);game.sleep(0.2)" : "game.keys('space',0.08)",
+                            3000, error), error);
+        for (int tick = 0; tick < 60 && runtime.Running(); ++tick) {
+            native.Advance();
+            runtime.Tick();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        const auto* status = runtime.CurrentStatus();
+        Check(!runtime.Running() && status->status == "completed" && status->error.empty(),
+              "reentrant_script_did_not_complete: " + status->error);
+        Check(native.inputs.size() == 1 && native.rawCallbacks == 1, "native_callback_replayed_key");
+        Check(native.Released() && native.releaseCallbacks == (press ? 0 : 1), "native_release_not_confirmed");
+        Check(status->resumes == (press ? 3 : 1), "original_coroutine_advanced_twice");
+        Check(native.inputs.front().interrupted == !press, "press_did_not_release_naturally");
+    }
+}
+
+void ManagementCallbacks() {
+    for (const auto operation : {MapleControl::TaskOperation::Replace, MapleControl::TaskOperation::Stop}) {
+        ReentrantBoundary native;
+        MapleControl::Runtime runtime(native);
+        native.runtime = &runtime;
+        native.acknowledgeRelease = true;
+        std::string error;
+        Check(runtime.Start("management-callback", R"lua(
+game.spawn("observer", 0, function()
+    while true do game.log("observer_tick"); game.sleep(0) end
+end)
+game.spawn("target", 10, function()
+    game.acquire()
+    game.move("right", 10)
+    game.move("right", 0.02)
+end)
+)lua", 3000, error), error);
+        Advance(runtime, native, 3);
+        Check(native.active && native.inputs.size() == 1, "management_target_not_waiting_on_input");
+        const auto observedBefore = native.observerLogs;
+        const auto oldRevision = LatestTask(runtime, "target").revision;
+        MapleControl::TaskChange change;
+        change.requestId = "external-management";
+        change.scriptId = "management-callback";
+        change.name = "target";
+        change.operation = operation;
+        change.expectedRevision = oldRevision;
+        if (operation == MapleControl::TaskOperation::Replace) {
+            change.priority = 10;
+            change.source = "game.acquire(); game.move('left',0.04); game.stop()";
+        }
+        const auto result = runtime.ManageTask(change);
+        Check(result.status == "completed" && result.changed && result.controlReleased,
+              "external_management_did_not_complete: " + result.reason);
+        Advance(runtime, native, 12);
+        Check(runtime.Running() && runtime.CurrentStatus()->error.empty(), "management_callback_cancelled_session");
+        Check(native.observerLogs > observedBefore, "management_callback_stopped_observer");
+        Check(native.inputs.front().interrupted && native.releaseCallbacks == 1 && native.Released(),
+              "management_release_not_confirmed");
+        if (operation == MapleControl::TaskOperation::Replace) {
+            Check(native.inputs.size() == 2 && native.inputs.back().direction == "left"
+                  && !native.inputs.back().interrupted, "replacement_did_not_acquire_and_finish");
+            Check(result.revision != oldRevision && LatestTask(runtime, "target").status == "completed",
+                  "replacement_version_not_completed");
+        }
+        else Check(native.inputs.size() == 1 && LatestTask(runtime, "target").status == "cancelled",
+                   "stopped_task_resumed");
+        runtime.Cancel("contract_cancel");
+        Advance(runtime, native, 3);
+        Check(!runtime.Running() && native.Released(), "management_callback_cleanup_not_confirmed");
+    }
+}
+
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
     if (std::string(argv[1]) == "live-changes") { LiveTaskChanges(); return 0; }
     if (std::string(argv[1]) == "last-replacement") { LastTaskReplacement(); return 0; }
+    if (std::string(argv[1]) == "reentrant-callbacks") { ReentrantCallbacks(); return 0; }
+    if (std::string(argv[1]) == "management-callbacks") { ManagementCallbacks(); return 0; }
     const bool cancel = std::string(argv[1]) == "cancel";
     const bool ordinary = std::string(argv[1]) == "single";
     const bool keys = std::string(argv[1]) == "raw-keys";

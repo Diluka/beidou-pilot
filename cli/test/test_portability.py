@@ -121,7 +121,8 @@ class SourceExportContract(unittest.TestCase):
             self.assertFalse((output / "cli/beidou_pilot/engines/short_combat.py").exists())
             self.assertTrue((output / "shared/lua-runtime/Runtime.cpp").is_file())
             exported_environment = {**environment, "PYTHONPATH": str(output / "cli"), "PYTHONDONTWRITEBYTECODE": "1"}
-            runtime_tests = subprocess.run(["python3", "-m", "unittest", "test.test_lua_runtime", "test.test_task_transport", "-v"],
+            runtime_tests = subprocess.run(["python3", "-m", "unittest", "test.test_lua_runtime", "test.test_task_transport",
+                                            "test.test_gui_key_input", "-v"],
                                            cwd=output, env=exported_environment, text=True, capture_output=True)
             self.assertEqual(0, runtime_tests.returncode, runtime_tests.stderr)
             self.assertTrue((output / "docker/compose.yaml").is_file())

@@ -45,3 +45,9 @@ class LuaRuntimeContract(unittest.TestCase):
 
     def test_last_task_replacement_waits_for_release_and_obeys_session_cancel(self) -> None:
         subprocess.run([str(self.executable), "last-replacement"], check=True, timeout=10)
+
+    def test_native_callbacks_do_not_reenter_coroutines_or_mutate_running_tasks(self) -> None:
+        subprocess.run([str(self.executable), "reentrant-callbacks"], check=True, timeout=10)
+
+    def test_management_release_callbacks_preserve_target_and_session_lifecycles(self) -> None:
+        subprocess.run([str(self.executable), "management-callbacks"], check=True, timeout=10)
