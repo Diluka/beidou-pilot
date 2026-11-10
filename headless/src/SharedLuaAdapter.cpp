@@ -917,6 +917,7 @@ Json SharedLuaAdapter::StateDocument() const {
           {"face", true},
           {"jump", true},
           {"attack", true},
+          {"attack_move", true},
           {"pickup", true},
           {"use_item", true},
           {"equip", true},

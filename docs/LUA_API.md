@@ -132,6 +132,7 @@ end
 | `revive` | boolean | 是否实现正常复活请求与确认；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `raw_keys` | boolean | 是否实现 `keys/press`；当前 headless 为 `false`，原版为 `true` |
 | `skill` | boolean | 是否实现直接技能入口；两端为 `true`，具体技能类型随后端支持范围 |
+| `attack_move` | boolean | 是否支持 `attack` 的方向与技能窗口参数；新两端构建均为 `true`，旧构建缺失时不能假定额外参数有效 |
 | `monster_hp_percent` | boolean | 是否能读取服务端目标HP百分比；headless 为 `true`，原版为 `false` |
 
 能力只表示有实现，不保证当前角色、地图、装备、库存或动作状态允许执行。可选函数在两端均已注册；`if game.skill then ...` 不能用于判断支持，必须读取能力表。没有 `native_skill`、`skills` 等能力别名。

@@ -579,7 +579,7 @@ bool Publish(const MapleControl::State& state) {
         out << ']';
     } else
         out << "null";
-    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"revive\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"monster_hp_percent\":false},\"inventory\":";
+    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"attack_move\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"revive\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"monster_hp_percent\":false},\"inventory\":";
     if (state.inventoryKnown) {
         out << '[';
         bool separator = false;

@@ -14,6 +14,7 @@ import unittest
 import uuid
 
 from beidou_game_ai.protocol import AppServer, JsonObject, JsonValue
+from beidou_game_ai.controller import GAME_TOOLS
 
 
 class CodexSurfaceContract(unittest.IsolatedAsyncioTestCase):
@@ -69,6 +70,14 @@ class CodexSurfaceContract(unittest.IsolatedAsyncioTestCase):
                         "call_id": "call_observe",
                         "name": "exec",
                         "input": 'text("AVAILABLE_TOOLS_38=" + JSON.stringify(ALL_TOOLS.map(tool => tool.name))); text(await tools.game__game_observe({}))',
+                    }
+                elif len(requests) == 4:
+                    output = {
+                        "id": "ct_hunt",
+                        "type": "custom_tool_call",
+                        "call_id": "call_hunt",
+                        "name": "exec",
+                        "input": 'text("RESUMED_TOOLS_86=" + JSON.stringify(ALL_TOOLS.map(tool => tool.name))); text(await tools.game__game_hunt({target:"100100",skill_id:1001004,range:75,seconds:60}))',
                     }
                 elif len(requests) == 2:
                     output = {
@@ -227,15 +236,7 @@ supports_websockets = false
             self.assertEqual([], mcps["data"])
             base_instructions = "GAME_BASE_38：只按游戏事实作决策。"
             developer_instructions = "GAME_ROLE_38：保留养成约束，必要时向开发 AI 询问。"
-            tools: list[JsonObject] = [
-                {
-                    "type": "function",
-                    "name": name,
-                    "description": name,
-                    "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-                }
-                for name in ("game_observe", "game_run_lua", "game_script_status")
-            ]
+            tools = GAME_TOOLS
             thread = cast(
                 JsonObject,
                 await server.call(
@@ -243,7 +244,6 @@ supports_websockets = false
                     {
                         "model": "gpt-6-luna",
                         "cwd": "/game",
-                        "ephemeral": True,
                         "sandbox": "read-only",
                         "approvalPolicy": "never",
                         "baseInstructions": base_instructions,
@@ -306,6 +306,53 @@ supports_websockets = false
                     self.assertNotEqual("transport/closed", method, methods)
             self.assertTrue(observed, methods)
             self.assertTrue(answered, methods)
+            resumed = cast(
+                JsonObject,
+                await server.call(
+                    "thread/resume",
+                    {
+                        "threadId": thread_id,
+                        "model": "gpt-6-luna",
+                        "cwd": "/game",
+                        "baseInstructions": base_instructions,
+                        "developerInstructions": developer_instructions,
+                        "excludeTurns": True,
+                    },
+                ),
+            )
+            self.assertEqual(thread_id, cast(JsonObject, resumed["thread"])["id"])
+            await server.call(
+                "turn/start",
+                {
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text": "验证续接后的既有狩猎工具，仅使用本地假结果，不操作游戏。"}],
+                },
+            )
+            hunted = False
+            async with asyncio.timeout(25):
+                while True:
+                    event = await server.events.get()
+                    method = cast(str, event["method"])
+                    if method == "item/tool/call":
+                        params = cast(JsonObject, event["params"])
+                        self.assertEqual(("game", "game_hunt"), (params.get("namespace"), params["tool"]))
+                        self.assertEqual(
+                            {"target": "100100", "skill_id": 1001004, "range": 75, "seconds": 60}, params["arguments"]
+                        )
+                        await server.respond(
+                            cast(int | str, event["id"]),
+                            {
+                                "success": True,
+                                "contentItems": [{"type": "inputText", "text": "HUNT_CONTRACT_86:starting"}],
+                            },
+                        )
+                        hunted = True
+                    if method == "turn/completed":
+                        turn = cast(JsonObject, cast(JsonObject, event["params"])["turn"])
+                        self.assertEqual("completed", turn["status"], turn.get("error"))
+                        break
+                    self.assertNotEqual("transport/closed", method)
+            self.assertTrue(hunted)
             self.assertGreaterEqual(len(requests), 3)
             self.assertTrue(
                 any("OBSERVE_CONTRACT_38" in json.dumps(request, ensure_ascii=False) for request in requests[1:])
@@ -333,8 +380,16 @@ supports_websockets = false
             self.assertIsNotNone(registry, "exec 未返回实际可调用工具清单。")
             available_tools = cast(list[str], json.loads(cast(re.Match[str], registry).group(1)))
             self.assertEqual(
-                {"game__game_observe", "game__game_run_lua", "game__game_script_status"}, set(available_tools)
+                {"game__game_observe", "game__game_run_lua", "game__game_script_status", "game__game_hunt"},
+                set(available_tools),
             )
+            resumed_registry = next(
+                re.search(r"RESUMED_TOOLS_86=(\[[^\n]*\])", output)
+                for output in tool_outputs
+                if "RESUMED_TOOLS_86=" in output
+            )
+            self.assertIsNotNone(resumed_registry)
+            self.assertEqual(set(available_tools), set(json.loads(cast(re.Match[str], resumed_registry).group(1))))
             first = requests[0]
             prompt = json.dumps(first.get("input"), ensure_ascii=False) + str(first.get("instructions", ""))
             self.assertTrue(base_instructions in prompt, "自定义游戏基础指令未进入请求。")
@@ -401,6 +456,7 @@ supports_websockets = false
                         "question_answer_round_trip": answered,
                         "runtime_available_tools": available_tools,
                         "game_observe_dispatch": observed,
+                        "resumed_game_hunt_dispatch": hunted,
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -409,7 +465,9 @@ supports_websockets = false
             )
             actual_functions = {name.removeprefix("game__") for name in callable_names}
             self.assertTrue(
-                {"request_user_input", "game_observe", "game_run_lua", "game_script_status"}.issubset(actual_functions),
+                {"request_user_input", "game_observe", "game_run_lua", "game_script_status", "game_hunt"}.issubset(
+                    actual_functions
+                ),
                 actual_functions,
             )
             self.assertTrue(
@@ -422,6 +480,7 @@ supports_websockets = false
                         "game_observe",
                         "game_run_lua",
                         "game_script_status",
+                        "game_hunt",
                     }
                 ),
                 actual_functions,

@@ -860,7 +860,7 @@ void CombatRequestsAndFacts() {
     MapleControl::Runtime runtime(native);
     std::string error;
     Check(runtime.Start("combat-contract", R"lua(
-assert(game.capabilities().skill and game.capabilities().monster_hp_percent)
+assert(game.capabilities().skill and game.capabilities().monster_hp_percent and game.capabilities().attack_move)
 local old = game.state().monsters[1]
 assert(old.object_id == 17 and old.hp_percent == nil and old.hp_sequence == nil and old.hp_source == nil)
 local skill = game.skill(1001004)

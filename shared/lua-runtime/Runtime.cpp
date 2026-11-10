@@ -490,6 +490,7 @@ struct Runtime::Impl {
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
+        Boolean(lua, "attack_move", adapter.Supports(ActionKind::Attack));
         Boolean(lua, "monster_hp_percent", adapter.SupportsMonsterHpPercent());
         return 1;
     }

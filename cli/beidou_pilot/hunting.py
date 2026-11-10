@@ -73,9 +73,11 @@ def hunt(
         raise ClientError("not_ready", "当前场景的角色、地图和位置尚未就绪，未开始狩猎。")
     if character["hp"] <= 0:
         raise ClientError("dead", "角色已死亡，请先恢复角色。")
+    capabilities = initial.get("capabilities")
+    if capabilities is None or capabilities.get("attack_move") is not True:
+        raise ClientError("unsupported_capability", "当前原生客户端未声明移动攻击同窗能力，请更新对应构建。")
     if skill_id is not None:
-        capabilities = initial.get("capabilities")
-        if capabilities is None or capabilities.get("skill") is not True:
+        if capabilities.get("skill") is not True:
             raise ClientError("unsupported_capability", "当前原生客户端未声明支持技能调用，未开始狩猎。")
     milestone = advancement(cast(JsonObject, character))
     if milestone is not None:

@@ -26,7 +26,7 @@ class HuntingEntryContract(unittest.TestCase):
         self.files.state["monsters"] = [
             {"object_id": 50, "template_id": 100100, "name": "蜗牛", "x": 100, "y": 20, "active": True}
         ]
-        self.files.state["capabilities"] = {"skill": True}
+        self.files.state["capabilities"] = {"skill": True, "attack_move": True}
         self.terrain = {
             "map_id": 100,
             "source": "local-client-map-data",
@@ -122,12 +122,17 @@ class HuntingEntryContract(unittest.TestCase):
                     run.assert_not_called()
 
     def test_unsupported_skill_and_due_advancement_never_start_hunting(self) -> None:
-        for arguments, code in (
-            (["--backend", "headless", "hunt", "--skill", "1001004"], "unsupported_capability"),
-            (["hunt"], "advancement_due"),
+        for arguments, capability, code in (
+            (
+                ["--backend", "headless", "hunt", "--skill", "1001004"],
+                {"skill": False, "attack_move": True},
+                "unsupported_capability",
+            ),
+            (["hunt"], {"skill": False, "attack_move": True}, "advancement_due"),
+            (["hunt"], {"skill": True}, "unsupported_capability"),
         ):
             with self.subTest(arguments=arguments):
-                self.files.state["capabilities"] = {"skill": False}
+                self.files.state["capabilities"] = capability
                 self.files.state["character"]["level"] = 30
                 output = io.StringIO()
                 with (

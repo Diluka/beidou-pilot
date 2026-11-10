@@ -1,6 +1,7 @@
 """一个游戏会话的 Codex 消费者；动作与释放仍由现有客户端 CLI 拥有。"""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -9,7 +10,7 @@ from pathlib import Path
 import time
 from typing import cast
 
-from .client import GameClient, GameClientError
+from .client import GameClient, GameClientError, HuntRequest
 from .protocol import AppServer, AppServerError, JsonObject, JsonValue
 
 
@@ -21,6 +22,11 @@ GAME_INSTRUCTIONS = """持续动作、战斗和等待交给 Lua，不做逐帧�
 game_run_lua 只提交有界执行，返回 starting 不证明原生受理。执行结束会自动收到结果；需要等待时结束本轮回复即可。
 暂停后不再提交动作；恢复时根据最新观察重规划，不重放旧动作。遵守既有养成方案，不试验性分配永久点数或消耗稀缺资源。
 """
+HUNT_INSTRUCTIONS = """\ngame_hunt 直接在当前场景内自主找怪、换层和连续攻击，target省略或all表示全部怪物，skill_id省略表示普攻；脚本和地形由客户端装载，无需生成狩猎源码。
+需要连续狩猎时选择continuous=true；限时则指定seconds，二者不同时提供。它返回starting后可结束本轮等待，执行会持续到期限、取消、场景变化或安全停止；用观察工具核对进展，不能同时提交另一动作。暂停/停止沿用所属执行的取消与放键确认。
+"""
+CONTROL_TOOLS = frozenset({"game_run_lua", "game_hunt"})
+TOOL_SURFACE = "hunt-v1"
 GAME_TOOLS: list[JsonObject] = [
     {
         "type": "function",
@@ -48,9 +54,35 @@ GAME_TOOLS: list[JsonObject] = [
             "additionalProperties": False,
         },
     },
+    {
+        "type": "function",
+        "name": "game_hunt",
+        "description": "在所属实例当前场景内自主找怪、换层并连续狩猎；立即返回starting，结束后自动收到结果。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "怪物名称、模板ID字符串或all，默认all"},
+                "skill_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647,
+                    "description": "本后端支持且角色已学的技能ID；省略时普攻",
+                },
+                "range": {"type": "number", "minimum": 1, "maximum": 1000, "default": 60},
+                "seconds": {
+                    "type": "number",
+                    "minimum": 0.05,
+                    "maximum": 600,
+                    "description": "限时预算，默认60秒；与continuous=true互斥",
+                },
+                "continuous": {"type": "boolean", "description": "true为持续到取消或安全停止，不同时提供seconds"},
+            },
+            "additionalProperties": False,
+        },
+    },
 ]
 TOOLS: list[JsonObject] = [
-    {"type": "namespace", "name": "game", "description": "所属实例的游戏观察与有界Lua操作。", "tools": GAME_TOOLS}
+    {"type": "namespace", "name": "game", "description": "所属实例的游戏观察、Lua与连续狩猎。", "tools": GAME_TOOLS}
 ]
 
 
@@ -91,6 +123,7 @@ class Controller:
         self._tools = 0
         self._usage_updates = 0
         self._decision_reported = False
+        self.tool_surface = TOOL_SURFACE
 
     def emit(self, event: str, data: JsonObject) -> None:
         record = {"at": datetime.now(timezone.utc).isoformat(), "event": event, **data}
@@ -114,6 +147,7 @@ class Controller:
             "token_usage_updates": self._usage_updates,
             "backend_api_requests": None,
             "cost": None,
+            "tool_surface": self.tool_surface,
         }
 
     async def initialize(self) -> None:
@@ -188,8 +222,17 @@ class Controller:
             ),
             cast(str, selected["defaultReasoningEffort"]),
         )
+        checkpoint = self.state / "checkpoint.json"
+        saved: JsonObject | None = None
+        if checkpoint.is_file():
+            saved = cast(JsonObject, json.loads(checkpoint.read_text(encoding="utf-8")))
+            if saved["binding"] != self.binding:
+                raise AppServerError("binding_mismatch", "保存的游戏会话属于另一组客户端选择，未续接。")
+            self.tool_surface = cast(str, saved.get("tool_surface", "lua-v1"))
+        game_tools = [tool for tool in GAME_TOOLS if self.tool_surface == TOOL_SURFACE or tool["name"] != "game_hunt"]
         developer_text = (
             GAME_INSTRUCTIONS
+            + (HUNT_INSTRUCTIONS if self.tool_surface == TOOL_SURFACE and not self.read_only else "")
             + ("\n本会话只读观察和交流，不提交Lua或接管角色。" if self.read_only else "")
             + "\n角色与养成约束：\n"
             + self.role
@@ -199,7 +242,7 @@ class Controller:
                 "type": "namespace",
                 "name": "game",
                 "description": "所属实例的游戏能力。",
-                "tools": [tool for tool in GAME_TOOLS if not self.read_only or tool["name"] != "game_run_lua"],
+                "tools": [tool for tool in game_tools if not self.read_only or tool["name"] not in CONTROL_TOOLS],
             }
         ]
         params: JsonObject = {
@@ -210,11 +253,7 @@ class Controller:
             "baseInstructions": BASE_INSTRUCTIONS,
             "developerInstructions": developer_text,
         }
-        checkpoint = self.state / "checkpoint.json"
-        if checkpoint.is_file():
-            saved = cast(JsonObject, json.loads(checkpoint.read_text(encoding="utf-8")))
-            if saved["binding"] != self.binding:
-                raise AppServerError("binding_mismatch", "保存的游戏会话属于另一组客户端选择，未续接。")
+        if saved is not None:
             params["threadId"] = saved["thread_id"]
             params["excludeTurns"] = True
             thread = cast(JsonObject, await self.server.call("thread/resume", params))
@@ -247,18 +286,34 @@ class Controller:
                 "declared_dynamic_tool_schema_bytes": len(json.dumps(tool_specs, ensure_ascii=False).encode()),
                 "component_tokens": None,
                 "declared_game_capabilities": [
-                    tool["name"] for tool in GAME_TOOLS if not self.read_only or tool["name"] != "game_run_lua"
+                    tool["name"] for tool in game_tools if not self.read_only or tool["name"] not in CONTROL_TOOLS
                 ],
                 "collaboration": "Codex同步/异步询问，经专用开发AI通道回答",
                 "cost": None,
             },
         )
+        if self.tool_surface != TOOL_SURFACE:
+            self.emit(
+                "legacy_tool_surface",
+                {
+                    "tool_surface": self.tool_surface,
+                    "reason": "固定Codex 0.167.0不支持为已有thread更新动态工具；沿用原工具及历史。",
+                    "game_hunt_available": False,
+                    "new_independent_state_required_for_hunt": True,
+                },
+            )
         self.mode = "ready"
 
     def _checkpoint(self) -> None:
         (self.state / "checkpoint.json").write_text(
             json.dumps(
-                {"thread_id": self.thread_id, "binding": self.binding, "model": self.model, "task": self.task},
+                {
+                    "thread_id": self.thread_id,
+                    "binding": self.binding,
+                    "model": self.model,
+                    "task": self.task,
+                    "tool_surface": self.tool_surface,
+                },
                 ensure_ascii=False,
                 indent=2,
             )
@@ -304,14 +359,14 @@ class Controller:
                     self.mode = "running"
                 self.emit("turn_requested", {"turn_id": self.turn_id})
 
-    async def _lua(self, code: str, seconds: float) -> None:
+    async def _execute(self, operation: Callable[[], Awaitable[JsonObject]]) -> None:
         started = time.monotonic()
         if self.mode not in {"ready", "running"}:
             self.last_script = {"ok": True, "data": {"status": "cancelled", "reason": "cancel_requested"}}
             self.emit("lua_finished", {"elapsed_seconds": 0, "result": self.last_script})
             return
         try:
-            result = await self.game.run_lua(code, seconds)
+            result = await operation()
             self.last_script = {"ok": True, "data": result}
         except GameClientError as error:
             self.last_script = {
@@ -342,7 +397,7 @@ class Controller:
             if not isinstance(params["arguments"], dict):
                 raise GameClientError("invalid_tool_arguments", "游戏工具参数必须是 JSON 对象。")
             args = cast(JsonObject, params["arguments"])
-            if tool != "game_run_lua" and args:
+            if tool not in CONTROL_TOOLS and args:
                 raise GameClientError("invalid_tool_arguments", "观察工具不接收参数或实例选择。")
             if self.mode not in {"ready", "running"}:
                 raise GameClientError("game_paused", "当前执行已暂停或停止，未派发游戏工具。")
@@ -363,8 +418,53 @@ class Controller:
                     raise GameClientError("invalid_tool_arguments", "Lua 工具需要源码与0至30秒的有界时间。")
                 if self.execution is not None and not self.execution.done():
                     raise GameClientError("input_busy", "本 harness 已有活动 Lua，先观察或等待结束。")
-                self.execution = asyncio.create_task(self._lua(cast(str, args["code"]), cast(float, args["seconds"])))
+                self.execution = asyncio.create_task(
+                    self._execute(lambda: self.game.run_lua(cast(str, args["code"]), cast(float, args["seconds"])))
+                )
                 result = {"status": "starting", "seconds": args["seconds"], "effect": "unknown"}
+            elif tool == "game_hunt" and self.tool_surface == TOOL_SURFACE:
+                if self.read_only:
+                    raise GameClientError("read_only", "本游戏 AI 会话仅观察，未提交狩猎。")
+                target, skill_id = args.get("target", "all"), args.get("skill_id")
+                attack_range = args.get("range", 60)
+                seconds, continuous = args.get("seconds", 60), args.get("continuous", False)
+                if (
+                    set(args) - {"target", "skill_id", "range", "seconds", "continuous"}
+                    or not isinstance(target, str)
+                    or not target.strip()
+                    or "\x00" in target
+                    or skill_id is not None
+                    and (type(skill_id) is not int or not 1 <= skill_id <= 2147483647)
+                    or type(attack_range) not in (float, int)
+                    or not math.isfinite(attack_range)
+                    or not 1 <= attack_range <= 1000
+                    or type(continuous) is not bool
+                    or continuous
+                    and "seconds" in args
+                    or type(seconds) not in (float, int)
+                    or not math.isfinite(seconds)
+                    or not 0.05 <= seconds <= 600
+                ):
+                    raise GameClientError(
+                        "invalid_tool_arguments", "狩猎需要目标、合法技能/距离，以及0.05至600秒预算或显式持续模式。"
+                    )
+                if self.execution is not None and not self.execution.done():
+                    raise GameClientError("input_busy", "本 harness 已有活动 Lua，先观察或等待结束。")
+                hunt: HuntRequest = {
+                    "target": target,
+                    "skill_id": skill_id,
+                    "attack_range": attack_range,
+                    "seconds": None if continuous else seconds,
+                }
+                self.execution = asyncio.create_task(self._execute(lambda: self.game.hunt(hunt)))
+                result = {
+                    "status": "starting",
+                    "action": "hunt",
+                    "target": target,
+                    "continuous": continuous,
+                    "seconds": hunt["seconds"],
+                    "effect": "unknown",
+                }
             else:
                 raise GameClientError("unknown_game_tool", "未注册这个游戏工具。")
             output: JsonObject = {"ok": True, "data": result}
