@@ -21,6 +21,7 @@ class NativeItemUseContract(unittest.TestCase):
         subprocess.run([
             "g++", "-std=c++20", "-O0", f"-I{lua}", f"-I{root / 'shared/lua-runtime'}",
             f"-I{root / 'beidou-ijl15/ezorsia'}", str(root / "shared/lua-runtime/Runtime.cpp"),
+            str(root / "shared/lua-runtime/Observation.cpp"),
             str(root / "cli/test/native_item_use_contract.cpp"), *map(str, sorted(build.glob("*.o"))),
             "-lm", "-ldl", "-o", str(cls.executable),
         ], check=True)

@@ -65,6 +65,8 @@ Lua 期限控制整个脚本会话，容器没有进程自退期限。脚本结�
 
 CLI 通过原生观察 API 消费 `stage/scene/inventory/character/quests/hotkeys/dialog/ui/shop`。前五域两端共用，后四域为原版 UI 扩展。原版在游戏线程读取 V17 对象，DLL 内部仍依赖版本布局；无头端读取自己的游戏对象，外部 Python 不读取游戏进程内存。
 
+活动 Lua 通过 `game.observe(domain)` 按需调用相同原生采集函数，共享值类型和 Lua 投影由 `shared/lua-runtime/` 维护，不经文件传输、JSON 文本往返或 Python 反馈。查询不需要动作控制权；响应附带当前实例、角色、地图、场景代次及采样时间。轻量 `game.state()` 保持独立，不在每帧采集所有领域；调用者在等待或动作后重新读取。无头任务仍是登录快照，GUI 桌面几何增强不属于原生 Lua 数据，完整字段与未知语义见 [Lua API](LUA_API.md#按需领域观察)。
+
 只读 `observation-request.txt/observation.json` 与动作/Lua的 `command.txt/state.json` 使用独立通道。响应核对请求ID、原生 `instance_id/run_id`、序号和采样年龄；实例名只选择工具会话，不能代替进程身份。请求派发不覆盖活动 Lua。
 
 原版 checksum 保留真实校验结果；无头没有执行的校验为 `null`，另用 `native_values_valid` 表达值是否可用。无头对话/可见性及未实现领域保持明确未知或不支持。

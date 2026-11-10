@@ -23,6 +23,7 @@ public:
 
     const char* Backend() const override;
     const MapleControl::State& Observe() const override;
+    MapleControl::Observation ObserveDomain(const std::string& domain) const override;
     bool Supports(MapleControl::ActionKind kind) const override;
     bool Begin(const MapleControl::Action& action, std::string& error) override;
     MapleControl::ActionResult Result() const override;

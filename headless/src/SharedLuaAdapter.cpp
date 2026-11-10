@@ -24,6 +24,27 @@ namespace {
 using Json = nlohmann::json;
 using Fact = MapleControl::Fact;
 
+MapleControl::Value ObservationValue(const Json& value) {
+    using Value = MapleControl::Value;
+    if (value.is_object()) {
+        auto result = Value::Object();
+        for (const auto& entry : value.items())
+            result[entry.key()] = ObservationValue(entry.value());
+        return result;
+    }
+    if (value.is_array()) {
+        auto result = Value::Array();
+        for (const auto& entry : value) result.Add(ObservationValue(entry));
+        return result;
+    }
+    if (value.is_null()) return {};
+    if (value.is_boolean()) return value.get<bool>();
+    if (value.is_string()) return value.get<std::string>();
+    if (value.is_number_unsigned()) return value.get<std::uint64_t>();
+    if (value.is_number_integer()) return value.get<std::int64_t>();
+    return value.get<double>();
+}
+
 std::uint64_t MonotonicMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -66,6 +87,11 @@ SharedLuaAdapter::SharedLuaAdapter(std::filesystem::path bridgeDirectory, std::s
 
 const char* SharedLuaAdapter::Backend() const { return "headless"; }
 const MapleControl::State& SharedLuaAdapter::Observe() const { return state; }
+MapleControl::Observation SharedLuaAdapter::ObserveDomain(const std::string& domain) const {
+    MapleControl::Observation observation;
+    observation.data = ObservationValue(ObservationData(domain, observation.status, observation.error));
+    return observation;
+}
 bool SharedLuaAdapter::Supports(MapleControl::ActionKind) const { return true; }
 MapleControl::ActionResult SharedLuaAdapter::Result() const { return result; }
 bool SharedLuaAdapter::Released() const { return !active && !releasePending; }

@@ -18,7 +18,7 @@
 - 文件与 `--code` 必须二选一。直接源码须按调用方 shell 的引号规则传为一个参数，CLI 保留传入的引号、中文和换行；文件每次读取当前内容。两者使用相同 `game` API 与执行链，可在现有实例中提交，无需重启或重新构建。直接源码结果的 `script_file` 为 `null`。
 - 每次脚本启动创建独立 Lua 状态，主任务名为 `main`。多个任务共享这次 Lua 状态；主任务返回后，已创建任务继续执行，全部任务结束且输入释放确认后脚本才结束。超时、脚本错误或外部取消会停止本次会话全部任务。脚本结束不会关闭客户端容器。
 - 自定义脚本没有自动提供的 `options` 全局变量。可以自行声明 `local options = {...}`；项目的复合能力由 CLI 装载器在脚本前注入 `local options`，不能把这些文件当作无参数用户脚本直接运行。
-- `game.state()` 返回一次采样的 Lua 表拷贝；后续状态变化不会修改旧表。执行动作或等待后重新读取。连续读取可能得到同一 `seq`。
+- `game.state()` 返回轻量状态采样，`game.observe(domain)` 按需读取一个原生领域。两者都返回独立 Lua 表拷贝；后续状态变化不会修改旧表。执行动作或等待后重新读取，连续读取可能得到同一 `seq`。
 - 未知字段为 `nil`，在 Lua 表中等同于缺键。已知的 `false`、`0`、空表 `{}` 与未知不同；例如 `inventory == nil` 不能按没有物品处理。
 - 所有 `seconds` 参数使用秒。可选参数省略或传 `nil` 时采用默认值；有效时间向上取整为毫秒，实际恢复受游戏更新、释放确认和调度影响，不保证精确墙钟时长。
 
@@ -27,6 +27,7 @@
 | 函数 | 参数与默认值 | 是否让出执行权 | 返回值 |
 | --- | --- | --- | --- |
 | `game.state()` | 无 | 否 | [状态表](#状态表) |
+| `game.observe(domain)` | 必填领域名，见[按需领域观察](#按需领域观察) | 否 | 领域状态、采样身份与原生数据 |
 | `game.capabilities()` | 无 | 否 | [能力表](#能力表) |
 | `game.time()` | 无 | 否 | 单调时间，单位秒 |
 | `game.sleep(seconds)` | 默认 `0`，有限数且 `0 <= seconds <= 30` | 是，包括 `sleep(0)` | 无 |
@@ -50,7 +51,7 @@
 
 ## 任务与控制权
 
-`spawn` 创建由共享运行时调度的独立 Lua 任务。一个任务等待动作、控制权或 `sleep` 时，其他任务仍可调用 `state/time/log/tasks`，观察和判断。任务共享 Lua 全局变量与闭包，不开放用户自行创建协程的入口。
+`spawn` 创建由共享运行时调度的独立 Lua 任务。一个任务等待动作、控制权或 `sleep` 时，其他任务仍可调用 `state/observe/time/log/tasks`，观察和判断。任务共享 Lua 全局变量与闭包，不开放用户自行创建协程的入口。
 
 普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
 
@@ -131,7 +132,7 @@ end
 
 ## 状态表
 
-以下五个字段总是存在：
+以下六个字段总是存在：
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
@@ -140,6 +141,7 @@ end
 | `observed_at_ms` | integer | 采样的 Unix 时间戳，毫秒 |
 | `scene_generation` | integer | 原生场景代次；同地图重新进入也可能变化 |
 | `ready` | boolean | 地图、角色、位置等基础对象已就绪；不表示角色存活、动作允许或全部领域已知 |
+| `in_game` | boolean | 原生仍在游戏中；`false` 表示宿主已确认离开游戏，不等同于短暂的 `ready=false` |
 
 其余字段在对应信息已知时提供，否则为 `nil`：
 
@@ -156,7 +158,7 @@ end
 
 `settled` 在 headless 中依据不处于攻击、不移动，且在地面/攀爬/水下计算；原版目前保持未知。它不是服务器 ACK。字段已知程度可以因后端或过渡状态不同而不同。
 
-Lua 状态不含 `in_game/inGame`、`backend`、频道、任务、NPC、金币总额、技能表、已装备列表，也不含主机桥 JSON 的 `command/script/held_keys/last_skill/action_result`。不要把 CLI 的快照或 `state.json` 字段直接当作 `game.state()` 字段；后端名用能力表读取。
+轻量状态不含 `inGame`、`backend`、频道、任务、NPC、金币总额、技能表、已装备列表，也不含主机桥 JSON 的 `command/script/held_keys/last_skill/action_result`。需要领域数据时调用 `game.observe(domain)`；不要把 CLI 的快照或 `state.json` 字段直接当作 `game.state()` 字段。
 
 ### character
 
@@ -190,6 +192,64 @@ Lua 状态不含 `in_game/inGame`、`backend`、频道、任务、NPC、金币�
 总有 `object_id: integer`、`x/y: number`；已知时有 `item_id: integer`、`money: integer`、`landed: boolean`。
 
 原版可能提供金币金额；headless 当前没有金额数据，`money` 保持未知。`item_id == nil` 不能单独证明是金币，`landed == nil` 不能按已落地处理。掉落 OID 与物品模板 ID 也不可混用。
+
+## 按需领域观察
+
+`game.observe(domain)` 在当前原生更新线程同步读取指定领域，不需要动作控制权，也不触碰主机桥文件或经过 Python 反馈。只有调用时才采集该领域；`game.state()` 的每帧轻量采样不因此增加全量任务、技能或 UI 遍历。按业务决策需要查询，长循环仍通过 `sleep` 或动作函数让出执行权。
+
+`domain` 精确接受下列九个名称。未知名称或缺少参数会产生 Lua 参数错误；合法但后端未实现的领域返回 `status="unsupported"`。
+
+| 领域 | 两端支持与主要原生字段 |
+| --- | --- |
+| `stage` | 两端；阶段、频道与角色摘要，具体已知范围随后端和当前阶段变化 |
+| `scene` | 两端；`map_id`、`player`、`player_facing`、`monsters`、`npcs`、`drops`。NPC 提供 `object_id/template_id/name/x/y`；保留本端已知字段及限制 |
+| `inventory` | 两端；`items` 为已占用正槽，`equipped` 为身上负槽，元素含 `inventory_type/slot/item_id/quantity`；`capacities` 以字符串背包类型为键 |
+| `character` | 两端；`character_id`、`mesos`、`skills`、`skills_complete` 及本端校验说明。`skills` 以字符串技能 ID 为键，记录含 `level/master_level`；没有覆盖的名称、需求和效果仍未知 |
+| `quests` | 两端；`quests` 元素含 `quest_id/state/progress`，状态为 `started/completed`，进度保留原始文本。无头另有 `linked_progress`、快照来源和非实时声明 |
+| `hotkeys` | GUI；原生快捷键与快捷栏映射、已知布局和限制；无头不支持 |
+| `dialog` | GUI；`dialog_open`、`npc_id`、`dialog_type`、`lines`、`choices`、`buttons` 及来源窗口说明；无头不支持 |
+| `ui` | GUI；`windows`、`dialog` 与原生游戏区布局；无头不支持 |
+| `shop` | GUI；`open`、`npc_id`、`buy_items/sell_items`、选择/滚动位置、`busy` 和数量窗口状态；无头不支持 |
+
+每次返回的外层结构为：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `domain`、`backend` | string | 本次领域及后端 |
+| `status` | string | `ok` 表示已完成领域读取；`unsupported` 表示该端未实现；`unavailable` 表示本次无法读取 |
+| `source`、`readonly` | string、boolean | 固定为 `client-native-api`、`true` |
+| `instance_id`、`seq`、`scene_generation`、`observed_at_ms` | string、integer | 与当前轻量采样相同的原生身份、序号、场景代次和 Unix 毫秒时间 |
+| `ready`、`in_game` | boolean | 当前基础对象就绪及仍在游戏的事实 |
+| `character_id`、`map_id` | integer 或 nil | 本次当前已知角色与地图，不取自历史查询 |
+| `data` | table 或 nil | 原生领域对象；读取失败或不支持时为 nil |
+| `error` | string 或 nil | 本次失败原因；成功时通常为 nil |
+
+`status="ok"` 不保证所有字段完整。继续按需要检查 `unavailable`、`not_covered`、checksum、`skills_complete` 等原生说明；空集合只代表相应已知范围内没有记录。原生 JSON 的 `null` 投影为 Lua `nil`，数组使用从1开始的索引，对象键保留原文。领域内 ID、数量与坐标以 Lua 数值提供；技能和背包容量对象的键仍是字符串，例如 `data.skills["2000001"]`、`data.capacities["2"]`。
+
+`data` 保留原生字段，与同一实例 CLI 领域查询在可比采样下含义一致。CLI 对来源的重命名、派生校验汇总与桌面坐标投影属于外部投影：Lua 中领域原生 `data.source` 对应 CLI 保留的 `data_source`；GUI 的 `root_rect/game_geometry` 保持 `nil`，已有 `game_rect` 等游戏区坐标照常提供。`dialog_open=nil` 表示未知，不能按关闭处理；商店未知单价也不能按零使用。
+
+GUI 的 `data.read_seconds` 是本次原生领域采集耗时；CLI 的同名结果还包含外部请求与读取时间，两者不能直接作为同一段耗时比较。
+
+无头任务的 `data.source="character_data_snapshot"`、`data.live_updates=false` 明确表示角色完整包快照。`observed_at_ms` 只标记本次读取所依附的采样时间，不是任务来源最后更新时间；来源更新时间未提供。重登后读到新快照不等于同会话实时任务更新。GUI 任务读取当前原生记录，同样不解释未覆盖的任务进度语义。
+
+非 `stage` 领域在 `ready=false` 时返回 `unavailable`、`error="native_client_not_in_game"` 和 `data=nil`，不使用旧领域缓存。换图后重新查询并核对 `instance_id/character_id/map_id/scene_generation`；旧表仍是历史拷贝，旧 NPC OID、UI 对象和任务规划不能自动用于新场景。角色变化、离开游戏与整会话取消仍遵循既有停止规则。
+
+只读示例见 [read-domains.lua](../shared/scripts/examples/read-domains.lua)：
+
+```lua
+local current = game.observe("character")
+if current.status ~= "ok" then
+    game.log(current.status .. ": " .. tostring(current.error))
+    return
+end
+if current.data.mesos ~= nil then
+    game.log("当前金币：" .. tostring(current.data.mesos))
+end
+local quests = game.observe("quests")
+if quests.status == "ok" and quests.data.live_updates == false then
+    game.log("任务为登录快照，不能据此判断当前任务进度变化")
+end
+```
 
 ## 动作结果
 
@@ -290,6 +350,7 @@ API 参数无效、后端能力缺失、原生状态或输入路线不可用时�
 | --- | --- |
 | 参数错误 | 方向、时长、整数ID、键表或键名不合法；修正调用，不盲重放 |
 | 能力不支持 | `unsupported: raw_keys/skill/...`；执行前检查能力，不用“函数存在”判断 |
+| 合法领域当前无法读取 | `game.observe` 返回 `status="unsupported"` 或 `"unavailable"`，检查 `error`；这类结果本身不结束脚本 |
 | 原生前提不满足 | 如 `state_unavailable_or_dead`、`action_in_progress`、`item_not_in_inventory`、`inventory_unavailable`；重新观察真实状态与已发生效果 |
 | 任务控制前提不满足 | `control_not_owned`；动作任务先 `acquire()`，取得控制后重新采样和规划。重复任务名、未知取消名称或无效任务参数也会报错 |
 | 脚本执行错误 | API错误或 `assert/error` 导致脚本进入 `script_error`，保留错误文本并释放控制 |
