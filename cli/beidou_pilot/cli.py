@@ -125,6 +125,12 @@ def parser() -> Parser:
     q.add_argument("selector", nargs="?")
     q.add_argument("--accept", action="store_true", help="advance遇Yes/No时明确接受")
     q.add_argument("--seconds", type=float, default=20)
+    q = command("quest", "无头按明确任务ID与当前NPC接取或交付普通任务")
+    q.add_argument("action", choices=["start", "complete"])
+    q.add_argument("id", type=int)
+    q.add_argument("--npc", required=True, help="当前NPC名称、模板ID或快照引用")
+    q.add_argument("--reward-choice", type=int, help="交付时明确的奖励选择序号，不自动选取")
+    q.add_argument("--seconds", type=float, default=3, help="等待本次正常任务状态更新，0.001至30秒")
     q = command("batch", "从JSON文件或stdin执行一组CLI命令，任一步失败立即停止")
     q.add_argument("--file", type=Path)
     q = command("key", "通过Lua按住并释放原版客户端按键")
@@ -298,6 +304,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "snapshot",
         "watch",
         "inspect",
+        "talk",
+        "dialog",
+        "quest",
         "walk",
         "face",
         "jump",
@@ -337,7 +346,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             }:
                 raise
             state = None
-        domains = DOMAINS if backend.name == "beidou" else DOMAINS - {"hotkeys", "dialog", "ui", "shop"}
+        domains = DOMAINS if backend.name == "beidou" else DOMAINS - {"hotkeys", "ui", "shop"}
         return {
             "connected": state is not None,
             "ready": state["ready"] if state is not None else False,
@@ -521,6 +530,10 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         return backend.read(engine, *values)
     if cmd == "talk":
         return dialogs.talk(backend, args.target)
+    if cmd == "quest":
+        return dialogs.quest(
+            backend, args.action, args.id, args.npc, reward_choice=args.reward_choice, seconds=args.seconds
+        )
     if cmd == "dialog":
         if args.action == "read":
             return backend.read("dialog")
@@ -528,7 +541,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             return dialogs.advance(backend, accept=args.accept, seconds=args.seconds)
         if args.action == "select" and args.selector is None:
             raise ClientError("usage", "dialog select需要文字、索引或当前引用。")
-        return dialogs.act(backend, args.action, args.selector)
+        return dialogs.act(backend, args.action, args.selector, seconds=args.seconds)
     if cmd == "click":
         if args.y is not None:
             return backend.desktop(

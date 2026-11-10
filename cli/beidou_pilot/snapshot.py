@@ -28,7 +28,7 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
         result.update(stage="TRANSITION", unavailable=observation["unavailable"])
         return result
     scene = backend.read("scene")
-    dialog = None if backend.name == "headless" else backend.read("dialog")
+    dialog = backend.read("dialog")
     inventory = backend.read("inventory", "--type", "1", "--type", "2", "--type", "3", "--type", "4", "--type", "5", "--equipped")
     quests = backend.read("quests")
     character_data = backend.read("character")
@@ -46,9 +46,9 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
     character["skills"] = character_data.get("skills", {})
     refs: JsonObject = {}
     client = cast(JsonObject, observation["client"])
-    scope = [client["container_id"], client["run_id"], observation["instance_id"], character["id"], map_id,
+    scope = [client["container_id"], client["run_id"], observation["instance_id"], observation["scene_generation"], character["id"], map_id,
              stage.get("world_id"), stage.get("channel")]
-    viewport = None if dialog is None else cast(JsonObject | None, dialog["camera_viewport"])
+    viewport = cast(JsonObject | None, dialog["camera_viewport"])
 
     def reference(kind: str, identity: JsonValue, target: JsonObject) -> str:
         digest = hashlib.sha256(json.dumps([scope, kind, identity], sort_keys=True).encode()).hexdigest()[:10]
@@ -83,21 +83,22 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
             entities[group].append(entity)
         entities[group].sort(key=lambda item: abs(cast(int | float, item["dx"])) + abs(cast(int | float, item["dy"])))
 
-    offer: JsonObject = {"supported": dialog is not None, "open": None, "npc_id": None,
+    offer: JsonObject = {"supported": True, "open": None, "npc_id": None,
                          "type": None, "lines": [], "choices": [], "buttons": []}
-    if dialog is not None:
-        offer.update(open=dialog["dialog_open"], npc_id=dialog["npc_id"],
-                     type=dialog["dialog_type"], lines=dialog["lines"])
-        fingerprint: JsonValue = [dialog["npc_id"], dialog["dialog_type"], dialog["lines"]]
-        for original in cast(list[JsonObject], dialog["choices"]):
-            value = dict(original)
-            value["ref"] = reference("c", [fingerprint, value["link_id"]], {"kind": "choice", **value})
-            cast(list[JsonObject], offer["choices"]).append(value)
-        for original in cast(list[JsonObject], dialog["buttons"]):
-            value: JsonObject = {"control_id": original["control_id"], "root_rect": original.get("root_rect"),
-                                 "action": BUTTONS.get(cast(int, original["control_id"]), str(original["control_id"]))}
-            value["ref"] = reference("b", [fingerprint, value["control_id"]], {"kind": "button", **value})
-            cast(list[JsonObject], offer["buttons"]).append(value)
+    offer.update(open=dialog["dialog_open"], npc_id=dialog["npc_id"],
+                 npc_object_id=dialog.get("npc_object_id"), reference=dialog.get("dialog_reference"),
+                 page_revision=dialog.get("page_revision"), response_pending=dialog.get("response_pending"),
+                 closed_by=dialog.get("closed_by"), type=dialog["dialog_type"], lines=dialog["lines"])
+    fingerprint: JsonValue = [dialog.get("dialog_reference"), dialog["npc_id"], dialog["dialog_type"], dialog["lines"]]
+    for original in cast(list[JsonObject], dialog["choices"]):
+        value = dict(original)
+        value["ref"] = reference("c", [fingerprint, value["link_id"]], {"kind": "choice", **value})
+        cast(list[JsonObject], offer["choices"]).append(value)
+    for original in cast(list[JsonObject], dialog["buttons"]):
+        value: JsonObject = {"control_id": original["control_id"], "root_rect": original.get("root_rect"),
+                             "action": BUTTONS.get(cast(int, original["control_id"]), str(original["control_id"]))}
+        value["ref"] = reference("b", [fingerprint, value["control_id"]], {"kind": "button", **value})
+        cast(list[JsonObject], offer["buttons"]).append(value)
     items = cast(list[JsonObject], inventory["items"])
     for item in items:
         item["name"] = catalog.item_name(cast(int, item["item_id"]))
@@ -105,11 +106,12 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
     equipped = cast(list[JsonObject], inventory.get("equipped", []))
     for item in equipped:
         item["name"] = catalog.item_name(cast(int, item["item_id"]))
-    result.update(observed_at=observation["observed_at"], map={"id": map_id, "name": catalog.map_name(map_id)},
+    result.update(observed_at=observation["observed_at"], scene_generation=observation["scene_generation"],
+                  map={"id": map_id, "name": catalog.map_name(map_id)},
                   character=character, position=player, facing=scene["player_facing"],
                   advancement=advancement(character), dialog=offer, viewport=viewport, **entities, inventory=items,
                   equipped=equipped, quests=quests["quests"],
-                  quest_observation={key: quests[key] for key in ("data_source", "live_updates", "not_covered") if key in quests},
+                  quest_observation={key: quests[key] for key in ("data_source", "live_updates", "live_update_kinds", "not_covered") if key in quests},
                   refs=refs)
     if debug:
         result["raw"] = {"stage": stage, "observation": observation, "scene": scene,

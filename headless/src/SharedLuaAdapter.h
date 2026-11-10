@@ -62,6 +62,17 @@ private:
     };
 
     std::optional<EquipmentChange> equipmentChange;
+
+    struct NpcInteraction {
+        MapleControl::ActionKind kind;
+        std::uint32_t characterId;
+        std::uint64_t sceneGeneration;
+        std::uint64_t pageRevision;
+        std::int32_t npcId;
+        std::uint16_t questId;
+    };
+
+    std::optional<NpcInteraction> npcInteraction;
     std::optional<std::uint32_t> reviveCharacter;
     std::optional<ms::KeyAction::Id> heldAction;
     std::uint64_t currentTick = 0;

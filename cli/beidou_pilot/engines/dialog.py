@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """通过原生观察 API 读取对话与布局；未知状态保持未知。"""
 import json
-from typing import Literal, TypedDict, cast
+from typing import Literal, NotRequired, TypedDict, cast
 
 from ..observations import observe_domain, project_geometry
 
@@ -32,25 +32,25 @@ class DialogChoice(TypedDict):
     link_id: int
     text: str
     token_indices: list[int]
-    dialog_rect: DialogRect
-    game_rect: DialogRect | None
+    dialog_rect: NotRequired[DialogRect]
+    game_rect: NotRequired[DialogRect | None]
     root_rect: DialogRect | None
-    click_validation: Literal['verified-observed-case', 'not-covered']
+    click_validation: NotRequired[Literal['verified-observed-case', 'not-covered']]
 
 
 class DialogButton(TypedDict):
     control_id: int
-    width: int
-    height: int
-    layout_x: int | None
-    layout_y: int | None
-    game_x: int | None
-    game_y: int | None
-    uncalibrated_vector_x: int | None
-    uncalibrated_vector_y: int | None
-    position_source: str | None
+    width: NotRequired[int]
+    height: NotRequired[int]
+    layout_x: NotRequired[int | None]
+    layout_y: NotRequired[int | None]
+    game_x: NotRequired[int | None]
+    game_y: NotRequired[int | None]
+    uncalibrated_vector_x: NotRequired[int | None]
+    uncalibrated_vector_y: NotRequired[int | None]
+    position_source: NotRequired[str | None]
     root_rect: DialogRect | None
-    click_validation: Literal['verified-observed-case', 'not-covered']
+    click_validation: NotRequired[Literal['verified-observed-case', 'not-covered']]
 
 
 class GameGeometry(TypedDict):
@@ -88,35 +88,40 @@ class DialogSnapshot(TypedDict):
     source: str
     readonly: bool
     dialog_open: bool | None
-    script_dialog_open: bool | None
-    focused_talk_dialog_open: bool | None
-    registered_talk_dialog_open: bool | None
-    registered_talk_count: int | None
+    script_dialog_open: NotRequired[bool | None]
+    focused_talk_dialog_open: NotRequired[bool | None]
+    registered_talk_dialog_open: NotRequired[bool | None]
+    registered_talk_count: NotRequired[int | None]
     dialog_reference: str | None
-    dialog_address: str | None
-    focused_window: FocusWindow | None
-    keyboard_handler: FocusObject | None
+    dialog_address: NotRequired[str | None]
+    focused_window: NotRequired[FocusWindow | None]
+    keyboard_handler: NotRequired[FocusObject | None]
     npc_id: int | None
     dialog_type: int | None
-    layout_validation: Literal['native-task-text-verified']
-    button_layout_validation: Literal[
+    layout_validation: NotRequired[Literal['native-task-text-verified']]
+    button_layout_validation: NotRequired[Literal[
         'camera-translation-unavailable', 'camera-projection-verified-click-pending',
         'observed-cases-verified',
-    ]
+    ]]
     camera_viewport: DialogRect | None
-    camera_source: str | None
-    layer_rect: DialogRect | None
-    game_rect: DialogRect | None
-    uncalibrated_vector_rect: DialogRect | None
-    root_rect: DialogRect | None
-    game_geometry: GameGeometry | None
-    window_position_source: str | None
+    camera_source: NotRequired[str | None]
+    layer_rect: NotRequired[DialogRect | None]
+    game_rect: NotRequired[DialogRect | None]
+    uncalibrated_vector_rect: NotRequired[DialogRect | None]
+    root_rect: NotRequired[DialogRect | None]
+    game_geometry: NotRequired[GameGeometry | None]
+    window_position_source: NotRequired[str | None]
     buttons: list[DialogButton]
-    text_tokens: list[DialogTextToken]
+    text_tokens: NotRequired[list[DialogTextToken]]
     lines: list[str]
     choices: list[DialogChoice]
     unavailable: list[str]
     not_covered: list[str]
+    npc_object_id: NotRequired[int | None]
+    npc_object_id_source: NotRequired[Literal["local_request"] | None]
+    page_revision: NotRequired[int]
+    response_pending: NotRequired[bool]
+    closed_by: NotRequired[str | None]
 
 
 def read_dialog() -> DialogSnapshot:

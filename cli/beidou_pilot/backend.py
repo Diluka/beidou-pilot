@@ -25,7 +25,7 @@ class Backend:
 
     def _run(self, name: str, arguments: list[str], *, payload: str | None = None,
              stream: bool = False, stream_stdout: bool = False) -> str:
-        if self.name != "beidou" and name not in {"observe", "scene", "inventory", "character", "quests", "stage"}:
+        if self.name != "beidou" and name not in {"observe", "scene", "inventory", "character", "quests", "stage", "dialog"}:
             raise ClientError("unsupported_capability", "该客户端不提供此北斗窗口或原始输入能力。", {"engine": name})
         engines = {"observe", "scene", "dialog", "inventory", "quests", "desktop",
                    "session", "ui", "stage", "character", "hotkeys", "shop", "record"}

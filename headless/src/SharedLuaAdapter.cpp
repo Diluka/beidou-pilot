@@ -14,7 +14,9 @@
 #include "Net/Session.h"
 #include "Net/Packets/InventoryPackets.h"
 #include "Net/Packets/GameplayPackets.h"
+#include "Net/Packets/NpcInteractionPackets.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
@@ -148,6 +150,14 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.monsters.clear();
     state.inventory.clear();
     state.drops.clear();
+    auto& dialogue = ms::headless_state().dialogue;
+    if (dialogue.scene_generation != state.sceneGeneration) {
+        const auto revision = dialogue.revision + 1;
+        dialogue = {};
+        dialogue.revision = revision;
+        dialogue.scene_generation = state.sceneGeneration;
+        dialogue.closed_by = "scene_changed";
+    }
     state.dead = state.reviveRequestable = Fact::Unknown;
     if (!state.ready) {
         state.settled = Fact::Unknown;
@@ -247,7 +257,120 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     auto& player = stage.get_player();
     result = {};
     result.reason = "native_action_dispatched";
-    if (action.kind == Kind::Revive) {
+    if (action.kind == Kind::Talk || action.kind == Kind::QuestStart || action.kind == Kind::QuestComplete) {
+        if (action.sceneGeneration != state.sceneGeneration) {
+            error = "npc_scene_changed";
+            return false;
+        }
+        auto target = stage.get_npcs().get_npcs()->get(static_cast<int32_t>(action.objectId));
+        if (!target || !target->is_active()) {
+            error = "npc_not_in_current_scene";
+            return false;
+        }
+        const auto& npc = static_cast<const ms::Npc&>(*target);
+        auto& dialogue = ms::headless_state().dialogue;
+        if (action.kind == Kind::Talk && dialogue.open && dialogue.npc_id == npc.get_template_id() && dialogue.object_id
+            && *dialogue.object_id == static_cast<int32_t>(action.objectId)) {
+            result.effect = "confirmed";
+            result.reason = "already_open";
+            result.controlReleased = true;
+            result.settled = state.settled;
+            return true;
+        }
+        if (dialogue.open || dialogue.response_pending) {
+            error = dialogue.open ? "npc_dialogue_blocks_request" : "npc_response_pending";
+            return false;
+        }
+        if (action.kind == Kind::Talk) {
+            ++dialogue.revision;
+            dialogue.requested_npc_id = npc.get_template_id();
+            dialogue.object_id = static_cast<int32_t>(action.objectId);
+            dialogue.response_pending = true;
+            dialogue.closed_by.clear();
+            ms::TalkToNPCPacket(static_cast<int32_t>(action.objectId)).dispatch();
+            result.reason = "npc_talk_requested";
+        } else {
+            const auto& quests = player.get_quests();
+            const bool complete = action.kind == Kind::QuestComplete;
+            if ((complete && quests.get_completed().count(action.questId))
+                || (!complete && quests.get_started().count(action.questId))) {
+                result.effect = "confirmed";
+                result.reason = complete ? "already_completed" : "already_started";
+                result.controlReleased = true;
+                result.settled = state.settled;
+                return true;
+            }
+            if (complete && !quests.get_started().count(action.questId)) {
+                error = "quest_not_started";
+                return false;
+            }
+            if (!complete && quests.get_completed().count(action.questId)) {
+                error = "quest_already_completed";
+                return false;
+            }
+            const auto position = player.get_position();
+            ms::QuestActionPacket(complete, static_cast<int16_t>(action.questId), npc.get_template_id(), position.x(),
+                                  position.y(), action.rewardChoice)
+                .dispatch();
+            result.reason = complete ? "quest_complete_requested" : "quest_start_requested";
+        }
+        npcInteraction = {action.kind,       state.character.id,    state.sceneGeneration,
+                          dialogue.revision, npc.get_template_id(), action.questId};
+    } else if (action.kind == Kind::Respond) {
+        auto& dialogue = ms::headless_state().dialogue;
+        const auto reference =
+            state.instanceId + ":" + std::to_string(state.sceneGeneration) + ":" + std::to_string(dialogue.revision);
+        if (!dialogue.open || dialogue.scene_generation != state.sceneGeneration
+            || action.dialogReference != reference) {
+            error = "stale_dialogue_reference";
+            return false;
+        }
+        int8_t response = 0;
+        bool allowed = false;
+        if (action.response == "end"
+            && (dialogue.type == 0 || dialogue.type == 1 || dialogue.type == 4 || dialogue.type == 12)) {
+            response = dialogue.type == 4 ? 0 : -1;
+            allowed = true;
+        } else if (dialogue.type == 0) {
+            if (action.response == "next" && dialogue.next) {
+                response = 1;
+                allowed = true;
+            } else if (action.response == "back" && dialogue.previous) {
+                response = 0;
+                allowed = true;
+            } else if (action.response == "confirm" && !dialogue.next && !dialogue.previous) {
+                response = 1;
+                allowed = true;
+            }
+        } else if (dialogue.type == 1 || dialogue.type == 12) {
+            if (action.response == "yes") {
+                response = 1;
+                allowed = true;
+            } else if (action.response == "no") {
+                response = 0;
+                allowed = true;
+            }
+        } else if (dialogue.type == 4 && action.response == "select" && dialogue.choices_complete) {
+            allowed = std::any_of(dialogue.choices.begin(), dialogue.choices.end(),
+                                  [&](const ms::NpcChoice& choice) { return choice.id == action.selection; });
+        }
+        if (!allowed) {
+            error = "dialogue_response_unavailable";
+            return false;
+        }
+        const auto type = dialogue.type;
+        dialogue.open = false;
+        dialogue.response_pending = true;
+        dialogue.closed_by = "local_response";
+        ++dialogue.revision;
+        npcInteraction = {action.kind,       state.character.id, state.sceneGeneration,
+                          dialogue.revision, dialogue.npc_id,    0};
+        if (action.response == "select")
+            ms::NpcTalkMorePacket(action.selection).dispatch();
+        else
+            ms::NpcTalkMorePacket(type, response).dispatch();
+        result.reason = "dialogue_response_requested";
+    } else if (action.kind == Kind::Revive) {
         if (state.character.values[6] > 0) {
             result.effect = "confirmed";
             result.reason = "already_alive";
@@ -394,7 +517,7 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     result.controlReleased = false;
     active = true;
     actionUntilMs = MonotonicMs() + action.durationMs;
-    if (!heldAction && !equipmentChange && !reviveCharacter) ApplyRelease();
+    if (!heldAction && !equipmentChange && !reviveCharacter && !npcInteraction) ApplyRelease();
     return true;
 }
 
@@ -407,6 +530,11 @@ void SharedLuaAdapter::ApplyRelease() {
     if (equipmentChange && result.reason == "equipment_change_requested")
         result.reason = "equipment_confirmation_stopped";
     equipmentChange.reset();
+    if (npcInteraction
+        && (result.reason == "npc_talk_requested" || result.reason == "dialogue_response_requested"
+            || result.reason == "quest_start_requested" || result.reason == "quest_complete_requested"))
+        result.reason = "npc_confirmation_stopped";
+    npcInteraction.reset();
     if (reviveCharacter && result.reason == "revive_requested") result.reason = "revive_confirmation_stopped";
     reviveCharacter.reset();
     active = false;
@@ -509,7 +637,52 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
             commandReason = "stopped";
         }
     }
-    if (active && reviveCharacter) {
+    if (active && npcInteraction) {
+        const auto& request = *npcInteraction;
+        const auto& dialogue = ms::headless_state().dialogue;
+        if (!state.ready || state.character.id != request.characterId || state.character.values[6] == 0
+            || state.sceneGeneration != request.sceneGeneration) {
+            result.reason = "npc_context_changed";
+            ApplyRelease();
+        } else if (request.kind == MapleControl::ActionKind::Talk
+                   || request.kind == MapleControl::ActionKind::Respond) {
+            if (dialogue.open && dialogue.revision > request.pageRevision) {
+                if (dialogue.npc_id == request.npcId) {
+                    result.effect = "confirmed";
+                    result.reason =
+                        request.kind == MapleControl::ActionKind::Talk ? "dialogue_opened" : "dialogue_page_changed";
+                } else
+                    result.reason = "npc_dialogue_identity_mismatch";
+                ApplyRelease();
+            } else if (!dialogue.open && !dialogue.response_pending
+                       && dialogue.closed_by == "enable_actions_after_request") {
+                if (request.kind == MapleControl::ActionKind::Respond) {
+                    result.effect = "confirmed";
+                    result.reason = "dialogue_closed";
+                } else
+                    result.reason = "npc_dialogue_not_opened";
+                ApplyRelease();
+            } else if (MonotonicMs() >= actionUntilMs) {
+                result.reason = "dialogue_not_confirmed";
+                ApplyRelease();
+            }
+        } else {
+            const auto& quests = ms::Stage::get().get_player().get_quests();
+            const bool complete = request.kind == MapleControl::ActionKind::QuestComplete;
+            if ((complete && quests.get_completed().count(request.questId))
+                || (!complete && quests.get_started().count(request.questId))) {
+                result.effect = "confirmed";
+                result.reason = complete ? "quest_completed" : "quest_started";
+                ApplyRelease();
+            } else if (dialogue.open && dialogue.revision > request.pageRevision) {
+                result.reason = "quest_dialogue_required";
+                ApplyRelease();
+            } else if (MonotonicMs() >= actionUntilMs) {
+                result.reason = "quest_not_confirmed";
+                ApplyRelease();
+            }
+        }
+    } else if (active && reviveCharacter) {
         if (!state.ready || state.character.id != *reviveCharacter) {
             result.reason = "revive_context_changed";
             ApplyRelease();
@@ -580,7 +753,8 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                 {"phase", login.phase},
                 {"unavailable", state.ready ? Json::array() : Json::array({"native_client_not_ready"})}};
     }
-    if (domain != "scene" && domain != "inventory" && domain != "character" && domain != "quests") {
+    if (domain != "scene" && domain != "inventory" && domain != "character" && domain != "quests"
+        && domain != "dialog") {
         status = "unsupported";
         error = "unsupported_observation_domain";
         return nullptr;
@@ -690,6 +864,50 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                  Json::array({"skill_names", "skill_requirements", "skill_effects", "skill_expirations",
                               "master_level_when_absent_from_client_records", "original_client_secure_checksums"})}};
     }
+    if (domain == "dialog") {
+        const auto& page = ms::headless_state().dialogue;
+        const bool supported = page.type == 0 || page.type == 1 || page.type == 4 || page.type == 12;
+        Json choices = Json::array();
+        Json buttons = Json::array();
+        if (page.open && supported) {
+            buttons.push_back({{"control_id", 2}, {"root_rect", nullptr}});
+            if (page.type == 0) {
+                if (page.previous) buttons.push_back({{"control_id", 8192}, {"root_rect", nullptr}});
+                if (page.next) buttons.push_back({{"control_id", 8193}, {"root_rect", nullptr}});
+                if (!page.previous && !page.next) buttons.push_back({{"control_id", 1}, {"root_rect", nullptr}});
+            } else if (page.type == 1 || page.type == 12) {
+                buttons.push_back({{"control_id", 6}, {"root_rect", nullptr}});
+                buttons.push_back({{"control_id", 7}, {"root_rect", nullptr}});
+            } else if (page.choices_complete) {
+                for (const auto& choice : page.choices)
+                    choices.push_back({{"link_id", choice.id},
+                                       {"text", choice.text},
+                                       {"token_indices", Json::array()},
+                                       {"root_rect", nullptr}});
+            }
+        }
+        return {{"dialog_open", page.open},
+                {"script_dialog_open", page.open},
+                {"npc_id", page.open ? Json(page.npc_id) : Json(nullptr)},
+                {"npc_object_id", page.open && page.object_id ? Json(*page.object_id) : Json(nullptr)},
+                {"npc_object_id_source", page.open && page.object_id ? Json("local_request") : Json(nullptr)},
+                {"dialog_type", page.open ? Json(page.type) : Json(nullptr)},
+                {"dialog_reference", page.open ? Json(state.instanceId + ":" + std::to_string(state.sceneGeneration)
+                                                      + ":" + std::to_string(page.revision))
+                                               : Json(nullptr)},
+                {"page_revision", page.revision},
+                {"response_pending", page.response_pending},
+                {"closed_by", !page.open && !page.closed_by.empty() ? Json(page.closed_by) : Json(nullptr)},
+                {"speaker", page.open ? Json(page.speaker) : Json(nullptr)},
+                {"lines", page.open ? Json::array({page.text}) : Json::array()},
+                {"choices", std::move(choices)},
+                {"choices_complete", page.open && supported ? Json(page.choices_complete) : Json(nullptr)},
+                {"buttons", std::move(buttons)},
+                {"camera_viewport", nullptr},
+                {"unavailable",
+                 page.open && !supported ? Json::array({"dialogue_response_type_not_supported"}) : Json::array()},
+                {"not_covered", Json::array({"screen_geometry", "dialogue_input_types", "reward_choice_layouts"})}};
+    }
     const auto& quests = player.get_quests();
     std::map<std::uint16_t, Json> entries;
     for (const auto& entry : quests.get_started()) {
@@ -702,18 +920,15 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
     }
     Json records = Json::array();
     for (const auto& entry : entries) records.push_back(entry.second);
-    Json linkedProgress = Json::array();
-    for (const auto& entry : quests.get_in_progress())
-        linkedProgress.push_back({{"quest_id", static_cast<std::uint16_t>(entry.first)},
-                                  {"linked_quest_id", static_cast<std::uint16_t>(entry.second.first)},
-                                  {"progress", entry.second.second}});
     return {{"quests", std::move(records)},
-            {"linked_progress", std::move(linkedProgress)},
-            {"source", "character_data_snapshot"},
-            {"live_updates", false},
+            {"linked_progress", nullptr},
+            {"source", "character_data_snapshot_and_updates"},
+            {"live_updates", true},
+            {"live_update_kinds", Json::array({"not_started", "started", "completed"})},
             {"unavailable", Json::array()},
-            {"not_covered", Json::array({"quest_names", "quest_requirements", "progress_string_semantics",
-                                         "available_quests", "linked_progress_semantics", "live_quest_updates"})}};
+            {"not_covered",
+             Json::array({"quest_names", "quest_requirements", "progress_string_semantics", "available_quests",
+                          "linked_progress_semantics", "npc_quest_hint_updates", "quest_expiration_notifications"})}};
 }
 
 void SharedLuaAdapter::ReadObservation() {
@@ -833,6 +1048,10 @@ Json SharedLuaAdapter::StateDocument() const {
           {"equip", true},
           {"unequip", true},
           {"revive", true},
+          {"talk", true},
+          {"respond", true},
+          {"quest_start", true},
+          {"quest_complete", true},
           {"stop", true},
           {"raw_keys", false},
           {"skill", false}}},

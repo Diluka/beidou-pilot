@@ -11,6 +11,7 @@ from beidou_pilot.items import read_inventory
 from beidou_pilot.snapshot import collect, format_snapshot
 from beidou_pilot.stats import read_character
 from beidou_pilot.travel import portal
+from beidou_pilot import dialogs
 
 
 class ObservationConsumerContract(unittest.TestCase):
@@ -64,6 +65,7 @@ class SnapshotConsumerContract(unittest.TestCase):
             "stage": {"stage": "IN_GAME", "running": True, "channel": 1},
             "observe": {"native_values_valid": True, "character": character, "map_id": 100,
                         "position": {"x": 0.5, "y": 0.0}, "instance_id": "native-1",
+                        "scene_generation": 3,
                         "client": {"container_id": "container", "run_id": "run"},
                         "observed_at": "2026-11-09T00:00:00+00:00"},
             "scene": {"map_id": 100, "player_facing": "Right", "npcs": [], "drops": [],
@@ -72,6 +74,8 @@ class SnapshotConsumerContract(unittest.TestCase):
                           "equipped": []},
             "quests": {"quests": {"1000": {"status": "started"}}},
             "character": {"mesos": 50, "skills": {"1001004": {"level": 1}}},
+            "dialog": {"camera_viewport": None, "dialog_open": False, "npc_id": None,
+                       "dialog_type": None, "dialog_reference": None, "lines": [], "choices": [], "buttons": []},
         }
         self.backend.read.side_effect = lambda domain, *arguments: self.domains[domain]
         self.catalog = self.enterContext(patch("beidou_pilot.snapshot.Catalog")).return_value
@@ -85,9 +89,9 @@ class SnapshotConsumerContract(unittest.TestCase):
         report = collect(self.backend)
         self.assertIs(report["dead"], True)
         self.assertIs(report["revive_requestable"], True)
-        self.assertNotIn("dialog", [call.args[0] for call in self.backend.read.call_args_list])
-        self.assertFalse(report["dialog"]["supported"])
-        self.assertIsNone(report["dialog"]["open"])
+        self.assertIn("dialog", [call.args[0] for call in self.backend.read.call_args_list])
+        self.assertTrue(report["dialog"]["supported"])
+        self.assertFalse(report["dialog"]["open"])
         self.assertIsNone(report["viewport"])
         self.assertIsNone(report["monsters"][0]["visible"])
         self.assertIsNone(report["monsters"][0]["name"])
@@ -98,9 +102,24 @@ class SnapshotConsumerContract(unittest.TestCase):
         self.assertEqual(self.domains["quests"]["quests"], report["quests"])
         self.assertEqual(self.domains["character"]["skills"], report["character"]["skills"])
         text = format_snapshot(report)
-        self.assertIn("客户端不支持观察", text)
+        self.assertNotIn("客户端不支持观察", text)
         self.assertIn("可见性未知", text)
         self.assertNotIn("画外", text)
+
+    def test_a_repeated_dialog_page_has_new_refs_and_rejects_the_old_choice(self) -> None:
+        self.backend.name = "headless"
+        self.domains["dialog"].update(dialog_open=True, npc_id=12101, dialog_type=4,
+                                     dialog_reference="native-1:3:1", lines=["选择"],
+                                     choices=[{"link_id": 7, "text": "继续", "root_rect": None}])
+        previous = collect(self.backend)["dialog"]["choices"][0]["ref"]
+        self.domains["dialog"]["dialog_reference"] = "native-1:3:2"
+        current = collect(self.backend)["dialog"]["choices"][0]["ref"]
+        self.assertNotEqual(previous, current)
+        with patch("beidou_pilot.dialogs.run_source") as run:
+            with self.assertRaises(ClientError) as failure:
+                dialogs.act(self.backend, "select", previous)
+        self.assertEqual("stale_reference", failure.exception.code)
+        run.assert_not_called()
 
     def test_beidou_preserves_dialog_and_filters_only_known_invisible_entities(self) -> None:
         self.backend.name = "beidou"

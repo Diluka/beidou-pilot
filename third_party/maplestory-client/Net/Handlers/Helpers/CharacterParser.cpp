@@ -94,6 +94,7 @@ namespace ms
 
 	void CharacterParser::parse_questlog(InPacket& recv, QuestLog& quests)
 	{
+		quests = {};
 		int16_t size = recv.read_short();
 
 		for (int16_t i = 0; i < size; i++)
@@ -101,19 +102,10 @@ namespace ms
 			int16_t qid = recv.read_short();
 			std::string qdata = recv.read_string();
 
-			if (quests.is_started(qid))
-			{
-				int16_t qidl = quests.get_last_started();
-				quests.add_in_progress(qidl, qid, qdata);
-				//i--; // This was causing issues
-			}
-			else
-			{
-				quests.add_started(qid, qdata);
-			}
+			// infoNumber records use the same layout; the wire carries no parent relation.
+			quests.add_started(qid, qdata);
 		}
 
-		std::map<int16_t, int64_t> completed;
 		size = recv.read_short();
 
 		for (int16_t i = 0; i < size; i++)
@@ -121,6 +113,26 @@ namespace ms
 			int16_t qid = recv.read_short();
 			int64_t time = recv.read_long();
 			quests.add_completed(qid, time);
+		}
+	}
+
+	void CharacterParser::parse_quest_update(InPacket& recv, QuestLog& quests)
+	{
+		const auto qid = recv.read_short();
+		const auto status = recv.read_byte();
+		switch (status)
+		{
+		case 0:
+			quests.remove(qid);
+			break;
+		case 1:
+			quests.add_started(qid, recv.read_string());
+			break;
+		case 2:
+			quests.add_completed(qid, recv.read_long());
+			break;
+		default:
+			throw PacketError("Unsupported quest status update: " + std::to_string(status));
 		}
 	}
 

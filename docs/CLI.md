@@ -54,6 +54,8 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | `walk DIR --seconds N`、`face DIR`、`jump` | 有界方向移动、朝向、跳跃尝试 |
 | `attack`、`pickup`、`use_item ID` | 原生尝试；`use_item`不等于消耗和恢复已确认 |
 | `revive` | 无头发一次正常复活请求并确认同角色恢复；GUI 使用已识别死亡确认框；存活时跳过 |
+| `talk TARGET`、`dialog read/select/next/back/confirm/yes/no/end` | 无头用正常原生对话与当前页引用；GUI保留既有鼠标路径 |
+| `quest start/complete ID --npc TARGET [--reward-choice INDEX] [--seconds N]` | 无头明确任务ID与当前NPC接交，默认确认期限3秒；GUI不支持此入口 |
 | `equip ITEM --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头普通装备；明确背包正槽和身上负槽，核对物品 ID 及实际替换结果 |
 | `unequip --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头卸下普通装备；明确身上负槽和空背包正槽 |
 | `move X`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单根绳梯或单个门户；不是通用寻路 |
@@ -105,6 +107,24 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 
 无头 `snapshot` 与 `bridge status` 提供 `dead/revive_requestable`：死亡来自已就绪角色的原生 HP=0；读数不可用时保持未知。`revive_requestable` 只表示客户端请求前置已满足，不能预判事件脚本许可。无头 `revive` 通过共享 Lua 默认等待至多6秒，只有同角色 HP>0 且地图、位置有效才返回 `revived`；存活返回 `already_alive`，均无重复请求。未确认返回 `revive_not_confirmed`，取消/断线保留实际结果；检测到死亡本身不触发复活或重连。参数化等待及脚本用法见 [Lua API](LUA_API.md#无头正常复活)。
 
+## 无头NPC与任务
+
+先 `snapshot` 取得当前NPC名称、模板ID或引用，再 `talk TARGET`；`dialog read` 读取实际正文与按钮，`dialog select TEXT_OR_ID_OR_REF`、`next/back/yes/no/confirm/end` 响应当前页。NPC脚本页与普通WZ任务分别处理：后者使用明确的 `quest start/complete`，不会合成任务菜单。
+
+```bash
+./cli/beidou-pilot --backend headless --instance worker-a --json talk 12101
+./cli/beidou-pilot --backend headless --instance worker-a --json dialog next
+./cli/beidou-pilot --backend headless --instance worker-a --json dialog end
+./cli/beidou-pilot --backend headless --instance worker-a --json quest start 1040 --npc 12000
+./cli/beidou-pilot --backend headless --instance worker-a --json inspect quests 1040
+```
+
+这些ID是普通新手场景示例，执行前仍需确认当前角色、场景、前置和授权。`--reward-choice` 仅用于交付，表示正常任务可选奖励中的0基序号，不是物品ID；省略时不填默认选择，复杂奖励场景未完整覆盖。有新请求时，CLI只在Lua完成且原生结果 `effect="confirmed"` 时报告确认；同一目标对话已打开时可直接复用。未知结果报未确认且不重放。确认任务状态不等于奖励到账，仍核对当前背包、金币或经验变化。
+
+无头对话没有屏幕矩形；`dialog_reference` 与快照中的选项引用绑定当前实例、场景和页面代次，翻页后旧引用失效。同一NPC模板的本地对象ID仅在明确请求追踪时提供。对话关闭可能来自本地响应与动作恢复消息，不能据此认定任务或消费已完成。`dialog advance` 目前仍为GUI流程；无头多页策略在Lua中有界组织。
+
+无头任务观察合并登录完整包和同会话任务增量，`live_updates=true`，当前 `live_update_kinds` 为 `not_started/started/completed`。原始进度串不解码；可接任务推断与关联进度保持未知，`linked_progress=null`。不靠重登刷新代替持续观察。
+
 ## 原版 GUI
 
 从项目根构建独立 GUI 镜像：
@@ -138,7 +158,7 @@ Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/r
 
 | 命令组 | 用途 |
 | --- | --- |
-| `talk TARGET`、`dialog`、`click REF` | 打开NPC对话、按当前正文选择、操作当前引用 |
+| `click REF`、`dialog advance` | GUI按当前引用点击或有界推进；无头逐页显式响应或用Lua编排 |
 | `ui read/open/close/focus` | 已识别窗口和输入焦点；`ui close all`同时处理普通商店 |
 | `equip ITEM` | 正常 GUI 穿戴并核对结果，不接受无头槽位参数 |
 | `stats`、`skills` | 正常GUI AP/SP操作，并核对结果 |

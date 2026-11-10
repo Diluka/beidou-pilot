@@ -70,6 +70,14 @@ const char* ActionName(ActionKind kind) {
         return "unequip";
     case ActionKind::Revive:
         return "revive";
+    case ActionKind::Talk:
+        return "talk";
+    case ActionKind::Respond:
+        return "respond";
+    case ActionKind::QuestStart:
+        return "quest_start";
+    case ActionKind::QuestComplete:
+        return "quest_complete";
     }
     return "unsupported";
 }
@@ -476,28 +484,12 @@ struct Runtime::Impl {
         String(lua, "backend", adapter.Backend());
         for (ActionKind kind :
              {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack, ActionKind::Pickup,
-              ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip, ActionKind::Unequip, ActionKind::Revive})
+              ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip, ActionKind::Unequip, ActionKind::Revive,
+              ActionKind::Talk, ActionKind::Respond, ActionKind::QuestStart, ActionKind::QuestComplete})
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
         return 1;
-    }
-
-    bool Begin(ActionKind kind, const char* direction, std::uint32_t durationMs, std::uint32_t itemId, int sourceSlot,
-               int destinationSlot, lua_State* lua) {
-        Action action;
-        action.kind = kind;
-        action.direction = direction;
-        action.durationMs = durationMs;
-        action.itemId = itemId;
-        action.sourceSlot = sourceSlot;
-        action.destinationSlot = destinationSlot;
-        std::string error;
-        if (!adapter.Begin(action, error)) {
-            lua_pushlstring(lua, error.data(), error.size());
-            return false;
-        }
-        return true;
     }
 
     static int ReturnAction(lua_State* lua, int, lua_KContext) {
@@ -506,18 +498,45 @@ struct Runtime::Impl {
         return 1;
     }
 
-    static int BeginSemantic(lua_State* lua, ActionKind kind, const char* direction, std::uint32_t durationMs,
-                             std::uint32_t itemId, int sourceSlot = 0, int destinationSlot = 0) {
+    static void RequireAction(lua_State* lua, ActionKind kind) {
         RequireControl(lua);
+        if (!Self(lua).adapter.Supports(kind)) luaL_error(lua, "unsupported: %s", ActionName(kind));
+    }
+
+    bool Begin(const Action& action, lua_State* lua) {
+        CaptureResult();
+        std::string error;
+        if (!adapter.Begin(action, error)) {
+            lua_pushlstring(lua, error.data(), error.size());
+            return false;
+        }
+        return true;
+    }
+
+    static int FinishAction(lua_State* lua, bool accepted) {
+        if (!accepted) return lua_error(lua);
         auto& runtime = Self(lua);
-        if (!runtime.adapter.Supports(kind)) return luaL_error(lua, "unsupported: %s", ActionName(kind));
-        runtime.CaptureResult();
-        if (!runtime.Begin(kind, direction, durationMs, itemId, sourceSlot, destinationSlot, lua))
-            return lua_error(lua);
         runtime.actionOwner = runtime.current;
         runtime.current->resultReady = false;
         runtime.current->wait = WaitFor::Action;
         return lua_yieldk(lua, 0, 0, ReturnAction);
+    }
+
+    static int BeginSemantic(lua_State* lua, ActionKind kind, const char* direction, std::uint32_t durationMs,
+                             std::uint32_t itemId, int sourceSlot = 0, int destinationSlot = 0) {
+        RequireAction(lua, kind);
+        bool accepted;
+        {
+            Action action;
+            action.kind = kind;
+            action.direction = direction;
+            action.durationMs = durationMs;
+            action.itemId = itemId;
+            action.sourceSlot = sourceSlot;
+            action.destinationSlot = destinationSlot;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
     }
 
     static const char* Direction(lua_State* lua, bool vertical) {
@@ -560,6 +579,118 @@ struct Runtime::Impl {
 
     static int Revive(lua_State* lua) {
         return BeginSemantic(lua, ActionKind::Revive, "", Duration(lua, 1, 6, false), 0);
+    }
+
+    static std::uint32_t NpcObjectId(lua_State* lua, int index) {
+        const auto id = luaL_checkinteger(lua, index);
+        if (id < 1 || id > 2147483647) luaL_error(lua, "NPC object id must be a positive int32");
+        return static_cast<std::uint32_t>(id);
+    }
+
+    static std::uint64_t SceneGeneration(lua_State* lua, int index) {
+        const auto generation = luaL_checkinteger(lua, index);
+        if (generation < 0) luaL_error(lua, "scene generation must be nonnegative");
+        return static_cast<std::uint64_t>(generation);
+    }
+
+    static std::uint16_t QuestId(lua_State* lua) {
+        const auto id = luaL_checkinteger(lua, 1);
+        if (id < 1 || id > 32767) luaL_error(lua, "quest id must fit a positive signed short");
+        return static_cast<std::uint16_t>(id);
+    }
+
+    static int Talk(lua_State* lua) {
+        const auto object = NpcObjectId(lua, 1);
+        const auto generation = SceneGeneration(lua, 2);
+        const auto duration = Duration(lua, 3, 3, false);
+        RequireAction(lua, ActionKind::Talk);
+        bool accepted;
+        {
+            Action action;
+            action.kind = ActionKind::Talk;
+            action.objectId = object;
+            action.sceneGeneration = generation;
+            action.durationMs = duration;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
+    }
+
+    static int Respond(lua_State* lua) {
+        size_t length = 0;
+        const auto* reference = luaL_checklstring(lua, 1, &length);
+        if (length == 0 || length > 128) return luaL_error(lua, "dialog reference must contain 1..128 bytes");
+        const auto* response = luaL_checkstring(lua, 2);
+        if (std::strcmp(response, "next") != 0 && std::strcmp(response, "back") != 0
+            && std::strcmp(response, "confirm") != 0 && std::strcmp(response, "yes") != 0
+            && std::strcmp(response, "no") != 0 && std::strcmp(response, "end") != 0
+            && std::strcmp(response, "select") != 0)
+            return luaL_error(lua, "unsupported dialog response");
+        std::int32_t selection = 0;
+        if (std::strcmp(response, "select") == 0) {
+            const auto value = luaL_checkinteger(lua, 3);
+            if (value < 0 || value > 2147483647) return luaL_error(lua, "selection must be a nonnegative int32");
+            selection = static_cast<std::int32_t>(value);
+        } else if (!lua_isnoneornil(lua, 3))
+            return luaL_error(lua, "only select accepts a selection");
+        const auto duration = Duration(lua, 4, 3, false);
+        RequireAction(lua, ActionKind::Respond);
+        bool accepted;
+        {
+            Action action;
+            action.kind = ActionKind::Respond;
+            action.dialogReference.assign(reference, length);
+            action.response = response;
+            action.selection = selection;
+            action.durationMs = duration;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
+    }
+
+    static int QuestStart(lua_State* lua) {
+        const auto quest = QuestId(lua);
+        const auto object = NpcObjectId(lua, 2);
+        const auto generation = SceneGeneration(lua, 3);
+        const auto duration = Duration(lua, 4, 3, false);
+        RequireAction(lua, ActionKind::QuestStart);
+        bool accepted;
+        {
+            Action action;
+            action.kind = ActionKind::QuestStart;
+            action.questId = quest;
+            action.objectId = object;
+            action.sceneGeneration = generation;
+            action.durationMs = duration;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
+    }
+
+    static int QuestComplete(lua_State* lua) {
+        const auto quest = QuestId(lua);
+        const auto object = NpcObjectId(lua, 2);
+        const auto generation = SceneGeneration(lua, 3);
+        int choice = -1;
+        if (!lua_isnoneornil(lua, 4)) {
+            const auto value = luaL_checkinteger(lua, 4);
+            if (value < 0 || value > 32767) return luaL_error(lua, "reward choice must fit a nonnegative signed short");
+            choice = static_cast<int>(value);
+        }
+        const auto duration = Duration(lua, 5, 3, false);
+        RequireAction(lua, ActionKind::QuestComplete);
+        bool accepted;
+        {
+            Action action;
+            action.kind = ActionKind::QuestComplete;
+            action.questId = quest;
+            action.objectId = object;
+            action.sceneGeneration = generation;
+            if (choice >= 0) action.rewardChoice = static_cast<std::int16_t>(choice);
+            action.durationMs = duration;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
     }
 
     static int ChangeEquipment(lua_State* lua, ActionKind kind) {
@@ -893,6 +1024,10 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source, std:
                                       {"equip", Impl::Equip},
                                       {"unequip", Impl::Unequip},
                                       {"revive", Impl::Revive},
+                                      {"talk", Impl::Talk},
+                                      {"respond", Impl::Respond},
+                                      {"quest_start", Impl::QuestStart},
+                                      {"quest_complete", Impl::QuestComplete},
                                       {"stop", Impl::Stop},
                                       {"press", Impl::Press},
                                       {"keys", Impl::Keys},
