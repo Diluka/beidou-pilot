@@ -43,7 +43,7 @@ def export_prototype(workspace: Path, output: Path) -> ExportSummary:
     tree(workspace / "cli/tools", Path("cli/tools"), {".py"})
     tree(workspace / "cli/test", Path("cli/test"), {".py", ".cpp"})
     for name in ["compose.yaml", "headless/Dockerfile", "gui/Dockerfile", "gui/entrypoint.sh",
-                 "gui/bootstrap.sh", "gui/prepare-client.sh", "gui/chinese-fontlink.reg"]:
+                 "gui/bootstrap.sh", "gui/prepare-client.sh", "gui/chinese-fontlink.reg", "gui/LICENSE"]:
         files[workspace / "docker" / name] = Path("docker") / name
     for name in ["Makefile", "agent", "LICENSE", "NOTICE", "Settings"]:
         files[workspace / "headless" / name] = Path("headless") / name
