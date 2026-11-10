@@ -103,7 +103,7 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 
 `skill`返回 `native_result`：0为本地拒绝，非零不能证明命中或服务器确认。对活动脚本发送原CLI的Ctrl+C/SIGTERM取消并等待放键；不要用第二个动作命令抢占。脚本能力及效果判断见 [CONTROL](CONTROL.md)。
 
-无头 `snapshot`、`inspect character` 与 `bridge status` 提供 `dead/revive_requestable`：死亡来自已就绪角色的原生 HP=0；读数不可用时保持未知。`revive_requestable` 只表示客户端请求前置已满足，不能预判事件脚本许可。无头 `revive` 通过共享 Lua 默认等待至多6秒，只有同角色 HP>0 且地图、位置有效才返回 `revived`；存活返回 `already_alive`，均无重复请求。未确认返回 `revive_not_confirmed`，取消/断线保留实际结果；检测到死亡本身不触发复活或重连。参数化等待及脚本用法见 [Lua API](LUA_API.md#无头正常复活)。
+无头 `snapshot` 与 `bridge status` 提供 `dead/revive_requestable`：死亡来自已就绪角色的原生 HP=0；读数不可用时保持未知。`revive_requestable` 只表示客户端请求前置已满足，不能预判事件脚本许可。无头 `revive` 通过共享 Lua 默认等待至多6秒，只有同角色 HP>0 且地图、位置有效才返回 `revived`；存活返回 `already_alive`，均无重复请求。未确认返回 `revive_not_confirmed`，取消/断线保留实际结果；检测到死亡本身不触发复活或重连。参数化等待及脚本用法见 [Lua API](LUA_API.md#无头正常复活)。
 
 ## 原版 GUI
 
