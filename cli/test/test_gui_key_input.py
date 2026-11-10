@@ -1,4 +1,4 @@
-"""真实Runtime与GUI输入消费核心合同；外部原生回调仅模拟消息泵与角色更新。"""
+"""按GUI的C++14约定编译真实Runtime与输入合同；外部原生回调模拟消息泵与角色更新。"""
 
 from pathlib import Path
 import subprocess
@@ -22,7 +22,7 @@ class GuiKeyInputContract(unittest.TestCase):
         subprocess.run(
             [
                 "g++",
-                "-std=c++20",
+                "-std=c++14",
                 "-O0",
                 f"-I{lua}",
                 f"-I{root / 'shared/lua-runtime'}",
