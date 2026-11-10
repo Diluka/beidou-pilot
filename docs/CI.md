@@ -41,8 +41,10 @@ docker build --file docker/headless/Dockerfile --tag local/beidou-pilot:ci .
 gh pr checks PR编号 --repo Diluka/beidou-pilot
 ```
 
-PR 当前提交的 `Python offline tests` 和 `Headless image build` 都必须成功才满足 CI 验收。失败、缺失、未运行或跳过的必需检查都保留为待验收；本地成功不能代替远端 CI 结果。PR 后续更新影响已验证结论时，按新提交重新检查。
+代码或构建改动按惯例在 PR 当前提交的 `Python offline tests` 和 `Headless image build` 均通过后合并。失败、缺失、未运行或跳过的检查如实记录并处理；本地成功不能代替远端 CI 结果。探索调试可先做本地检查和有界客户端试验，不以远端 CI 完成为前提；正式验收使用对应提交的检查结果。
 
-主分支的 `default` 规则已将这两项 GitHub Actions 检查设为必需检查，并要求分支与基线保持同步；原有禁止删除和非快进更新规则继续保留，没有设置绕过者。
+纯文档修改按 [AGENTS.md](../AGENTS.md#开发与交付流程) 的简易流程直接提交并推送 `main`，不要求创建 PR 或等待 CI。推送触发的自动检查仍保留，结果按实际状态记录。
 
-CI 的镜像检查覆盖无头镜像；GUI Wine/VirtualGL 镜像需按改动在本地构建验证，Windows DLL 由独立工作流构建。CI 不连接真实游戏或证明实际游戏效果。CI 通过后，按[验收约定](../AGENTS.md#验收方式)使用改动涉及的真实客户端进入游戏试用；纯文档、CI 等不改变客户端运行行为的改动，可以在 PR 说明游戏试用不适用及理由。
+CI 验收是日常协作约定，不配置为远端强制检查门禁。主分支的 `default` 规则仅保留禁止删除和非快进更新保护。
+
+CI 的镜像检查覆盖无头镜像；GUI Wine/VirtualGL 镜像需按改动在本地构建验证，Windows DLL 由独立工作流构建。CI 不连接真实游戏或证明实际游戏效果。正式验收、回归范围和证据复用统一按[验收约定](../AGENTS.md#验收方式)执行，只补实际受影响的路径；未改变组件的有效证据可引用复用。纯文档、CI 等不改变客户端运行行为的改动，可以在 PR 说明游戏试用不适用及理由。
