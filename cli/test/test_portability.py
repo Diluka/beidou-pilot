@@ -122,7 +122,7 @@ class SourceExportContract(unittest.TestCase):
             self.assertTrue((output / "shared/lua-runtime/Runtime.cpp").is_file())
             exported_environment = {**environment, "PYTHONPATH": str(output / "cli"), "PYTHONDONTWRITEBYTECODE": "1"}
             runtime_tests = subprocess.run(["python3", "-m", "unittest", "test.test_lua_runtime", "test.test_task_transport",
-                                            "test.test_gui_key_input", "-v"],
+                                            "test.test_gui_key_input", "test.test_native_item_use", "-v"],
                                            cwd=output, env=exported_environment, text=True, capture_output=True)
             self.assertEqual(0, runtime_tests.returncode, runtime_tests.stderr)
             self.assertTrue((output / "docker/compose.yaml").is_file())

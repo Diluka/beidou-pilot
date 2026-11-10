@@ -18,6 +18,8 @@
 
 相同函数签名与事实边界用于两端，各端读取对象、调用原生输入或技能的实现留在适配器。可选按键/技能能力由 `game.capabilities()` 声明，headless 未支持时明确拒绝；已知程度不同的物理收束等信息保留未知，不伪造对齐。公共 `use_item` 限普通200类恢复药品。
 
+GUI普通200类用药按物品ID与实际消费槽直接调用原生入口，不查键位。请求仍只占一个活动动作，在Lua恢复栈外的原生阶段消费；未派发时可取消，调用已进入只证明本地派发，不承诺撤销药品消耗或确认恢复。显式 `keys/press` 和其他语义动作的现有路径分别保留。
+
 ```text
 shared/scripts/
   travel/move_to.lua       同层坐标反馈与到达确认
@@ -69,6 +71,6 @@ CLI 通过原生观察 API 消费 `stage/scene/inventory/character/quests/hotkey
 
 ## 原版桌面边界
 
-`engines/desktop.py`只承担登录、鼠标、滚轮、截图和短线性 GUI 操作。当前 Lua 无接口的装备、未绑定物品和传送卷等工作流继续使用桌面实现，不承担角色持续策略。
+`engines/desktop.py`只承担登录、鼠标、滚轮、截图和短线性 GUI 操作。当前 Lua 无接口的装备、非普通200类可用物品和传送卷等工作流继续使用桌面实现，不承担角色持续策略。
 
 匹配的 `ijl15.dll` 只安装到独立 GUI 运行副本，并登记构建清单；EXE、原代理 DLL 和桥 DLL 的实际指纹由 [binaries.py](../cli/beidou_pilot/binaries.py) 核验。完整客户端素材和 GUI 环境均由外部准备。

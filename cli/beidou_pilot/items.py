@@ -1,4 +1,4 @@
-"""原生Lua执行恢复品，GUI处理装备与未绑定物品，并核对结果。"""
+"""原生Lua执行普通恢复品，GUI处理其余支持物品，并核对结果。"""
 
 import math
 import time
@@ -128,7 +128,7 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
     heals_mp = any(isinstance(value, (int, float)) and value > 0 for value in (mp_amount, mp_ratio))
     move_to = specification.get("moveTo")
     teleports = type(move_to) is int and move_to > 0
-    native_potion = backend.name == "headless" and item_id // 10000 == 200
+    native_potion = item_id // 10000 == 200
     if backend.name == "headless" and not native_potion:
         raise ClientError("unsupported_capability", "无头端仅支持普通200类HP/MP药品。", {"item_id": item_id})
     if not heals_hp and not heals_mp and not teleports and not native_potion:
@@ -158,12 +158,7 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
         raise ClientError("healing_metadata_missing", "本地 WZ 未说明该物品恢复 HP，无法按目标 HP 连续使用。")
     if until_mp is not None and not heals_mp:
         raise ClientError("healing_metadata_missing", "本地 WZ 未说明该物品恢复 MP，无法按目标 MP 连续使用。")
-    binding = None
-    if backend.name == "beidou" and not teleports:
-        from .hotkeys import find_binding
-
-        binding = find_binding(backend, "item", item_id)
-    if native_potion or item_id // 10000 == 200 and binding is not None:
+    if native_potion:
         from .control_scripts import run_strategy
 
         before_inventory = read_inventory(backend, 2)
@@ -227,7 +222,7 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
                 "target_hp": until_hp, "target_mp": until_mp, "target_reached": target_reached,
                 "reason": reason, "effect": "recovery",
                 "effect_confirmed": used > 0 if report["status"] == "completed" and used is not None else None,
-                "input_method": "native_lua", "key": binding["key"] if binding else None,
+                "input_method": "native_lua", "key": None,
                 "inventory_opened": False, "inventory_closed": False,
                 "game_focused": game_focused,
                 "cleanup_pending": None, "elapsed_seconds": round(time.monotonic() - started, 3)}
