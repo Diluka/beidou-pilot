@@ -71,6 +71,7 @@ std::uint64_t characterUpdates = 0;
 std::uint64_t releaseAtCharacterUpdate = 0;
 bool releaseNeedsCharacterUpdate = false;
 bool releasing = false;
+bool dispatchingRelease = false;
 bool haveScene = false;
 MapleControl::State previousState;
 std::uint64_t sceneGeneration = 1;
@@ -451,15 +452,19 @@ void BeginRelease(const std::string& status, const std::string& reason) {
     releaseNeedsCharacterUpdate = false;
     for (bool key : owned) releaseNeedsCharacterUpdate = releaseNeedsCharacterUpdate || key;
     releaseCharacter = controlledCharacter;
-    releaseAtCharacterUpdate = characterUpdates;
-    for (unsigned int key = 0; key < held.size(); ++key) if (held[key]) {
-        held[key] = false;
-        SendKey(key, false);
-    }
     active = false;
     releasing = true;
     pendingStatus = status;
     pendingReason = reason;
+    // Native key dispatch may synchronously run another application update.
+    const bool wasDispatching = dispatchingRelease;
+    dispatchingRelease = true;
+    for (unsigned int key = 0; key < held.size(); ++key) if (held[key]) {
+        held[key] = false;
+        SendKey(key, false);
+    }
+    releaseAtCharacterUpdate = characterUpdates;
+    dispatchingRelease = wasDispatching;
 }
 
 bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durationMs, std::string& error) {
@@ -497,9 +502,13 @@ bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durati
     releasing = false;
     pendingStatus.clear();
     pendingReason.clear();
+    active = true;
+    controlledCharacter = currentNative.user;
+    deadline = GetTickCount64() + durationMs;
     for (unsigned int key = 0; key < held.size(); ++key) if (held[key] && !desired[key]) {
         held[key] = false;
         SendKey(key, false);
+        if (!active) return true;
     }
     for (unsigned int key = 0; key < held.size(); ++key) if (!held[key] && desired[key]) {
         owned[key] = true;
@@ -509,10 +518,9 @@ bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durati
             error = "input_route_unavailable";
             return false;
         }
+        // A synchronous update can stop this input before the next key.
+        if (!active) return true;
     }
-    active = true;
-    controlledCharacter = currentNative.user;
-    deadline = GetTickCount64() + durationMs;
     return true;
 }
 
@@ -754,7 +762,8 @@ void Tick() {
     const bool oldCharacterExited = native.loginStage ||
         (native.field == 0 && native.stats == 0 && native.user == 0) ||
         (previousState.characterKnown && previousState.positionKnown && native.user != releaseCharacter);
-    if (releasing && (!releaseNeedsCharacterUpdate || characterConsumedRelease || oldCharacterExited)) {
+    if (releasing && !dispatchingRelease &&
+        (!releaseNeedsCharacterUpdate || characterConsumedRelease || oldCharacterExited)) {
         releasing = false;
         owned.fill(false);
         controlledCharacter = 0;

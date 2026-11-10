@@ -153,6 +153,11 @@ unsigned int Duration(lua_State* lua, int argument, double defaultSeconds, bool 
 }
 
 struct Runtime::Impl {
+    struct UpdateScope {
+        bool& updating;
+        explicit UpdateScope(bool& flag) : updating(flag) { updating = true; }
+        ~UpdateScope() { updating = false; }
+    };
     enum class WaitFor { None, Sleep, Action, RawKeys, Release, Control };
     struct Task {
         lua_State* coroutine = nullptr;
@@ -187,6 +192,7 @@ struct Runtime::Impl {
     int replacementReference = LUA_NOREF;
     int replacementPriority = 0;
     std::uint64_t replacementGeneration = 0;
+    bool updating = false;
     bool finishing = false;
     std::string finalStatus;
     std::string finalReason;
@@ -774,7 +780,8 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source,
 
 void Runtime::Tick(bool sceneChanged) {
     auto& runtime = *impl;
-    if (runtime.report.status != "running") return;
+    if (runtime.updating || runtime.report.status != "running") return;
+    Impl::UpdateScope scope(runtime.updating);
     const auto& state = runtime.adapter.Observe();
     runtime.CaptureResult();
     if (runtime.finishing) {
@@ -868,10 +875,11 @@ TaskChangeResult Runtime::ManageTask(const TaskChange& change) {
         result.reason = "script_session_unavailable";
         return result;
     }
-    if (runtime.changeResult.status == "pending") {
+    if (runtime.updating || runtime.changeResult.status == "pending") {
         result.reason = "task_management_busy";
         return result;
     }
+    Impl::UpdateScope scope(runtime.updating);
     if (change.name.empty() || change.name.size() > 64 || change.name.find('\0') != std::string::npos) {
         result.reason = "invalid_task_name";
         return result;
