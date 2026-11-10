@@ -3,6 +3,8 @@
 
 #include "Runtime.h"
 #include "TaskTransport.h"
+#include "Interaction.h"
+#include "QuestInteraction.h"
 #include <nlohmann/json.hpp>
 #include "IO/KeyAction.h"
 
@@ -43,6 +45,12 @@ private:
     nlohmann::json ObservationData(const std::string& domain, std::string& status, std::string& error) const;
     void Publish();
     void ApplyRelease();
+    void CaptureInteraction();
+    bool OpenNpc(std::int32_t objectId, std::int32_t npcId, std::string& error);
+    bool OpenServerNpc(std::int32_t objectId, std::int32_t npcId, std::string& error);
+    bool RespondNpc(std::uint64_t revision, std::int8_t response, std::optional<std::int32_t> selection,
+                    std::string& error);
+    bool RequestQuest(const QuestRequest& request, std::string& error);
     nlohmann::json StateDocument() const;
 
     std::filesystem::path directory;
@@ -62,6 +70,18 @@ private:
     };
 
     std::optional<EquipmentChange> equipmentChange;
+
+    Interaction interaction;
+    QuestInteraction questInteraction;
+    std::string localQuestUnavailable;
+
+    struct NpcTarget {
+        std::int32_t templateId;
+        std::string reference;
+    };
+
+    std::map<std::int32_t, NpcTarget> npcTargets;
+    std::optional<std::uint64_t> shownDialogueRevision;
     std::optional<std::uint32_t> reviveCharacter;
     std::optional<ms::KeyAction::Id> heldAction;
     std::uint64_t currentTick = 0;

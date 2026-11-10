@@ -111,10 +111,10 @@ def parser() -> Parser:
     q.add_argument("id", nargs="?", type=int)
     q = command("talk", "按当前NPC名称、模板ID或引用打开对话")
     q.add_argument("target")
-    q = command("click", "操作当前快照引用，或点击根桌面坐标")
-    q.add_argument("target")
-    q.add_argument("y", nargs="?", type=int)
-    q.add_argument("--double", action="store_true")
+    q = command("click", "激活当前控件引用；GUI另可点击根桌面坐标")
+    q.add_argument("target", help="当前控件引用；GUI也接受既有引用或x坐标")
+    q.add_argument("y", nargs="?", type=int, help="仅GUI坐标点击")
+    q.add_argument("--double", action="store_true", help="仅GUI桌面双击")
     q = command("dialog", "读当前对话、选文字、下一页或确认")
     q.add_argument(
         "action",
@@ -298,6 +298,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "snapshot",
         "watch",
         "inspect",
+        "click",
         "walk",
         "face",
         "jump",
@@ -337,7 +338,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             }:
                 raise
             state = None
-        domains = DOMAINS if backend.name == "beidou" else DOMAINS - {"hotkeys", "dialog", "ui", "shop"}
+        domains = (
+            DOMAINS - {"interaction"} if backend.name == "beidou" else DOMAINS - {"hotkeys", "dialog", "ui", "shop"}
+        )
         return {
             "connected": state is not None,
             "ready": state["ready"] if state is not None else False,
@@ -530,6 +533,14 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             raise ClientError("usage", "dialog select需要文字、索引或当前引用。")
         return dialogs.act(backend, args.action, args.selector)
     if cmd == "click":
+        if backend.name == "headless":
+            if args.y is not None or args.double:
+                raise ClientError("unsupported_capability", "无头端只激活当前原生控件引用，不提供桌面坐标或双击。")
+            from .control_scripts import _lua_literal, run_source
+
+            report = run_source(backend, "game.activate(" + _lua_literal(args.target) + ")\n", 3)
+            state = cast(JsonObject, report["last_state"])
+            return {**report, "action": "activate", "action_result": state["action_result"]}
         if args.y is not None:
             return backend.desktop(
                 [{"action": "double-click" if args.double else "click", "x": int(args.target), "y": args.y}]

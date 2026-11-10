@@ -47,6 +47,9 @@ class LuaRuntimeContract(unittest.TestCase):
     def test_domain_availability_and_context_changes_do_not_reuse_stale_values(self) -> None:
         subprocess.run([str(self.executable), "domain-availability"], check=True, timeout=10)
 
+    def test_activation_keeps_only_a_reference_and_waits_without_replay(self) -> None:
+        subprocess.run([str(self.executable), "activation-requests"], check=True, timeout=10)
+
     def test_revive_waits_for_native_confirmation_across_map_arrival_without_replay(self) -> None:
         subprocess.run([str(self.executable), "revive-requests"], check=True, timeout=10)
 

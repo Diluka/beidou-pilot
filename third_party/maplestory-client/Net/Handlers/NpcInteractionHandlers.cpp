@@ -21,6 +21,10 @@
 
 #include "../../IO/UITypes/UINpcTalk.h"
 #include "../../IO/UITypes/UIShop.h"
+#ifdef HEADLESS
+#include "HeadlessState.h"
+#include <charconv>
+#endif
 
 namespace ms
 {
@@ -31,18 +35,66 @@ namespace ms
 		int32_t npcid = recv.read_int();
 		int8_t msgtype = recv.read_byte(); // 0 - textonly, 1 - yes/no, 4 - selection, 12 - accept/decline
 		int8_t speaker = recv.read_byte();
-		std::string text = recv.read_string();
-
 		int16_t style = 0;
-
+#ifdef HEADLESS
+		const bool supported = msgtype == 0 || msgtype == 1 || msgtype == 4 || msgtype == 12;
+		// Other native types can insert fields before the text; do not parse them as ordinary pages.
+		std::string text = supported ? recv.read_string() : std::string{};
+		if (msgtype == 0) style = recv.read_short();
+#else
+		std::string text = recv.read_string();
 		if (msgtype == 0 && recv.length() > 0)
 			style = recv.read_short();
+#endif
 
+#ifdef HEADLESS
+		auto& host = headless_state();
+		auto& page = host.dialogue;
+		++page.revision;
+		page.scene_generation = host.map_generation;
+		page.open = true;
+		page.response_pending = false;
+		page.npc_id = npcid;
+		if (page.requested_npc_id != npcid) page.object_id.reset();
+		page.type = msgtype;
+		page.speaker = static_cast<uint8_t>(speaker);
+		page.previous = (style & 0xff) != 0;
+		page.next = (style & 0xff00) != 0;
+		page.text_known = supported;
+		page.text = std::move(text);
+		page.choices.clear();
+		page.choices_complete = supported;
+		page.closed_by.clear();
+		if (msgtype == 4)
+		{
+			size_t offset = 0;
+			while ((offset = page.text.find("#L", offset)) != std::string::npos)
+			{
+				const auto end = page.text.find('#', offset + 2);
+				const auto close = end == std::string::npos ? end : page.text.find("#l", end + 1);
+				int32_t id = 0;
+				if (end == std::string::npos || close == std::string::npos)
+				{
+					page.choices_complete = false;
+					break;
+				}
+				const auto parsed = std::from_chars(page.text.data() + offset + 2, page.text.data() + end, id);
+				if (parsed.ec != std::errc{} || parsed.ptr != page.text.data() + end || id < 0)
+				{
+					page.choices_complete = false;
+					break;
+				}
+				page.choices.push_back({id, page.text.substr(end + 1, close - end - 1)});
+				offset = close + 2;
+			}
+		}
+#else
 		UI::get().emplace<UINpcTalk>();
 		UI::get().enable();
 
 		if (auto npctalk = UI::get().get_element<UINpcTalk>())
 			npctalk->change_text(npcid, msgtype, style, speaker, text);
+#endif
 	}
 
 	void OpenNpcShopHandler::handle(InPacket& recv) const

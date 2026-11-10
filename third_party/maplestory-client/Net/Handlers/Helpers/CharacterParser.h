@@ -29,6 +29,7 @@ namespace ms
 		void parse_skillbook(InPacket& recv, SkillBook& skills);
 		void parse_cooldowns(InPacket& recv, Player& player);
 		void parse_questlog(InPacket& recv, QuestLog& quests);
+		void parse_quest_update(InPacket& recv, QuestLog& quests);
 		void parse_ring1(InPacket& recv);
 		void parse_ring2(InPacket& recv);
 		void parse_ring3(InPacket& recv);

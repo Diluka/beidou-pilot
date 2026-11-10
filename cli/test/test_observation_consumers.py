@@ -72,6 +72,7 @@ class SnapshotConsumerContract(unittest.TestCase):
                           "equipped": []},
             "quests": {"quests": {"1000": {"status": "started"}}},
             "character": {"mesos": 50, "skills": {"1001004": {"level": 1}}},
+            "interaction": {"page": None},
         }
         self.backend.read.side_effect = lambda domain, *arguments: self.domains[domain]
         self.catalog = self.enterContext(patch("beidou_pilot.snapshot.Catalog")).return_value
@@ -86,8 +87,9 @@ class SnapshotConsumerContract(unittest.TestCase):
         self.assertIs(report["dead"], True)
         self.assertIs(report["revive_requestable"], True)
         self.assertNotIn("dialog", [call.args[0] for call in self.backend.read.call_args_list])
-        self.assertFalse(report["dialog"]["supported"])
-        self.assertIsNone(report["dialog"]["open"])
+        self.assertIn("interaction", [call.args[0] for call in self.backend.read.call_args_list])
+        self.assertNotIn("dialog", report)
+        self.assertIsNone(report["interaction"]["page"])
         self.assertIsNone(report["viewport"])
         self.assertIsNone(report["monsters"][0]["visible"])
         self.assertIsNone(report["monsters"][0]["name"])
@@ -98,9 +100,39 @@ class SnapshotConsumerContract(unittest.TestCase):
         self.assertEqual(self.domains["quests"]["quests"], report["quests"])
         self.assertEqual(self.domains["character"]["skills"], report["character"]["skills"])
         text = format_snapshot(report)
-        self.assertIn("客户端不支持观察", text)
+        self.assertIn("当前没有交互页面", text)
         self.assertIn("可见性未知", text)
         self.assertNotIn("画外", text)
+
+    def test_native_control_and_npc_refs_are_preserved_without_python_payloads(self) -> None:
+        self.backend.name = "headless"
+        self.domains["scene"]["npcs"] = [{"object_id": 12, "template_id": 12101, "name": "瑞恩",
+                                           "x": .5, "y": 0, "ref": "native-npc-ref"}]
+        page = {"source": "server", "title": "瑞恩", "text": "你好",
+                "controls": [{"role": "button", "text": "继续", "enabled": None, "ref": "native-button-ref"}]}
+        self.domains["interaction"]["page"] = page
+        report = collect(self.backend)
+        self.assertEqual(page, report["interaction"]["page"])
+        self.assertIsNone(report["interaction"]["page"]["controls"][0]["enabled"])
+        self.assertEqual("native-npc-ref", report["npcs"][0]["ref"])
+        self.assertNotIn("native-npc-ref", report["refs"])
+        self.assertNotIn("native-button-ref", report["refs"])
+        self.assertIn("启用状态未知", format_snapshot(report))
+
+    def test_unknown_interaction_text_and_controls_stay_unknown(self) -> None:
+        self.backend.name = "headless"
+        page = {"source": "server", "title": "NPC对话", "text": None, "controls": None}
+        self.domains["interaction"].update(page=page, unavailable=["interaction_page_layout_not_supported"],
+                                           not_covered=[], client={"container_id": "native-metadata"})
+        with patch("beidou_pilot.control_scripts.run_source") as run:
+            report = collect(self.backend)
+        run.assert_not_called()
+        self.assertEqual(page, report["interaction"]["page"])
+        self.assertEqual(["interaction_page_layout_not_supported"], report["interaction"]["unavailable"])
+        self.assertEqual([], report["interaction"]["not_covered"])
+        self.assertNotIn("client", report["interaction"])
+        self.assertIn("交互正文：未知", format_snapshot(report))
+        self.assertIn("交互控件：未知", format_snapshot(report))
 
     def test_beidou_preserves_dialog_and_filters_only_known_invisible_entities(self) -> None:
         self.backend.name = "beidou"

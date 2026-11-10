@@ -44,6 +44,7 @@
 | `game.equip(backpack_slot, equipped_slot, seconds)` | 无头普通装备；背包正槽、身上负槽；默认确认期限 `3` 秒，`0 < seconds <= 30` | 是，等待槽位变化或本次执行结束 | 动作结果 |
 | `game.unequip(equipped_slot, backpack_slot, seconds)` | 无头普通装备；身上负槽、空背包正槽；确认期限同 `equip` | 是，等待槽位变化或本次执行结束 | 动作结果 |
 | `game.revive(seconds)` | 无头普通复活；默认确认期限 `6` 秒，`0 < seconds <= 30` | 是，等待同角色恢复或期限结束 | 动作结果 |
+| `game.activate(ref)` | 当前原生控件或场景目标的不透明引用，仅接受这一个参数 | 是，等待单次控件处理和控制释放 | 动作结果 |
 | `game.stop()` | 无 | 是，等待释放确认 | 动作结果 |
 | `game.log(text)` | 字符串，限制见[日志与预算](#日志与预算) | 否 | 无 |
 | `game.keys(keys, seconds)` | 原版可选；默认租期 `0.1`，`0 < seconds <= 30` | 否 | 无 |
@@ -56,7 +57,7 @@
 
 `spawn` 创建由共享运行时调度的独立 Lua 任务。一个任务等待动作、控制权或 `sleep` 时，其他任务仍可调用 `state/observe/time/log/tasks`，观察和判断。任务共享 Lua 全局变量与闭包，不开放用户自行创建协程的入口。
 
-普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/equip/unequip/revive/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
+普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/equip/unequip/revive/activate/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
 
 优先级越大越先取得控制。高优先级任务请求接管时，旧任务立即停止派发冲突动作，运行时请求释放原生输入，确认释放后才授权新任务；等待释放期间其他任务仍可观察。相同优先级保持当前控制者，等待者按请求顺序取得控制。控制权跨 `sleep()` 保留，直到 `stop()`、任务完成、任务取消或更高优先级接管。
 
@@ -130,6 +131,7 @@ end
 | `move`、`face`、`jump`、`attack`、`pickup`、`use_item`、`stop` | boolean | 后端是否实现该语义动作；当前两端均实现 |
 | `equip`、`unequip` | boolean | 是否实现普通装备穿戴/卸下；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `revive` | boolean | 是否实现正常复活请求与确认；当前 headless 为 `true`，原版 Lua 为 `false` |
+| `activate` | boolean | 是否实现原生控件引用激活；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `raw_keys` | boolean | 是否实现 `keys/press`；当前 headless 为 `false`，原版为 `true` |
 | `skill` | boolean | 是否实现直接技能；当前 headless 为 `false`，原版为 `true` |
 
@@ -204,7 +206,7 @@ end
 
 `game.observe(domain)` 在当前原生更新线程同步读取指定领域，不需要动作控制权，也不触碰主机桥文件或经过 Python 反馈。只有调用时才采集该领域；`game.state()` 的每帧轻量采样不因此增加全量任务、技能或 UI 遍历。按业务决策需要查询，长循环仍通过 `sleep` 或动作函数让出执行权。
 
-`domain` 精确接受下列九个名称。未知名称或缺少参数会产生 Lua 参数错误；合法但后端未实现的领域返回 `status="unsupported"`。
+`domain` 精确接受下列十个名称。未知名称或缺少参数会产生 Lua 参数错误；合法但后端未实现的领域返回 `status="unsupported"`。
 
 | 领域 | 两端支持与主要原生字段 |
 | --- | --- |
@@ -212,9 +214,10 @@ end
 | `scene` | 两端；`map_id`、`player`、`player_facing`、`monsters`、`npcs`、`drops`。NPC 提供 `object_id/template_id/name/x/y`；保留本端已知字段及限制 |
 | `inventory` | 两端；`items` 为已占用正槽，`equipped` 为身上负槽，元素含 `inventory_type/slot/item_id/quantity`；`capacities` 以字符串背包类型为键 |
 | `character` | 两端；`character_id`、`mesos`、`skills`、`skills_complete` 及本端校验说明。`skills` 以字符串技能 ID 为键，记录含 `level/master_level`；没有覆盖的名称、需求和效果仍未知 |
-| `quests` | 两端；`quests` 元素含 `quest_id/state/progress`，状态为 `started/completed`，进度保留原始文本。无头另有 `linked_progress`、快照来源和非实时声明 |
+| `quests` | 两端；`quests` 元素含 `quest_id/state/progress`，状态为 `started/completed`，进度保留原始文本。无头从完整角色包和本端正常增量维护记录；未核实的 `linked_progress` 为 nil |
 | `hotkeys` | GUI；原生快捷键与快捷栏映射、已知布局和限制；无头不支持 |
-| `dialog` | GUI；`dialog_open`、`npc_id`、`dialog_type`、`lines`、`choices`、`buttons` 及来源窗口说明；无头不支持 |
+| `interaction` | 无头；`data.page` 是当前通用页面或 nil，页面和控件结构见[控件交互](#控件交互)；GUI未支持 |
+| `dialog` | GUI既有对话观察；无头不支持此内容领域，使用 `interaction` |
 | `ui` | GUI；`windows`、`dialog` 与原生游戏区布局；无头不支持 |
 | `shop` | GUI；`open`、`npc_id`、`buy_items/sell_items`、选择/滚动位置、`busy` 和数量窗口状态；无头不支持 |
 
@@ -237,7 +240,7 @@ end
 
 GUI 的 `data.read_seconds` 是本次原生领域采集耗时；CLI 的同名结果还包含外部请求与读取时间，两者不能直接作为同一段耗时比较。
 
-无头任务的 `data.source="character_data_snapshot"`、`data.live_updates=false` 明确表示角色完整包快照。`observed_at_ms` 只标记本次读取所依附的采样时间，不是任务来源最后更新时间；来源更新时间未提供。重登后读到新快照不等于同会话实时任务更新。GUI 任务读取当前原生记录，同样不解释未覆盖的任务进度语义。
+无头任务的 `data.source="character_data_snapshot_and_updates"`、`data.live_updates=true` 表示完整角色包与同会话正常增量共同维护记录。`live_update_kinds` 为 `not_started/started/completed`；移除或放弃会清除旧记录，进度串保留原文，不推断计数、可接任务或关联。`linked_progress=nil` 表示关联语义未知。`observed_at_ms` 是采样时间，不是任务来源最后更新时间；GUI同样只读取本端当前记录。
 
 非 `stage` 领域在 `ready=false` 时返回 `unavailable`、`error="native_client_not_in_game"` 和 `data=nil`，不使用旧领域缓存。换图后重新查询并核对 `instance_id/character_id/map_id/scene_generation`；旧表仍是历史拷贝，旧 NPC OID、UI 对象和任务规划不能自动用于新场景。角色变化、离开游戏与整会话取消仍遵循既有停止规则。
 
@@ -253,14 +256,14 @@ if current.data.mesos ~= nil then
     game.log("当前金币：" .. tostring(current.data.mesos))
 end
 local quests = game.observe("quests")
-if quests.status == "ok" and quests.data.live_updates == false then
-    game.log("任务为登录快照，不能据此判断当前任务进度变化")
+if quests.status == "ok" then
+    game.log("任务增量支持：" .. tostring(quests.data.live_updates))
 end
 ```
 
 ## 动作结果
 
-`move/face/jump/attack/pickup/use_item/equip/unequip/stop/press` 返回以下表：
+`move/face/jump/attack/pickup/use_item/equip/unequip/revive/activate/stop/press` 返回以下表：
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
@@ -293,6 +296,18 @@ end
 恢复确认后为 `effect="confirmed"`、`reason="revive_confirmed"`；期限内未确认、角色变化或取消时保留 `effect="unknown"` 及本次派发事实，不重发。事件脚本等服务端许可不能由当前客户端预判，`revive_requestable=true` 仅说明客户端请求前置已满足。动作结果和最新 `game.state()` 共同决定后续策略，不自动继续此前战斗、复活或重连。
 
 该 Lua 能力仅 headless 提供。原版 Lua 声明 `revive=false`，调用报 `unsupported: revive`；原版 CLI `revive` 保留已识别 GUI 确认框流程。无头死亡时可以装载只读观察或显式复活 Lua；移动、攻击、用物等原有动作仍拒绝死亡角色。
+
+### 控件交互
+
+无头端通过 `game.observe("interaction").data.page` 观察当前页面，再用 `game.activate(ref)` 激活选定控件。没有当前页面时 `page=nil`。Page严格包含四项：`source`（来源字符串）、`title`（标题字符串）、`text`（正文字符串或nil）、`controls`（控件数组或nil）。每个Control只有 `role/text/enabled/ref`；`role/text/ref` 是字符串，`enabled` 为布尔值或nil。未知正文或控件不转换为空文本或空菜单，未知启用状态也不等于禁用。
+
+`scene` 中NPC目标的 `ref` 与页面控件引用由同一原生交互组件生产。引用绑定所属实例、角色、场景和页面，调用方不解析格式，也不拼对象ID、页版本、任务ID或协议选择参数。页面或场景变化后重新观察；旧引用由原生拒绝，Python不会替换或重放它。
+
+`reason="control_activated"` 只说明本次控件已处理；`effect` 不因此成为任务、奖励或消费成功。激活后再读当前交互页判断界面变化，任务和收益分别从 `quests`、背包或角色观察核对。激活预算和取消沿用脚本生命周期，不给函数增加内容参数或动作别名。
+
+普通服务端脚本页和客户端本地任务页共用上述模型。后者的 `source="client_local_quest"`，条目、正文与资格来自真实 `Quest.nx`、当前NPC及本端状态；先打开详情，再明确激活确认控件，不把可发送协议的任务ID目录当成菜单。未接任务只在本地资格已知满足时列出；已接任务可读当前详情，交付资格未知或不满足时不允许确认。已完成历史不会遮蔽普通交谈；混合来源界面通过同一模型的“交谈”导航切换。
+
+缺少 `Quest.nx`、未支持条件、重复或脚本特殊流程、复杂奖励选择均不自动补全或猜测；只有已实现的真实控件可激活。本地UI仅对已核实的普通单目标进度格式判定条件，`quests` 领域仍保留原始文本；成功正文要等真实任务状态到达，奖励另读原生事实。待响应或未解析页面保持未知，不生成假控件。GUI的 `activate` 能力为false，其已有CLI桌面消费者继续使用原流程。
 
 ### 无头普通换装
 

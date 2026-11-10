@@ -142,8 +142,25 @@ public:
 // This boundary controls native completion; it does not simulate inventory packets or equipment rules.
 class ConfirmationBoundary final : public NativeBoundary {
 public:
+    MapleControl::Observation ObserveDomain(const std::string& domain) const override {
+        if (domain != "interaction") return NativeBoundary::ObserveDomain(domain);
+        using MapleControl::Value;
+        return {"ok",
+                Value::Object(
+                    {{"page", Value::Object(
+                                  {{"source", "native_fixture"},
+                                   {"title", "Panel"},
+                                   {"text", "Current page"},
+                                   {"controls", Value::Array({Value::Object({{"role", "button"},
+                                                                             {"text", "Next"},
+                                                                             {"enabled", true},
+                                                                             {"ref", "opaque-native-control"}})})}})}}),
+                {}};
+    }
+
     bool Supports(MapleControl::ActionKind kind) const override {
         if (kind == MapleControl::ActionKind::Revive) return reviveSupported;
+        if (kind == MapleControl::ActionKind::Activate) return activateSupported;
         return (kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip)
                || equipmentSupported;
     }
@@ -179,6 +196,7 @@ public:
     bool pending = false;
     bool equipmentSupported = true;
     bool reviveSupported = true;
+    bool activateSupported = true;
 };
 
 // The native callback re-enters the real scheduler; it does not model NPCs.
@@ -823,8 +841,57 @@ game.revive()
           "unsupported_revive_reached_native_dispatch");
 }
 
+void ActivationRequests() {
+    ConfirmationBoundary native;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("activation", R"lua(
+assert(game.capabilities().activate)
+assert(game.talk == nil and game.respond == nil and game.quest_start == nil and game.quest_complete == nil)
+local observed = game.observe("interaction")
+assert(observed.status == "ok")
+local control = observed.data.page.controls[1]
+assert(control.role == "button" and control.text == "Next" and control.enabled)
+local result = game.activate(control.ref)
+assert(result.dispatched and result.control_released and result.effect == "unknown")
+assert(result.reason == "control_activated")
+)lua",
+                        3000, error),
+          error);
+    Advance(runtime, native, 2);
+    Check(native.pending && native.requests.size() == 1
+              && native.requests.back().kind == MapleControl::ActionKind::Activate
+              && native.requests.back().reference == "opaque-native-control",
+          "activation_reference_or_wait_lost");
+    native.Complete("unknown", "control_activated");
+    Advance(runtime, native, 3);
+    Check(!runtime.Running() && runtime.CurrentStatus()->error.empty() && native.requests.size() == 1,
+          "activation_was_replayed_or_claimed_a_business_result");
+    Check(runtime.Start("activation-arguments", "game.activate('opaque-native-control', 3)", 3000, error), error);
+    Advance(runtime, native, 2);
+    Check(runtime.CurrentStatus()->error.find("activate accepts only a control reference") != std::string::npos
+              && native.requests.size() == 1,
+          "activation_accepted_protocol_or_budget_arguments");
+    native.activateSupported = false;
+    Check(runtime.Start("unsupported-activation", R"lua(
+assert(not game.capabilities().activate)
+game.activate("opaque-native-control")
+)lua",
+                        3000, error),
+          error);
+    Advance(runtime, native, 3);
+    Check(runtime.CurrentStatus()->reason == "script_error"
+              && runtime.CurrentStatus()->error.find("unsupported: activate") != std::string::npos
+              && native.requests.size() == 1,
+          "unsupported_activation_reached_native_dispatch");
+}
+
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
+    if (std::string(argv[1]) == "activation-requests") {
+        ActivationRequests();
+        return 0;
+    }
     if (std::string(argv[1]) == "revive-requests") {
         ReviveRequests();
         return 0;

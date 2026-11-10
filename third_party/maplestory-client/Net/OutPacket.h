@@ -71,6 +71,7 @@ namespace ms
 			TALK_TO_NPC = 58,
 			NPC_TALK_MORE = 60,
 			NPC_SHOP_ACTION = 61,
+			QUEST_ACTION = 107,
 
 			/// Player Interaction
 			CHAR_INFO_REQUEST = 97,
@@ -91,6 +92,7 @@ namespace ms
 			USE_SKILL = 91,
 
 			/// Gameplay 2
+			CHANGE_MAP_SPECIAL = 100,
 			PARTY_OPERATION = 124,
 			ADMIN_COMMAND = 128,
 			MOVE_MONSTER = 188,
