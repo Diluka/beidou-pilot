@@ -44,7 +44,7 @@ class ItemUseContract(unittest.TestCase):
             "last_state": {"character": {**self.character, "hp": hp},
                            "inventory": [{"item_id": item_id, "quantity": quantity}]}}
 
-    def test_bound_recovery_runs_strategy_and_projects_observed_target(self) -> None:
+    def test_gui_potion_uses_native_strategy_without_binding_lookup(self) -> None:
         self.metadata(2000000, '<int name="hp" value="50"/>')
         self.complete(2000000, 3, hp=100)
         result = use(self.backend, 2000000, count=2, until_hp=100)
@@ -53,6 +53,8 @@ class ItemUseContract(unittest.TestCase):
         self.assertEqual(1, result["used"])
         self.assertEqual("target_reached", result["reason"])
         self.assertTrue(result["effect_confirmed"])
+        self.assertIsNone(result["key"])
+        self.assertNotIn("hotkeys", [call.args[0] for call in self.backend.read.call_args_list])
         self.backend.desktop.assert_not_called()
 
     def test_headless_count_does_not_require_optional_xml(self) -> None:

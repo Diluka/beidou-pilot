@@ -3,6 +3,7 @@
 #include "Runtime.h"
 #include "TaskTransport.h"
 #include "NativeKeyInput.h"
+#include "NativeItemUse.h"
 #include "NativeObservation.h"
 
 #include <array>
@@ -18,7 +19,7 @@
 
 // These addresses and layouts belong to BeiDou Client V17, EXE SHA256
 // 1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df.
-// The bridge uses the existing client input route; it never builds game packets.
+// The bridge calls original client routines; it never builds game packets.
 namespace {
 struct ClientApplication;
 struct InputSystem;
@@ -28,12 +29,15 @@ using InputModifiers = unsigned int(__thiscall*)(InputSystem*);
 using InputMessage = void(__stdcall*)(unsigned int, unsigned int, unsigned int);
 struct ClientPlayer;
 using ActiveSkill = int(__thiscall*)(ClientPlayer*, int, int, int*);
+struct ClientContext;
+using UseItem = void(__thiscall*)(ClientContext*, int, int);
 
 auto originalUpdate = reinterpret_cast<ApplicationUpdate>(0x009F84D0);
 auto originalKeyPressed = reinterpret_cast<KeyPressed>(0x0059A25A);
 const auto dispatchInput = reinterpret_cast<InputMessage>(0x009F97B7);
 const auto inputModifiers = reinterpret_cast<InputModifiers>(0x0059B1EB);
 const auto activeSkill = reinterpret_cast<ActiveSkill>(0x00966F7A);
+const auto useItem = reinterpret_cast<UseItem>(0x00A092FB);
 
 struct NativeContext {
     std::uint32_t field = 0;
@@ -54,6 +58,8 @@ std::string lastConsumedId;
 std::string pendingStatus;
 std::string pendingReason;
 BeiDouBridge::NativeKeyInput keyInput;
+BeiDouBridge::NativeItemUse itemUse;
+bool itemResult = false;
 std::array<unsigned int, 256> scanCodes{};
 std::array<std::uint32_t, 256> nativeScanCodes{};
 std::uint32_t nativeScanCodesOwner = 0;
@@ -91,7 +97,7 @@ public:
     }
     MapleControl::ActionResult Result() const override { return NativeResult(); }
     void Release() override { BeginRelease({}, {}); }
-    bool Released() const override { return keyInput.Released(); }
+    bool Released() const override { return keyInput.Released() && !itemUse.Pending(); }
     bool ReleasePending() const override { return keyInput.ReleasePending(); }
     bool Logs(const std::string& scriptId, const std::vector<std::string>& lines) override {
         return NativeLogs(scriptId, lines);
@@ -305,7 +311,7 @@ std::uint64_t UnixMilliseconds() {
     return (ticks - 116444736000000000ULL) / 10000;
 }
 
-bool BindingKey(unsigned char type, std::uint32_t id, unsigned int& key, std::string& error) {
+bool BindingKey(std::uint32_t id, unsigned int& key, std::string& error) {
     std::uint32_t mapped = 0;
     std::uint32_t input = 0;
     std::uint32_t vtable = 0;
@@ -319,7 +325,7 @@ bool BindingKey(unsigned char type, std::uint32_t id, unsigned int& key, std::st
     for (unsigned int index = 0; index < 89; ++index) {
         std::uint32_t actionId = 0;
         std::memcpy(&actionId, table.data() + index * 5 + 1, sizeof(actionId));
-        if (table[index * 5] != type || actionId != id) continue;
+        if (table[index * 5] != 5 || actionId != id) continue;
         // Extended navigation keys share the low seven DIK bits used by CFuncKeyMappedMan.
         unsigned int scan = index;
         if (index == 71 || index == 72 || index == 73 || index == 75 || index == 77 ||
@@ -327,7 +333,7 @@ bool BindingKey(unsigned char type, std::uint32_t id, unsigned int& key, std::st
         if (!ReadAt(input + 0x424 + scan * 4, key) || key == 0 || key > 255) continue;
         return true;
     }
-    error = type == 2 ? "unsupported: item_not_bound" : "unsupported: native_action_not_bound";
+    error = "unsupported: native_action_not_bound";
     return false;
 }
 
@@ -445,6 +451,7 @@ bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
 }
 
 void BeginRelease(const std::string& status, const std::string& reason) {
+    itemUse.Cancel();
     keyInput.Release();
     pendingStatus = status;
     pendingReason = reason;
@@ -668,11 +675,11 @@ void ReadCommand() {
             !(stream >> extra) && previousState.ready && previousState.character.values[6] > 0;
     }
     else valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
-    const bool busy = operation != "stop" && (runtime.Running() || !keyInput.Released());
+    const bool busy = operation != "stop" && (runtime.Running() || !adapter.Released());
     if (!valid || busy) {
         rejectedId = id;
         rejectedReason = busy ? "busy" : "invalid_or_stale_command";
-        if (!runtime.Running() && keyInput.Released()) {
+        if (!runtime.Running() && adapter.Released()) {
             commandId = id; commandStatus = "rejected"; commandReason = rejectedReason;
         }
         return;
@@ -752,9 +759,22 @@ void Tick() {
     if (now - lastPublishedAt >= 25) {
         if (!Publish(previousState)) {
             if (runtime.Running()) runtime.Cancel("state_publish_failed");
-            else if (keyInput.Active()) BeginRelease({}, {});
+            else if (keyInput.Active() || itemUse.Pending()) BeginRelease({}, {});
         }
         lastPublishedAt = now;
+    }
+    if (itemUse.Pending()) {
+        std::uint32_t context = 0;
+        if (!ReadAt(0x00BE7918, context)) context = 0;
+        const auto consumed = itemUse.Consume(previousState.characterKnown ? previousState.character.id : 0,
+            sceneGeneration, context, [](const BeiDouBridge::NativeItemUse::Item& item) {
+                useItem(reinterpret_cast<ClientContext*>(item.context), item.slot, static_cast<int>(item.itemId));
+            });
+        if (consumed == BeiDouBridge::NativeItemUse::Consumption::ContextChanged) {
+            semanticResult.reason = "item_context_changed";
+            runtime.Cancel("item_context_changed");
+        }
+        return;
     }
     // Native delivery may remain in a UI message loop. Lua and management have
     // already returned, and a superseded delivery frame has no old tail work.
@@ -808,11 +828,12 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         BeginRelease({}, {});
         return true;
     }
+    itemResult = false;
     if (!currentState->ready || currentState->character.values[6] == 0) {
         error = "state_unavailable_or_dead";
         return false;
     }
-    if (!keyInput.Released()) { error = "action_in_progress"; return false; }
+    if (!adapter.Released()) { error = "action_in_progress"; return false; }
     unsigned int key = 0;
     unsigned int duration = action.durationMs == 0 ? 60 : action.durationMs;
     switch (action.kind) {
@@ -833,13 +854,13 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         }
         break;
     case MapleControl::ActionKind::Jump:
-        if (!BindingKey(5, 53, key, error)) return false;
+        if (!BindingKey(53, key, error)) return false;
         break;
     case MapleControl::ActionKind::Attack:
-        if (!BindingKey(5, 52, key, error)) return false;
+        if (!BindingKey(52, key, error)) return false;
         break;
     case MapleControl::ActionKind::Pickup:
-        if (!BindingKey(5, 50, key, error)) return false;
+        if (!BindingKey(50, key, error)) return false;
         break;
     case MapleControl::ActionKind::UseItem: {
         if (action.itemId / 10000 != 200) {
@@ -847,27 +868,45 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
             return false;
         }
         if (!currentState->inventoryKnown) { error = "inventory_unavailable"; return false; }
-        int quantity = 0;
-        for (const auto& item : currentState->inventory) if (item.itemId == action.itemId) {
-            if (!item.quantityKnown) { error = "inventory_unavailable"; return false; }
-            quantity += item.quantity;
+        int slot = 0;
+        bool quantityUnknown = false;
+        for (const auto& item : currentState->inventory) {
+            if (item.inventoryType != 2 || item.itemId != action.itemId) continue;
+            if (!item.quantityKnown) {
+                quantityUnknown = true;
+                continue;
+            }
+            if (item.quantity > 0) {
+                slot = item.slot;
+                break;
+            }
         }
-        if (quantity <= 0) { error = "item_not_in_inventory"; return false; }
-        if (!BindingKey(2, action.itemId, key, error)) return false;
-        break;
+        if (slot == 0) {
+            error = quantityUnknown ? "inventory_unavailable" : "item_not_in_inventory";
+            return false;
+        }
+        std::uint32_t context = 0;
+        if (!ReadAt(0x00BE7918, context) || context == 0) {
+            error = "native_context_unavailable";
+            return false;
+        }
+        itemUse.Request({currentState->character.id, currentState->sceneGeneration, context, slot, action.itemId});
+        itemResult = true;
+        semanticResult.reason = "item_use_requested";
+        return true;
     }
     case MapleControl::ActionKind::Stop:
         break;
     }
     if (!ApplyDesiredKeys({key}, duration, error)) return false;
-    semanticResult.reason = action.kind == MapleControl::ActionKind::UseItem ? "item_use_requested" : "native_action_requested";
+    semanticResult.reason = "native_action_requested";
     return true;
 }
 
 MapleControl::ActionResult NativeResult() {
     auto result = semanticResult;
-    result.dispatched = keyInput.Dispatched() && result.reason != "already_facing";
-    result.controlReleased = keyInput.Released();
+    result.dispatched = itemResult ? itemUse.Dispatched() : keyInput.Dispatched() && result.reason != "already_facing";
+    result.controlReleased = adapter.Released();
     if (result.dispatched && result.reason == "native_action_requested") result.reason = "native_action_dispatched";
     if (result.dispatched && result.reason == "native_keys_requested") result.reason = "native_keys_dispatched";
     return result;
@@ -906,6 +945,7 @@ bool NativeRawKeys(const std::vector<std::string>& names, unsigned int duration,
         keys.push_back(key);
     }
     if (!ApplyDesiredKeys(keys, duration, error)) return false;
+    itemResult = false;
     semanticResult = MapleControl::ActionResult{};
     semanticResult.reason = "native_keys_requested";
     return true;
