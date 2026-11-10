@@ -59,6 +59,7 @@ docker build -t local/beidou-v17-client:intel docker/gui
 - [Lua API 参考](docs/LUA_API.md)：写脚本使用的状态字段、函数参数、返回值与错误语义。
 - [Lua 与控制协议](docs/CONTROL.md)：脚本、控制权、取消和效果边界。
 - [架构与支持范围](docs/ARCHITECTURE.md)：代码职责、外部资源、两端能力和限制。
+- [客户端能力边界与缺口索引](docs/CLIENT_LIMITATIONS.md)：实际使用成本、已入池用户结果和已有能力的适用范围。
 - [依赖管理](docs/DEPENDENCIES.md)：子模块、派生源码与许可来源。
 - [CI 与合并验收](docs/CI.md)：PR 自动检查、本地复现入口及与真实游戏试用的分工。
 - [需求池](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20label%3A%E9%9C%80%E6%B1%82%E6%B1%A0)：按独立用户故事收集需求，入池标准与讨论规则见 [开发约定](AGENTS.md#需求收集与需求池)。
