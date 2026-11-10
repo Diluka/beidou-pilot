@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Runtime.h"
+#include "TaskTransport.h"
 #include <nlohmann/json.hpp>
 #include "IO/KeyAction.h"
 
@@ -44,6 +45,7 @@ private:
     std::string runId;
     MapleControl::State state;
     MapleControl::Runtime runtime;
+    MapleControl::TaskTransport taskTransport;
     MapleControl::ActionResult result;
     std::optional<ms::KeyAction::Id> heldAction;
     std::uint64_t currentTick = 0;

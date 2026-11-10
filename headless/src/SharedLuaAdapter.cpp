@@ -39,7 +39,7 @@ Json ScriptDocument(const MapleControl::Status* script) {
     if (script == nullptr) return nullptr;
     Json tasks = Json::array();
     for (const auto& task : script->tasks)
-        tasks.push_back({{"name", task.name}, {"priority", task.priority}, {"status", task.status},
+        tasks.push_back({{"name", task.name}, {"revision", task.revision}, {"priority", task.priority}, {"status", task.status},
             {"wait", task.wait}, {"reason", task.reason.empty() ? Json(nullptr) : Json(task.reason)},
             {"error", task.error.empty() ? Json(nullptr) : Json(task.error)}});
     const auto& control = script->control;
@@ -58,7 +58,8 @@ Json ScriptDocument(const MapleControl::Status* script) {
 }
 
 SharedLuaAdapter::SharedLuaAdapter(std::filesystem::path bridgeDirectory, std::string registeredRun)
-    : directory(std::move(bridgeDirectory)), runId(std::move(registeredRun)), runtime(*this) {
+    : directory(std::move(bridgeDirectory)), runId(std::move(registeredRun)), runtime(*this),
+      taskTransport(directory.string(), runId) {
     state.instanceId = std::to_string(getpid()) + "-" + std::to_string(UnixMs()) + "-" + std::to_string(MonotonicMs());
     if (!directory.empty()) std::filesystem::create_directories(directory);
 }
@@ -291,6 +292,7 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
     if (active && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs)) ApplyRelease();
     ReadCommand(externalActionBusy);
     runtime.Tick(changed);
+    if (!taskTransport.Tick(runtime, state)) runtime.Cancel("task_result_write_failed");
     if (scriptCommand && !runtime.Running()) {
         const auto* script = runtime.CurrentStatus();
         commandStatus = script->status; commandReason = script->reason; scriptCommand = false;

@@ -54,6 +54,7 @@ class RejectedCommand(TypedDict):
 
 class BridgeTask(TypedDict):
     name: str
+    revision: NotRequired[int]
     priority: int
     status: Literal["running", "waiting", "completed", "cancelled"]
     wait: Literal["none", "sleep", "action", "raw_keys", "release", "control"]
@@ -194,6 +195,7 @@ class BridgeClient:
                 tasks = script["tasks"]
                 if (not isinstance(tasks, list) or any(not isinstance(task, dict)
                         or not isinstance(task.get("name"), str) or not task["name"]
+                        or ("revision" in task and (type(task["revision"]) is not int or task["revision"] <= 0))
                         or type(task.get("priority")) is not int or not -0x80000000 <= task["priority"] <= 0x7FFFFFFF
                         or task.get("status") not in ("running", "waiting", "completed", "cancelled")
                         or task.get("wait") not in ("none", "sleep", "action", "raw_keys", "release", "control")
