@@ -2,6 +2,8 @@
 
 `harness/` 是客户端能力的独立消费者。Codex app-server 在专用容器中保留一个角色的模型会话；宿主薄控制器只调用固定 root/backend/instance 的已有 CLI，并负责开发 AI 的短协作消息。模型不进入逐帧控制，持续移动、战斗与等待仍由 Lua 执行。
 
+准备客户端、选择授权目标与角色、核对占用及交接前，先按[游戏 AI 操作指引](PLAY_GUIDE.md)完成检查；harness 的运行配置不代替游戏操作授权。
+
 ## 准备与启动
 
 需要 Linux、Docker、Python 标准库和已准备好的授权客户端实例。harness 不创建账号、不启动或关闭客户端。先构建固定版本 Codex 镜像：
