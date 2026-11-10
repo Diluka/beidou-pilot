@@ -1,0 +1,235 @@
+schemaVersion: 1
+map:
+  id: script-execution
+  title: Lua 脚本执行与控制权
+  summary: 在指定客户端实例中装载 Lua，管理会话、任务、控制权、期限与取消，并等待所属输入释放。
+nodes:
+  - id: script-execution
+    kind: domain
+    name: Lua 脚本执行
+    summary: 为脚本作者和外部消费者提供两端共用的执行生命周期；玩法判断由脚本决定，客户端容器生命周期由实例管理负责。
+    aliases: [Lua Runtime, 脚本调度, 任务执行]
+    anchors:
+      - kind: directory
+        value: shared/lua-runtime
+        description: 两端共享的脚本会话、任务调度与控制权实现。
+      - kind: document
+        value: docs/CONTROL.md
+        description: 脚本、输入释放、实例生命周期与游戏效果之间的契约。
+  - id: script-execution.run
+    kind: scenario
+    name: 在现有实例运行 Lua
+    summary: 从 UTF-8 文件或直接源码创建一个会话，限时或显式持续执行；全部任务结束并释放输入后返回，客户端实例继续存在。
+    aliases: [script run, 连续脚本, 脚本装载]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/bridge.py
+        value: BridgeClient.run_script
+        description: 核对当前实例、准备源码并提交脚本，等待对应脚本身份的终态。
+      - kind: symbol
+        file: shared/lua-runtime/Runtime.cpp
+        value: Runtime::Start
+        description: 编译受信 Lua 并创建持有初始控制权的 main 任务。
+      - kind: symbol
+        file: shared/lua-runtime/Runtime.cpp
+        value: Runtime::Tick
+        description: 调度会话任务，处理期限、身份变化、脚本错误与最终释放。
+  - id: script-execution.manage-task
+    kind: scenario
+    name: 调整活动会话中的任务
+    summary: 向指定 script.id 新增、替换或停止独立任务；替换先编译，成功后等待旧任务释放，再安装新 revision，管理等待失败不停止原会话。
+    aliases: [task add, task replace, task stop, 热更新]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/task_management.py
+        value: change_task
+        description: 通过独立管理通道发布绑定实例、会话与预期任务版本的请求。
+      - kind: symbol
+        file: shared/lua-runtime/Runtime.cpp
+        value: Runtime::ManageTask
+        description: 核对会话和任务版本，先编译替换源码并按输入归属结束旧任务。
+      - kind: symbol
+        file: shared/lua-runtime/TaskTransport.cpp
+        value: TaskTransport::Tick
+        description: 核验原生身份和场景代次，保留请求结果，不从管理通道直接派发动作。
+  - id: script-execution.cancel
+    kind: operation
+    name: 取消脚本会话并释放输入
+    summary: 原控制 CLI 的取消、期限、角色变化、离开游戏或脚本错误停止全部任务；原生输入释放确认后发布会话终态，不关闭客户端容器。
+    aliases: [取消脚本, Ctrl+C, SIGTERM, time_limit]
+    anchors:
+      - kind: symbol
+        file: shared/lua-runtime/Runtime.cpp
+        value: Runtime::Cancel
+        description: 将运行中的整个会话转入停止与释放路径。
+      - kind: symbol
+        file: cli/beidou_pilot/bridge.py
+        value: BridgeClient._wait
+        description: 接收调用方取消并核对原生停止、所属实例身份与释放确认。
+  - id: script-execution.control
+    kind: capability
+    name: 任务协作与输入控制权
+    summary: 多任务共享本次 Lua 状态，观察可以交错执行，原生动作串行派发；高优先级可接管，旧任务失去派发资格，释放确认后新任务取得控制。
+    aliases: [优先级接管, 多任务, spawn, acquire]
+    anchors:
+      - kind: symbol
+        file: shared/lua-runtime/Runtime.cpp
+        value: Runtime::Impl::GrantControl
+        description: 按优先级请求交接，并等待原生释放后授予控制权。
+      - kind: symbol
+        file: shared/lua-runtime/Runtime.cpp
+        value: Runtime::Impl::FinishTask
+        description: 结束指定任务，仅释放它仍拥有的控制，保留其他任务生命周期。
+  - id: script-execution.status
+    kind: operation
+    name: 查询脚本与管理结果
+    summary: 只读查看会话、任务 revision、等待原因、控制权与保留的任务管理结果；查询历史响应不证明当前角色效果。
+    aliases: [script status, task result, 脚本状态]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/bridge.py
+        value: BridgeClient.snapshot
+        description: 读取当前登记会话的新鲜原生桥状态，包含脚本与控制权投影。
+      - kind: symbol
+        file: cli/beidou_pilot/task_management.py
+        value: task_result
+        description: 按请求 ID 返回已保留的管理结果，供超时或中断后核对。
+  - id: script-execution.session
+    kind: data
+    name: 脚本会话与任务版本
+    summary: script.id 标识会话，任务名称和 revision 标识执行版本；主任务返回后子任务可继续，全部任务结束才结束会话。
+    aliases: [script.id, revision, main, 任务状态]
+    anchors:
+      - kind: file
+        value: shared/lua-runtime/Runtime.h
+        description: 会话状态、任务状态、任务变更与控制权报告的数据结构。
+  - id: script-execution.task-result
+    kind: data
+    name: 已保留的任务管理结果
+    summary: 每个 request_id 的管理响应保留所属实例、会话和任务版本；等待超时后的请求仍可查询，不自动重放。
+    aliases: [task-results, request_id, task_result_unconfirmed]
+    anchors:
+      - kind: symbol
+        file: shared/lua-runtime/TaskTransport.cpp
+        value: TaskTransport::Publish
+        description: 将管理请求的处理状态和身份写入专属结果文件。
+      - kind: file
+        value: cli/beidou_pilot/task_management.py
+        description: 读取、验证管理结果并报告已发布但尚未确认的请求。
+  - id: script-execution.lua-api
+    kind: interface
+    name: 统一 game Lua 接口
+    summary: 提供状态、能力、时间、日志、动作和任务协作；各端原生适配器落实能力差异，GUI 对话、商店和养成工作流尚无对应 Lua 接口。
+    aliases: [game API, game.state, game.capabilities]
+    anchors:
+      - kind: document
+        value: docs/LUA_API.md
+        description: 公共 Lua 状态字段、参数、返回值、能力声明与错误语义的统一参考。
+      - kind: symbol
+        file: shared/lua-runtime/Runtime.cpp
+        value: Runtime::Start
+        description: 注册唯一一份公共 game 函数及允许的标准库。
+  - id: script-execution.effect-boundary
+    kind: invariant
+    name: 执行终态与游戏效果分别确认
+    summary: 请求接受、输入派发、输入释放、动作收束与游戏效果分别判断；completed、held_keys 为空或原生调用非零均不能单独证明到达、命中、掉落或恢复。
+    aliases: [效果未知, control_released, dispatched, 不自动重放]
+    anchors:
+      - kind: document
+        value: docs/CONTROL.md
+        description: 规定动作结果各层事实与未确认释放时的返回边界。
+      - kind: file
+        value: cli/test/test_native_scripts.py
+        description: 离线覆盖取消等待释放、脚本错误与采样停止后的未知释放结果。
+  - id: script-execution.trusted-source
+    kind: invariant
+    name: 仅执行受信脚本
+    summary: Lua 环境仅开放所需标准库并限制日志和指令预算；不提供任意原生函数的 CPU 或内存隔离，脚本必须受信。
+    aliases: [受信 Lua, 指令预算, 标准库边界]
+    anchors:
+      - kind: symbol
+        file: shared/lua-runtime/Runtime.cpp
+        value: Runtime::Start
+        description: 创建 Lua 状态并移除文件加载、系统调用及错误吞并等入口。
+      - kind: document
+        value: docs/LUA_API.md
+        description: 说明指令与日志预算、开放库及受信脚本前提。
+relations:
+  - {from: script-execution.run, type: part_of, to: script-execution, summary: 脚本装载和整会话运行归执行领域。}
+  - {from: script-execution.manage-task, type: part_of, to: script-execution, summary: 活动任务的新增替换和停止归执行领域。}
+  - {from: script-execution.cancel, type: part_of, to: script-execution, summary: 会话停止和所属输入释放归执行领域。}
+  - {from: script-execution.control, type: part_of, to: script-execution, summary: 任务间的控制权交接由共享执行契约决定。}
+  - {from: script-execution.status, type: part_of, to: script-execution, summary: 执行状态和管理反馈查询归执行领域。}
+  - {from: script-execution.session, type: part_of, to: script-execution, summary: 执行领域定义会话和任务版本的生命周期。}
+  - {from: script-execution.task-result, type: part_of, to: script-execution, summary: 执行领域保存任务管理请求的处理事实。}
+  - {from: script-execution.lua-api, type: part_of, to: script-execution, summary: 公共 Lua 接口由共享运行时统一定义。}
+  - {from: script-execution.effect-boundary, type: part_of, to: script-execution, summary: 执行领域限定终态与效果的解释。}
+  - {from: script-execution.trusted-source, type: part_of, to: script-execution, summary: 执行领域拥有脚本环境和预算边界。}
+  - {from: script-execution.run, type: consumes, to: client-session.cli, summary: 调用方通过固定实例的统一 CLI 提交脚本。}
+  - {from: script-execution.run, type: publishes, to: script-execution.lua-api, summary: 为本会话中的 Lua 源码开放统一 game 接口。}
+  - {from: script-execution.run, type: reads, to: game-observation.facts, summary: 依据当前原生角色与场景事实调度和停止会话。}
+  - {from: script-execution.run, type: writes, to: script-execution.session, summary: 创建会话和 main 任务并更新其执行终态。}
+  - {from: script-execution.run, type: invokes, to: script-execution.cancel, summary: 期限或外部取消等停止原因进入整会话释放路径。}
+  - {from: script-execution.run, type: constrained_by, to: client-session.identity, summary: 会话和取消均绑定当前原生实例与运行身份。}
+  - {from: script-execution.run, type: constrained_by, to: script-execution.trusted-source, summary: 只在受信源码与运行预算边界内执行。}
+  - {from: script-execution.run, type: constrained_by, to: script-execution.effect-boundary, summary: 运行结束仅报告执行事实，游戏目标需另外观察。}
+  - {from: script-execution.manage-task, type: reads, to: script-execution.session, summary: 请求绑定 script.id，替换和停止核对预期 revision。}
+  - {from: script-execution.manage-task, type: writes, to: script-execution.session, summary: 管理请求改变指定任务版本，不夺取整会话动作锁。}
+  - {from: script-execution.manage-task, type: writes, to: script-execution.task-result, summary: 保存每个管理请求的处理状态和所属身份。}
+  - {from: script-execution.manage-task, type: constrained_by, to: client-session.identity, summary: 不向其他实例、运行或已变化场景安装旧任务。}
+  - {from: script-execution.manage-task, type: constrained_by, to: script-execution.effect-boundary, summary: 任务安装成功和旧任务释放不代表游戏副作用可回滚。}
+  - {from: script-execution.cancel, type: writes, to: script-execution.session, summary: 停止全部任务并在释放后更新会话终态。}
+  - {from: script-execution.cancel, type: constrained_by, to: client-session.identity, summary: 不向后继实例或其他控制者补发旧取消。}
+  - {from: script-execution.control, type: publishes, to: script-execution.lua-api, summary: 通过 spawn、acquire、cancel 和 tasks 提供任务协作。}
+  - {from: script-execution.status, type: reads, to: script-execution.session, summary: 读取任务版本、等待原因和控制权状态。}
+  - {from: script-execution.status, type: reads, to: script-execution.task-result, summary: 查询已发布管理请求的保留反馈。}
+flows:
+  - id: script-execution.run.flow
+    name: 从提交脚本到确认停止
+    summary: 文件和源码共用同一执行链；保留拒绝、正常完成、取消或错误，以及释放未确认的不同结果。
+    scenario: script-execution.run
+    startsAt: submit
+    steps:
+      - {id: submit, kind: action, name: 向当前实例提交受信 Lua, summary: 核对实例身份和脚本能力，准备源码并请求创建会话。, concept: script-execution.run}
+      - {id: admitted, kind: decision, name: 能否开始会话, summary: 当前实例、控制权、脚本编译与能力共同决定是否接受。}
+      - {id: refused, kind: outcome, name: 拒绝并保留原因, summary: 忙碌、身份不符、能力缺失或源码错误不构成脚本成功。}
+      - {id: execute, kind: action, name: 调度任务与所属动作, summary: 任务按优先级和等待状态协作，主任务返回后子任务可继续。, concept: script-execution.control}
+      - {id: ending, kind: decision, name: 会话因何结束, summary: 全部任务正常返回，或取消、期限、角色变化、离开游戏与错误触发停止。}
+      - {id: cancel, kind: action, name: 停止全部任务, summary: 不再派发旧动作，开始释放该会话仍拥有的输入。, concept: script-execution.cancel}
+      - {id: release, kind: action, name: 等待所属输入释放, summary: 正常结束和停止均须完成原生释放，容器继续运行。}
+      - {id: confirmed, kind: decision, name: 是否确认对应终态和释放, summary: CLI 核验请求身份与新鲜状态，不以空按键列表单独断言成功。}
+      - {id: returned, kind: outcome, name: 返回已确认的执行结果, summary: 保留正常完成、取消或脚本错误事实；游戏效果另行观察。}
+      - {id: unconfirmed, kind: outcome, name: 返回释放未确认, summary: 无法取得可信终态时报告 bridge_release_unconfirmed，不向后继实例重放控制。}
+    transitions:
+      - {from: submit, to: admitted}
+      - {from: admitted, to: refused, when: 前提或编译不满足}
+      - {from: admitted, to: execute, when: 会话已接受}
+      - {from: execute, to: ending}
+      - {from: ending, to: release, when: 全部任务正常结束}
+      - {from: ending, to: cancel, when: 取消或异常要求停止}
+      - {from: cancel, to: release}
+      - {from: release, to: confirmed}
+      - {from: confirmed, to: returned, when: 身份终态与释放已确认}
+      - {from: confirmed, to: unconfirmed, when: 身份或新鲜采样不足以确认}
+  - id: script-execution.manage-task.flow
+    name: 活动任务变更与结果核对
+    summary: 管理通道以会话和任务版本为边界；编译拒绝保留旧任务，已发布但未确认的请求保留查询入口。
+    scenario: script-execution.manage-task
+    startsAt: request
+    steps:
+      - {id: request, kind: action, name: 发布指定任务变更, summary: 明确会话、任务名和适用的预期版本，使用独立管理通道。, concept: script-execution.manage-task}
+      - {id: valid, kind: decision, name: 请求身份和版本是否匹配, summary: 拒绝失效会话、旧版本、保留任务名、重复名称和变化的场景。}
+      - {id: rejected, kind: outcome, name: 拒绝变更, summary: 保存请求原因，不把错误请求作用于其他任务版本。}
+      - {id: change, kind: action, name: 编译并执行任务变更, summary: 新增和替换先编译；替换或停止按旧任务归属释放，不直接派发游戏输入。}
+      - {id: result, kind: decision, name: 本次管理得到何种结果, summary: 区分成功、源码或会话拒绝，以及调用方等待结束后的未知结果。}
+      - {id: applied, kind: outcome, name: 指定任务变更已完成, summary: 新任务已安装或旧版本已停止并确认其释放；其他任务仍可运行。}
+      - {id: preserved, kind: outcome, name: 变更未安装并保留原因, summary: 编译失败保留旧任务；会话结束或场景改变可取消尚未安装的替换。}
+      - {id: pending, kind: outcome, name: 结果待按请求 ID 查询, summary: 超时或中断不停止整会话、不自动重放，使用保留 request_id 查询最终处理事实。, concept: script-execution.status}
+    transitions:
+      - {from: request, to: valid}
+      - {from: valid, to: rejected, when: 身份版本或任务规则不满足}
+      - {from: valid, to: change, when: 请求可处理}
+      - {from: change, to: result}
+      - {from: result, to: applied, when: 收到对应 completed 结果}
+      - {from: result, to: preserved, when: 收到编译拒绝或会话取消结果}
+      - {from: result, to: pending, when: 请求已发布但等待超时或中断}

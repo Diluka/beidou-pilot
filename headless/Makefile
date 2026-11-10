@@ -13,7 +13,7 @@ LDFLAGS ?= -Wl,--gc-sections
 LDLIBS := -pthread -l:liblz4.so.1
 ENGINE_SOURCES := $(shell find $(ENGINE)/Audio $(ENGINE)/Character $(ENGINE)/Data $(ENGINE)/Gameplay $(ENGINE)/Graphics $(ENGINE)/IO $(ENGINE)/Net $(ENGINE)/Util -name '*.cpp' ! -name SocketWinsock.cpp) $(ENGINE)/Configuration.cpp $(wildcard $(NX)/*.cpp)
 SOURCES := $(wildcard src/*.cpp)
-OBJECTS := $(patsubst $(ENGINE)/%.cpp,build/engine/%.o,$(ENGINE_SOURCES)) $(patsubst %.cpp,build/%.o,$(SOURCES)) build/shared/Runtime.o build/shared/TaskTransport.o $(LUA_OBJECTS)
+OBJECTS := $(patsubst $(ENGINE)/%.cpp,build/engine/%.o,$(ENGINE_SOURCES)) $(patsubst %.cpp,build/%.o,$(SOURCES)) build/shared/Runtime.o build/shared/Observation.o build/shared/TaskTransport.o $(LUA_OBJECTS)
 DEPS := $(OBJECTS:.o=.d)
 
 .PHONY: all objects clean

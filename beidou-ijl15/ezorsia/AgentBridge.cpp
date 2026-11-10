@@ -92,6 +92,10 @@ public:
 
     const MapleControl::State& Observe() const override { return previousState; }
 
+    MapleControl::Observation ObserveDomain(const std::string& domain) const override {
+        return NativeObservation::Collect(domain);
+    }
+
     bool Supports(MapleControl::ActionKind) const override { return true; }
 
     bool Begin(const MapleControl::Action& action, std::string& error) override {

@@ -84,6 +84,7 @@ void PushState(lua_State* lua, const State& state) {
     Integer(lua, "observed_at_ms", state.observedAtMs);
     Integer(lua, "scene_generation", state.sceneGeneration);
     Boolean(lua, "ready", state.ready);
+    Boolean(lua, "in_game", state.inGame);
     if (state.mapKnown) Integer(lua, "map_id", state.mapId);
     if (state.characterKnown) {
         lua_newtable(lua);
@@ -149,6 +150,46 @@ void PushState(lua_State* lua, const State& state) {
             lua_rawseti(lua, -2, index++);
         }
         lua_setfield(lua, -2, "drops");
+    }
+}
+
+void PushValue(lua_State* lua, const Value& value) {
+    switch (value.Type()) {
+    case Value::Kind::Null:
+        lua_pushnil(lua);
+        break;
+    case Value::Kind::Boolean:
+        lua_pushboolean(lua, value.Boolean());
+        break;
+    case Value::Kind::Number: {
+        const auto number = value.Number();
+        const auto minimum = static_cast<double>(std::numeric_limits<lua_Integer>::min());
+        if (number >= minimum && number < -minimum && std::trunc(number) == number)
+            lua_pushinteger(lua, static_cast<lua_Integer>(number));
+        else
+            lua_pushnumber(lua, number);
+        break;
+    }
+    case Value::Kind::String:
+        lua_pushlstring(lua, value.Text().data(), value.Text().size());
+        break;
+    case Value::Kind::Array: {
+        lua_createtable(lua, static_cast<int>(value.Elements().size()), 0);
+        lua_Integer index = 1;
+        for (const auto& entry : value.Elements()) {
+            PushValue(lua, entry);
+            lua_rawseti(lua, -2, index++);
+        }
+        break;
+    }
+    case Value::Kind::Object:
+        lua_createtable(lua, 0, static_cast<int>(value.Members().size()));
+        for (const auto& entry : value.Members()) {
+            lua_pushlstring(lua, entry.first.data(), entry.first.size());
+            PushValue(lua, entry.second);
+            lua_rawset(lua, -3);
+        }
+        break;
     }
 }
 
@@ -389,6 +430,35 @@ struct Runtime::Impl {
 
     static int Observe(lua_State* lua) {
         PushState(lua, Self(lua).adapter.Observe());
+        return 1;
+    }
+
+    static int ObserveDomain(lua_State* lua) {
+        static const char* domains[]{"stage",   "scene",  "inventory", "character", "quests",
+                                     "hotkeys", "dialog", "ui",        "shop",      nullptr};
+        const auto domain = domains[luaL_checkoption(lua, 1, nullptr, domains)];
+        const auto& adapter = Self(lua).adapter;
+        const auto& state = adapter.Observe();
+        const auto observation = !state.ready && std::strcmp(domain, "stage") != 0
+                                     ? Observation{"unavailable", {}, "native_client_not_in_game"}
+                                     : adapter.ObserveDomain(domain);
+        lua_newtable(lua);
+        String(lua, "domain", domain);
+        String(lua, "status", observation.status);
+        String(lua, "source", "client-native-api");
+        Boolean(lua, "readonly", true);
+        String(lua, "backend", adapter.Backend());
+        String(lua, "instance_id", state.instanceId);
+        Integer(lua, "seq", state.sequence);
+        Integer(lua, "scene_generation", state.sceneGeneration);
+        Integer(lua, "observed_at_ms", state.observedAtMs);
+        Boolean(lua, "ready", state.ready);
+        Boolean(lua, "in_game", state.inGame);
+        if (state.characterKnown) Integer(lua, "character_id", state.character.id);
+        if (state.mapKnown) Integer(lua, "map_id", state.mapId);
+        PushValue(lua, observation.data);
+        lua_setfield(lua, -2, "data");
+        if (!observation.error.empty()) String(lua, "error", observation.error);
         return 1;
     }
 
@@ -772,16 +842,27 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source, std:
         lua_pushnil(runtime.main);
         lua_setglobal(runtime.main, name);
     }
-    static const luaL_Reg functions[]{{"state", Impl::Observe},    {"capabilities", Impl::Capabilities},
-                                      {"time", Impl::Time},        {"sleep", Impl::Sleep},
-                                      {"log", Impl::Log},          {"move", Impl::Move},
-                                      {"face", Impl::Face},        {"jump", Impl::Jump},
-                                      {"attack", Impl::Attack},    {"pickup", Impl::Pickup},
-                                      {"use_item", Impl::UseItem}, {"stop", Impl::Stop},
-                                      {"press", Impl::Press},      {"keys", Impl::Keys},
-                                      {"skill", Impl::Skill},      {"spawn", Impl::Spawn},
-                                      {"acquire", Impl::Acquire},  {"cancel", Impl::CancelTask},
-                                      {"tasks", Impl::Tasks},      {nullptr, nullptr}};
+    static const luaL_Reg functions[]{{"state", Impl::Observe},
+                                      {"observe", Impl::ObserveDomain},
+                                      {"capabilities", Impl::Capabilities},
+                                      {"time", Impl::Time},
+                                      {"sleep", Impl::Sleep},
+                                      {"log", Impl::Log},
+                                      {"move", Impl::Move},
+                                      {"face", Impl::Face},
+                                      {"jump", Impl::Jump},
+                                      {"attack", Impl::Attack},
+                                      {"pickup", Impl::Pickup},
+                                      {"use_item", Impl::UseItem},
+                                      {"stop", Impl::Stop},
+                                      {"press", Impl::Press},
+                                      {"keys", Impl::Keys},
+                                      {"skill", Impl::Skill},
+                                      {"spawn", Impl::Spawn},
+                                      {"acquire", Impl::Acquire},
+                                      {"cancel", Impl::CancelTask},
+                                      {"tasks", Impl::Tasks},
+                                      {nullptr, nullptr}};
     luaL_newlib(runtime.main, functions);
     lua_setglobal(runtime.main, "game");
     const int loaded = luaL_loadbufferx(runtime.main, source.data(), source.size(), scriptId.c_str(), "t");

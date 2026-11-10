@@ -28,6 +28,7 @@ class GuiKeyInputContract(unittest.TestCase):
                 f"-I{root / 'shared/lua-runtime'}",
                 f"-I{root / 'beidou-ijl15/ezorsia'}",
                 str(root / "shared/lua-runtime/Runtime.cpp"),
+                str(root / "shared/lua-runtime/Observation.cpp"),
                 str(root / "cli/test/gui_key_input_contract.cpp"),
                 *map(str, sorted(build.glob("*.o"))),
                 "-lm",

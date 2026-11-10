@@ -1,42 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #pragma once
 
+#include "Observation.h"
+
 #include <cstdint>
 #include <cstddef>
-#include <initializer_list>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
-#include <utility>
 #include <vector>
 
 namespace NativeObservation {
 
-// Small JSON output value: observations never parse arbitrary JSON in the game thread.
-class Value {
-public:
-    enum class Kind { Null, Boolean, Number, String, Array, Object };
-    Value() = default;
-    Value(bool value) : kind(Kind::Boolean), boolean(value) {}
-    Value(const char* value) : kind(Kind::String), text(value) {}
-    Value(const std::string& value) : kind(Kind::String), text(value) {}
-    Value(double value) : kind(Kind::Number), number(value) {}
-    template<class T, typename std::enable_if<std::is_integral<T>::value &&
-        !std::is_same<T, bool>::value, int>::type = 0>
-    Value(T value) : kind(Kind::Number), number(static_cast<double>(value)) {}
-    static Value Object(std::initializer_list<std::pair<std::string, Value>> values = {});
-    static Value Array(std::initializer_list<Value> values = {});
-    Value& operator[](const std::string& key);
-    void Add(Value value);
-    std::string Dump() const;
-private:
-    Kind kind = Kind::Null;
-    bool boolean = false;
-    double number = 0;
-    std::string text;
-    std::vector<Value> array;
-    std::vector<std::pair<std::string, Value>> object;
-};
+using MapleControl::Value;
 
 class ReadError : public std::runtime_error {
 public:
@@ -64,6 +39,7 @@ Value Dialog();
 Value Window(std::uintptr_t address);
 Value Ui();
 Value Shop();
+MapleControl::Observation Collect(const std::string& domain);
 
 // Separate read-only request lane; it never replaces a running action/script request.
 void Tick(const std::string& directory, const std::string& instance,

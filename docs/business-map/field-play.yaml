@@ -1,0 +1,260 @@
+schemaVersion: 1
+map:
+  id: field-play
+  title: 有界角色行动
+  summary: 根据当前客户端事实完成有限旅行、基础战斗和近距拾取尝试；实时判断在 Lua 中执行，结果按具体效果确认。
+nodes:
+  - id: field-play
+    kind: domain
+    name: 有界角色行动
+    summary: 为操作者和策略消费者提供当前实例中的旅行、基础战斗与原生动作，拥有行动目标、安全范围和到达规则，不承担通用寻路或完整自主日程。
+    aliases: [玩法控制, 旅行战斗, 有界玩法]
+    anchors:
+      - kind: document
+        value: docs/CONTROL.md
+        description: 说明动作、复合 Lua 策略和外部决策的职责。
+      - kind: directory
+        value: shared/scripts
+        description: 旅行、战斗和恢复等初步公共策略；各能力按业务目标使用。
+  - id: field-play.travel
+    kind: scenario
+    name: 完成一次有限旅行
+    summary: 根据当前角色位置选择同层移动、单根绳梯或单个门户，以最终坐标或转场事实核对结果；资料不足与意外场景变化明确停止。
+    aliases: [到达, 旅行, 移动路线, 爬绳, 过图]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/control_scripts.py
+        value: move_to_x
+        description: 运行同层移动策略并以最终场景与坐标确认到达。
+      - kind: file
+        value: cli/beidou_pilot/travel.py
+        description: 基于静态资料和当前原生状态规划单根绳梯与单个门户。
+  - id: field-play.fight
+    kind: scenario
+    name: 在安全范围内基础战斗
+    summary: 按指定怪物、楼层、范围、停级和预算选择目标、普攻、近距拾取并尝试撤退；低 HP 时直接尝试普通药品，不调用消耗与恢复双确认流程，命中和掉落仍需观察。
+    aliases: [fight, 练级, 普攻, 拾取, 撤退]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/control_scripts.py
+        value: fight
+        description: 将战斗范围、目标和预算传给公共 Lua 策略并返回最终状态。
+      - kind: file
+        value: shared/scripts/combat/fight.lua
+        description: 在客户端判断目标、HP、楼层和安全范围，执行攻击、补药、拾取及有限撤退。
+      - kind: file
+        value: cli/beidou_pilot/cli.py
+        description: fight 入口按转职节点拒绝或限制停级，避免越过当前养成节点。
+  - id: field-play.primitive
+    kind: operation
+    name: 尝试一次原生角色动作
+    summary: 移动、朝向、跳跃、普攻、近距拾取等均经 Lua 调用原生适配器；函数支持与输入派发不等于游戏效果成功。
+    aliases: [walk, face, jump, attack, pickup, 语义动作]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/control_scripts.py
+        value: action
+        description: 校验动作参数并通过统一 Lua 会话执行，效果默认保持未知。
+  - id: field-play.move
+    kind: operation
+    name: 同层移动并确认横向到达
+    summary: 同一角色和场景中按位置反馈对齐横坐标，停止输入后重新采样确认；换层、无进展或预算耗尽停止。
+    aliases: [move, move_to, 同层对齐]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/control_scripts.py
+        value: move_to_x
+        description: 固定当前身份和场景，执行共享策略并再次核对最终到达。
+      - kind: file
+        value: shared/scripts/travel/move_to.lua
+        description: 使用公共对齐逻辑完成一次同层坐标目标。
+      - kind: symbol
+        file: shared/scripts/travel/_common.lua
+        value: align_to_x
+        description: 依据原生位置调整输入，确认停止后位置并拒绝持续无进展。
+  - id: field-play.climb
+    kind: operation
+    name: 对齐并攀爬单根绳梯
+    summary: 在当前场景靠近绳梯并按指定方向和高度攀爬，最终核对同角色、同场景与目标位置；不承诺任意跨层寻路。
+    aliases: [climb, 爬绳, 爬梯]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/travel.py
+        value: climb
+        description: 取得现场状态和可用绳梯资料，提交 Lua 后核对最终绳梯位置。
+      - kind: file
+        value: shared/scripts/travel/climb_to.lua
+        description: 在安全与时间预算内对齐、攀爬并确认高度。
+  - id: field-play.portal
+    kind: operation
+    name: 进入单个门户并核对目的地
+    summary: 从静态资料选择唯一同层门户并靠近进入；分别确认目标地图、同图目的位置，未知目的地仅报告实际发生转场。
+    aliases: [portal, 传送门, 同图传送]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/travel.py
+        value: portal
+        description: 拒绝不唯一或资料缺失的门户，核对转场后的角色、地图与目的位置。
+      - kind: file
+        value: shared/scripts/travel/enter_portal.lua
+        description: 靠近当前门户、尝试进入并观察转场，不把向上输入当成到达。
+  - id: field-play.strategy
+    kind: data
+    name: 公共 Lua 策略及本次行动参数
+    summary: 当前源码中的旅行与战斗策略接收调用方的目标、预算和安全参数；运行目录不改变加载的内置策略来源。
+    aliases: [共享脚本, options, 内置策略]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/control_scripts.py
+        value: run_strategy
+        description: 从当前代码所带 shared/scripts 装载策略和必要旅行公共逻辑，注入业务参数。
+      - kind: directory
+        value: shared/scripts
+        description: 公共策略与示例分开维护，示例不被正式策略自动加载。
+  - id: field-play.result
+    kind: data
+    name: 行动终态与效果读回
+    summary: 保存本次执行报告、前后状态和按场景确认的到达事实；战斗报告反映尝试与最终读数，不推断击杀、拾取或服务器存档。
+    aliases: [arrived, transitioned, last_state, effect]
+    anchors:
+      - kind: file
+        value: cli/beidou_pilot/travel.py
+        description: 爬绳、跨图和同图门户分别返回其可确认的到达事实。
+      - kind: file
+        value: cli/beidou_pilot/control_scripts.py
+        description: 原生尝试、同层到达和基础战斗采用不同的结果解释。
+  - id: field-play.bounded
+    kind: invariant
+    name: 行动绑定现场身份与安全预算
+    summary: 规划只用于已核验实例和角色的当前场景；按行动核对地图代次、HP、楼层、范围、期限与停级节点，出现变化后停止旧规划，不自动跨实例重放。
+    aliases: [安全范围, 期限, 场景代次, 转职节点]
+    anchors:
+      - kind: symbol
+        file: shared/scripts/travel/_common.lua
+        value: travel_state
+        description: 在旅行过程中核验实例、角色、场景及最低 HP。
+      - kind: file
+        value: shared/scripts/combat/fight.lua
+        description: 核验战斗身份、楼层、范围、生命与停级条件。
+      - kind: symbol
+        file: cli/beidou_pilot/rules.py
+        value: advancement
+        description: 根据当前职业确定 CLI 战斗不能越过的养成节点。
+  - id: field-play.maturity
+    kind: invariant
+    name: 初步策略以实际效果迭代
+    summary: 公共策略是初步脚手架；既有阈值、时序和离线测试不构成成熟打法、全职业支持或两端物理精确等价的承诺。
+    aliases: [脚手架策略, 实际效果验收, 非通用寻路]
+    anchors:
+      - kind: document
+        value: shared/scripts/AGENTS.md
+        description: 策略定位、未知事实边界以及按真实客户端效果迭代的维护要求。
+      - kind: document
+        value: docs/ARCHITECTURE.md
+        description: 两端动作、物理、技能和玩法支持范围。
+relations:
+  - {from: field-play.travel, type: part_of, to: field-play, summary: 单次有限旅行属于角色行动。}
+  - {from: field-play.fight, type: part_of, to: field-play, summary: 基础战斗和近距拾取尝试属于角色行动。}
+  - {from: field-play.primitive, type: part_of, to: field-play, summary: 有界原生动作是角色行动的基础操作。}
+  - {from: field-play.move, type: part_of, to: field-play, summary: 同层到达规则归旅行行动拥有。}
+  - {from: field-play.climb, type: part_of, to: field-play, summary: 单根绳梯攀爬规则归旅行行动拥有。}
+  - {from: field-play.portal, type: part_of, to: field-play, summary: 单个门户和目的地确认归旅行行动拥有。}
+  - {from: field-play.strategy, type: part_of, to: field-play, summary: 当前旅行战斗策略及其业务参数归角色行动。}
+  - {from: field-play.result, type: part_of, to: field-play, summary: 旅行和战斗的场景结果由行动规则解释。}
+  - {from: field-play.bounded, type: part_of, to: field-play, summary: 行动领域决定安全与预算停止边界。}
+  - {from: field-play.maturity, type: part_of, to: field-play, summary: 行动领域明确现有策略的成熟度和承诺范围。}
+  - {from: field-play.travel, type: invokes, to: field-play.move, summary: 旅行可选择当前层横坐标目标。}
+  - {from: field-play.travel, type: invokes, to: field-play.climb, summary: 旅行可选择一根绳梯和目标高度。}
+  - {from: field-play.travel, type: invokes, to: field-play.portal, summary: 旅行可选择一个具备资料的门户。}
+  - {from: field-play.travel, type: reads, to: game-observation.facts, summary: 规划依据当前原生角色、位置和场景事实。}
+  - {from: field-play.travel, type: reads, to: field-play.strategy, summary: 使用当前源码所带策略及本次目标参数。}
+  - {from: field-play.travel, type: writes, to: field-play.result, summary: 汇总适用的坐标或转场确认结果。}
+  - {from: field-play.travel, type: constrained_by, to: field-play.bounded, summary: 身份场景变化与行动预算限制后续输入。}
+  - {from: field-play.travel, type: constrained_by, to: field-play.maturity, summary: 有限旅行不扩展为通用路线能力承诺。}
+  - {from: field-play.move, type: invokes, to: script-execution.run, summary: 装载同层移动 Lua，由客户端执行持续反馈。}
+  - {from: field-play.climb, type: invokes, to: script-execution.run, summary: 装载绳梯 Lua，由客户端完成对齐和攀爬。}
+  - {from: field-play.climb, type: reads, to: game-resources.catalog, summary: 可用地图资料帮助识别绳梯顶端，不补造缺失地形。}
+  - {from: field-play.portal, type: reads, to: game-resources.catalog, summary: 门户名称、坐标和静态目的地来自外部资料。}
+  - {from: field-play.portal, type: invokes, to: script-execution.run, summary: 在当前实例执行门户策略并等待原生场景变化。}
+  - {from: field-play.fight, type: invokes, to: script-execution.run, summary: 选择目标、补药尝试、攻击和撤退判断在 Lua 中连续执行。}
+  - {from: field-play.fight, type: consumes, to: script-execution.lua-api, summary: 直接调用 game 状态和动作，包括普通补药尝试；不调用完整恢复确认策略。}
+  - {from: field-play.fight, type: reads, to: game-observation.facts, summary: 根据当前怪物、角色、库存和位置决定后续尝试。}
+  - {from: field-play.fight, type: reads, to: field-play.strategy, summary: 使用指定怪物、范围、停级和撤退参数。}
+  - {from: field-play.fight, type: writes, to: field-play.result, summary: 返回最终状态与攻击尝试，不推断击杀和拾取成功。}
+  - {from: field-play.fight, type: constrained_by, to: field-play.bounded, summary: 限定战斗楼层范围、HP、期限和成长节点。}
+  - {from: field-play.fight, type: constrained_by, to: field-play.maturity, summary: 当前基础打法不构成完整职业和长期日程承诺。}
+  - {from: field-play.fight, type: constrained_by, to: script-execution.effect-boundary, summary: 原生攻击和补药派发仍需另行观察实际效果。}
+  - {from: field-play.primitive, type: invokes, to: script-execution.run, summary: CLI 基础角色动作统一提交 Lua，不维护 Python 逐帧控制。}
+  - {from: field-play.primitive, type: writes, to: field-play.result, summary: 报告本次原生尝试及保留的未知效果。}
+  - {from: field-play.primitive, type: constrained_by, to: script-execution.effect-boundary, summary: 原生输入成功不直接等于行动目标完成。}
+flows:
+  - id: field-play.travel-position.flow
+    name: 同层移动或绳梯到达
+    summary: 以当前身份和位置开始有限行动，保留安全停止与终态未确认，不把脚本返回直接视作到达。
+    scenario: field-play.travel
+    startsAt: observe
+    steps:
+      - {id: observe, kind: action, name: 读取当前角色位置与目标, summary: 按同层目标或绳梯高度建立本次规划。, concept: game-observation.observe}
+      - {id: ready, kind: decision, name: 前提是否满足, summary: 当前原生角色、位置、方向及适用资料须支持所选行动。}
+      - {id: refused, kind: outcome, name: 前提不足而未开始, summary: 报告状态或目标问题，不以未知位置和地形继续规划。}
+      - {id: run, kind: action, name: 执行位置反馈 Lua, summary: 在预算内对齐或攀爬，持续核对身份、场景、楼层与安全条件。, concept: script-execution.run}
+      - {id: completed, kind: decision, name: 策略如何结束, summary: 区分正常返回与取消、安全条件失败或执行错误。}
+      - {id: stopped, kind: outcome, name: 停止并保留实际状态, summary: 不在场景变化、死亡、无进展或预算停止后继续旧规划。}
+      - {id: verify, kind: action, name: 核对最终场景和坐标, summary: 确认同实例、同角色、同地图代次及所需横坐标或绳梯高度。}
+      - {id: arrived, kind: decision, name: 到达是否已确认, summary: 到达结论以本次目标的最终位置为准。}
+      - {id: success, kind: outcome, name: 已确认到达, summary: 返回 arrived 及前后状态。}
+      - {id: unknown, kind: outcome, name: 到达未确认, summary: 报告 travel_not_confirmed 或 climb_not_confirmed，供调用方重新观察。}
+    transitions:
+      - {from: observe, to: ready}
+      - {from: ready, to: refused, when: 现场或目标前提不足}
+      - {from: ready, to: run, when: 当前规划可执行}
+      - {from: run, to: completed}
+      - {from: completed, to: stopped, when: 取消安全停止或执行失败}
+      - {from: completed, to: verify, when: Lua 正常返回}
+      - {from: verify, to: arrived}
+      - {from: arrived, to: success, when: 身份场景和目标位置均确认}
+      - {from: arrived, to: unknown, when: 任一到达条件未确认}
+  - id: field-play.portal.flow
+    name: 单门户进入与转场确认
+    summary: 资料允许时尝试进入一次门户，按已知或未知目的地分别解释客户端变化。
+    scenario: field-play.travel
+    startsAt: plan
+    steps:
+      - {id: plan, kind: action, name: 从当前地图资料选择门户, summary: 取得唯一名称、坐标、目的地和当前层位置。, concept: game-resources.lookup}
+      - {id: supported, kind: decision, name: 门户是否可规划, summary: 缺失资料、多个同名门户或另一楼层不能直接进入。}
+      - {id: refused, kind: outcome, name: 门户前提不足, summary: 未发送进入输入，返回资料或楼层原因。}
+      - {id: enter, kind: action, name: 靠近并尝试进入门户, summary: 运行 Lua 并观察同角色的地图或同图目的位置变化。, concept: field-play.portal}
+      - {id: result, kind: decision, name: 实际观察到什么结果, summary: 身份与状态可信时区分已知目的地、未知目的地转场以及未确认或异常终止。}
+      - {id: arrived, kind: outcome, name: 已到已知目的地, summary: 目标地图或同图目的位置已确认，返回 arrived。}
+      - {id: transitioned, kind: outcome, name: 已转场而目的地未知, summary: 特殊未知目标只返回 transitioned，destination_confirmed 为 false。}
+      - {id: stopped, kind: outcome, name: 停止或转场未确认, summary: 意外地图、身份变化、执行失败或无目的变化保留原因，不重放旧输入。}
+    transitions:
+      - {from: plan, to: supported}
+      - {from: supported, to: refused, when: 资料唯一性坐标或楼层不满足}
+      - {from: supported, to: enter, when: 门户和现场前提可用}
+      - {from: enter, to: result}
+      - {from: result, to: arrived, when: 身份及已知目的地均确认}
+      - {from: result, to: transitioned, when: 身份与转场确认但静态目的地未知}
+      - {from: result, to: stopped, when: 异常停止或目标变化未确认}
+  - id: field-play.fight.flow
+    name: 预算内战斗与撤退尝试
+    summary: 战斗受养成节点与现场安全条件约束；正常预算停止后有限撤退，报告尝试而不承诺击杀掉落。
+    scenario: field-play.fight
+    startsAt: plan
+    steps:
+      - {id: plan, kind: action, name: 设定战斗目标与安全范围, summary: 确定怪物、楼层、停级、预算、拾取偏好和撤退位置。}
+      - {id: allowed, kind: decision, name: 当前是否允许战斗, summary: CLI 核对养成节点，Lua 核对角色身份、HP、楼层和安全范围。}
+      - {id: refused, kind: outcome, name: 拒绝或安全停止, summary: 到转职节点、死亡、场景变化或超出安全边界后停止旧行动。}
+      - {id: act, kind: action, name: 在现场选择并尝试动作, summary: 低 HP 尝试补药，否则靠近指定怪物、朝向普攻并按需近距拾取；未做完整恢复双确认。, concept: field-play.fight}
+      - {id: continue, kind: decision, name: 是否继续本次战斗, summary: 每轮重新核对现场安全、等级与预算。}
+      - {id: retreat, kind: action, name: 用剩余预算尝试撤退, summary: 正常达到停级或战斗预算后放键，再在剩余预算内向撤退点移动。}
+      - {id: report, kind: outcome, name: 返回战斗尝试与最终状态, summary: 攻击计数反映派发次数，撤退可能因预算结束未到达；命中、拾取和恢复效果另行观察。}
+    transitions:
+      - {from: plan, to: allowed}
+      - {from: allowed, to: refused, when: 养成节点或现场安全不满足}
+      - {from: allowed, to: act, when: 本次战斗可执行}
+      - {from: act, to: continue}
+      - {from: continue, to: act, when: 仍安全且等级和预算允许}
+      - {from: continue, to: refused, when: 安全身份或执行条件失效}
+      - {from: continue, to: retreat, when: 正常达到停级或战斗预算}
+      - {from: retreat, to: report}

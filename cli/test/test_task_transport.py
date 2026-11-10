@@ -28,6 +28,7 @@ class TaskTransportContract(unittest.TestCase):
                 f"-I{root / 'shared/lua-runtime'}",
                 f"-I{root / 'third_party/json/single_include'}",
                 str(root / "shared/lua-runtime/Runtime.cpp"),
+                str(root / "shared/lua-runtime/Observation.cpp"),
                 str(root / "shared/lua-runtime/TaskTransport.cpp"),
                 str(root / "cli/test/task_transport_contract.cpp"),
                 *map(str, sorted(build.glob("*.o"))),

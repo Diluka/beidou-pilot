@@ -47,6 +47,8 @@ Python、Lua 按现有模块职责组织。harness 的 CLI、Controller、协议
 
 第三方原始源码、生成文件、Docker 安装文件、Shell 和 Makefile 不在本批自动整理范围。Shell 按模块保留周边写法：GUI 脚本的块缩进为两空格，harness 入口的块缩进为四空格，续行沿用各自现有形式；Makefile 命令行保留语法必需的 Tab。此范围外的文件不因缺少格式检查而被宣称已经统一。
 
+`beidou-ijl15/` 的历史 Windows 项目保留现有 GBK、带 BOM 的 UTF-8、UTF-16LE 及混合换行事实；`.editorconfig` 对该目录取消通用字符集、LF、末尾换行和行尾空白设置，避免保存时顺手转码或重排历史文件。新自维护源码通常使用 UTF-8；参与既有 GUI 构建且含中文的新文件按[原构建约定](../beidou-ijl15/tools/build-agent-bridge.ps1)保存为带 BOM 的 UTF-8。格式白名单与编码例外独立，本批不转换历史编码，不改 MSVC 编译编码。
+
 ## 整理与验证
 
 机械排版与文件移动分别提交，不夹带算法、控制流程、业务语义或公开接口变更。核对差异和字面量，复用 Python AST 等证据，并执行受影响的既有合同、构建与 CI；格式工具通过本身不证明业务行为。

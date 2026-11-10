@@ -1,0 +1,192 @@
+schemaVersion: 1
+map:
+  id: game-observation
+  title: 游戏事实观察
+  summary: 向操作者、策略和AI提供带身份、时效、来源及支持边界的客户端事实。
+nodes:
+  - id: game-observation
+    kind: domain
+    name: 游戏事实观察
+    summary: 拥有原生领域读取、能力声明和快照投影的语义；不拥有游戏服务器事实，也不将静态资料作为实时状态。
+    aliases: [状态观察, 游戏快照, 原生观察]
+    anchors:
+      - kind: document
+        value: docs/ARCHITECTURE.md
+        description: 区分原生观察、CLI工作流与Lua接口的实际支持面。
+  - id: game-observation.observe
+    kind: operation
+    name: 读取当前原生领域
+    summary: 对当前实例发出只读领域请求，核验请求、运行和原生实例身份，保留不支持、不可用与超时的区别。
+    aliases: [NativeObserver, 只读查询]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/observations.py
+        value: NativeObserver.observe
+        description: 使用独立观察通道请求领域数据，并验证响应身份、状态和来源。
+      - kind: symbol
+        file: cli/beidou_pilot/observations.py
+        value: active_session
+        description: 从所选实例登记与Docker事实证明观察对象。
+  - id: game-observation.snapshot
+    kind: scenario
+    name: 获取可决策游戏快照
+    summary: 组合当前阶段、角色、场景、背包和任务事实及静态名称；过渡状态和缺失能力明确保留。
+    aliases: [snapshot, 态势快照, 当前引用]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/snapshot.py
+        value: collect
+        description: 聚合原生领域与静态资料，识别采样地图变化并生成当前场景短引用。
+      - kind: symbol
+        file: cli/beidou_pilot/snapshot.py
+        value: format_snapshot
+        description: 在可读结果中保留未知可见性和不支持的对话状态。
+  - id: game-observation.capabilities
+    kind: operation
+    name: 查询当前支持范围
+    summary: 返回后端静态观察领域及有效连接实际声明的原生动作；离线或无有效桥状态时动作能力保留未知。
+    aliases: [capabilities, 能力声明, 支持矩阵]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/cli.py
+        value: dispatch
+        description: capabilities分支返回observation_domains和有效桥声明的native_actions。
+      - kind: file
+        value: cli/test/test_instances.py
+        description: 合同覆盖离线动作能力为null及在线读取原生声明。
+  - id: game-observation.collect-native
+    kind: operation
+    name: 从各端原生对象采集事实
+    summary: 各适配器在所属客户端提供实际支持的观察领域；无头任务来自完整包快照，不声明实时增量。
+    aliases: [原生采集, 领域响应]
+    anchors:
+      - kind: symbol
+        file: headless/src/SharedLuaAdapter.cpp
+        value: SharedLuaAdapter::ObservationData
+        description: 提供无头stage、scene、inventory、character和quests，明确未入图及不支持状态。
+      - kind: symbol
+        file: beidou-ijl15/ezorsia/NativeObservation.cpp
+        value: NativeObservation::Tick
+        description: 调用GUI原生领域采集器，区分领域不支持与当前对象读取不可用。
+  - id: game-observation.facts
+    kind: data
+    name: 当前客户端事实
+    summary: 原生阶段、角色、场景、背包、任务与适用GUI领域的取样值，携带运行身份、序列、时间、来源和不可用说明。
+    aliases: [原生状态, observations, live_updates]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/observations.py
+        value: NativeObserver.metadata
+        description: 为领域结果保留客户端来源、实例、run_id、采样时间与镜像身份。
+      - kind: symbol
+        file: headless/src/SharedLuaAdapter.cpp
+        value: SharedLuaAdapter::ObservationData
+        description: 无头任务明确source为character_data_snapshot、live_updates为false及未覆盖语义。
+  - id: game-observation.references
+    kind: data
+    name: 当前快照短引用
+    summary: 对实体、背包与GUI选择生成带容器、运行、原生实例、角色、地图及频道上下文的引用，供后续工作流重新核对。
+    aliases: [refs, 实体引用, 背包引用]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/snapshot.py
+        value: collect
+        description: 以当前身份和场景构造引用上下文，不保留原生内存地址作为消费者引用。
+  - id: game-observation.native-api
+    kind: interface
+    name: 客户端原生只读观察接口
+    summary: 通过所属桥目录的状态及领域请求响应提供客户端事实；观察与Lua动作命令使用独立通道。
+    aliases: [native observation API, 原生观察通道]
+    anchors:
+      - kind: file
+        value: cli/beidou_pilot/observations.py
+        description: 定义原生状态、领域请求及响应的消费者协议与身份校验。
+      - kind: symbol
+        file: headless/src/SharedLuaAdapter.cpp
+        value: SharedLuaAdapter::ReadObservation
+        description: 无头端核验原生实例并发布带请求及运行身份的只读领域响应。
+      - kind: file
+        value: cli/test/test_native_observations.py
+        description: 覆盖观察不覆盖活动Lua命令、身份不符和不支持领域的合同。
+  - id: game-observation.truth
+    kind: invariant
+    name: 未知与能力缺失如实表达
+    summary: 未知不转换为零、关闭、不可见或空集合；不支持明确拒绝，不用服务端或另一后端补齐，读取能力不等于动作能力。
+    aliases: [未知保留未知, unsupported, 事实来源]
+    anchors:
+      - kind: document
+        value: docs/ARCHITECTURE.md
+        description: 规定能力边界、未知值与各支持面的区别。
+      - kind: file
+        value: cli/test/test_observation_consumers.py
+        description: 覆盖未知校验状态、未知可见性和无头不支持对话等消费语义。
+  - id: game-observation.freshness
+    kind: invariant
+    name: 观察必须属于当前运行与取样
+    summary: 拒绝旧run、错误原生实例、过期状态和请求不匹配的响应；聚合期间地图变化返回过渡状态。
+    aliases: [新鲜度, 过期状态, 观察身份]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/observations.py
+        value: NativeObserver._snapshot
+        description: 核验运行身份和取样时间后才提供状态。
+      - kind: symbol
+        file: cli/beidou_pilot/snapshot.py
+        value: collect
+        description: 场景与角色取样地图不一致时返回TRANSITION。
+relations:
+  - {from: game-observation.observe, type: part_of, to: game-observation, summary: 原生领域读取属于事实观察。}
+  - {from: game-observation.snapshot, type: part_of, to: game-observation, summary: 可决策快照由事实观察组织。}
+  - {from: game-observation.capabilities, type: part_of, to: game-observation, summary: 支持声明由观察域对外投影。}
+  - {from: game-observation.collect-native, type: part_of, to: game-observation, summary: 各端采集实现同一观察责任。}
+  - {from: game-observation.facts, type: part_of, to: game-observation, summary: 原生事实的来源与可用性语义归观察域。}
+  - {from: game-observation.references, type: part_of, to: game-observation, summary: 当前引用由快照生成。}
+  - {from: game-observation.native-api, type: part_of, to: game-observation, summary: 只读原生接口由事实观察拥有。}
+  - {from: game-observation.truth, type: part_of, to: game-observation, summary: 真实性规则约束观察与投影。}
+  - {from: game-observation.freshness, type: part_of, to: game-observation, summary: 当前身份及时效规则约束观察。}
+  - {from: game-observation.collect-native, type: writes, to: game-observation.facts, summary: 原生采集产生有来源与边界的领域事实。}
+  - {from: game-observation.collect-native, type: publishes, to: game-observation.native-api, summary: 两端通过共同只读协议发布实际支持的领域结果。}
+  - {from: game-observation.collect-native, type: constrained_by, to: game-observation.truth, summary: 各端明确不支持与当前不可用，不伪造共同能力。}
+  - {from: game-observation.observe, type: consumes, to: game-observation.native-api, summary: 读取操作经独立观察通道获取领域响应。}
+  - {from: game-observation.observe, type: reads, to: client-session.registration, summary: 观察使用所选实例登记证明当前目标。}
+  - {from: game-observation.observe, type: constrained_by, to: client-session.identity, summary: 观察不得接续到另一实例。}
+  - {from: game-observation.observe, type: constrained_by, to: game-observation.freshness, summary: 只接受当前运行的匹配和有效取样。}
+  - {from: game-observation.observe, type: constrained_by, to: game-observation.truth, summary: 不支持、不可用与未知保持各自语义。}
+  - {from: game-observation.snapshot, type: invokes, to: game-observation.observe, summary: 快照组合多个原生领域的观察结果。}
+  - {from: game-observation.snapshot, type: reads, to: game-observation.facts, summary: 快照消费当前客户端事实。}
+  - {from: game-observation.snapshot, type: invokes, to: game-resources.lookup, summary: 仅通过本地静态查询补充名称等资料。}
+  - {from: game-observation.snapshot, type: reads, to: game-resources.catalog, summary: 静态名称和属性作为可选资料加入快照。}
+  - {from: game-observation.snapshot, type: writes, to: game-observation.references, summary: 快照为当前场景及背包生成短引用。}
+  - {from: game-observation.snapshot, type: constrained_by, to: game-observation.truth, summary: 快照保留未知可见性、不支持的对话和任务快照来源。}
+  - {from: game-observation.snapshot, type: constrained_by, to: game-observation.freshness, summary: 聚合采样发现地图变化时不给出可操作快照。}
+  - {from: game-observation.snapshot, type: publishes, to: client-session.cli, summary: 通过统一CLI为操作者与AI提供快照。}
+  - {from: game-observation.capabilities, type: consumes, to: game-observation.native-api, summary: 动作能力来自当前有效桥状态的实际声明。}
+  - {from: game-observation.capabilities, type: constrained_by, to: game-observation.truth, summary: 离线不能将未知原生动作能力写成已支持或不支持。}
+  - {from: game-observation.capabilities, type: publishes, to: client-session.cli, summary: 统一入口提供后端领域和动作能力查询。}
+flows:
+  - id: game-observation.snapshot.flow
+    name: 获取当前游戏态势
+    summary: 从原生取样生成可决策快照，并保留未入图、领域不可用与场景变化的实际结果。
+    scenario: game-observation.snapshot
+    startsAt: stage
+    steps:
+      - {id: stage, kind: action, name: 读取所选实例阶段, summary: 获取当前后端和实例的原生运行阶段。, concept: game-observation.observe}
+      - {id: in-game, kind: decision, name: 是否已经入图, summary: 只有IN_GAME才继续聚合角色与场景。}
+      - {id: waiting, kind: outcome, name: 返回实际阶段, summary: 停止、启动或登录阶段只报告已有状态及不可用说明。}
+      - {id: sample, kind: action, name: 采集角色与领域事实, summary: 读取角色位置、场景、背包、任务和适用GUI领域。, concept: game-observation.observe}
+      - {id: available, kind: decision, name: 事实是否可用, summary: 识别当前不可用值、请求失败及后端不支持领域。}
+      - {id: unavailable, kind: outcome, name: 保留不可用或拒绝结果, summary: 不把未知和缺失能力转成可操作的正常状态。}
+      - {id: consistent, kind: decision, name: 聚合场景是否一致, summary: 比较角色取样与场景取样的地图身份。}
+      - {id: transition, kind: outcome, name: 场景过渡需重新观察, summary: 地图取样不一致时返回TRANSITION和重试说明。}
+      - {id: project, kind: action, name: 加入静态资料与当前引用, summary: 按需补充本地名称，保留未知值并建立当前场景引用。, concept: game-observation.snapshot}
+      - {id: ready, kind: outcome, name: 返回有来源的快照, summary: 返回当前角色与场景事实、适用领域、未知说明及任务更新边界。}
+    transitions:
+      - {from: stage, to: in-game}
+      - {from: in-game, to: waiting, when: 尚未入图}
+      - {from: in-game, to: sample, when: 已入图}
+      - {from: sample, to: available}
+      - {from: available, to: consistent, when: 所需事实可用}
+      - {from: available, to: unavailable, when: 必需事实不可用或请求被拒绝}
+      - {from: consistent, to: transition, when: 采样地图已经变化}
+      - {from: consistent, to: project, when: 采样地图一致}
+      - {from: project, to: ready}

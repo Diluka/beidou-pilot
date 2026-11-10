@@ -4,7 +4,7 @@
 
 ## 当前使用边界
 
-- **原生观察、CLI工作流与Lua消费面不同。** CLI能读取某个领域，不表示`game.state()`已有该领域，也不表示Lua可以调用相应GUI交互。无头任务目前是登录快照，不能当成实时进度。
+- **领域读取与交互动作分别支持。** Lua 已通过按需 `game.observe(domain)` 读取 CLI 已有原生领域，`game.state()` 保持轻量。读取 NPC、窗口、装备或商店不表示已有相应 Lua 交互动作。无头任务目前是登录快照，不能当成实时进度。
 - **原版能显示不等于工具已有命中资料。** `talk`当前会使用可选WZ XML计算NPC点击范围；缺少资料时会明确拒绝。metadata-only NX准备完成也不表示CLI所需XML已具备。静态资料可辅助查询、定位与规划，不能替代本端实时对象和结果。
 - **基础操作与完成目标不同。** 移动、跳跃、普攻、拾取和按键主要表达原生尝试；派发、释放、收束及游戏效果分别判断。现有`move/climb/portal`已有局部到达检查，`use`等也有部分结果确认；它们尚未覆盖完整跨层旅行、目标回收及战斗效果。
 - **后端实现范围不同。** 无头已有属性、点数、装备和技能等读取，不代表NPC、商店、加点、换装、职业技能或复活操作已实现。补齐时使用正常原生语义，不复制无消费者的图形键盘/快捷栏。
@@ -14,7 +14,7 @@
 
 | 用户需要的结果 | 当前成本或边界 | 跟踪 |
 | --- | --- | --- |
-| Lua直接消费已有领域事实 | NPC/任务/金币/技能装备/UI仍有外部查询往返 | [#40](https://github.com/Diluka/beidou-pilot/issues/40) |
+| Lua直接消费已有领域事实 | `game.observe(domain)` 已接入原生领域；保留各端支持、来源及非实时限制 | [#40](https://github.com/Diluka/beidou-pilot/issues/40) |
 | 同会话连续完成GUI交互与养成 | 已有CLI流程尚无完整Lua语义入口；batch不承担动态判断 | [#41](https://github.com/Diluka/beidou-pilot/issues/41) |
 | 可靠打开可见近距NPC | 当前点击依赖额外图形XML与有效目标信息 | [#42](https://github.com/Diluka/beidou-pilot/issues/42) |
 | 知道箱子等对象当前是否存在及已知状态 | 原生内部实现不等于公开结构化观察 | [#43](https://github.com/Diluka/beidou-pilot/issues/43) |

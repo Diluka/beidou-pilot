@@ -27,6 +27,7 @@ class LuaRuntimeContract(unittest.TestCase):
                 f"-I{lua}",
                 f"-I{root / 'shared/lua-runtime'}",
                 str(root / "shared/lua-runtime/Runtime.cpp"),
+                str(root / "shared/lua-runtime/Observation.cpp"),
                 str(root / "cli/test/lua_runtime_contract.cpp"),
                 *map(str, sorted(build.glob("*.o"))),
                 "-lm",
@@ -39,6 +40,12 @@ class LuaRuntimeContract(unittest.TestCase):
 
     def test_tasks_handoff_replan_and_cancel_without_releasing_successor(self) -> None:
         subprocess.run([str(self.executable), "collaboration"], check=True, timeout=10)
+
+    def test_domain_reads_preserve_native_unknowns_source_and_fresh_scene_identity(self) -> None:
+        subprocess.run([str(self.executable), "domain-observations"], check=True, timeout=10)
+
+    def test_domain_availability_and_context_changes_do_not_reuse_stale_values(self) -> None:
+        subprocess.run([str(self.executable), "domain-availability"], check=True, timeout=10)
 
     def test_session_cancel_waits_for_native_release_and_stops_all_tasks(self) -> None:
         subprocess.run([str(self.executable), "cancel"], check=True, timeout=10)

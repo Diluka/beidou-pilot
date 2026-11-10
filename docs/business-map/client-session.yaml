@@ -1,0 +1,231 @@
+schemaVersion: 1
+map:
+  id: client-session
+  title: 客户端会话与实例
+  summary: 为操作者建立、复用和关闭连接已核验目标与已有角色的客户端容器。
+nodes:
+  - id: client-session
+    kind: domain
+    name: 客户端会话与实例
+    summary: 拥有实例选择、容器登记、登录入图及退出回收；游戏服务端与账号数据由外部提供。
+    aliases: [实例管理, 会话生命周期, open, close]
+    anchors:
+      - kind: document
+        value: docs/ARCHITECTURE.md
+        description: 说明容器常驻、动作与实例的独立生命周期及两端支持范围。
+  - id: client-session.open
+    kind: scenario
+    name: 打开或复用客户端
+    summary: 在目标与角色匹配时复用现有会话，或核验环境后创建容器并等待已有角色入图。
+    aliases: [启动, 登录, 重用实例]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/headless.py
+        value: open_game
+        description: 为命名无头实例核验目标、profile与重复角色占用，启动容器并等待原生就绪状态。
+      - kind: symbol
+        file: cli/beidou_pilot/session.py
+        value: open_game
+        description: 复用或启动GUI会话，按原生登录阶段选择已有角色并确认入图。
+  - id: client-session.close
+    kind: scenario
+    name: 关闭所属实例
+    summary: 正常停止并核实所属容器退出，保存退出事实；GUI另行回收能够证明归属的会话网络。
+    aliases: [退出, 容器回收]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/headless.py
+        value: close_game
+        description: 停止登记的无头容器，核实退出、保存日志与原因后回收容器。
+      - kind: symbol
+        file: cli/beidou_pilot/session.py
+        value: close_game
+        description: 关闭本目录GUI客户端并报告网络回收成功或cleanup_pending。
+  - id: client-session.status
+    kind: operation
+    name: 查询实例状态
+    summary: 返回所选实例的运行、入图和退出事实；命名多实例目前只支持无头端，GUI使用default。
+    aliases: [status, instances, 就绪状态]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/cli.py
+        value: status
+        description: 按后端返回当前实例的运行阶段与原生角色状态。
+      - kind: symbol
+        file: cli/beidou_pilot/headless.py
+        value: list_instances
+        description: 枚举已登记无头实例并核实各自容器运行状态。
+  - id: client-session.adopt
+    kind: operation
+    name: 恢复已证明归属的GUI会话
+    summary: 依据现有容器、运行记录和目标登记恢复会话归属；没有唯一证据时保留未决状态。
+    aliases: [会话接续, 网络归属]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/session.py
+        value: adopt_session
+        description: 对照容器、目标与session记录，只接续唯一可证明的GUI会话。
+  - id: client-session.registration
+    kind: data
+    name: 实例运行登记
+    summary: 记录实例名、后端、容器、镜像、run_id、目标、角色与退出证据位置；不将运行内容纳入源码。
+    aliases: [运行身份, 会话记录]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/instances.py
+        value: InstancePaths
+        description: 定义实例独立的登记、桥、运行目录及输入锁路径。
+      - kind: symbol
+        file: cli/beidou_pilot/headless.py
+        value: registration
+        description: 读取并校验所选无头实例的会话登记。
+  - id: client-session.target
+    kind: data
+    name: 已核验目标与角色配置
+    summary: 外部target标识目标容器、镜像及隔离网络，私密profile声明已有角色与登录参数；本域只消费和核验。
+    aliases: [target, profile, 已有角色]
+    anchors:
+      - kind: symbol
+        file: cli/clientctl.py
+        value: target
+        description: 核验目标容器唯一性、镜像、internal网络与授权的工作区服务器路径。
+      - kind: symbol
+        file: cli/beidou_pilot/headless.py
+        value: load_profile
+        description: 在启动边界核验私密profile权限和已有角色参数。
+  - id: client-session.identity
+    kind: invariant
+    name: 控制与关闭必须属于所选实例
+    summary: 按实例名选择并继续核对容器、镜像、run_id及原生instance_id；身份不符时拒绝接管或操作。
+    aliases: [实例隔离, 身份核验]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/headless.py
+        value: current_container
+        description: 核验登记容器的任务、根目录、实例标签、镜像及容器边界。
+      - kind: document
+        value: docs/CONTROL.md
+        description: 说明后续桥请求的原生实例与运行身份核对规则。
+  - id: client-session.exclusive-character
+    kind: invariant
+    name: 同一目标角色只有一个控制实例
+    summary: 同一目标、世界和角色不得由多个无头实例同时接管；GUI保持一名明确操作者。
+    aliases: [角色独占, 单控制者]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/headless.py
+        value: open_game
+        description: 在启动锁内检查其他运行实例的目标、世界和角色，拒绝重复接管。
+      - kind: document
+        value: AGENTS.md
+        description: 规定授权角色、隔离目标及GUI单一操作者边界。
+  - id: client-session.persistent
+    kind: invariant
+    name: 动作结束与实例关闭独立
+    summary: Lua返回、期限结束和取消后容器继续运行；显式close结束所属实例，真实断线与错误保留退出原因。
+    aliases: [容器常驻, 独立关闭]
+    anchors:
+      - kind: document
+        value: docs/ARCHITECTURE.md
+        description: 规定Docker拥有进程生命周期，动作与关闭使用独立控制路径。
+      - kind: file
+        value: cli/test/test_instances.py
+        description: 覆盖活动Lua期间关闭、关闭一端保留同伴和退出原因归档的合同。
+  - id: client-session.cli
+    kind: interface
+    name: 统一客户端CLI
+    summary: beidou-pilot以固定后端和实例承接操作者、脚本及独立harness对客户端能力的调用。
+    aliases: [beidou-pilot, 命令入口]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/cli.py
+        value: dispatch
+        description: 将统一命令分派到实例、观察、Lua和已支持的GUI工作流。
+      - kind: document
+        value: docs/CLI.md
+        description: 定义统一入口的命令、参数和结果使用方式。
+relations:
+  - {from: client-session.open, type: part_of, to: client-session, summary: 打开与复用建立本域拥有的客户端会话。}
+  - {from: client-session.close, type: part_of, to: client-session, summary: 关闭结束本域拥有的客户端会话。}
+  - {from: client-session.status, type: part_of, to: client-session, summary: 状态查询揭示实例生命周期事实。}
+  - {from: client-session.adopt, type: part_of, to: client-session, summary: 会话接续恢复已经存在的归属。}
+  - {from: client-session.registration, type: part_of, to: client-session, summary: 实例登记由会话生命周期维护。}
+  - {from: client-session.target, type: part_of, to: client-session, summary: 目标和角色核验决定本域可建立的会话。}
+  - {from: client-session.identity, type: part_of, to: client-session, summary: 所属身份约束实例操作。}
+  - {from: client-session.exclusive-character, type: part_of, to: client-session, summary: 角色独占约束会话建立。}
+  - {from: client-session.persistent, type: part_of, to: client-session, summary: 常驻规则界定会话何时结束。}
+  - {from: client-session.cli, type: part_of, to: client-session, summary: 统一CLI提供客户端消费入口。}
+  - {from: client-session.open, type: reads, to: client-session.target, summary: 启动与复用核验目标及所选角色。}
+  - {from: client-session.open, type: writes, to: client-session.registration, summary: 新建会话登记容器与运行身份。}
+  - {from: client-session.open, type: constrained_by, to: client-session.identity, summary: 复用不能切换为身份不匹配的会话。}
+  - {from: client-session.open, type: constrained_by, to: client-session.exclusive-character, summary: 新建实例拒绝重复角色接管。}
+  - {from: client-session.open, type: reads, to: game-resources.config, summary: 启动使用已配置的外部资源和GUI桥文件路径。}
+  - {from: client-session.open, type: invokes, to: client-session.adopt, summary: GUI复用前恢复可证明的现有会话归属。}
+  - {from: client-session.open, type: consumes, to: game-observation.native-api, summary: 登录与入图确认读取原生阶段和就绪事实。}
+  - {from: client-session.close, type: reads, to: client-session.registration, summary: 关闭只选择已登记和核实的所属容器。}
+  - {from: client-session.close, type: writes, to: client-session.registration, summary: 关闭归档退出原因与清理结果。}
+  - {from: client-session.close, type: constrained_by, to: client-session.identity, summary: 关闭不能影响其他实例。}
+  - {from: client-session.close, type: constrained_by, to: client-session.persistent, summary: 显式关闭可独立于当前Lua执行完成。}
+  - {from: client-session.status, type: reads, to: client-session.registration, summary: 状态查询结合登记与所属容器事实。}
+  - {from: client-session.adopt, type: reads, to: client-session.registration, summary: 会话接续核对已有目标和运行记录。}
+  - {from: client-session.adopt, type: writes, to: client-session.registration, summary: 只为已证明唯一归属的GUI会话恢复登记。}
+  - {from: client-session.open, type: publishes, to: client-session.cli, summary: 通过统一CLI提供打开和复用能力。}
+  - {from: client-session.close, type: publishes, to: client-session.cli, summary: 通过统一CLI提供所属实例关闭能力。}
+flows:
+  - id: client-session.open.flow
+    name: 打开或复用客户端
+    summary: 保留匹配的现有会话，在核验通过后创建新会话，并如实报告是否入图。
+    scenario: client-session.open
+    startsAt: select
+    steps:
+      - {id: select, kind: action, name: 选择并核验所属实例, summary: 按后端和实例名读取登记并核验容器身份。, concept: client-session.open}
+      - {id: existing, kind: decision, name: 是否已有运行会话, summary: 判断所选实例是否已有所属容器运行。}
+      - {id: matching, kind: decision, name: 请求是否允许复用现有会话, summary: 核对可证明的显式目标；无头另核对profile中的角色、世界和频道，不匹配时保留现场。}
+      - {id: reuse-backend, kind: decision, name: 复用哪个后端的会话, summary: 无头直接返回现有运行状态；GUI继续当前登录流程，入图后核对角色和频道。}
+      - {id: resumed, kind: outcome, name: 返回已有无头会话状态, summary: 返回实际阶段与ready，不重复登录或隐式切换角色。}
+      - {id: continue-gui, kind: action, name: 继续已有GUI会话的登录与入图等待, summary: 根据当前登录、频道或选角阶段继续正常GUI流程，不新建客户端容器。, concept: client-session.open}
+      - {id: validate, kind: action, name: 核验新会话前置条件, summary: 核对目标、角色配置、资源、镜像和其他实例的角色占用。, concept: client-session.open}
+      - {id: permitted, kind: decision, name: 是否允许建立会话, summary: 目标与配置有效且没有重复角色接管才允许启动。}
+      - {id: launch, kind: action, name: 启动容器并等待入图, summary: 登记新运行身份，登录已有角色并读取原生就绪状态。, concept: client-session.open}
+      - {id: ready, kind: decision, name: 是否确认所选角色入图, summary: 判断角色和场景是否在期限内就绪；GUI入图后另核对请求的角色与频道，不隐式切换已入图角色。}
+      - {id: opened, kind: outcome, name: 客户端会话已入图, summary: 新建或继续已有GUI会话后，返回所选角色、场景和所属运行信息。}
+      - {id: interrupted, kind: outcome, name: 未确认入图并保留事实, summary: 报告启动退出或超时，保留日志与现场，不将请求成功当作入图。}
+      - {id: refused, kind: outcome, name: 拒绝启动或切换, summary: 返回核验或角色占用问题，保留已有客户端。}
+    transitions:
+      - {from: select, to: existing}
+      - {from: existing, to: matching, when: 已有运行会话}
+      - {from: existing, to: validate, when: 没有运行会话}
+      - {from: matching, to: reuse-backend, when: 已证明匹配或未请求切换}
+      - {from: matching, to: refused, when: 不匹配或无法证明一致}
+      - {from: reuse-backend, to: resumed, when: 无头会话}
+      - {from: reuse-backend, to: continue-gui, when: GUI会话}
+      - {from: continue-gui, to: ready}
+      - {from: validate, to: permitted}
+      - {from: permitted, to: launch, when: 前置条件通过}
+      - {from: permitted, to: refused, when: 前置条件拒绝}
+      - {from: launch, to: ready}
+      - {from: ready, to: opened, when: 原生状态确认入图}
+      - {from: ready, to: refused, when: 入图后角色或频道不匹配}
+      - {from: ready, to: interrupted, when: 退出或等待期限结束}
+  - id: client-session.close.flow
+    name: 关闭与回收所属实例
+    summary: 核实容器退出后保存结果，GUI网络清理不足不掩盖客户端已经关闭的事实。
+    scenario: client-session.close
+    startsAt: locate
+    steps:
+      - {id: locate, kind: action, name: 定位所属容器, summary: 依据实例登记和容器身份确定关闭对象。, concept: client-session.close}
+      - {id: stop, kind: action, name: 确认所属客户端停止, summary: 有所属容器时通过Docker正常停止并核对Running和Pid；无容器时保留已经停止的事实。, concept: client-session.close}
+      - {id: exited, kind: decision, name: 是否确认容器退出, summary: 未确认退出时不报告关闭成功。}
+      - {id: archive, kind: action, name: 保存退出结果并清理所属资源, summary: 无头归档退出原因并回收容器；GUI仅回收已证明归属的会话网络。, concept: client-session.close}
+      - {id: cleaned, kind: decision, name: 是否仍有GUI网络清理待办, summary: 依据网络归属证据与回收结果报告cleanup_pending。}
+      - {id: closed, kind: outcome, name: 实例已关闭, summary: 客户端已退出，所属生命周期处理完成。}
+      - {id: pending, kind: outcome, name: 已关闭且清理待办明确, summary: 客户端已退出，网络归属或回收问题另行报告。}
+      - {id: unconfirmed, kind: outcome, name: 退出尚未确认, summary: 保留容器事实并报告未确认关闭。}
+    transitions:
+      - {from: locate, to: stop}
+      - {from: stop, to: exited}
+      - {from: exited, to: archive, when: 已确认退出}
+      - {from: exited, to: unconfirmed, when: 尚未确认退出}
+      - {from: archive, to: cleaned}
+      - {from: cleaned, to: closed, when: 无需清理或清理完成}
+      - {from: cleaned, to: pending, when: GUI网络归属或回收待处理}
