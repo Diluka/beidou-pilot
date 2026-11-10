@@ -21,6 +21,8 @@
 
 无头新实例必须显式给出 target 与权限0600的 profile；已有匹配实例可 `open` 复用。target 格式见 [target.example.json](../cli/config/target.example.json)，当前按 Docker Compose 项目/服务、精确应用镜像和 internal 网络核验，不自动启动游戏服务端。
 
+已核验目标公告的频道 IPv4 位于 `127.0.0.0/8` 时，无头客户端使用该目标的内部 IP 连接频道，并保留服务器公告的端口。其他频道地址沿用公告值。该映射只发生在无头频道连接阶段，不需要修改服务端、原客户端资源或容器网络权限；目标核验失败时仍拒绝启动。
+
 profile 需 `username/password/character_id`，可选 `world/channel` 为0基索引。角色必须已经存在，不自动创建。账号文件外置，密码不写到参数中。无头选角与频道来自 profile，不接受 GUI 的 `--character/--character-index/--channel` 选项；旧 `max_seconds` 进程期限字段明确拒绝。`--timeout`只限制启动等待。
 
 GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--character` 或 `--character-index` 选择已有角色。它需要已准备的 GUI 运行环境，默认目标配置不代表已获准操作任意服务。

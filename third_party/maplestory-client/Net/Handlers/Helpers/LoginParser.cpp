@@ -18,6 +18,9 @@
 #include "LoginParser.h"
 
 #include "../../Session.h"
+#ifdef HEADLESS
+#include "../../../Configuration.h"
+#endif
 
 namespace ms
 {
@@ -214,6 +217,12 @@ namespace ms
 
 		// Read the port address in a string
 		std::string portstr = std::to_string(static_cast<uint16_t>(recv.read_short()));
+
+#ifdef HEADLESS
+		// A server's loopback channel address refers to the verified target, not this container.
+		if (addrstr.starts_with("127."))
+			addrstr = Setting<ServerIP>::get().load();
+#endif
 
 		// Attempt to reconnect to the server
 		Session::get().reconnect(addrstr.c_str(), portstr.c_str());
