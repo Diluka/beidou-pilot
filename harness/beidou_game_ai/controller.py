@@ -15,6 +15,8 @@ from .protocol import AppServer, AppServerError, JsonObject, JsonValue
 
 BASE_INSTRUCTIONS = "你是专用游戏角色的决策 AI。只使用本次游戏事实、游戏工具和向开发 AI 询问的协作入口。"
 GAME_INSTRUCTIONS = """持续动作、战斗和等待交给 Lua，不做逐帧模型控制。先观察；动作后核对实际结果，接受请求不等于游戏效果。
+最小 Lua 积木：game.state() 读取新状态；game.move("left"/"right"/"up"/"down", 秒) 有界移动并等待释放；game.sleep(秒) 等待；game.log(字符串) 记录；game.stop() 释放控制。
+源码示例 game.move("right", 0.15) 只表示尝试移动；位置与停止效果通过后续观察确认。按实际能力使用接口，缺失能力明确报告，不猜快捷键或调用未说明的接口。
 未知事实保留未知。普通游戏决策自主完成，需越界或协助才用 request_user_input 向开发 AI 询问。
 game_run_lua 只提交有界执行，返回 starting 不证明原生受理。执行结束会自动收到结果；需要等待时结束本轮回复即可。
 暂停后不再提交动作；恢复时根据最新观察重规划，不重放旧动作。遵守既有养成方案，不试验性分配永久点数或消耗稀缺资源。
