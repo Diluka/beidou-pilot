@@ -128,6 +128,7 @@ class SourceExportContract(unittest.TestCase):
             self.assertTrue((output / "docker/compose.yaml").is_file())
             self.assertTrue((output / "docker/headless/Dockerfile").is_file())
             self.assertTrue((output / "docker/gui/prepare-client.sh").is_file())
+            self.assertEqual((output / "LICENSE").read_bytes(), (output / "docker/gui/LICENSE").read_bytes())
             self.assertTrue((output / "shared/scripts/travel/move_to.lua").is_file())
             self.assertFalse((output / "beidou-pilot").exists())
             self.assertFalse((output / "beidou-ijl15/shared/control").exists())

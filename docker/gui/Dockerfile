@@ -1,4 +1,4 @@
-ARG WINE_BASE=scottyhardy/docker-wine@sha256:a8aaee5b8559a391f06b923367078284ee86adcf913f0e3c497356567526a237
+ARG WINE_BASE=scottyhardy/docker-wine:stable-11.0-20261025
 FROM ${WINE_BASE}
 USER root
 
@@ -13,8 +13,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && curl --fail --location --retry 3 \
         https://github.com/VirtualGL/virtualgl/releases/download/3.1.5/virtualgl32_3.1.5_amd64.deb \
         --output /tmp/virtualgl32.deb \
-    && echo 'df3f7788ce41b182a47c0d298e5cd6d2d63579522cb41825970b7726e825485e  /tmp/virtualgl.deb' | sha256sum --check --strict \
-    && echo '7dc63ecb47d7ab9cb486bb21a9a968dee853380da760cc7f36f616d09ec62b9e  /tmp/virtualgl32.deb' | sha256sum --check --strict \
     && dpkg -i /tmp/virtualgl.deb /tmp/virtualgl32.deb \
     && rm -rf /var/lib/apt/lists/* /tmp/virtualgl.deb /tmp/virtualgl32.deb \
     && localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 \
@@ -24,6 +22,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 
 COPY --chmod=755 entrypoint.sh bootstrap.sh prepare-client.sh /opt/beidou/
 COPY chinese-fontlink.reg /opt/beidou/
+COPY LICENSE /usr/share/licenses/beidou-pilot/LICENSE
 
 ENV LANG=zh_CN.UTF-8 DISPLAY=:97 WINEPREFIX=/work/prefix WINEARCH=win32
 WORKDIR /work

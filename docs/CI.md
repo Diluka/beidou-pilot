@@ -1,13 +1,14 @@
 # CI 与合并验收
 
-[CI 工作流](../.github/workflows/ci.yml) 在 PR 创建、重新打开或更新提交时运行，也在提交进入 `main` 后运行。每次运行包含两项独立检查：
+[CI 工作流](../.github/workflows/ci.yml) 在 PR 创建、重新打开或更新提交时运行，也在提交进入 `main` 后运行。每次运行包含以下独立检查：
 
 | 检查名称 | 执行内容 |
 | --- | --- |
 | `Python offline tests` | Ubuntu 24.04、Python 3.14，运行现有 CLI 离线合同测试 |
 | `Headless image build` | Ubuntu 24.04，使用 `docker/headless/Dockerfile` 构建无头镜像 |
+| `Game AI harness contract` | 构建标准 npm 安装的固定 Codex 镜像，运行无认证的 harness 合同，含真实 app-server、Code Mode 游戏工具分派与开发询问往返 |
 
-两个任务都从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库，无需安装 pip 依赖；其中 Lua 任务合同使用 runner 自带的 `gcc/g++` 编译真实共享 Runtime 和固定 Lua 源码，适配器只模拟原生输入与释放边界。无头镜像的编译器和系统库由 `docker/headless/Dockerfile` 的 builder 安装。
+客户端测试与无头构建从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库，无需安装 pip 依赖；其中 Lua 任务合同使用 runner 自带的 `gcc/g++` 编译真实共享 Runtime 和固定 Lua 源码，适配器只模拟原生输入与释放边界。无头镜像的编译器只放在 builder，运行层由 Bookworm 包管理器安装依赖。harness 合同不访问真实模型或游戏，不需要认证。
 
 [Windows 桥工作流](../.github/workflows/agent-bridge.yml) 另在 PR、`main` 推送和手动触发时执行 `Windows bridge build`。它在 Windows 2022 / VS2022 中从固定 Detours 源码构建 x86 库及桥 DLL，并上传含来源清单、日志和许可证的 `maple-agent-bridge-win32` 工件。构建与下载说明见[桥构建文档](../beidou-ijl15/docs/agent-bridge-build.md)。
 

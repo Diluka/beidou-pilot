@@ -6,7 +6,9 @@
 docker build -t local/beidou-game-ai:0.167.0 docker/harness
 ```
 
-镜像使用未修改的 Codex 0.167.0 Linux amd64 原生发行物；包摘要与对应源码 commit 固定在 Dockerfile 中。运行层保留该发行包 `vendor/bin` 的两个可执行文件 `codex`、`codex-code-mode-host`，保持同目录以支持实际 Code Mode 动态工具分派，并保留 Codex Apache-2.0 LICENSE、上游 NOTICE（包含 Ratatui 声明）、发行物元数据，以及本项目 AGPL-3.0-only LICENSE。构建不登录或调用模型，不包含角色资料、认证、游戏资源或客户端。
+镜像以官方 `node:24.22.2-bookworm-slim` 为基础，通过 `npm install --global @openai/codex@0.167.0` 安装固定版本。Node/npm 和 npm 自动选择的完整平台包保留在运行层，不手工解包或复制上游内部文件，避免漏装 Code Mode 等功能所需的配套程序。本次验证平台为 Linux amd64。
+
+固定 npm 包没有 Codex 根 LICENSE/NOTICE，构建从对应 `rust-v0.167.0` 发行 tag 补齐 Apache-2.0 LICENSE 与 NOTICE（包含 Ratatui 声明）；平台包自带的其他许可、Node/npm 和发行版许可保留原位置，本项目 AGPL-3.0-only LICENSE 位于 `/usr/share/licenses/beidou-pilot/`。版本和来源见 Dockerfile，不再维护额外镜像 digest、下载包或许可 hash 校验，标准包管理器使用默认完整性校验。构建不登录或调用模型，不包含角色资料、认证、游戏资源或客户端。
 
 镜像以 UID/GID `1000:1000` 运行，默认 `HOME=/home/game`，Codex 状态位于 `/home/game/.codex`。宿主专用状态目录必须允许 UID 1000 写入；需要持续会话时，仅将该目录挂到此位置。工作目录 `/game` 为空，不挂开发仓库、宿主 HOME 或 Docker socket。
 
