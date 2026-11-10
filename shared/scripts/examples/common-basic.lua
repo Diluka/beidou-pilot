@@ -16,8 +16,7 @@ game.pickup()
 current = game.state()
 if current.character.hp < current.character.max_hp * 0.8 then
     for _, item in ipairs(current.inventory or {}) do
-        if item.quantity and item.quantity > 0 and
-            (item.item_id == 2000013 or item.item_id == 2000000) then
+        if item.quantity and item.quantity > 0 and (item.item_id == 2000013 or item.item_id == 2000000) then
             game.use_item(item.item_id)
             break
         end

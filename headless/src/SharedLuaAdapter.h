@@ -35,8 +35,7 @@ private:
     void Capture(std::uint64_t nativeTick);
     void ReadCommand(bool externalActionBusy);
     void ReadObservation();
-    nlohmann::json ObservationData(const std::string& domain, std::string& status,
-        std::string& error) const;
+    nlohmann::json ObservationData(const std::string& domain, std::string& status, std::string& error) const;
     void Publish();
     void ApplyRelease();
     nlohmann::json StateDocument() const;

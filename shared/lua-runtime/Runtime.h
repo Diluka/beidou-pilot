@@ -104,12 +104,16 @@ public:
     virtual bool Released() const = 0;
     virtual bool ReleasePending() const = 0;
     virtual bool Logs(const std::string& scriptId, const std::vector<std::string>& lines) = 0;
+
     virtual bool SupportsRawKeys() const { return false; }
+
     virtual bool RawKeys(const std::vector<std::string>&, std::uint32_t, std::string& error) {
         error = "unsupported: raw_keys";
         return false;
     }
+
     virtual bool SupportsSkill() const { return false; }
+
     virtual bool Skill(std::uint32_t, int&, std::string& error) {
         error = "unsupported: skill";
         return false;
@@ -178,8 +182,7 @@ public:
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
 
-    bool Start(const std::string& scriptId, const std::string& source,
-        std::uint32_t limitMs, std::string& error);
+    bool Start(const std::string& scriptId, const std::string& source, std::uint32_t limitMs, std::string& error);
     // Call after the host has updated native state and key-release facts.
     void Tick(bool sceneChanged = false);
     void Cancel(const std::string& reason);

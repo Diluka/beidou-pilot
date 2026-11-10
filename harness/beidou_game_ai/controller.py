@@ -22,21 +22,51 @@ game_run_lua 只提交有界执行，返回 starting 不证明原生受理。执
 暂停后不再提交动作；恢复时根据最新观察重规划，不重放旧动作。遵守既有养成方案，不试验性分配永久点数或消耗稀缺资源。
 """
 GAME_TOOLS: list[JsonObject] = [
-    {"type": "function", "name": "game_observe", "description": "读取所属实例的新鲜身份与实际游戏快照。",
-     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
-    {"type": "function", "name": "game_script_status", "description": "读取所属实例的 Lua、任务、控制权、持键及最近执行结果。",
-     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
-    {"type": "function", "name": "game_run_lua", "description": "提交一段有界 Lua；结束后自动收到结果。源码使用现有 game API，不能更改所控实例。",
-     "inputSchema": {"type": "object", "properties": {"code": {"type": "string"},
-                     "seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 30}},
-                     "required": ["code", "seconds"], "additionalProperties": False}},
+    {
+        "type": "function",
+        "name": "game_observe",
+        "description": "读取所属实例的新鲜身份与实际游戏快照。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "type": "function",
+        "name": "game_script_status",
+        "description": "读取所属实例的 Lua、任务、控制权、持键及最近执行结果。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "type": "function",
+        "name": "game_run_lua",
+        "description": "提交一段有界 Lua；结束后自动收到结果。源码使用现有 game API，不能更改所控实例。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string"},
+                "seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 30},
+            },
+            "required": ["code", "seconds"],
+            "additionalProperties": False,
+        },
+    },
 ]
-TOOLS: list[JsonObject] = [{"type": "namespace", "name": "game", "description": "所属实例的游戏观察与有界Lua操作。", "tools": GAME_TOOLS}]
+TOOLS: list[JsonObject] = [
+    {"type": "namespace", "name": "game", "description": "所属实例的游戏观察与有界Lua操作。", "tools": GAME_TOOLS}
+]
 
 
 class Controller:
-    def __init__(self, server: AppServer, game: GameClient, state: Path, model: str,
-                 role: str, task: str, binding: JsonObject, *, read_only: bool = False) -> None:
+    def __init__(
+        self,
+        server: AppServer,
+        game: GameClient,
+        state: Path,
+        model: str,
+        role: str,
+        task: str,
+        binding: JsonObject,
+        *,
+        read_only: bool = False,
+    ) -> None:
         self.server = server
         self.game = game
         self.state = state
@@ -69,16 +99,34 @@ class Controller:
         print(json.dumps(record, ensure_ascii=False), flush=True)
 
     def status(self) -> JsonObject:
-        return {"mode": self.mode, "thread_id": self.thread_id, "turn_id": self.turn_id,
-                "model": self.model, "effort": self.effort, "task": self.task,
-                "read_only": self.read_only, "lua_running": self.game.running, "pending_questions": list(self.questions),
-                "turn_requests": self._turns, "dynamic_tool_calls": self._tools,
-                "token_usage_updates": self._usage_updates, "backend_api_requests": None, "cost": None}
+        return {
+            "mode": self.mode,
+            "thread_id": self.thread_id,
+            "turn_id": self.turn_id,
+            "model": self.model,
+            "effort": self.effort,
+            "task": self.task,
+            "read_only": self.read_only,
+            "lua_running": self.game.running,
+            "pending_questions": list(self.questions),
+            "turn_requests": self._turns,
+            "dynamic_tool_calls": self._tools,
+            "token_usage_updates": self._usage_updates,
+            "backend_api_requests": None,
+            "cost": None,
+        }
 
     async def initialize(self) -> None:
-        initialized = cast(JsonObject, await self.server.call("initialize", {
-            "clientInfo": {"name": "beidou_game_ai", "version": "0.1.0"},
-            "capabilities": {"experimentalApi": True}}))
+        initialized = cast(
+            JsonObject,
+            await self.server.call(
+                "initialize",
+                {
+                    "clientInfo": {"name": "beidou_game_ai", "version": "0.1.0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            ),
+        )
         await self.server.notify("initialized", {})
         configuration = cast(JsonObject, await self.server.call("config/read", {"cwd": "/game", "includeLayers": True}))
         config = cast(JsonObject, configuration["config"])
@@ -87,33 +135,81 @@ class Controller:
         if any(cast(JsonObject, item)["skills"] for item in cast(list[JsonValue], skills["data"])) or mcps["data"]:
             raise AppServerError("context_not_isolated", "游戏 AI 启动时发现额外技能或 MCP。")
         features = cast(JsonObject, config.get("features", {}))
-        unwanted = ("shell_tool", "apps", "multi_agent", "memories", "goals", "hooks", "plugins", "image_generation", "view_image")
+        unwanted = (
+            "shell_tool",
+            "apps",
+            "multi_agent",
+            "memories",
+            "goals",
+            "hooks",
+            "plugins",
+            "image_generation",
+            "view_image",
+        )
         code_mode = cast(JsonObject, features.get("code_mode", {}))
-        if (any(features.get(name) is not False for name in unwanted) or config.get("project_doc_max_bytes") != 0
-                or features.get("sleep_tool") is not False
-                or not {"functions", "clock"}.issubset(cast(list[str], code_mode.get("excluded_tool_namespaces", [])))):
+        if (
+            any(features.get(name) is not False for name in unwanted)
+            or config.get("project_doc_max_bytes") != 0
+            or features.get("sleep_tool") is not False
+            or not {"functions", "clock"}.issubset(cast(list[str], code_mode.get("excluded_tool_namespaces", [])))
+        ):
             raise AppServerError("context_not_isolated", "游戏 AI 的工具或项目指令裁剪配置不符合启动合同。")
         cursor: JsonValue = None
         selected: JsonObject | None = None
         while True:
-            catalog = cast(JsonObject, await self.server.call("model/list", {"limit": 100, "includeHidden": False, "cursor": cursor}))
-            selected = next((cast(JsonObject, item) for item in cast(list[JsonValue], catalog["data"])
-                             if cast(JsonObject, item)["model"] == self.model), None)
+            catalog = cast(
+                JsonObject,
+                await self.server.call("model/list", {"limit": 100, "includeHidden": False, "cursor": cursor}),
+            )
+            selected = next(
+                (
+                    cast(JsonObject, item)
+                    for item in cast(list[JsonValue], catalog["data"])
+                    if cast(JsonObject, item)["model"] == self.model
+                ),
+                None,
+            )
             if selected is not None or catalog.get("nextCursor") is None:
                 break
             cursor = catalog["nextCursor"]
         if selected is None:
-            raise AppServerError("model_unavailable", "所选模型没有出现在当前运行身份的 model/list 中。", {"model": self.model})
-        efforts = [cast(str, cast(JsonObject, item)["reasoningEffort"])
-                   for item in cast(list[JsonValue], selected["supportedReasoningEfforts"])]
-        self.effort = next((value for value in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
-                            if value in efforts), cast(str, selected["defaultReasoningEffort"]))
-        developer_text = (GAME_INSTRUCTIONS + ("\n本会话只读观察和交流，不提交Lua或接管角色。" if self.read_only else "")
-                          + "\n角色与养成约束：\n" + self.role)
-        tool_specs: list[JsonObject] = [{"type": "namespace", "name": "game", "description": "所属实例的游戏能力。",
-                                       "tools": [tool for tool in GAME_TOOLS if not self.read_only or tool["name"] != "game_run_lua"]}]
-        params: JsonObject = {"model": self.model, "cwd": "/game", "approvalPolicy": "never", "sandbox": "read-only",
-                              "baseInstructions": BASE_INSTRUCTIONS, "developerInstructions": developer_text}
+            raise AppServerError(
+                "model_unavailable", "所选模型没有出现在当前运行身份的 model/list 中。", {"model": self.model}
+            )
+        efforts = [
+            cast(str, cast(JsonObject, item)["reasoningEffort"])
+            for item in cast(list[JsonValue], selected["supportedReasoningEfforts"])
+        ]
+        self.effort = next(
+            (
+                value
+                for value in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+                if value in efforts
+            ),
+            cast(str, selected["defaultReasoningEffort"]),
+        )
+        developer_text = (
+            GAME_INSTRUCTIONS
+            + ("\n本会话只读观察和交流，不提交Lua或接管角色。" if self.read_only else "")
+            + "\n角色与养成约束：\n"
+            + self.role
+        )
+        tool_specs: list[JsonObject] = [
+            {
+                "type": "namespace",
+                "name": "game",
+                "description": "所属实例的游戏能力。",
+                "tools": [tool for tool in GAME_TOOLS if not self.read_only or tool["name"] != "game_run_lua"],
+            }
+        ]
+        params: JsonObject = {
+            "model": self.model,
+            "cwd": "/game",
+            "approvalPolicy": "never",
+            "sandbox": "read-only",
+            "baseInstructions": BASE_INSTRUCTIONS,
+            "developerInstructions": developer_text,
+        }
         checkpoint = self.state / "checkpoint.json"
         if checkpoint.is_file():
             saved = cast(JsonObject, json.loads(checkpoint.read_text(encoding="utf-8")))
@@ -127,29 +223,48 @@ class Controller:
             params["allowProviderModelFallback"] = False
             thread = cast(JsonObject, await self.server.call("thread/start", params))
         if thread.get("instructionSources"):
-            raise AppServerError("context_not_isolated", "游戏会话加载了未授权的指令文件。", thread["instructionSources"])
+            raise AppServerError(
+                "context_not_isolated", "游戏会话加载了未授权的指令文件。", thread["instructionSources"]
+            )
         self.thread_id = cast(str, cast(JsonObject, thread["thread"])["id"])
         self._checkpoint()
-        self.emit("startup", {"model": self.model, "effort": self.effort, "advertised_efforts": efforts,
-                              "codex_user_agent": initialized.get("userAgent"),
-                              "configured_context_window": config.get("model_context_window"),
-                              "configured_compact_limit": config.get("model_auto_compact_token_limit"),
-                              "skills": 0, "mcp_servers": 0, "instruction_sources": thread.get("instructionSources", []),
-                              "excluded_tool_namespaces": code_mode["excluded_tool_namespaces"],
-                              "role_sha256": hashlib.sha256(self.role.encode()).hexdigest(),
-                              "controlled_base_instruction_bytes": len(BASE_INSTRUCTIONS.encode()),
-                              "controlled_developer_instruction_bytes": len(developer_text.encode()),
-                              "declared_dynamic_tool_schema_bytes": len(json.dumps(tool_specs, ensure_ascii=False).encode()),
-                              "component_tokens": None,
-                              "declared_game_capabilities": [tool["name"] for tool in GAME_TOOLS
-                                                             if not self.read_only or tool["name"] != "game_run_lua"],
-                              "collaboration": "Codex同步/异步询问，经专用开发AI通道回答",
-                              "cost": None})
+        self.emit(
+            "startup",
+            {
+                "model": self.model,
+                "effort": self.effort,
+                "advertised_efforts": efforts,
+                "codex_user_agent": initialized.get("userAgent"),
+                "configured_context_window": config.get("model_context_window"),
+                "configured_compact_limit": config.get("model_auto_compact_token_limit"),
+                "skills": 0,
+                "mcp_servers": 0,
+                "instruction_sources": thread.get("instructionSources", []),
+                "excluded_tool_namespaces": code_mode["excluded_tool_namespaces"],
+                "role_sha256": hashlib.sha256(self.role.encode()).hexdigest(),
+                "controlled_base_instruction_bytes": len(BASE_INSTRUCTIONS.encode()),
+                "controlled_developer_instruction_bytes": len(developer_text.encode()),
+                "declared_dynamic_tool_schema_bytes": len(json.dumps(tool_specs, ensure_ascii=False).encode()),
+                "component_tokens": None,
+                "declared_game_capabilities": [
+                    tool["name"] for tool in GAME_TOOLS if not self.read_only or tool["name"] != "game_run_lua"
+                ],
+                "collaboration": "Codex同步/异步询问，经专用开发AI通道回答",
+                "cost": None,
+            },
+        )
         self.mode = "ready"
 
     def _checkpoint(self) -> None:
-        (self.state / "checkpoint.json").write_text(json.dumps({"thread_id": self.thread_id, "binding": self.binding,
-            "model": self.model, "task": self.task}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (self.state / "checkpoint.json").write_text(
+            json.dumps(
+                {"thread_id": self.thread_id, "binding": self.binding, "model": self.model, "task": self.task},
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     async def update_task(self, text: str) -> None:
         self.task = text
@@ -164,14 +279,25 @@ class Controller:
                 self.emit("message_queued", {"mode": self.mode})
                 return
             if self.turn_id is not None:
-                await self.server.call("turn/steer", {"threadId": self.thread_id, "expectedTurnId": self.turn_id,
-                                                     "input": [{"type": "text", "text": text}]})
+                await self.server.call(
+                    "turn/steer",
+                    {
+                        "threadId": self.thread_id,
+                        "expectedTurnId": self.turn_id,
+                        "input": [{"type": "text", "text": text}],
+                    },
+                )
                 self.emit("message_delivered", {"turn_id": self.turn_id})
             else:
                 self._turn_started = time.monotonic()
                 self._decision_reported = False
-                result = cast(JsonObject, await self.server.call("turn/start", {"threadId": self.thread_id, "effort": self.effort,
-                    "input": [{"type": "text", "text": text}]}))
+                result = cast(
+                    JsonObject,
+                    await self.server.call(
+                        "turn/start",
+                        {"threadId": self.thread_id, "effort": self.effort, "input": [{"type": "text", "text": text}]},
+                    ),
+                )
                 self.turn_id = cast(str, cast(JsonObject, result["turn"])["id"])
                 self._turns += 1
                 if self.mode in {"ready", "running"}:
@@ -188,13 +314,19 @@ class Controller:
             result = await self.game.run_lua(code, seconds)
             self.last_script = {"ok": True, "data": result}
         except GameClientError as error:
-            self.last_script = {"ok": False, "error": {"code": error.code, "message": error.message, "details": error.details}}
+            self.last_script = {
+                "ok": False,
+                "error": {"code": error.code, "message": error.message, "details": error.details},
+            }
             if error.code in {"bridge_release_unconfirmed", "client_identity_changed"}:
                 self.mode = "error"
         self.emit("lua_finished", {"elapsed_seconds": round(time.monotonic() - started, 4), "result": self.last_script})
         if self.mode in {"ready", "running"}:
             try:
-                await self.message("本次 Lua 已结束。请重新观察并核对实际效果，再按当前任务决定下一步。执行结果：" + json.dumps(self.last_script, ensure_ascii=False))
+                await self.message(
+                    "本次 Lua 已结束。请重新观察并核对实际效果，再按当前任务决定下一步。执行结果："
+                    + json.dumps(self.last_script, ensure_ascii=False)
+                )
             except AppServerError as error:
                 self.mode = "error"
                 self.emit("continuation_failed", {"code": error.code, "message": error.message})
@@ -221,9 +353,13 @@ class Controller:
             elif tool == "game_run_lua":
                 if self.read_only:
                     raise GameClientError("read_only", "本游戏 AI 会话仅观察，未提交 Lua。")
-                if (set(args) != {"code", "seconds"} or not isinstance(args["code"], str)
-                        or type(args["seconds"]) not in (float, int) or not math.isfinite(args["seconds"])
-                        or not 0 < args["seconds"] <= 30):
+                if (
+                    set(args) != {"code", "seconds"}
+                    or not isinstance(args["code"], str)
+                    or type(args["seconds"]) not in (float, int)
+                    or not math.isfinite(args["seconds"])
+                    or not 0 < args["seconds"] <= 30
+                ):
                     raise GameClientError("invalid_tool_arguments", "Lua 工具需要源码与0至30秒的有界时间。")
                 if self.execution is not None and not self.execution.done():
                     raise GameClientError("input_busy", "本 harness 已有活动 Lua，先观察或等待结束。")
@@ -235,9 +371,16 @@ class Controller:
         except GameClientError as error:
             output = {"ok": False, "error": {"code": error.code, "message": error.message, "details": error.details}}
         self._tools += 1
-        self.emit("tool_finished", {"tool": tool, "elapsed_seconds": round(time.monotonic() - started, 4), "result": output})
-        await self.server.respond(identifier, {"success": output["ok"],
-            "contentItems": [{"type": "inputText", "text": json.dumps(output, ensure_ascii=False)}]})
+        self.emit(
+            "tool_finished", {"tool": tool, "elapsed_seconds": round(time.monotonic() - started, 4), "result": output}
+        )
+        await self.server.respond(
+            identifier,
+            {
+                "success": output["ok"],
+                "contentItems": [{"type": "inputText", "text": json.dumps(output, ensure_ascii=False)}],
+            },
+        )
 
     async def control(self, command: str) -> None:
         async with self._control:
@@ -248,8 +391,14 @@ class Controller:
                 self.mode = "ready"
                 messages = self.queued_messages
                 self.queued_messages = []
-                await self.message("恢复后重新规划，不重放旧动作。当前任务：" + self.task + "\n" + "\n".join(messages)
-                                   + "\n新鲜观察：" + json.dumps(observed, ensure_ascii=False))
+                await self.message(
+                    "恢复后重新规划，不重放旧动作。当前任务："
+                    + self.task
+                    + "\n"
+                    + "\n".join(messages)
+                    + "\n新鲜观察："
+                    + json.dumps(observed, ensure_ascii=False)
+                )
                 return
             self.mode = "pausing" if command == "pause" else "stopping"
             cancellation = None if self.read_only else asyncio.create_task(self.game.cancel())
@@ -265,8 +414,16 @@ class Controller:
                     raise
             self.turn_id = None
             self.mode = "paused" if command == "pause" else "stopped"
-            self.emit("control_completed", {"command": command, "mode": self.mode, "read_only": self.read_only,
-                                            "released_state": released, "game_input_cancelled": not self.read_only})
+            self.emit(
+                "control_completed",
+                {
+                    "command": command,
+                    "mode": self.mode,
+                    "read_only": self.read_only,
+                    "released_state": released,
+                    "game_input_cancelled": not self.read_only,
+                },
+            )
             if command == "stop":
                 self.done.set()
 
@@ -276,11 +433,18 @@ class Controller:
                 event = await self.server.events.get()
                 method = cast(str, event["method"])
                 params = cast(JsonObject, event.get("params", {}))
-                if (method in {"item/tool/call", "item/tool/requestUserInput", "item/agentMessage/delta"}
-                        and not self._decision_reported):
+                if (
+                    method in {"item/tool/call", "item/tool/requestUserInput", "item/agentMessage/delta"}
+                    and not self._decision_reported
+                ):
                     self._decision_reported = True
-                    self.emit("first_decision", {"elapsed_seconds": round(time.monotonic() - self._turn_started, 4),
-                                                 "includes_transport": True})
+                    self.emit(
+                        "first_decision",
+                        {
+                            "elapsed_seconds": round(time.monotonic() - self._turn_started, 4),
+                            "includes_transport": True,
+                        },
+                    )
                 if method == "item/tool/call":
                     pending.create_task(self._tool(event))
                 elif method == "item/tool/requestUserInput":
@@ -299,9 +463,15 @@ class Controller:
                         self.turn_id = None
                         if self.mode == "running":
                             self.mode = "ready"
-                    self.emit("turn_completed", {"turn_id": completed["id"], "status": completed["status"],
-                        "elapsed_seconds": round(time.monotonic() - self._turn_started, 4) if current else None,
-                        "error": completed.get("error")})
+                    self.emit(
+                        "turn_completed",
+                        {
+                            "turn_id": completed["id"],
+                            "status": completed["status"],
+                            "elapsed_seconds": round(time.monotonic() - self._turn_started, 4) if current else None,
+                            "error": completed.get("error"),
+                        },
+                    )
                 elif method == "serverRequest/resolved":
                     self.questions.pop(cast(int | str, params["requestId"]), None)
                 elif method == "transport/closed":

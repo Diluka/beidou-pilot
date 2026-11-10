@@ -26,7 +26,9 @@ public:
     }
 
     void Cancel() { pending = false; }
+
     bool Pending() const { return pending; }
+
     bool Dispatched() const { return dispatched; }
 
     template <typename Invoke>

@@ -17,7 +17,8 @@ from .protocol import AppServer, AppServerError, JsonObject
 async def commands(controller: Controller) -> None:
     reader = asyncio.StreamReader()
     transport, _ = await asyncio.get_running_loop().connect_read_pipe(
-        lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
+        lambda: asyncio.StreamReaderProtocol(reader), sys.stdin
+    )
     try:
         while line := await reader.readline():
             identifier = None
@@ -45,10 +46,12 @@ async def commands(controller: Controller) -> None:
                     answers = request.get("answers")
                     if type(request_id) not in (int, str) or request_id not in controller.questions:
                         raise ValueError("询问已结束或不属于当前会话。")
-                    if not isinstance(answers, dict) or any(not isinstance(value, dict)
-                            or not isinstance(value.get("answers"), list)
-                            or any(not isinstance(answer, str) for answer in value["answers"])
-                            for value in answers.values()):
+                    if not isinstance(answers, dict) or any(
+                        not isinstance(value, dict)
+                        or not isinstance(value.get("answers"), list)
+                        or any(not isinstance(answer, str) for answer in value["answers"])
+                        for value in answers.values()
+                    ):
                         raise ValueError("answer 需要按问题ID提供 answers 字符串数组。")
                     await controller.server.respond(cast(int | str, request_id), {"answers": answers})
                     controller.questions.pop(cast(int | str, request_id), None)
@@ -62,11 +65,15 @@ async def commands(controller: Controller) -> None:
                 if command == "stop":
                     return
             except (json.JSONDecodeError, ValueError) as error:
-                controller.emit("command_result", {"id": identifier, "ok": False,
-                                                  "error": {"code": "invalid_command", "message": str(error)}})
+                controller.emit(
+                    "command_result",
+                    {"id": identifier, "ok": False, "error": {"code": "invalid_command", "message": str(error)}},
+                )
             except (GameClientError, AppServerError) as error:
-                controller.emit("command_result", {"id": identifier, "ok": False,
-                                                  "error": {"code": error.code, "message": error.message}})
+                controller.emit(
+                    "command_result",
+                    {"id": identifier, "ok": False, "error": {"code": error.code, "message": error.message}},
+                )
         await controller.control("stop")
     finally:
         transport.close()
@@ -78,8 +85,19 @@ async def run(args: argparse.Namespace) -> None:
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     codex_state = state / "codex"
     codex_state.mkdir(exist_ok=True, mode=0o700)
-    command = ["docker", "run", "--rm", "--pull=never", "-i", "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
-               "--mount", f"type=bind,src={codex_state},dst=/home/game/.codex", args.image]
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-i",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,size=64m",
+        "--mount",
+        f"type=bind,src={codex_state},dst=/home/game/.codex",
+        args.image,
+    ]
     extra: list[str] = []
     if args.provider_config is not None:
         extra += ["--mount", f"type=bind,src={args.provider_config.resolve()},dst=/run/game-ai/provider.toml,readonly"]
@@ -90,10 +108,23 @@ async def run(args: argparse.Namespace) -> None:
     command[-1:-1] = extra
     server = await AppServer.start(command, stderr=state / "codex.stderr.log")
     game = GameClient(args.cli, args.root, args.backend, args.instance)
-    binding: JsonObject = {"cli": str(args.cli.resolve()), "root": str(args.root.resolve()),
-                           "backend": args.backend, "instance": args.instance, "read_only": args.read_only}
-    controller = Controller(server, game, state, args.model, args.role.read_text(encoding="utf-8"), args.task, binding,
-                            read_only=args.read_only)
+    binding: JsonObject = {
+        "cli": str(args.cli.resolve()),
+        "root": str(args.root.resolve()),
+        "backend": args.backend,
+        "instance": args.instance,
+        "read_only": args.read_only,
+    }
+    controller = Controller(
+        server,
+        game,
+        state,
+        args.model,
+        args.role.read_text(encoding="utf-8"),
+        args.task,
+        binding,
+        read_only=args.read_only,
+    )
     initialized = False
     events: asyncio.Task[None] | None = None
     incoming: asyncio.Task[None] | None = None
@@ -112,8 +143,12 @@ async def run(args: argparse.Namespace) -> None:
             controller.emit("ready", controller.status())
         else:
             observed = await game.observe()
-            await controller.message("当前任务：" + args.task + "\n先前经历不是当前状态，请以这次新鲜观察重新决策："
-                                     + json.dumps(observed, ensure_ascii=False))
+            await controller.message(
+                "当前任务："
+                + args.task
+                + "\n先前经历不是当前状态，请以这次新鲜观察重新决策："
+                + json.dumps(observed, ensure_ascii=False)
+            )
         incoming = asyncio.create_task(commands(controller))
         signal_wait = asyncio.create_task(stop_signal.wait())
         stopped = asyncio.create_task(controller.done.wait())
@@ -155,7 +190,9 @@ def main() -> int:
     parser.add_argument("--paused", action="store_true", help="初始化后等待resume，不立即开始模型turn或游戏操作")
     parser.add_argument("--provider-config", type=Path, help="专用运行时TOML，不使用开发config.toml")
     parser.add_argument("--auth-file", type=Path, help="专用认证副本，仅运行时初始化，不读取或打印其内容")
-    parser.add_argument("--credential-env", action="append", default=[], help="显式转交容器的认证变量名；值不放参数或日志")
+    parser.add_argument(
+        "--credential-env", action="append", default=[], help="显式转交容器的认证变量名；值不放参数或日志"
+    )
     args = parser.parse_args()
     for path in (args.cli, args.role, args.provider_config, args.auth_file):
         if path is not None and not path.is_file():
@@ -164,5 +201,10 @@ def main() -> int:
         asyncio.run(run(args))
         return 0
     except (GameClientError, AppServerError) as error:
-        print(json.dumps({"event": "failed", "error": {"code": error.code, "message": error.message}}, ensure_ascii=False), flush=True)
+        print(
+            json.dumps(
+                {"event": "failed", "error": {"code": error.code, "message": error.message}}, ensure_ascii=False
+            ),
+            flush=True,
+        )
         return 2

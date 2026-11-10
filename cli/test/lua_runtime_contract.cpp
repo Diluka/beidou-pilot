@@ -35,10 +35,16 @@ public:
     }
 
     const char* Backend() const override { return "contract"; }
+
     const MapleControl::State& Observe() const override { return state; }
+
     bool Supports(MapleControl::ActionKind) const override { return true; }
+
     bool Begin(const MapleControl::Action& action, std::string& error) override {
-        if (!Released()) { error = "native_input_still_owned"; return false; }
+        if (!Released()) {
+            error = "native_input_still_owned";
+            return false;
+        }
         inputs.push_back({action.direction});
         active = true;
         remaining = static_cast<int>(action.durationMs / 20);
@@ -48,20 +54,27 @@ public:
         result.reason = "native_input_" + std::to_string(inputs.size());
         return true;
     }
+
     MapleControl::ActionResult Result() const override {
         auto snapshot = result;
         snapshot.controlReleased = Released();
         return snapshot;
     }
+
     void Release() override {
         if (active) inputs.back().interrupted = true;
         active = false;
         releasing = 3;
     }
+
     bool Released() const override { return !active && releasing == 0; }
+
     bool ReleasePending() const override { return releasing != 0; }
+
     bool Logs(const std::string&, const std::vector<std::string>&) override { return true; }
+
     bool SupportsRawKeys() const override { return true; }
+
     bool RawKeys(const std::vector<std::string>& keys, std::uint32_t duration, std::string& error) override {
         Check(keys.size() == 1 && (keys.front() == "Left" || keys.front() == "Right"), "unexpected_native_key");
         MapleControl::Action action;
@@ -275,7 +288,6 @@ assert(cancelled < 512 and returned < 512 and self_cancelled < 512,
 )lua";
 }
 
-
 MapleControl::TaskStatus LatestTask(MapleControl::Runtime& runtime, const std::string& name) {
     const auto* status = runtime.CurrentStatus();
     for (auto task = status->tasks.rbegin(); task != status->tasks.rend(); ++task)
@@ -306,7 +318,9 @@ game.spawn("chase", 10, function()
     game.move("right", 10)
     while true do game.sleep(0) end
 end)
-)lua", 5000, error), error);
+)lua",
+                        5000, error),
+          error);
     Advance(runtime, native, 3);
     Check(native.active && runtime.CurrentStatus()->control.owner == "chase", "initial_owner_missing");
     const auto original = LatestTask(runtime, "chase");
@@ -336,8 +350,9 @@ for _, task in ipairs(game.tasks().tasks) do assert(task.revision > 0) end
     result = runtime.ManageTask(change);
     Check(result.status == "rejected" && result.reason == "task_load_error" && !result.error.empty(),
           "invalid_replacement_not_rejected");
-    Check(native.active && !native.ReleasePending() && native.inputs.size() == 1 &&
-          runtime.CurrentStatus()->control.owner == "chase" && LatestTask(runtime, "chase").revision == original.revision,
+    Check(native.active && !native.ReleasePending() && native.inputs.size() == 1
+              && runtime.CurrentStatus()->control.owner == "chase"
+              && LatestTask(runtime, "chase").revision == original.revision,
           "compile_error_changed_original_owner");
     change.requestId = "replace";
     change.priority = 10;
@@ -351,8 +366,9 @@ for _, task in ipairs(game.tasks().tasks) do assert(task.revision > 0) end
     Check(native.inputs.size() == 1 && runtime.Running(), "replacement_started_before_release_ack");
     Advance(runtime, native, 2);
     const auto replacement = LatestTask(runtime, "chase");
-    Check(replacement.revision > original.revision && native.inputs.size() == 2 && native.active &&
-          native.inputs.back().direction == "left", "replacement_not_started");
+    Check(replacement.revision > original.revision && native.inputs.size() == 2 && native.active
+              && native.inputs.back().direction == "left",
+          "replacement_not_started");
     result = *runtime.CurrentTaskChange();
     Check(result.status == "completed" && result.controlReleased && result.revision == replacement.revision,
           "replacement_result_missing");
@@ -382,8 +398,8 @@ for _, task in ipairs(game.tasks().tasks) do assert(task.revision > 0) end
     change.source = "error('injected-runtime-error')";
     Check(runtime.ManageTask(change).status == "completed", "valid_error_source_not_compiled");
     Advance(runtime, native, 3);
-    Check(!runtime.Running() && runtime.CurrentStatus()->reason == "script_error" &&
-          runtime.CurrentStatus()->error.find("injected-runtime-error") != std::string::npos,
+    Check(!runtime.Running() && runtime.CurrentStatus()->reason == "script_error"
+              && runtime.CurrentStatus()->error.find("injected-runtime-error") != std::string::npos,
           "injected_runtime_error_did_not_preserve_session_error_semantics");
 }
 
@@ -395,7 +411,9 @@ void LastTaskReplacement() {
 game.spawn("only", 10, function()
     game.acquire(); game.move("right", 10)
 end)
-)lua", 5000, error), error);
+)lua",
+                        5000, error),
+          error);
     Advance(runtime, native, 3);
     MapleControl::TaskChange change;
     change.requestId = "last-replacement";
@@ -428,8 +446,9 @@ void ReentrantCallbacks() {
         native.runtime = &runtime;
         std::string error;
         Check(runtime.Start(press ? "reentrant-press" : "reentrant-release",
-                            press ? "game.press('space',0.08);game.sleep(0.2)" : "game.keys('space',0.08)",
-                            3000, error), error);
+                            press ? "game.press('space',0.08);game.sleep(0.2)" : "game.keys('space',0.08)", 3000,
+                            error),
+              error);
         for (int tick = 0; tick < 60 && runtime.Running(); ++tick) {
             native.Advance();
             runtime.Tick();
@@ -461,7 +480,9 @@ game.spawn("target", 10, function()
     game.move("right", 10)
     game.move("right", 0.02)
 end)
-)lua", 3000, error), error);
+)lua",
+                            3000, error),
+              error);
         Advance(runtime, native, 3);
         Check(native.active && native.inputs.size() == 1, "management_target_not_waiting_on_input");
         const auto observedBefore = native.observerLogs;
@@ -486,12 +507,13 @@ end)
               "management_release_not_confirmed");
         if (operation == MapleControl::TaskOperation::Replace) {
             Check(native.inputs.size() == 2 && native.inputs.back().direction == "left"
-                  && !native.inputs.back().interrupted, "replacement_did_not_acquire_and_finish");
+                      && !native.inputs.back().interrupted,
+                  "replacement_did_not_acquire_and_finish");
             Check(result.revision != oldRevision && LatestTask(runtime, "target").status == "completed",
                   "replacement_version_not_completed");
-        }
-        else Check(native.inputs.size() == 1 && LatestTask(runtime, "target").status == "cancelled",
-                   "stopped_task_resumed");
+        } else
+            Check(native.inputs.size() == 1 && LatestTask(runtime, "target").status == "cancelled",
+                  "stopped_task_resumed");
         runtime.Cancel("contract_cancel");
         Advance(runtime, native, 3);
         Check(!runtime.Running() && native.Released(), "management_callback_cleanup_not_confirmed");
@@ -500,10 +522,22 @@ end)
 
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
-    if (std::string(argv[1]) == "live-changes") { LiveTaskChanges(); return 0; }
-    if (std::string(argv[1]) == "last-replacement") { LastTaskReplacement(); return 0; }
-    if (std::string(argv[1]) == "reentrant-callbacks") { ReentrantCallbacks(); return 0; }
-    if (std::string(argv[1]) == "management-callbacks") { ManagementCallbacks(); return 0; }
+    if (std::string(argv[1]) == "live-changes") {
+        LiveTaskChanges();
+        return 0;
+    }
+    if (std::string(argv[1]) == "last-replacement") {
+        LastTaskReplacement();
+        return 0;
+    }
+    if (std::string(argv[1]) == "reentrant-callbacks") {
+        ReentrantCallbacks();
+        return 0;
+    }
+    if (std::string(argv[1]) == "management-callbacks") {
+        ManagementCallbacks();
+        return 0;
+    }
     const bool cancel = std::string(argv[1]) == "cancel";
     const bool ordinary = std::string(argv[1]) == "single";
     const bool keys = std::string(argv[1]) == "raw-keys";
@@ -511,8 +545,14 @@ int main(int argc, char** argv) {
     NativeBoundary native;
     MapleControl::Runtime runtime(native);
     std::string error;
-    Check(runtime.Start("runtime-contract", lifetime ? lifecycle : keys ? rawKeys : ordinary ? single
-                        : cancel ? cancelled : collaboration, 5000, error), error);
+    Check(runtime.Start("runtime-contract",
+                        lifetime   ? lifecycle
+                        : keys     ? rawKeys
+                        : ordinary ? single
+                        : cancel   ? cancelled
+                                   : collaboration,
+                        5000, error),
+          error);
     bool cancellationSent = false;
     for (int tick = 0; tick < 200 && runtime.Running(); ++tick) {
         native.Advance();
@@ -539,11 +579,13 @@ int main(int argc, char** argv) {
     } else if (keys) {
         Check(status->status == "completed", "raw_keys_handoff_did_not_complete");
         Check(native.inputs.size() == 3 && !native.inputs[0].interrupted && native.inputs[1].interrupted
-              && !native.inputs[2].interrupted, "old_task_released_successor_keys");
+                  && !native.inputs[2].interrupted,
+              "old_task_released_successor_keys");
     } else if (ordinary) {
         Check(status->status == "completed", "single_script_did_not_complete");
         Check(native.inputs.size() == 2 && native.inputs[0].direction == "right"
-              && native.inputs[1].direction == "left", "move_after_stop_missing");
+                  && native.inputs[1].direction == "left",
+              "move_after_stop_missing");
         Check(runtime.Start("next-script", "game.move('right', 0.02); game.stop()", 5000, error), error);
         for (int tick = 0; tick < 30 && runtime.Running(); ++tick) {
             native.Advance();
@@ -556,14 +598,11 @@ int main(int argc, char** argv) {
     } else {
         Check(status->status == "completed", "collaboration_did_not_complete");
         Check(native.inputs.size() == 5, "stale_action_replayed_or_expected_action_missing");
-        Check(native.inputs[0].direction == "right" && native.inputs[0].interrupted,
-              "chase_was_not_preempted");
-        Check(native.inputs[1].direction == "left" && !native.inputs[1].interrupted,
-              "first_retreat_was_interrupted");
+        Check(native.inputs[0].direction == "right" && native.inputs[0].interrupted, "chase_was_not_preempted");
+        Check(native.inputs[1].direction == "left" && !native.inputs[1].interrupted, "first_retreat_was_interrupted");
         Check(native.inputs[2].direction == "left" && !native.inputs[2].interrupted,
               "chase_did_not_replan_from_current_state");
-        Check(native.inputs[3].direction == "right" && native.inputs[3].interrupted,
-              "second_chase_was_not_preempted");
+        Check(native.inputs[3].direction == "right" && native.inputs[3].interrupted, "second_chase_was_not_preempted");
         Check(native.inputs[4].direction == "left" && !native.inputs[4].interrupted,
               "cancelling_old_task_released_successor_input");
     }

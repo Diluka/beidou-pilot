@@ -14,16 +14,29 @@ class GuiKeyInputContract(unittest.TestCase):
         build = Path(temporary.name)
         root = Path(__file__).resolve().parents[2]
         lua = root / "third_party/lua"
-        sources = sorted(path for path in lua.glob("*.c")
-                         if path.name not in {"lua.c", "luac.c", "ltests.c", "onelua.c"})
+        sources = sorted(
+            path for path in lua.glob("*.c") if path.name not in {"lua.c", "luac.c", "ltests.c", "onelua.c"}
+        )
         subprocess.run(["gcc", "-DLUA_USE_LINUX", "-O0", "-c", *map(str, sources)], cwd=build, check=True)
         cls.executable = build / "gui-key-input-contract"
-        subprocess.run([
-            "g++", "-std=c++20", "-O0", f"-I{lua}", f"-I{root / 'shared/lua-runtime'}",
-            f"-I{root / 'beidou-ijl15/ezorsia'}", str(root / "shared/lua-runtime/Runtime.cpp"),
-            str(root / "cli/test/gui_key_input_contract.cpp"), *map(str, sorted(build.glob("*.o"))),
-            "-lm", "-ldl", "-o", str(cls.executable),
-        ], check=True)
+        subprocess.run(
+            [
+                "g++",
+                "-std=c++20",
+                "-O0",
+                f"-I{lua}",
+                f"-I{root / 'shared/lua-runtime'}",
+                f"-I{root / 'beidou-ijl15/ezorsia'}",
+                str(root / "shared/lua-runtime/Runtime.cpp"),
+                str(root / "cli/test/gui_key_input_contract.cpp"),
+                *map(str, sorted(build.glob("*.o"))),
+                "-lm",
+                "-ldl",
+                "-o",
+                str(cls.executable),
+            ],
+            check=True,
+        )
 
     def test_modal_native_dispatch_allows_vm_and_real_release_ack_to_progress(self) -> None:
         subprocess.run([str(self.executable), "modal"], check=True, timeout=10)
