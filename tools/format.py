@@ -18,6 +18,7 @@ SOURCES = {
         "cli/test/test_task_transport.py",
         "cli/test/test_gui_key_input.py",
         "cli/test/test_native_item_use.py",
+        "cli/test/test_native_observations.py",
     ),
     "clang-format": (
         "shared/lua-runtime/*.cpp",
@@ -28,6 +29,8 @@ SOURCES = {
         "beidou-ijl15/ezorsia/AgentBridge.h",
         "beidou-ijl15/ezorsia/NativeKeyInput.h",
         "beidou-ijl15/ezorsia/NativeItemUse.h",
+        "beidou-ijl15/ezorsia/NativeObservation.cpp",
+        "beidou-ijl15/ezorsia/NativeObservation.h",
         "cli/test/*_contract.cpp",
     ),
     "stylua": ("shared/scripts/examples/*.lua",),

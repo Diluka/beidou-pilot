@@ -1,5 +1,6 @@
 # 易误改约束
 
+- 自维护代码排版与文件组织见[格式规范](../../docs/FORMATTING.md)，统一入口见[tools/format.py](../../tools/format.py)；只处理明确的新自维护白名单，历史编码和第三方例外按规范保留。
 - 代码根与运行根不同：--root可指外部Wine运行环境。子进程优先加载cli当前代码，公共策略按代码仓库根shared/scripts读取，不能从运行根导入旧包/脚本。
 - cli/test使用包相对导入共享BridgeFiles；子进程测试的PYTHONPATH指cli代码根。不要散放测试或多处sys.path补丁。
 - Python只在动作前静态规划，Lua首动作核对原生instance_id/CID/map/scene_generation；旧规划不能被新进程认领。

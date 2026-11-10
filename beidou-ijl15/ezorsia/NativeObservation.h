@@ -17,12 +17,15 @@ class ReadError : public std::runtime_error {
 public:
     explicit ReadError(const std::string& message) : std::runtime_error(message) {}
 };
+
 void Copy(std::uintptr_t address, void* output, std::size_t size);
-template<class T> T Read(std::uintptr_t address) {
+
+template <class T> T Read(std::uintptr_t address) {
     T value{};
     Copy(address, &value, sizeof(value));
     return value;
 }
+
 std::vector<unsigned char> Bytes(std::uintptr_t address, std::size_t size);
 std::string Utf8(const std::string& cp936);
 std::string ZxString(std::uintptr_t field, std::size_t maximum = 65536);
@@ -42,6 +45,6 @@ Value Shop();
 MapleControl::Observation Collect(const std::string& domain);
 
 // Separate read-only request lane; it never replaces a running action/script request.
-void Tick(const std::string& directory, const std::string& instance,
-    const std::string& run, std::uint64_t generation, std::uint64_t sequence);
+void Tick(const std::string& directory, const std::string& instance, const std::string& run, std::uint64_t generation,
+          std::uint64_t sequence);
 }
