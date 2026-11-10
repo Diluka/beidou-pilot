@@ -2,6 +2,7 @@
 #include "AgentBridge.h"
 #include "Runtime.h"
 #include "TaskTransport.h"
+#include "EventTransport.h"
 #include "NativeKeyInput.h"
 #include "NativeItemUse.h"
 #include "NativeObservation.h"
@@ -78,6 +79,7 @@ std::uint64_t sequence = 0;
 std::uint64_t inputEvents = 0;
 MapleControl::ActionResult semanticResult;
 ULONGLONG lastPublishedAt = 0;
+bool eventsPublished = false;
 
 void BeginRelease(const std::string& status, const std::string& reason);
 bool BeginNativeAction(const MapleControl::Action& action, std::string& error);
@@ -133,6 +135,7 @@ public:
 BeiDouAdapter adapter;
 MapleControl::Runtime runtime(adapter);
 std::unique_ptr<MapleControl::TaskTransport> taskTransport;
+std::unique_ptr<MapleControl::EventTransport> eventTransport;
 
 template <typename T> bool ReadAt(std::uintptr_t address, T& value) {
     SIZE_T count = 0;
@@ -568,7 +571,8 @@ bool Publish(const MapleControl::State& state) {
         out << ']';
     } else
         out << "null";
-    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"revive\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true},\"inventory\":";
+    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"revive\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"events\":true},\"event_stream_status\":"
+        << Quote(eventsPublished ? "ok" : "publish_failed") << ",\"inventory\":";
     if (state.inventoryKnown) {
         out << '[';
         bool separator = false;
@@ -808,6 +812,8 @@ void Tick() {
     }
     NativeObservation::Tick(directory, instanceId, runId, sceneGeneration, sequence);
     if (now - lastPublishedAt >= 25) {
+        NativeObservation::PollInvitations(*eventTransport, previousState);
+        eventsPublished = eventTransport->Flush(previousState);
         if (!Publish(previousState)) {
             if (runtime.Running())
                 runtime.Cancel("state_publish_failed");
@@ -860,6 +866,7 @@ bool AgentBridge::Install() {
     const DWORD runLength = GetEnvironmentVariableA("RUN_ID", run.data(), static_cast<DWORD>(run.size()));
     if (runLength < run.size()) runId.assign(run.data(), runLength);
     taskTransport.reset(new MapleControl::TaskTransport(directory, runId));
+    eventTransport.reset(new MapleControl::EventTransport(directory, runId));
     FILETIME created{}, exited{}, kernel{}, user{};
     if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return false;
     std::ostringstream identity;

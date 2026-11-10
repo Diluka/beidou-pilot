@@ -269,7 +269,8 @@ class BridgeClient:
         return request_id
 
     def _wait(self, before: BridgeSnapshot, request_id: str, timeout: float | None,
-              cancel_file: Path | None = None, poll_interval: float = 0.01) -> BridgeSnapshot | None:
+              cancel_file: Path | None = None, poll_interval: float = 0.01,
+              wait_for_start: bool = False) -> BridgeSnapshot | None:
         until = time.monotonic() + timeout if timeout is not None else None
         max_age = (max(0, time.time() - before["observed_at_ms"] / 1000) + timeout + 1
                    if timeout is not None else CONTINUOUS_STATE_MAX_AGE)
@@ -291,12 +292,13 @@ class BridgeClient:
                     details["script"] = cast(JsonObject | None, state["script"])
                 raise ClientError("bridge_command_rejected", "原生桥拒绝了本次请求。", details)
             if (command["id"] == request_id and state["seq"] > before["seq"]
-                    and command["status"] in ("completed", "cancelled")):
+                    and (command["status"] in ("completed", "cancelled")
+                         or wait_for_start and command["status"] == "running")):
                 return state
             if cancel_file is not None and cancel_file.exists():
                 return None
             if until is not None and time.monotonic() >= until:
-                raise ClientError("bridge_timeout", "未在期限内确认原生桥命令终态。",
+                raise ClientError("bridge_timeout", "未在期限内确认原生桥命令状态。",
                                   {"request_id": request_id, "last_status": command["status"],
                                    "held_keys": state["held_keys"]})
             time.sleep(poll_interval)
@@ -325,14 +327,15 @@ class BridgeClient:
 
     def _execute(self, before: BridgeSnapshot, action: str, argument: int, values: list[str],
                  timeout: float | None, cancel_file: Path | None = None,
-                 poll_interval: float = 0.01) -> tuple[BridgeSnapshot, str | None, bool]:
+                 poll_interval: float = 0.01,
+                 wait_for_start: bool = False) -> tuple[BridgeSnapshot, str | None, bool]:
         if cancel_file is not None and cancel_file.exists():
             return before, None, True
         request_id = None
         try:
             request_id = self._publish(before, action, argument, values)
-            result = self._wait(before, request_id, timeout, cancel_file, poll_interval)
-            if result is not None and result["held_keys"]:
+            result = self._wait(before, request_id, timeout, cancel_file, poll_interval, wait_for_start)
+            if result is not None and result["held_keys"] and result["command"]["status"] != "running":
                 raise ClientError("bridge_release_unconfirmed", "动作已结束，但原生桥按键尚未释放。",
                                   {"request_id": request_id, "held_keys": result["held_keys"]})
         except (ClientError, KeyboardInterrupt) as error:
@@ -357,8 +360,9 @@ class BridgeClient:
         return result, request_id, False
 
     def run_script(self, path: Path | None = None, seconds: float | None = 30, timeout: float | None = None,
-                   cancel_file: Path | None = None, *, code: str | None = None) -> JsonObject:
-        """在DLL内执行受信Lua文件或源码；None时限明确持续，控制器只等待与取消。"""
+                   cancel_file: Path | None = None, *, code: str | None = None,
+                   wait_for_start: bool = False) -> JsonObject:
+        """执行受信Lua；wait_for_start只等待原生受理，返回后由Runtime独立运行。"""
         if (path is None) == (code is None):
             raise ClientError("invalid_bridge_options", "Lua文件与直接源码须且只能提供一项。")
         if (seconds is not None and not 0.001 <= seconds <= 0xFFFFFFFF / 1000
@@ -386,19 +390,22 @@ class BridgeClient:
                 raise ClientError("invalid_script_file" if path is not None else "invalid_script_source",
                                   "无法准备UTF-8 Lua脚本，未发布执行请求。",
                                   {"path": str(path) if path is not None else None, "reason": str(error)}) from error
-            wait_seconds = timeout if timeout is not None else seconds + 2 if seconds is not None else None
+            wait_seconds = timeout
+            if wait_seconds is None:
+                wait_seconds = 3 if wait_for_start else seconds + 2 if seconds is not None else None
             state, request_id, locally_cancelled = self._execute(
                 before, "script", round(seconds * 1000) if seconds is not None else 0,
-                [script_id], wait_seconds, cancel_file, poll_interval=0.05)
+                [script_id], wait_seconds, cancel_file, poll_interval=0.05, wait_for_start=wait_for_start)
             script = state["script"] if request_id is not None else None
             if request_id is not None and (script is None or script["id"] != script_id):
-                raise ClientError("invalid_bridge_state", "脚本终态与本次脚本身份不符。",
+                raise ClientError("invalid_bridge_state", "脚本状态与本次脚本身份不符。",
                                   {"request_id": request_id, "script_id": script_id})
             cancelled = locally_cancelled or state["command"]["status"] == "cancelled"
             report: JsonObject = {
-                "source": "client-native-bridge", "request_id": request_id, "script_id": script_id,
+                "source": "client-native-bridge", "instance_id": state["instance_id"], "run_id": state["run_id"],
+                "request_id": request_id, "script_id": script_id,
                 "script_file": str(path) if path is not None else None, "seconds": seconds, "continuous": seconds is None,
-                "status": "cancelled" if cancelled else "completed", "cancelled": cancelled,
+                "status": "cancelled" if cancelled else state["command"]["status"], "cancelled": cancelled,
                 "reason": "cancel_requested" if locally_cancelled else state["command"]["reason"],
                 "elapsed_seconds": round(time.monotonic() - started, 4),
                 "script": cast(JsonObject | None, script), "last_state": cast(JsonObject, state),
@@ -406,6 +413,25 @@ class BridgeClient:
             if script is not None and script["id"] == script_id and script["error"] is not None:
                 raise ClientError("bridge_script_error", "DLL内Lua脚本执行失败，脚本已停止并释放按键。", report)
             return report
+
+    def cancel_script(self, script_id: str, timeout: float = 2.0) -> JsonObject:
+        """只取消当前匹配的Lua会话，保留客户端并等待放键。"""
+        if not re.fullmatch(r"[0-9a-fA-F]{32}", script_id) or not math.isfinite(timeout) or timeout <= 0:
+            raise ClientError("invalid_bridge_options", "取消须指定script status中的脚本ID与正数等待期限。")
+        with self._control():
+            before = self.snapshot()
+            script = before.get("script")
+            if script is None or script["id"] != script_id:
+                raise ClientError("script_session_mismatch", "当前Lua会话与指定脚本不符，未发送取消。",
+                                  {"script_id": script_id,
+                                   "current_script_id": script["id"] if script is not None else None})
+            already_stopped = (script["status"] != "running" and before["command"]["status"] != "running"
+                               and not before["held_keys"])
+            state = before if already_stopped else self._stop(before, timeout)
+            return {"source": "client-native-bridge", "instance_id": state["instance_id"], "run_id": state["run_id"],
+                    "request_id": None if already_stopped else state["command"]["id"], "script_id": script_id,
+                    "status": "already_stopped" if already_stopped else "cancelled", "already_stopped": already_stopped,
+                    "held_keys": state["held_keys"], "last_state": cast(JsonObject, state)}
 
     def stop(self, timeout: float = 2.0) -> JsonObject:
         """释放当前实例的桥接按键；不会向后继游戏进程补发旧停止请求。"""

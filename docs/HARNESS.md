@@ -83,3 +83,44 @@ TMPDIR="$PWD/tmp/harness-tests" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=harness \
 `Game AI harness contract` CI 构建隔离镜像，执行纯假 CLI/app-server 合同及真实 Codex 到本地假 Responses 端点的完整工具/指令、exec 游戏分派与询问往返检查，无认证、无外部模型和游戏操作。既有 `Python offline tests` 与 `Headless image build` 继续独立运行。
 
 正式验收仍需主代理记录实际模型、effort、上下文与 token、决策延迟，在授权角色和隔离目标上核对有界移动、停止放键、双向询问和定向复验。离线模拟、Lua 返回或仅登录成功不能代替实际游戏结果；此证据缺失时 PR 保持待验收。
+
+## 向已有 SSH Codex 会话投递客户端事件
+
+`harness/game-events` 是独立的事件消费者，连接桌面应用经 SSH 使用的既有 Codex daemon 和明确指定的 thread。它不启动 `game-ai`、模型容器或游戏客户端，不创建新聊天，也不修改已有角色设定或工具。客户端事件契约由统一 CLI 的 `events read/watch` 提供，模型接入代码留在 `harness/`。
+
+此入口单独需要 `harness/requirements-events.txt` 中固定的 `websockets` 依赖；原有 `harness/game-ai` 仍可仅用 Python 标准库。依赖安装到独立虚拟环境，例如使用本机已有的 uv：
+
+```bash
+uv venv /private/game-events/venv
+uv pip install --python /private/game-events/venv/bin/python -r harness/requirements-events.txt
+```
+
+在 SSH 远端主机以拥有目标会话的同一用户运行，显式绑定客户端、Codex thread 和 daemon socket。socket 可使用该用户的 `~/.codex/app-server-control/app-server-control.sock`；必须确实指向管理目标会话的 daemon，不启动或重启其他服务。
+
+```bash
+/private/game-events/venv/bin/python harness/game-events \
+  --root /external/client-cli --backend beidou --instance default \
+  --thread THREAD_UUID \
+  --socket "$HOME/.codex/app-server-control/app-server-control.sock" \
+  --state /private/game-events/receiver --check
+```
+
+`--check` 只初始化连接并读取指定会话，不订阅客户端事件、不发送模型输入。移除 `--check` 后，消费者装载同一 thread 的通知连接，并启动只读 `events watch` 子进程。默认只投递 `invitation.opened`；重复 `--event-type TYPE` 可显式选择其他原生事件。`invitation.closed` 等未选中的事件只推进游标，避免在模型刚处理完邀请时再次打断它。
+
+首次没有游标时，以当前最新事件序号建立基线；先看到 `events_ready`，再开始发送邀请。它不会把启动前的历史邀请当作仍然有效，已有弹窗应通过当前邀请观察另行检查。状态目录私密保存绑定和 `instance_id/run_id/seq` 游标；恢复时由 CLI 补读留存增量，重复序号不会重复通知。已知过期事件跳过；时限未知保持未知。事件缺口、身份变化或原生观察不可用不能作为邀请已处理的证据。
+
+默认 `--delivery steer` 在活跃回合使用 `turn/steer`，空闲时直接 `turn/start`。显式选择 `--delivery interrupt` 时，先中断当前模型回合，等待匹配的 `turn/completed`，再启动事件处理回合；不通过 `queue` 等旧回合自然结束。该选项会打断目标聊天正在处理的工作，只用于明确授权的专用控制会话。
+
+消费者只调度模型，不调用已有 `game-ai` 的 `pause/stop`、不发送游戏取消、不直接写桥命令。已提交游戏任务是否继续，遵循其原执行入口的生命周期；同步 `script run` 的 SIGINT/SIGTERM 仍会取消所属 Lua。需要让游戏任务独立于模型回合继续时，使用客户端正式支持的非阻塞执行入口，并从当前脚本状态核对结果。停止本监听器只关闭它自己的只读 watcher 与 daemon 连接。
+
+stdout 的 `event_delivered` 区分事件观察到接口受理的时间、投递调度耗时、目标 thread/turn 和实际使用的 RPC；`effect="unknown"` 表示尚未核对游戏效果。接口受理不证明模型已经理解通知，也不保证在邀请有效期内完成决策。收到通知后仍需读取当前邀请引用，按既有明确意图接受或拒绝，并以实际好友或队伍状态确认结果。连接中断、RPC 超时等不明投递结果会报错并保留未确认的游标，不自动重放模型操作。
+
+离线合同使用真实 Unix WebSocket 假服务和 CLI 子进程，不访问模型或游戏：
+
+```bash
+mkdir -p tmp/game-events-tests
+TMPDIR="$PWD/tmp/game-events-tests" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=harness \
+  /private/game-events/venv/bin/python -m unittest discover -s harness/test -p test_events.py -v
+```
+
+实际验收分别记录运行中插话、空闲唤醒、显式中断后重新处理，以及真实邀请是否仍有效、接受/拒绝和成员结果。两账号分属两个控制会话；停止接收方模型时发送方与开发协调方继续运行。监听器的离线合同和 `--check` 均不能替代这项试用。

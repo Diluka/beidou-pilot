@@ -28,7 +28,7 @@ class Parser(argparse.ArgumentParser):
 def parser() -> Parser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
-        "--json", action="store_true", default=argparse.SUPPRESS, help="单个JSON结果；仅独立watch使用JSONL"
+        "--json", action="store_true", default=argparse.SUPPRESS, help="单个JSON结果；watch与events watch使用JSONL"
     )
     common.add_argument("--root", type=Path, default=argparse.SUPPRESS, help="客户端目录，默认入口所在目录")
     common.add_argument("--debug", action="store_true", default=argparse.SUPPRESS, help="保留引擎原始来源和布局细节")
@@ -55,7 +55,8 @@ def parser() -> Parser:
     q = command("bridge", "读取原生桥状态，或停止桥持有的按键")
     q.add_argument("action", choices=["status", "stop"], nargs="?", default="status")
     q = command("script", "在客户端内运行Lua控制脚本，或只读当前脚本状态")
-    q.add_argument("action", choices=["run", "status"])
+    q.add_argument("action", choices=["run", "start", "status", "cancel"])
+    q.add_argument("--session", help="cancel必须指定当前script.id，只取消匹配脚本")
     source = q.add_mutually_exclusive_group()
     source.add_argument("file", type=Path, nargs="?", help="受信UTF-8 Lua文件")
     source.add_argument("--code", help="直接执行受信Lua源码，与文件输入互斥")
@@ -104,6 +105,11 @@ def parser() -> Parser:
     q = command("watch", "持续只读角色变化，输出JSONL")
     q.add_argument("--seconds", type=float, default=10)
     q.add_argument("--interval", type=float, default=0.5)
+    q = command("events", "只读原生事件序列，或持续监听新事件")
+    q.add_argument("action", nargs="?", choices=["read", "watch"], default="read")
+    q.add_argument("--cursor", help="包含 instance_id、run_id、seq 的 JSON 游标")
+    q.add_argument("--seconds", type=float, help="watch 的可选监听时长；省略则持续监听")
+    q.add_argument("--interval", type=float, default=0.025, help="watch 读取间隔，0.01 至 1 秒")
     q = command("inspect", "按需读取一个领域或静态资源")
     q.add_argument(
         "kind", choices=["scene", "inventory", "quests", "skills", "stage", "ui", "item", "npc", "monster", "map"]
@@ -125,6 +131,11 @@ def parser() -> Parser:
     q.add_argument("selector", nargs="?")
     q.add_argument("--accept", action="store_true", help="advance遇Yes/No时明确接受")
     q.add_argument("--seconds", type=float, default=20)
+    q = command("invitations", "读取当前好友/组队邀请，按新鲜引用明确响应")
+    q.add_argument("action", choices=["read", "accept", "reject"], default="read", nargs="?")
+    q.add_argument("reference", nargs="?", help="invitations read返回的当前@invite引用")
+    q.add_argument("--seconds", type=float, default=3, help="响应后的结果确认期限")
+    command("party", "读取本端已知的队伍成员，不打开窗口")
     q = command("batch", "从JSON文件或stdin执行一组CLI命令，任一步失败立即停止")
     q.add_argument("--file", type=Path)
     q = command("key", "通过Lua按住并释放原版客户端按键")
@@ -297,6 +308,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "close",
         "snapshot",
         "watch",
+        "events",
         "inspect",
         "walk",
         "face",
@@ -316,6 +328,37 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "unequip",
     }:
         raise ClientError("unsupported_capability", "该客户端尚未提供这个窗口、原始按键或玩法接口。", {"command": cmd})
+    if (
+        backend.name == "beidou"
+        and cmd
+        in {
+            "click",
+            "talk",
+            "dialog",
+            "ui",
+            "equip",
+            "use",
+            "stats",
+            "skills",
+            "bind",
+            "press",
+            "shop",
+            "invitations",
+        }
+        and not (cmd in {"dialog", "ui", "shop", "invitations"} and args.action == "read")
+    ):
+        from .bridge import BridgeClient
+
+        bridge = BridgeClient(backend.root, backend.name, backend.instance)
+        if (bridge.directory / "state.json").exists():
+            state = bridge.snapshot()
+            script = state.get("script")
+            if script is not None and script["status"] == "running":
+                raise ClientError(
+                    "input_busy",
+                    "Lua仍在控制客户端；先显式取消对应脚本再操作窗口。",
+                    {"script_id": script["id"]},
+                )
     if cmd == "status":
         return status(backend)
     if cmd == "instances":
@@ -337,7 +380,11 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             }:
                 raise
             state = None
-        domains = DOMAINS if backend.name == "beidou" else DOMAINS - {"hotkeys", "dialog", "ui", "shop"}
+        domains = (
+            DOMAINS
+            if backend.name == "beidou"
+            else DOMAINS - {"hotkeys", "dialog", "ui", "shop", "invitations", "party"}
+        )
         return {
             "connected": state is not None,
             "ready": state["ready"] if state is not None else False,
@@ -378,6 +425,12 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .bridge import BridgeClient
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
+        if args.action == "cancel":
+            if args.session is None or args.file is not None or args.code is not None:
+                raise ClientError("usage", "script cancel需要--session，不接收Lua文件或源码。")
+            return bridge.cancel_script(args.session)
+        if args.session is not None:
+            raise ClientError("usage", "--session仅用于script cancel。")
         if args.action == "status":
             if args.file is not None or args.code is not None:
                 raise ClientError("usage", "script status不接收脚本文件或源码。")
@@ -386,13 +439,30 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 "source": "client-native-bridge",
                 "supported": "script" in state,
                 "instance_id": state["instance_id"],
+                "run_id": state["run_id"],
                 "script": cast(JsonObject | None, state.get("script")),
                 "command": cast(JsonObject, state["command"]),
                 "held_keys": state["held_keys"],
             }
         if args.file is None and args.code is None:
-            raise ClientError("usage", "script run需要UTF-8本地Lua文件或--code源码。")
+            raise ClientError("usage", "script run/start需要UTF-8本地Lua文件或--code源码。")
+        if args.action == "start":
+            return bridge.run_script(
+                args.file, seconds=None if args.continuous else args.seconds, code=args.code, wait_for_start=True
+            )
         return bridge.run_script(args.file, seconds=None if args.continuous else args.seconds, code=args.code)
+    if cmd == "invitations":
+        from .social import read_invitations, respond
+
+        if args.action == "read":
+            if args.reference is not None:
+                raise ClientError("usage", "invitations read不接收邀请引用。")
+            return read_invitations(backend)
+        if args.reference is None:
+            raise ClientError("usage", "接受或拒绝需要invitations read返回的当前引用。")
+        return respond(backend, args.reference, args.action, args.seconds)
+    if cmd == "party":
+        return backend.read("social", "party")
     if cmd == "task":
         from .task_management import change_task, task_result
 
@@ -501,6 +571,18 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             stdout=not getattr(args, "_batch", False),
         )
         return {"state": report} if getattr(args, "_batch", False) else None
+    if cmd == "events":
+        from .events import EventReader, parse_cursor
+
+        cursor = parse_cursor(args.cursor)
+        reader = EventReader(backend.root, backend.name, backend.instance)
+        if args.action == "read":
+            return reader.read(cursor)
+        if getattr(args, "_batch", False):
+            raise ClientError("usage", "events watch须独立运行，不进入动作批次。")
+        for event in reader.watch(cursor, seconds=args.seconds, interval=args.interval):
+            print(json.dumps(event, ensure_ascii=False, separators=(",", ":")), flush=True)
+        return None
     if cmd == "inspect":
         kind = args.kind
         if kind in ("item", "npc", "monster", "map"):
@@ -797,18 +879,21 @@ def main(argv: list[str] | None = None) -> int:
                 "doctor",
                 "snapshot",
                 "watch",
+                "events",
                 "inspect",
                 "screenshot",
                 "record",
                 "hotkeys",
+                "party",
             )
             or (args.command == "bridge" and args.action == "status")
             or (args.command == "script" and args.action == "status")
+            or (args.command == "invitations" and args.action == "read")
             or (args.command == "dialog" and args.action == "read")
             or (args.command == "ui" and args.action == "read")
             or (args.command == "shop" and args.action == "read")
         )
-        if args.command == "task":
+        if args.command == "task" or args.command == "events" and args.action == "watch":
             previous_handler = signal.signal(signal.SIGTERM, signal.default_int_handler)
             try:
                 result = dispatch(backend, args)

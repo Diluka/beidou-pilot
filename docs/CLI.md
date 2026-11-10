@@ -8,7 +8,7 @@
 
 命名实例只支持无头端，省略为 `default`；名字为1至48位小写字母、数字、下划线或连字符，首位为字母或数字。GUI只使用默认单实例。每个无头实例独立持有容器、登记、日志和桥目录，同一目标同一角色只能由一个实例接管。
 
-普通成功结果为单个 JSON，包含 `ok/command/backend/instance/data`。失败对象包含 `error.code/message/details`；显式 `--json` 时错误也写 stdout，否则写 stderr。已识别的失败退出码为2，中断为130，正常返回为0。独立 `watch` 输出 JSONL；原版 `snapshot` 无 `--json` 时为简洁文本，无头 `snapshot` 仍为 JSON。
+普通成功结果为单个 JSON，包含 `ok/command/backend/instance/data`。失败对象包含 `error.code/message/details`；显式 `--json` 时错误也写 stdout，否则写 stderr。已识别的失败退出码为2，中断为130，正常返回为0。独立 `watch` 和 `events watch` 输出 JSONL；原版 `snapshot` 无 `--json` 时为简洁文本，无头 `snapshot` 仍为 JSON。
 
 ## 启动、观察与关闭
 
@@ -36,9 +36,38 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | `snapshot [-i] [--all]` | 当前角色、场景、领域摘要及引用；`-i`省略怪物行，`--all`包含画外实体 |
 | `inspect KIND [ID]` | 领域读数或静态资源，KIND见帮助 |
 | `watch --seconds N --interval N` | 持续只读状态，独立调用为JSONL |
+| `events read [--cursor JSON]`、`events watch [--cursor JSON]` | 读取或监听本实例原生事件；首批由 GUI 邀请提供，无头明确不支持 |
 | `bridge status`、`script status` | 原生桥、动作或脚本状态，只读 |
 
 容器在命令结束后常驻。短脚本返回或取消不会关闭客户端；无头 `close` 可关闭正在执行 Lua 的实例。关闭使用独立生命周期锁；同一实例正在启停时为 `lifecycle_busy`，活动脚本期间其他动作是 `input_busy`。退出状态保留 `run_dir/exit_code/stop_reason`。失败后先读取原因和实际状态，再决定重开。
+
+## 客户端事件
+
+```bash
+./cli/beidou-pilot --backend beidou --json events read
+./cli/beidou-pilot --backend beidou --json events watch
+./cli/beidou-pilot --backend beidou --json events watch \
+  --cursor '{"instance_id":"本次原生实例","run_id":"本次运行","seq":12}' --seconds 30
+```
+
+`events read` 返回当前保留区的 `events`、`first_seq/last_seq` 和完整 `cursor`；给定游标时只返回其后的事件。游标由 `instance_id/run_id/seq` 三字段组成，必须原样保留身份，不能只保存数字序号。事件带 `seq/observed_at_ms/scene_generation/character_id/type/source/expires_at_ms/data`；未知角色或期限为 `null`，`observed_at_ms` 是客户端捕获时间。
+
+`events watch` 首行是 `event="events_ready"` 及基线游标，随后每条 `event="client_event"` 的 `data` 保存完整原生事件，`cursor` 指向该条。无游标时从订阅时刻之后开始；给定游标时先输出就绪，再补发保留区内的后续事件。已有未处理邀请须另读当前邀请观察，不能把历史事件当成仍有效。默认持续监听，可用 `--seconds` 有界退出；`--interval` 默认为0.025秒，范围为0.01至1秒。中断监听只结束读者，不取消 Lua 或关闭客户端。
+
+原生保留最近128条事件，每个读者独立持有游标。落后于保留区返回 `events_gap`，须重新观察当前事实；身份变化返回 `events_identity_changed` 并停止，不跟随后继实例。旧桥及无头尚未提供邀请事件时返回 `unsupported_capability`；原生报告事件发布失败时返回 `events_unavailable`，不把旧文件当成正常事件流。事件通知不代表游戏操作完成：`invitation.opened` 提示发现邀请，`invitation.closed` 只表示该邀请不再可响应；`invitation.observation_unavailable` 表示本端未能继续观察。接受、拒绝及社交关系结果须经当前原生邀请与成员事实确认。
+
+## GUI 社交邀请
+
+```bash
+./cli/beidou-pilot --backend beidou --json invitations
+./cli/beidou-pilot --backend beidou --json invitations accept @inviteCURRENT
+./cli/beidou-pilot --backend beidou --json invitations reject @inviteCURRENT
+./cli/beidou-pilot --backend beidou --json party
+```
+
+`invitations` 读取本端当前好友/组队弹窗，保留发送者、原生截止时间、待处理状态和当前按钮。响应必须提供本次读取的 `ref`，引用绑定原生实例、运行和场景代次；过期、关闭、不可响应或旧实例引用返回 `stale_invitation`，不点击。GUI 按当前窗口内的原生按钮位置响应，不使用固定桌面坐标。
+
+组队接受只在本端 `party` 同时确认目标队伍、本人和邀请者成员后返回 `status="joined"`、`effect="confirmed"`；拒绝须确认邀请已结束且未加入目标队伍。气泡消失仍无法确认成员时返回 `invitation_effect_unconfirmed`，不会重复点击。好友弹窗可明确响应，但当前尚无好友关系观察；返回 `effect="unknown"`、`reason="friend_relationship_not_observed"`，不能当作已建立或已拒绝好友关系。无头尚不支持这两个社交观察域。
 
 ## 动作与 Lua
 
@@ -47,6 +76,8 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 ./cli/beidou-pilot --backend headless --instance worker-a --json script run --code 'game.log("你好，Lua"); game.sleep(0.1)' --seconds 20
 ./cli/beidou-pilot --backend headless --instance worker-a --json script run /path/control.lua --seconds 20
 ./cli/beidou-pilot --backend headless --instance worker-a --json script run /path/control.lua --continuous
+./cli/beidou-pilot --backend headless --instance worker-a --json script start --code 'while true do game.sleep(1) end' --continuous
+./cli/beidou-pilot --backend headless --instance worker-a --json script cancel --session SCRIPT_ID
 ```
 
 | 命令 | 支持与结果边界 |
@@ -60,12 +91,16 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点及近距拾取尝试 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
 | `script run FILE`、`script run --code CODE` | 文件或直接源码二选一，使用同一 Lua 执行链；默认限时，持续模式须明确声明 |
+| `script start FILE`、`script start --code CODE` | 原生受理后返回，脚本由客户端独立执行；返回实例、运行、请求与脚本身份 |
+| `script cancel --session SCRIPT_ID` | 只取消当前匹配脚本，并等待原生停止和放键；旧脚本 ID 不发送取消 |
 | `task add/replace/stop` | 向指定活动Lua会话管理独立任务，不取得整会话动作锁 |
 | `task result REQUEST_ID` | 只读查询已保留的任务管理结果，包括超时后的结果 |
 | `stop`、`bridge stop` | 无其他活动动作控制者时清理遗留控制 |
 | `key KEYS --seconds N`、`skill ID` | 原版专属Lua扩展；无头明确拒绝 |
 
 `--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。CLI 不拼接、展开或改写源码。文件方式每次读取当前 UTF-8 内容。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
+
+`script run` 等待整个会话结束，原调用方的 Ctrl+C/SIGTERM 会取消该脚本。`script start` 只等待原生受理，成功返回后关闭调用终端、停止模型回合或结束事件监听均不取消 Lua；原生期限、角色变化、断线等停止规则保留。使用 `script status` 重新观察进度，明确取消使用 `script cancel --session`。活动 Lua 仍占有本实例控制权，其他脚本和普通窗口输入返回 `input_busy`；处理邀请前由操作者明确取消需要停下的脚本。`--continuous` 必须显式给出，不增加后台 Python 控制进程。
 
 在已有脚本会话中调整一项任务，先用 `script status` 取得 `script.id` 和该任务的 `revision`，再明确传给任务管理入口：
 

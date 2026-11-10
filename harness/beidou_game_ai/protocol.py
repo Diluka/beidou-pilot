@@ -1,4 +1,4 @@
-"""Codex app-server 的异步 JSONL 传输；模型与游戏决策由调用者处理。"""
+"""Codex JSON-RPC 分派与独立 app-server 的异步 JSONL 传输。"""
 
 import asyncio
 import json
@@ -18,32 +18,27 @@ class AppServerError(RuntimeError):
         self.details = details
 
 
-class AppServer:
-    def __init__(self, process: asyncio.subprocess.Process) -> None:
-        self._process = process
-        self._stdin = cast(asyncio.StreamWriter, process.stdin)
-        self._stdout = cast(asyncio.StreamReader, process.stdout)
+class JsonRpcConnection:
+    def __init__(self) -> None:
         self._pending: dict[int, asyncio.Future[JsonValue]] = {}
         self._next_id = 0
         self._closing = False
+        self._returncode: int | None = None
         self.events: asyncio.Queue[JsonObject] = asyncio.Queue()
         self._reader = asyncio.create_task(self._read())
 
-    @classmethod
-    async def start(cls, command: list[str], stderr: Path) -> "AppServer":
-        with stderr.open("ab") as stream:
-            process = await asyncio.create_subprocess_exec(
-                *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=stream
-            )
-        return cls(process)
+    async def _write(self, message: str) -> None:
+        raise NotImplementedError
+
+    async def _receive(self) -> str | bytes | None:
+        raise NotImplementedError
 
     async def _send(self, message: JsonObject) -> None:
         if self._closing or self._reader.done():
             raise AppServerError("transport_closed", "Codex app-server 连接已结束。")
         try:
-            self._stdin.write((json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8"))
-            await self._stdin.drain()
-        except (BrokenPipeError, ConnectionResetError) as error:
+            await self._write(json.dumps(message, ensure_ascii=False))
+        except OSError as error:
             raise AppServerError("transport_closed", "Codex app-server 输入已关闭。") from error
 
     async def call(self, method: str, params: JsonObject) -> JsonValue:
@@ -66,7 +61,7 @@ class AppServer:
     async def _read(self) -> None:
         failure = AppServerError("transport_closed", "Codex app-server 输出已结束。")
         try:
-            while line := await self._stdout.readline():
+            while (line := await self._receive()) is not None:
                 try:
                     payload = json.loads(line)
                 except (json.JSONDecodeError, UnicodeDecodeError):
@@ -116,10 +111,35 @@ class AppServer:
                     "params": {
                         "code": failure.code,
                         "message": failure.message,
-                        "returncode": self._process.returncode,
+                        "returncode": self._returncode,
                     },
                 }
             )
+
+
+class AppServer(JsonRpcConnection):
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
+        self._process = process
+        self._stdin = cast(asyncio.StreamWriter, process.stdin)
+        self._stdout = cast(asyncio.StreamReader, process.stdout)
+        super().__init__()
+
+    @classmethod
+    async def start(cls, command: list[str], stderr: Path) -> "AppServer":
+        with stderr.open("ab") as stream:
+            process = await asyncio.create_subprocess_exec(
+                *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=stream
+            )
+        return cls(process)
+
+    async def _write(self, message: str) -> None:
+        self._stdin.write((message + "\n").encode("utf-8"))
+        await self._stdin.drain()
+
+    async def _receive(self) -> bytes | None:
+        line = await self._stdout.readline()
+        self._returncode = self._process.returncode
+        return line or None
 
     async def close(self) -> None:
         self._closing = True

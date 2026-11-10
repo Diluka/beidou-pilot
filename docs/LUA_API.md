@@ -216,6 +216,8 @@ end
 | `hotkeys` | GUI；原生快捷键与快捷栏映射、已知布局和限制；无头不支持 |
 | `dialog` | GUI；`dialog_open`、`npc_id`、`dialog_type`、`lines`、`choices`、`buttons` 及来源窗口说明；无头不支持 |
 | `ui` | GUI；`windows`、`dialog` 与原生游戏区布局；无头不支持 |
+| `invitations` | GUI；当前好友/组队邀请的类型、来源、原生引用、期限、可用按钮和窗口；无头不支持 |
+| `party` | GUI；本端已知队伍 ID、队长和成员的 ID、姓名、职业、等级、频道与地图；无头不支持 |
 | `shop` | GUI；`open`、`npc_id`、`buy_items/sell_items`、选择/滚动位置、`busy` 和数量窗口状态；无头不支持 |
 
 每次返回的外层结构为：

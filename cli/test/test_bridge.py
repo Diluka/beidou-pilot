@@ -186,6 +186,62 @@ class BridgeContract(unittest.TestCase):
         self.assertEqual(failure.exception.details["cleanup"]["held_keys"], [])
         self.assertEqual(self.client.snapshot()["script"]["status"], "cancelled")
 
+    def test_async_start_returns_while_native_script_runs_until_targeted_cancel(self) -> None:
+        def peer() -> list[str]:
+            command = self.files.command()
+            self.publish_running(command)
+            stop = self.files.command(command[3])
+            self.files.state["script"]["status"] = "cancelled"
+            self.files.state["script"]["reason"] = "stopped"
+            self.files.complete_stop(command[3])
+            return stop
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            native = pool.submit(peer)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(0, main(["--root", str(self.files.root), "--json", "script", "start",
+                                          "--code", "game.move('right', 1)", "--continuous"]))
+            report = json.loads(output.getvalue())["data"]
+            self.assertEqual(("running", "client-1", "bridge-contract"),
+                             (report["status"], report["instance_id"], report["run_id"]))
+            self.assertEqual([39], self.client.snapshot()["held_keys"])
+            with self.assertRaises(ClientError) as busy:
+                BridgeClient(self.files.root).run_script(code="game.jump()", wait_for_start=True)
+            self.assertEqual("input_busy", busy.exception.code)
+            self.assertEqual(report["request_id"], self.files.command()[3])
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(2, main(["--root", str(self.files.root), "--json", "invitations", "accept", "old-ref"]))
+            self.assertEqual("input_busy", json.loads(output.getvalue())["error"]["code"])
+            commands = self.files.root / "commands.json"
+            commands.write_text(json.dumps([["click", 10, 20]]))
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(2, main(["--root", str(self.files.root), "--json", "batch", "--file", str(commands)]))
+            self.assertEqual("input_busy", json.loads(output.getvalue())["error"]["code"])
+            self.assertEqual(report["request_id"], self.files.command()[3])
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(0, main(["--root", str(self.files.root), "--json", "script", "cancel",
+                                          "--session", report["script_id"]]))
+            cancelled = json.loads(output.getvalue())["data"]
+            stop = native.result(3)
+        self.assertEqual(("cancelled", [], report["script_id"]),
+                         (cancelled["status"], cancelled["held_keys"], cancelled["script_id"]))
+        self.assertEqual(stop[3], cancelled["request_id"])
+        self.assertEqual("cancelled", cancelled["last_state"]["script"]["status"])
+        self.assertEqual("already_stopped", self.client.cancel_script(report["script_id"])["status"])
+        self.assertEqual(stop[3], self.files.command()[3])
+
+    def test_targeted_cancel_refuses_previous_script_without_stopping_current_owner(self) -> None:
+        self.publish_running(["1", "client-1", "1", "current-command", "script", "0", "a" * 32])
+        with self.assertRaises(ClientError) as failure:
+            self.client.cancel_script("b" * 32)
+        self.assertEqual("script_session_mismatch", failure.exception.code)
+        self.assertEqual([39], self.client.snapshot()["held_keys"])
+        self.assertFalse((self.files.directory / "command.txt").exists())
+
     def test_busy_rejection_does_not_stop_another_owner(self) -> None:
         def peer() -> None:
             command = self.files.command()
