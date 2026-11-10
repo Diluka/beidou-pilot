@@ -3,6 +3,8 @@ language_servers: []
 encoding: utf-8
 ignore_all_files_in_gitignore: true
 ignored_paths:
+- tmp/**
+- .worktrees/**
 - third_party/**
 - cli/runtime/**
 - cli/state/**

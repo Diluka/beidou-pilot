@@ -17,3 +17,5 @@ evidence/
 /headless/resources/
 /beidou-ijl15/out/
 /LOCAL.md
+/tmp/
+/.worktrees/
