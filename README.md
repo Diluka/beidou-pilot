@@ -54,6 +54,7 @@ docker build -t local/beidou-v17-client:intel docker/gui
 
 ## 文档与开发
 
+- [业务地图](docs/business-map/README.md)：按领域查看用户结果、责任边界、主要流程与源码入口。
 - [游戏 AI harness](docs/HARNESS.md)：隔离 Codex、角色上下文、游戏工具与开发 AI 协作。
 - [命令使用](docs/CLI.md)：实例、观察、动作、GUI 入口和错误结果。
 - [Lua API 参考](docs/LUA_API.md)：写脚本使用的状态字段、函数参数、返回值与错误语义。

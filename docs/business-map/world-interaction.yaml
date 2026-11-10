@@ -1,0 +1,455 @@
+schemaVersion: 1
+map:
+  id: world-interaction
+  title: 世界交互与交易
+  summary: 原版 GUI 的 NPC 对话、普通商店和可确认窗口上下文。
+nodes:
+- id: world-interaction
+  kind: domain
+  name: 世界交互与交易
+  summary: 为操作者在原版 GUI 中打开当前 NPC、处理对话和普通商店交易，并确认窗口及交易结果；不拥有服务端任务或经济规则。
+  aliases:
+  - NPC交互
+  - 普通商店
+  anchors:
+  - kind: document
+    value: docs/CLI.md
+    description: 原版 GUI 的 NPC、商店与窗口操作及支持范围。
+- id: world-interaction.npc-contact
+  kind: capability
+  name: NPC 接触与对话决策
+  summary: 定位当前唯一 NPC、复用已有同目标窗口，并将菜单、确认和输入交还调用方决策。
+  aliases: []
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/dialogs.py
+    value: talk
+    description: 从当前快照定位 NPC 并确认打开的对话或商店。
+  - kind: symbol
+    file: cli/beidou_pilot/dialogs.py
+    value: advance
+    description: 推进普通对话页并保留需要调用方决定的停点。
+- id: world-interaction.commerce
+  kind: capability
+  name: 普通商店交易
+  summary: 依据当前商店报价和唯一库存槽位完成指定买卖，核对数量、金币及关店收尾。
+  aliases:
+  - 买卖
+  - 补给交易
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/shop.py
+    value: _trade
+    description: 按当前报价提交一次买卖并同时核对库存和金币。
+- id: world-interaction.talk
+  kind: scenario
+  name: 打开或复用目标 NPC
+  summary: 按当前文字、模板 ID 或引用选择唯一 NPC；拒绝其他窗口阻塞、画外目标或缺少点击资料，点击后核对目标 NPC 的对话或商店。
+  aliases:
+  - talk
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/dialogs.py
+    value: talk
+    description: 复用同 NPC 窗口或确认点击打开的实际 NPC。
+- id: world-interaction.dialogue
+  kind: scenario
+  name: 推进对话并保留决策点
+  summary: 普通页可有界推进；遇菜单、未授权确认、文本输入、正文未变或预算结束时返回当前上下文。
+  aliases:
+  - dialog advance
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/dialogs.py
+    value: advance
+    description: 按页推进，遇选择、确认、输入或无进展时停止。
+- id: world-interaction.select
+  kind: operation
+  name: 按当前页面选择或确认
+  summary: 只操作当前页存在的选项或按钮；菜单不能被普通 next 越过，引用按当前快照解析。
+  aliases: []
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/dialogs.py
+    value: act
+    description: 读取当前对话并选择唯一菜单项或已存在按钮。
+- id: world-interaction.trade
+  kind: scenario
+  name: 按报价完成指定买卖
+  summary: 仅支持已识别普通商店、明确报价与唯一商品或库存槽位；数量框读回正确后提交，库存和金币同时符合报价才确认完成。
+  aliases:
+  - shop buy
+  - shop sell
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/shop.py
+    value: _trade
+    description: 拒绝待处理交易、歧义槽位及未覆盖价格形式，提交后双重确认。
+- id: world-interaction.close-shop
+  kind: operation
+  name: 取消数量框并关闭商店
+  summary: 已关闭时无操作返回；先确认数量框取消，再核对原商店窗口并确认退出。
+  aliases: []
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/shop.py
+    value: close_shop
+    description: 取消待处理数量框并确认所属商店窗口关闭。
+- id: world-interaction.windows
+  kind: operation
+  name: 开关已识别游戏窗口
+  summary: 按已校准布局定位背包、属性或技能窗口，确认目标窗口取得焦点或已关闭；不匹配布局与歧义窗口明确拒绝。
+  aliases: []
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/ui.py
+    value: open_window
+    description: 打开或复用唯一窗口并确认其布局与焦点。
+  - kind: symbol
+    file: cli/beidou_pilot/ui.py
+    value: close_window
+    description: 关闭指定窗口并读取活动窗口确认退出。
+- id: world-interaction.focus
+  kind: operation
+  name: 恢复游戏输入焦点
+  summary: 先处理 NPC 对话或商店，避开活动窗口及 NPC 寻找可确认空白位置，点击后核对游戏输入处理者。
+  aliases: []
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/ui.py
+    value: focus_game
+    description: 在当前可确认的场景空白区域恢复游戏键盘焦点。
+- id: world-interaction.current-context
+  kind: invariant
+  name: 交互只依据当前可确认上下文
+  summary: 目标必须唯一且位于可用窗口或画面中；快照引用随场景和对话变化失效，应重新读取。未知布局、遮挡或读数不能作为可点击证明。
+  aliases: []
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/dialogs.py
+    value: choose
+    description: 歧义与缺失目标拒绝选择。
+  - kind: symbol
+    file: cli/beidou_pilot/snapshot.py
+    value: collect
+    description: 按当前实例、角色和场景生成短引用。
+- id: world-interaction.trade-confirmation
+  kind: invariant
+  name: 交易双重确认且不盲重放
+  summary: 提交后必须同时观察库存按数量改变、金币按报价改变；效果未确认保留现场，不能因失败结果重复提交。
+  aliases: []
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/shop.py
+    value: _trade
+    description: 交易后比对库存总量和钱包余额，不符合时返回未确认。
+- id: world-interaction.gui-only
+  kind: invariant
+  name: 当前语义交互仅由原版 GUI 提供
+  summary: NPC 对话、商店和窗口流程是 GUI CLI 的已有能力，当前无头端与公共 Lua API 不提供这些语义操作。
+  aliases: []
+  anchors:
+  - kind: symbol
+    file: cli/beidou_pilot/cli.py
+    value: dispatch
+    description: 在无头入口明确拒绝未支持的窗口和玩法命令。
+  - kind: document
+    value: docs/LUA_API.md
+    description: 公共 Lua API 的实际消费范围。
+relations:
+- from: world-interaction.npc-contact
+  type: part_of
+  to: world-interaction
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.commerce
+  type: part_of
+  to: world-interaction
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.talk
+  type: part_of
+  to: world-interaction.npc-contact
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.dialogue
+  type: part_of
+  to: world-interaction.npc-contact
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.select
+  type: part_of
+  to: world-interaction.npc-contact
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.trade
+  type: part_of
+  to: world-interaction.commerce
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.close-shop
+  type: part_of
+  to: world-interaction.commerce
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.windows
+  type: part_of
+  to: world-interaction
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.focus
+  type: part_of
+  to: world-interaction
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.current-context
+  type: part_of
+  to: world-interaction
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.trade-confirmation
+  type: part_of
+  to: world-interaction
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.gui-only
+  type: part_of
+  to: world-interaction
+  summary: 归属世界交互与交易的相应责任。
+- from: world-interaction.talk
+  type: invokes
+  to: game-observation.snapshot
+  summary: 从本端快照选择当前 NPC。
+- from: world-interaction.talk
+  type: invokes
+  to: game-resources.lookup
+  summary: 按本地静态资料获得 NPC 点击范围。
+- from: world-interaction.dialogue
+  type: invokes
+  to: world-interaction.select
+  summary: 逐页调用当前页面选择或确认。
+- from: world-interaction.trade
+  type: invokes
+  to: game-observation.observe
+  summary: 读取商店、库存与角色金币进行交易前后核对。
+- from: world-interaction.trade
+  type: reads
+  to: game-observation.facts
+  summary: 以本端商店报价、库存和金币观察决定提交及确认。
+- from: world-interaction.close-shop
+  type: invokes
+  to: game-observation.observe
+  summary: 确认数量框和原商店窗口的关闭。
+- from: world-interaction.windows
+  type: invokes
+  to: world-interaction.focus
+  summary: 必要时先恢复游戏焦点再发送窗口快捷键。
+- from: world-interaction.talk
+  type: constrained_by
+  to: world-interaction.current-context
+  summary: 只与当前唯一、可点击 NPC 交互。
+- from: world-interaction.dialogue
+  type: constrained_by
+  to: world-interaction.current-context
+  summary: 每页重新依据当前正文和按钮判断。
+- from: world-interaction.trade
+  type: constrained_by
+  to: world-interaction.trade-confirmation
+  summary: 金币和库存双重确认后才报告完成。
+- from: world-interaction
+  type: constrained_by
+  to: world-interaction.gui-only
+  summary: 当前交互实现受原版 GUI 支持范围限制。
+- from: world-interaction.trade
+  type: constrained_by
+  to: game-observation.truth
+  summary: 未知库存、报价或钱包读数不能支持交易。
+flows:
+- id: world-interaction.talk.flow
+  name: 打开或复用 NPC
+  summary: 从当前目标和窗口上下文进入目标对话或商店；未确认时停止点击。
+  scenario: world-interaction.talk
+  startsAt: select
+  steps:
+  - id: select
+    kind: action
+    name: 读取当前目标与窗口
+    summary: 从当前快照选择唯一 NPC，读取已有对话及商店。
+    concept: world-interaction.talk
+  - id: context
+    kind: decision
+    name: 当前能否进入目标交互
+    summary: 判断已有窗口归属、点击资料和目标是否在画面内。
+    concept: world-interaction.current-context
+  - id: reuse
+    kind: outcome
+    name: 复用同目标窗口
+    summary: 已有同 NPC 对话或商店，返回当前状态。
+  - id: refuse
+    kind: outcome
+    name: 保留现场并拒绝点击
+    summary: 其他窗口阻塞、目标歧义、画外或点击资料缺失。
+  - id: click
+    kind: action
+    name: 正常点击目标 NPC
+    summary: 按当前相机及静态点击范围投影执行双击。
+    concept: world-interaction.talk
+  - id: opened
+    kind: decision
+    name: 实际窗口是否属于目标
+    summary: 重新读取 NPC 对话或商店并核对模板 ID。
+  - id: ready
+    kind: outcome
+    name: 目标交互已打开
+    summary: 返回本次确认的对话或商店。
+  - id: unconfirmed
+    kind: outcome
+    name: 打开未确认
+    summary: 停止后续点击，返回实际对话状态。
+  transitions:
+  - from: select
+    to: context
+  - from: context
+    to: reuse
+    when: 同目标窗口已打开
+  - from: context
+    to: refuse
+    when: 上下文不满足点击条件
+  - from: context
+    to: click
+    when: 可点击且无其他窗口阻塞
+  - from: click
+    to: opened
+  - from: opened
+    to: ready
+    when: 目标对话或商店已确认
+  - from: opened
+    to: unconfirmed
+    when: 未确认目标窗口
+- id: world-interaction.dialogue.flow
+  name: 有界推进并停在决策点
+  summary: 保留对话关闭、需要调用方决定与无进展等实际结果。
+  scenario: world-interaction.dialogue
+  startsAt: read
+  steps:
+  - id: read
+    kind: action
+    name: 读取当前对话页
+    summary: 读取当前正文、选项、类型和按钮。
+    concept: world-interaction.dialogue
+  - id: page
+    kind: decision
+    name: 当前页需要何种处理
+    summary: 检查关闭、菜单、确认、输入和本次预算。
+  - id: closed
+    kind: outcome
+    name: 对话已关闭
+    summary: 返回已读页面及当前角色状态。
+  - id: decision-required
+    kind: outcome
+    name: 交还调用方决策
+    summary: 返回菜单、未显式接受的确认或文本输入上下文。
+  - id: budget
+    kind: outcome
+    name: 预算结束
+    summary: 保留当前页，停止自动推进。
+  - id: advance
+    kind: action
+    name: 推进普通页或已授权确认
+    summary: 使用当前可用按钮，显式 accept 才自动接受确认。
+    concept: world-interaction.select
+  - id: changed
+    kind: decision
+    name: 页面是否变化
+    summary: 比较 NPC、对话类型及完整正文。
+  - id: unchanged
+    kind: outcome
+    name: 正文未变
+    summary: 停止推进并返回现场，避免重复点击。
+  transitions:
+  - from: read
+    to: page
+  - from: page
+    to: closed
+    when: 对话已关闭
+  - from: page
+    to: decision-required
+    when: 菜单、输入或未接受的确认
+  - from: page
+    to: budget
+    when: 本次预算已到
+  - from: page
+    to: advance
+    when: 普通页或已显式接受的确认
+  - from: advance
+    to: changed
+  - from: changed
+    to: read
+    when: 页面已变化
+  - from: changed
+    to: unchanged
+    when: 页面未变化
+- id: world-interaction.trade.flow
+  name: 提交并确认普通买卖
+  summary: 先核对唯一物品、报价和数量，再按库存与金币判断结果。
+  scenario: world-interaction.trade
+  startsAt: quote
+  steps:
+  - id: quote
+    kind: action
+    name: 读取报价及库存钱包
+    summary: 读取当前普通商店、指定商品或库存槽位及交易前读数。
+    concept: world-interaction.trade
+  - id: eligible
+    kind: decision
+    name: 本次交易条件是否明确
+    summary: 检查商店可用、无待处理交易、唯一物品、支持的价格及足够库存或金币。
+  - id: refused
+    kind: outcome
+    name: 交易前拒绝
+    summary: 条件未满足，不继续提交。
+  - id: quantity
+    kind: action
+    name: 选择物品并填写数量
+    summary: 按实际可见商品行操作，读取数量框中的实际值。
+    concept: world-interaction.trade
+  - id: typed
+    kind: decision
+    name: 数量框是否准确
+    summary: 当前数量框仍属本次窗口且实际值等于请求数量。
+  - id: not-submitted
+    kind: outcome
+    name: 数量未确认
+    summary: 不提交交易，保留当前窗口等待处理。
+  - id: submit
+    kind: action
+    name: 提交一次交易
+    summary: 确认当前数量框，随后读取库存和金币。
+    concept: world-interaction.trade
+  - id: confirm
+    kind: decision
+    name: 库存和金币是否同时符合报价
+    summary: 同时比对预期库存总量与钱包余额。
+    concept: world-interaction.trade-confirmation
+  - id: completed
+    kind: outcome
+    name: 买卖已确认
+    summary: 返回数量和实际金币变化。
+  - id: unknown
+    kind: outcome
+    name: 交易效果未确认
+    summary: 保留现场及前后读数，禁止盲目重放。
+  transitions:
+  - from: quote
+    to: eligible
+  - from: eligible
+    to: refused
+    when: 条件缺失、不支持或资源不足
+  - from: eligible
+    to: quantity
+    when: 条件明确且资源足够
+  - from: quantity
+    to: typed
+  - from: typed
+    to: not-submitted
+    when: 数量框或实际值未确认
+  - from: typed
+    to: submit
+    when: 数量框和实际值已确认
+  - from: submit
+    to: confirm
+  - from: confirm
+    to: completed
+    when: 库存与金币同时符合预期
+  - from: confirm
+    to: unknown
+    when: 读数未知或未同时符合预期
