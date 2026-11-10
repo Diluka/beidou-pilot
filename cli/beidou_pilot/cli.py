@@ -132,6 +132,13 @@ def parser() -> Parser:
     q.add_argument("window", nargs="?", choices=["inventory", "stats", "skills", "shop", "all"])
     q = command("equip", "装备背包中的物品，并核对身上负槽")
     q.add_argument("item")
+    q.add_argument("--slot", type=int, help="无头：明确装备背包源正槽")
+    q.add_argument("--to-slot", type=int, help="无头：明确身上目的负槽")
+    q.add_argument("--seconds", type=float, default=3, help="无头换装确认期限，默认3秒")
+    q = command("unequip", "无头正常卸下指定身上装备到空背包槽，并核对结果")
+    q.add_argument("--slot", type=int, required=True, help="身上源负槽")
+    q.add_argument("--to-slot", type=int, required=True, help="装备背包目的正槽，必须为空")
+    q.add_argument("--seconds", type=float, default=3, help="换装确认期限，默认3秒")
     q = command("use", "正常使用消费品，核对数量与实际恢复")
     q.add_argument("item")
     q.add_argument("--count", type=int, default=1)
@@ -248,7 +255,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     cmd = args.command
     if backend.name == "headless" and cmd not in {
             "status", "instances", "capabilities", "doctor", "bridge", "script", "task", "skill", "open", "close", "snapshot", "watch", "inspect",
-            "walk", "face", "jump", "attack", "pickup", "use_item", "stop", "move", "climb", "portal", "fight", "batch", "use"}:
+            "walk", "face", "jump", "attack", "pickup", "use_item", "stop", "move", "climb", "portal", "fight", "batch", "use", "equip", "unequip"}:
         raise ClientError("unsupported_capability", "该客户端尚未提供这个窗口、原始按键或玩法接口。", {"command": cmd})
     if cmd == "status":
         return status(backend)
@@ -466,7 +473,21 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             from .shop import close_shop
             return close_shop(backend)
         return (ui.open_window if args.action == "open" else ui.close_window)(backend, args.window)
+    if cmd == "unequip" or cmd == "equip" and backend.name == "headless":
+        from .control_scripts import change_equipment
+
+        if backend.name != "headless":
+            raise ClientError("unsupported_capability", "该客户端尚未提供明确槽位的原生卸下操作。")
+        if cmd == "equip":
+            if args.slot is None or args.to_slot is None:
+                raise ClientError("usage", "无头 equip 需要 --slot 明确背包源槽和 --to-slot 明确身上目的槽。")
+            if not args.item.isdecimal():
+                raise ClientError("usage", "无头 equip 需要数字物品ID，并同时指定实际背包槽。")
+        return change_equipment(backend, args.slot, args.to_slot, unequip=cmd == "unequip",
+                                item_id=int(args.item) if cmd == "equip" else None, seconds=args.seconds)
     if cmd in ("equip", "use"):
+        if cmd == "equip" and (args.slot is not None or args.to_slot is not None or args.seconds != 3):
+            raise ClientError("unsupported_capability", "GUI equip 沿用物品选择与窗口流程；明确原生槽位参数仅支持无头端。")
         if backend.name == "headless" and not args.item.isdecimal():
             raise ClientError("unsupported_capability", "无头端use需要数字物品ID。")
         from . import items

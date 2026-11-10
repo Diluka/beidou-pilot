@@ -86,6 +86,34 @@ def press_keys(backend: Backend, keys: list[str], *, seconds: float = .15) -> Js
     return {**report, "action": "key", "keys": keys, "effect": "unknown"}
 
 
+def change_equipment(backend: Backend, source_slot: int, destination_slot: int, *,
+                     unequip: bool = False, item_id: int | None = None, seconds: float = 3) -> JsonObject:
+    if not math.isfinite(seconds) or not .001 <= seconds <= 30:
+        raise ClientError("invalid_equipment_duration", "换装确认期限须为0.001至30秒。")
+    name = "unequip" if unequip else "equip"
+    source = ""
+    if item_id is not None:
+        source = (
+            'local inventory = game.observe("inventory")\n'
+            'assert(inventory.status == "ok", "inventory_unavailable")\n'
+            'local selected\n'
+            f'for _, item in ipairs(inventory.data.items) do if item.slot == {source_slot} '
+            'and item.inventory_type == 1 then selected = item; break end end\n'
+            f'assert(selected and selected.item_id == {item_id}, "equipment_source_changed")\n'
+        )
+    source += f"game.{name}({source_slot}, {destination_slot}, {_lua_literal(seconds)})\n"
+    report = run_source(backend, source, seconds + 2)
+    state = cast(JsonObject, report["last_state"])
+    result = cast(JsonObject, state["action_result"])
+    confirmed = report["status"] == "completed" and result["effect"] == "confirmed"
+    projected: JsonObject = {**report, "action": name, "source_slot": source_slot,
+                             "destination_slot": destination_slot, "item_id": item_id,
+                             "action_result": result, "effect": result["effect"], "confirmed": confirmed}
+    if report["status"] == "completed" and not confirmed:
+        raise ClientError("equipment_change_unconfirmed", "本次换装实际槽位变化未确认，未重试。", projected)
+    return projected
+
+
 def skill(backend: Backend, skill_id: int) -> JsonObject:
     if backend.name != "beidou":
         raise ClientError("unsupported_capability", "该客户端尚未提供直接技能调用。")

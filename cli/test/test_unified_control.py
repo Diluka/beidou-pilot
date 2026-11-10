@@ -69,6 +69,53 @@ class UnifiedControlContract(unittest.TestCase):
             self.assertEqual(2000003, item_id)
             self.assertEqual({"count": 2, "until_hp": None, "until_mp": None, "seconds": None}, use.call_args.kwargs)
 
+    def test_headless_equipment_loads_one_lua_request_and_requires_native_confirmation(self) -> None:
+        equipped = ["equip", "1002001", "--slot", "2", "--to-slot", "-5", "--seconds", "1.25"]
+        removed = ["unequip", "--slot", "-5", "--to-slot", "7"]
+        cases = [(equipped, "completed", "confirmed", 0), (removed, "completed", "confirmed", 0),
+                 (equipped, "completed", "unknown", 2), (equipped, "cancelled", "confirmed", 0)]
+        for command, status, effect, code in cases:
+            with self.subTest(command=command, status=status, effect=effect):
+                native_result = {"dispatched": True, "control_released": True, "settled": None,
+                                 "effect": effect, "reason": "equipment_changed" if effect == "confirmed"
+                                 else "equipment_confirmation_timeout"}
+                report = {"status": status, "last_state": {"action_result": native_result}}
+                with patch("beidou_pilot.control_scripts.run_source", return_value=report) as run:
+                    with patch.object(Backend, "_run") as desktop:
+                        output = io.StringIO()
+                        with redirect_stdout(output):
+                            self.assertEqual(code, main(["--root", str(self.root), "--backend", "headless",
+                                                         "--json", *command]))
+                        run.assert_called_once()
+                        backend, source, _ = run.call_args.args
+                        self.assertEqual("headless", backend.name)
+                        if command[0] == "equip":
+                            self.assertIn('game.observe("inventory")', source)
+                            self.assertIn("selected.item_id == 1002001", source)
+                            self.assertIn("item.slot == 2", source)
+                            self.assertIn("game.equip(2, -5, 1.25)", source)
+                        else:
+                            self.assertEqual("game.unequip(-5, 7, 3)\n", source)
+                        actual = json.loads(output.getvalue())
+                        if code:
+                            self.assertEqual("equipment_change_unconfirmed", actual["error"]["code"])
+                            self.assertFalse(actual["error"]["details"]["confirmed"])
+                        else:
+                            self.assertEqual(status == "completed", actual["data"]["confirmed"])
+                            self.assertEqual(native_result, actual["data"]["action_result"])
+                        desktop.assert_not_called()
+
+    def test_gui_equipment_rejects_headless_slot_arguments_without_dispatch(self) -> None:
+        for command in (["equip", "1002001", "--slot", "2", "--to-slot", "-5"],
+                        ["unequip", "--slot", "-5", "--to-slot", "7"]):
+            with self.subTest(command=command), patch("beidou_pilot.control_scripts.run_source") as run:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(2, main(["--root", str(self.root), "--backend", "beidou",
+                                              "--json", *command]))
+                self.assertEqual("unsupported_capability", json.loads(output.getvalue())["error"]["code"])
+                run.assert_not_called()
+
     def test_backend_snapshots_remain_separate_and_native_coordinates_can_be_floats(self) -> None:
         directory = self.root / "runtime/headless/bridge"
         directory.mkdir(parents=True)

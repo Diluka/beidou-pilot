@@ -118,6 +118,40 @@ public:
     std::string npcName = "向导";
 };
 
+// This boundary controls native completion; it does not simulate inventory packets or equipment rules.
+class EquipmentBoundary final : public NativeBoundary {
+public:
+    bool Supports(MapleControl::ActionKind kind) const override {
+        return (kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip)
+            || equipmentSupported;
+    }
+    bool Begin(const MapleControl::Action& action, std::string&) override {
+        Check(!pending, "equipment_request_was_replayed_before_confirmation");
+        requests.push_back(action);
+        pending = true;
+        result = {};
+        result.dispatched = true;
+        return true;
+    }
+    MapleControl::ActionResult Result() const override { return result; }
+    void Release() override {
+        if (!pending) return;
+        Complete("unknown", "equipment_request_cancelled");
+    }
+    bool Released() const override { return !pending; }
+    bool ReleasePending() const override { return false; }
+    void Complete(const std::string& effect, const std::string& reason) {
+        pending = false;
+        result.controlReleased = true;
+        result.effect = effect;
+        result.reason = reason;
+    }
+
+    std::vector<MapleControl::Action> requests;
+    bool pending = false;
+    bool equipmentSupported = true;
+};
+
 // The native callback re-enters the real scheduler; it does not model NPCs.
 class ReentrantBoundary final : public NativeBoundary {
 public:
@@ -610,8 +644,80 @@ error("query_resumed_for_another_character")
     Check(native.queries.size() == 3 && native.inputs.empty(), "invalid_domain_reached_native_collector");
 }
 
+void EquipmentRequests() {
+    EquipmentBoundary native;
+    native.state.inventoryKnown = true;
+    native.state.inventory = {{1, 1, 1002001, 1, true}, {1, 2, 1002001, 1, true}};
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("equipment-requests", R"lua(
+assert(game.capabilities().equip and game.capabilities().unequip)
+local items = game.state().inventory
+assert(items[1].item_id == items[2].item_id)
+local equipped = game.equip(items[2].slot, -5)
+assert(equipped.dispatched and equipped.control_released and equipped.effect == "confirmed")
+local removed = game.unequip(-5, 7, 1.25)
+assert(removed.dispatched and removed.control_released and removed.effect == "unknown")
+assert(removed.reason == "equipment_confirmation_timeout")
+)lua", 5000, error), error);
+    Advance(runtime, native, 3);
+    Check(runtime.Running() && native.pending && native.requests.size() == 1,
+          "equipment_returned_before_native_confirmation");
+    const auto& equip = native.requests.front();
+    Check(equip.kind == MapleControl::ActionKind::Equip && equip.sourceSlot == 2
+          && equip.destinationSlot == -5 && equip.durationMs == 3000,
+          "equipment_source_slot_or_default_deadline_was_not_preserved");
+    native.Complete("confirmed", "equipment_changed");
+    Advance(runtime, native, 1);
+    Check(runtime.Running() && native.pending && native.requests.size() == 2,
+          "confirmed_equipment_did_not_advance_to_unequip");
+    const auto& unequip = native.requests.back();
+    Check(unequip.kind == MapleControl::ActionKind::Unequip && unequip.sourceSlot == -5
+          && unequip.destinationSlot == 7 && unequip.durationMs == 1250,
+          "unequip_slots_or_explicit_deadline_were_not_preserved");
+    native.Complete("unknown", "equipment_confirmation_timeout");
+    Advance(runtime, native, 3);
+    const auto* status = runtime.CurrentStatus();
+    Check(!runtime.Running() && status->status == "completed" && status->error.empty(), status->error);
+    Check(native.requests.size() == 2 && native.Released(), "equipment_request_was_resent");
+}
+
+void EquipmentCancellationAndRejection() {
+    EquipmentBoundary native;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("cancel-equipment", "game.equip(4,-6,0.5); error('resumed_after_cancel')",
+                        5000, error), error);
+    Advance(runtime, native, 1);
+    runtime.Cancel("contract_cancel");
+    Advance(runtime, native, 3);
+    const auto* status = runtime.CurrentStatus();
+    Check(!runtime.Running() && status->status == "cancelled" && status->reason == "contract_cancel"
+          && status->error.empty(), "equipment_cancel_resumed_old_task");
+    Check(native.requests.size() == 1 && native.Released() && native.Result().effect == "unknown",
+          "cancelled_equipment_was_replayed_or_reported_confirmed");
+    native.equipmentSupported = false;
+    Check(runtime.Start("unsupported-equipment", R"lua(
+assert(not game.capabilities().equip and not game.capabilities().unequip)
+game.equip(1,-5)
+)lua", 5000, error), error);
+    Advance(runtime, native, 3);
+    Check(runtime.CurrentStatus()->reason == "script_error"
+          && runtime.CurrentStatus()->error.find("unsupported: equip") != std::string::npos,
+          "unsupported_equipment_was_not_rejected");
+    native.equipmentSupported = true;
+    for (const auto* source : {"game.equip(0,-5)", "game.unequip(-5,0)"}) {
+        Check(runtime.Start("invalid-equipment-slot", source, 5000, error), error);
+        Advance(runtime, native, 3);
+        Check(runtime.CurrentStatus()->reason == "script_error", "invalid_equipment_slot_was_not_rejected");
+    }
+    Check(native.requests.size() == 1, "rejected_equipment_reached_native_dispatch");
+}
+
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
+    if (std::string(argv[1]) == "equipment-requests") { EquipmentRequests(); return 0; }
+    if (std::string(argv[1]) == "equipment-cancellation") { EquipmentCancellationAndRejection(); return 0; }
     if (std::string(argv[1]) == "domain-observations") { DomainObservations(); return 0; }
     if (std::string(argv[1]) == "domain-availability") { DomainAvailability(); return 0; }
     if (std::string(argv[1]) == "live-changes") { LiveTaskChanges(); return 0; }

@@ -41,19 +41,21 @@
 | `game.attack(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
 | `game.pickup(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
 | `game.use_item(item_id)` | 整数 `1..2147483647`；当前原生实现只接受普通 `200` 类药品 | 是 | 动作结果 |
+| `game.equip(backpack_slot, equipped_slot, seconds)` | 无头普通装备；背包正槽、身上负槽；默认确认期限 `3` 秒，`0 < seconds <= 30` | 是，等待槽位变化或本次执行结束 | 动作结果 |
+| `game.unequip(equipped_slot, backpack_slot, seconds)` | 无头普通装备；身上负槽、空背包正槽；确认期限同 `equip` | 是，等待槽位变化或本次执行结束 | 动作结果 |
 | `game.stop()` | 无 | 是，等待释放确认 | 动作结果 |
 | `game.log(text)` | 字符串，限制见[日志与预算](#日志与预算) | 否 | 无 |
 | `game.keys(keys, seconds)` | 原版可选；默认租期 `0.1`，`0 < seconds <= 30` | 否 | 无 |
 | `game.press(keys, seconds)` | 原版可选；默认 `0.06`，`0 < seconds <= 30` | 是，等待释放确认 | 动作结果 |
 | `game.skill(skill_id)` | 原版可选；整数 `1..2147483647` | 否 | [技能结果](#原版直接技能) |
 
-动作函数的等待范围是原生输入释放或该动作的本地执行边界，不是服务器效果确认。一次函数调用也不保证只发生一次原生重复输入、只攻击一个目标或只拾取一个物品。
+移动、战斗和按键函数等待原生输入释放或该动作的本地执行边界，服务器效果另行判断；普通换装等待正常库存更新中的源、目的槽位确认。一次函数调用也不保证只发生一次原生重复输入、只攻击一个目标或只拾取一个物品。
 
 ## 任务与控制权
 
 `spawn` 创建由共享运行时调度的独立 Lua 任务。一个任务等待动作、控制权或 `sleep` 时，其他任务仍可调用 `state/observe/time/log/tasks`，观察和判断。任务共享 Lua 全局变量与闭包，不开放用户自行创建协程的入口。
 
-普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
+普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/equip/unequip/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
 
 优先级越大越先取得控制。高优先级任务请求接管时，旧任务立即停止派发冲突动作，运行时请求释放原生输入，确认释放后才授权新任务；等待释放期间其他任务仍可观察。相同优先级保持当前控制者，等待者按请求顺序取得控制。控制权跨 `sleep()` 保留，直到 `stop()`、任务完成、任务取消或更高优先级接管。
 
@@ -125,6 +127,7 @@ end
 | --- | --- | --- |
 | `backend` | string | 当前为 `headless` 或 `beidou` |
 | `move`、`face`、`jump`、`attack`、`pickup`、`use_item`、`stop` | boolean | 后端是否实现该语义动作；当前两端均实现 |
+| `equip`、`unequip` | boolean | 是否实现普通装备穿戴/卸下；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `raw_keys` | boolean | 是否实现 `keys/press`；当前 headless 为 `false`，原版为 `true` |
 | `skill` | boolean | 是否实现直接技能；当前 headless 为 `false`，原版为 `true` |
 
@@ -253,14 +256,14 @@ end
 
 ## 动作结果
 
-`move/face/jump/attack/pickup/use_item/stop/press` 返回以下表：
+`move/face/jump/attack/pickup/use_item/equip/unequip/stop/press` 返回以下表：
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `dispatched` | boolean | 本地动作或释放请求是否已派发；不等于游戏效果成功 |
 | `control_released` | boolean | 原生控制是否已确认释放 |
 | `settled` | boolean 或 nil | 本地动作/物理是否已收束，未知为 nil |
-| `effect` | string | 当前为 `unknown`，不能据此认定命中、拾取或恢复 |
+| `effect` | string | 普通换装在源、目的槽位结果已确认时为 `confirmed`；其余动作或未确认的换装为 `unknown`，不能据此认定命中、拾取或恢复 |
 | `reason` | string 或 nil | 原生执行说明；例如 `native_action_dispatched`、`already_facing`、`native_attack_not_allowed`、`item_use_requested`、`control_released` |
 
 原生暂不准入可以返回 `dispatched=false`，例如 headless 攻击尚未允许或原版已朝目标方向。它与抛出 Lua 错误不同。`reason` 是诊断信息，不是完整稳定的业务枚举；优先根据状态和结果事实决定下一步。
@@ -278,6 +281,25 @@ end
 `game.use_item(item_id)` 当前只接受 `item_id // 10000 == 200` 的普通 HP/MP 药品，且库存必须存在。GUI按物品ID选择消费背包的真实正槽，在既有原生更新阶段直接调用普通用药入口，不读取或修改快捷键绑定；原绑定、改绑和解除绑定使用相同调用。非200类食品或传送卷不属于这个共同接口，原版 GUI 的对应工作流另行处理。
 
 共享层使用60毫秒动作请求，headless 可能立即进入原生释放阶段；GUI为不持键的单次原生调用，在Lua恢复栈之外派发。原生入口没有可消费的成功返回值，`dispatched=true` 只确认进入原生调用，`effect` 仍为 `unknown`。原生准入、库存消耗和HP/MP恢复分别观察，不能以控制释放或脚本完成作为药效成功依据。重复用药、目标阈值与每次消耗确认由 `recovery/recover.lua` 负责。
+
+### 无头普通换装
+
+`game.equip(backpack_slot, equipped_slot[, seconds])` 从装备背包正槽穿到明确的身上负槽。目的槽已有普通装备时，正常替换会让原装备回到源背包槽。`game.unequip(equipped_slot, backpack_slot[, seconds])` 从身上负槽卸到指定的空背包正槽；目标背包槽被占用时拒绝，不自动选择其他位置。
+
+两个入口使用正常装备请求和库存更新，不模拟快捷键或拖放，不修改点数、装备属性或服务端数据。角色、装备、槽位及本地可核实的条件仍需满足；声望要求不作本地未知值猜测，以正常服务端处理和实际库存结果为准。当前仅 headless 支持，GUI Lua 调用明确报 `unsupported`；原版 CLI 的既有 GUI 装备流程继续独立使用。
+
+请求只派发一次。穿戴/替换成功需源槽与目的槽的装备对象对应关系同时符合本次请求；卸下则需源身上槽清空且目标背包槽收到原装备。确认后返回 `effect="confirmed"`，仅派发、脚本返回或两处物品 ID 看似相同均不足以确认同一件装备。
+
+确认期限默认3秒，第三参数仅控制本次等待。超时、任务接管或换图结束等待时，未确认的结果保留 `effect="unknown"`；取消会停止所属任务，不保证继续执行此函数后的源码。这些结束方式不会撤销已经派发的服务器请求，也不会自动重发。恢复后先调用 `game.observe("inventory")` 核对当前槽位，再决定后续操作；角色变化及整会话停止仍按既有生命周期处理。
+
+以下使用调用方已经依据最新背包、装备和养成计划确定的 `backpack_slot` 与 `equipped_slot`。多任务先取得控制；结果未确认时保留实际状态，不立即反向操作：
+
+```lua
+if not game.capabilities().equip then return end
+game.acquire()
+local result = game.equip(backpack_slot, equipped_slot)
+game.log("换装结果：" .. result.effect .. "，原因：" .. tostring(result.reason))
+```
 
 ## 原版按键
 

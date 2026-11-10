@@ -11,6 +11,8 @@
 #include <optional>
 #include <string>
 
+namespace ms { class Equip; }
+
 // The same Lua runtime is linked into both hosts. This class only adapts the
 // original open-source client state/actions and its local management transport.
 class SharedLuaAdapter final : public MapleControl::Adapter {
@@ -48,6 +50,15 @@ private:
     MapleControl::Runtime runtime;
     MapleControl::TaskTransport taskTransport;
     MapleControl::ActionResult result;
+    struct EquipmentChange {
+        int sourceSlot;
+        int destinationSlot;
+        const ms::Equip* source;
+        const ms::Equip* destination;
+        std::uint32_t characterId;
+        std::uint64_t sceneGeneration;
+    };
+    std::optional<EquipmentChange> equipmentChange;
     std::optional<ms::KeyAction::Id> heldAction;
     std::uint64_t currentTick = 0;
     std::uint64_t releaseTick = 0;

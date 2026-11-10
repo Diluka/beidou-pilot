@@ -35,6 +35,12 @@ class LuaRuntimeContract(unittest.TestCase):
     def test_domain_availability_and_context_changes_do_not_reuse_stale_values(self) -> None:
         subprocess.run([str(self.executable), "domain-availability"], check=True, timeout=10)
 
+    def test_equipment_slots_wait_for_native_results_without_resending(self) -> None:
+        subprocess.run([str(self.executable), "equipment-requests"], check=True, timeout=10)
+
+    def test_equipment_cancel_and_rejections_preserve_unknown_effects(self) -> None:
+        subprocess.run([str(self.executable), "equipment-cancellation"], check=True, timeout=10)
+
     def test_session_cancel_waits_for_native_release_and_stops_all_tasks(self) -> None:
         subprocess.run([str(self.executable), "cancel"], check=True, timeout=10)
 

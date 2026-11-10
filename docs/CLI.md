@@ -51,6 +51,8 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | --- | --- |
 | `walk DIR --seconds N`、`face DIR`、`jump` | 有界方向移动、朝向、跳跃尝试 |
 | `attack`、`pickup`、`use_item ID` | 原生尝试；`use_item`不等于消耗和恢复已确认 |
+| `equip ITEM --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头普通装备；明确背包正槽和身上负槽，核对物品 ID 及实际替换结果 |
+| `unequip --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头卸下普通装备；明确身上负槽和空背包正槽 |
 | `move X`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单根绳梯或单个门户；不是通用寻路 |
 | `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点及近距拾取尝试 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
@@ -85,6 +87,12 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 移动和战斗参数只对当前场景有效。门户和部分规划依赖可选静态 WZ XML，资料不足时明确拒绝；换层、身份变化、低HP或未确认到达会停止后续动作。基础 `fight` 受转职节点限制，特殊任务、材料或职业技能策略应自行写Lua，没有未实现的占位选项。
 
 无头 `use` 只接受数字ID和普通200类HP/MP药剂。两端普通200类药品均走Lua原生用药，不要求快捷键绑定；按次数使用可不依赖XML，带HP/MP目标时需要资料已知恢复类型。GUI其他已支持恢复品保留背包工作流；203类传送卷仅支持单次使用，不接受HP/MP目标。
+
+无头 `equip` 要求数字物品 ID、装备背包源正槽和身上目标负槽；Lua 先读取库存，核对该源槽仍是明确指定的物品。目标已有普通装备时，正常替换将其放回源槽。`unequip` 要求明确源负槽和空背包目标正槽。两者通过共享 Lua 发起一次正常装备请求，在无头原生更新中等待源、目的槽位对象变化。`--seconds` 默认3秒，范围为0.001至30秒；超时、取消、接管或换图保持未确认事实，不自动重试，也不撤销已派发请求。随后先读取最新背包和身上槽位，再决定下一步。
+
+CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed"` 时返回 `confirmed=true`。脚本正常完成但槽位效果未知时，报 `equipment_change_unconfirmed`，错误详情保留本次结果；`cancelled` 等终态不会被标为确认成功。Python 只负责参数、Lua 装载/取消和终态投影，不轮询执行换装反馈。
+
+原版 `equip ITEM` 保留原有 GUI 工作流，新增原生槽位参数供无头使用；原版不支持 `unequip`。换装只覆盖普通装备，不扩展强化、现金外观或其他装备操作。
 
 `skill`返回 `native_result`：0为本地拒绝，非零不能证明命中或服务器确认。对活动脚本发送原CLI的Ctrl+C/SIGTERM取消并等待放键；不要用第二个动作命令抢占。脚本能力及效果判断见 [CONTROL](CONTROL.md)。
 
@@ -123,7 +131,8 @@ Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/r
 | --- | --- |
 | `talk TARGET`、`dialog`、`click REF` | 打开NPC对话、按当前正文选择、操作当前引用 |
 | `ui read/open/close/focus` | 已识别窗口和输入焦点；`ui close all`同时处理普通商店 |
-| `equip ITEM`、`stats`、`skills` | 正常GUI装备/AP/SP操作，并核对结果 |
+| `equip ITEM` | 正常 GUI 穿戴并核对结果，不接受无头槽位参数 |
+| `stats`、`skills` | 正常GUI AP/SP操作，并核对结果 |
 | `hotkeys`、`bind`、`press` | 读取、拖放绑定和按已有物品/技能快捷键 |
 | `shop read/buy/sell/close` | 普通商店读取与指定买卖；数量框和关店按实际UI收尾 |
 | `revive` | 已识别死亡确认，核对同角色恢复；存活时跳过 |
