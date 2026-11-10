@@ -183,6 +183,7 @@
       <FileType>CppHeader</FileType>
     </ClInclude>
     <ClInclude Include="AgentBridge.h" />
+    <ClInclude Include="NativeKeyInput.h" />
     <ClInclude Include="NativeObservation.h" />
     <ClInclude Include="..\..\shared\lua-runtime\Runtime.h" />
     <ClInclude Include="..\..\shared\lua-runtime\TaskTransport.h" />

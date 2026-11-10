@@ -259,13 +259,16 @@ struct Runtime::Impl {
     void CaptureResult() {
         if (actionOwner == nullptr || !adapter.Released()) return;
         auto& task = *actionOwner;
-        if (task.wait == WaitFor::Action) task.result = adapter.Result();
-        else {
+        if (task.wait == WaitFor::Release) {
             task.result = ActionResult{};
             task.result.dispatched = true;
             task.result.controlReleased = true;
             task.result.settled = adapter.Observe().settled;
             task.result.reason = "control_released";
+        }
+        else {
+            task.result = adapter.Result();
+            task.result.controlReleased = true;
         }
         if (task.preempted) task.result.reason = "control_preempted";
         task.resultReady = true;

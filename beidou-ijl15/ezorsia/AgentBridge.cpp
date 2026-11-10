@@ -2,6 +2,7 @@
 #include "AgentBridge.h"
 #include "Runtime.h"
 #include "TaskTransport.h"
+#include "NativeKeyInput.h"
 #include "NativeObservation.h"
 
 #include <array>
@@ -52,33 +53,24 @@ std::string rejectedReason;
 std::string lastConsumedId;
 std::string pendingStatus;
 std::string pendingReason;
-std::array<bool, 256> held{};
-std::array<bool, 256> owned{};
+BeiDouBridge::NativeKeyInput keyInput;
 std::array<unsigned int, 256> scanCodes{};
 std::array<std::uint32_t, 256> nativeScanCodes{};
 std::uint32_t nativeScanCodesOwner = 0;
-bool active = false;
 bool scriptCommand = false;
 bool haveSkillResult = false;
 std::uint32_t lastSkillId = 0;
 int lastSkillResult = 0;
 const MapleControl::State* currentState = nullptr;
 NativeContext currentNative;
-std::uint32_t controlledCharacter = 0;
 std::uint32_t updatedCharacter = 0;
-std::uint32_t releaseCharacter = 0;
 std::uint64_t characterUpdates = 0;
-std::uint64_t releaseAtCharacterUpdate = 0;
-bool releaseNeedsCharacterUpdate = false;
-bool releasing = false;
-bool dispatchingRelease = false;
 bool haveScene = false;
 MapleControl::State previousState;
 std::uint64_t sceneGeneration = 1;
 std::uint64_t sequence = 0;
 std::uint64_t inputEvents = 0;
 MapleControl::ActionResult semanticResult;
-ULONGLONG deadline = 0;
 ULONGLONG lastPublishedAt = 0;
 
 
@@ -99,8 +91,8 @@ public:
     }
     MapleControl::ActionResult Result() const override { return NativeResult(); }
     void Release() override { BeginRelease({}, {}); }
-    bool Released() const override { return !active && !releasing; }
-    bool ReleasePending() const override { return releasing; }
+    bool Released() const override { return keyInput.Released(); }
+    bool ReleasePending() const override { return keyInput.ReleasePending(); }
     bool Logs(const std::string& scriptId, const std::vector<std::string>& lines) override {
         return NativeLogs(scriptId, lines);
     }
@@ -419,6 +411,8 @@ MapleControl::State CaptureState(NativeContext& native) {
 }
 
 unsigned int __fastcall KeyPressedHook(InputSystem* input, void*, int key) {
+    const auto& owned = keyInput.Owned();
+    const auto& held = keyInput.Held();
     if (key >= 0 && key < 256 && owned[key]) return held[key] ? 1 : 0;
     // The native input system exposes both side-specific and aggregate modifier keys.
     if (key == VK_SHIFT && (owned[VK_LSHIFT] || owned[VK_RSHIFT]))
@@ -430,7 +424,7 @@ unsigned int __fastcall KeyPressedHook(InputSystem* input, void*, int key) {
     return originalKeyPressed(input, key);
 }
 
-bool SendKey(unsigned int key, bool down) {
+bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
     std::uint32_t windowManager = 0;
     std::uint32_t input = 0;
     if (!ReadAt(0x00BEC20C, windowManager) || windowManager == 0 ||
@@ -443,33 +437,25 @@ bool SendKey(unsigned int key, bool down) {
     const unsigned int messageKey = key == VK_LSHIFT || key == VK_RSHIFT ? VK_SHIFT :
         key == VK_LCONTROL || key == VK_RCONTROL ? VK_CONTROL :
         key == VK_LMENU || key == VK_RMENU ? VK_MENU : key;
-    dispatchInput(0x100, messageKey, flags);
+    if (down && epoch != keyInput.Epoch()) return true;
+    keyInput.MarkDispatched(epoch);
     ++inputEvents;
+    dispatchInput(0x100, messageKey, flags);
     return true;
 }
 
 void BeginRelease(const std::string& status, const std::string& reason) {
-    releaseNeedsCharacterUpdate = false;
-    for (bool key : owned) releaseNeedsCharacterUpdate = releaseNeedsCharacterUpdate || key;
-    releaseCharacter = controlledCharacter;
-    active = false;
-    releasing = true;
+    keyInput.Release();
     pendingStatus = status;
     pendingReason = reason;
-    // Native key dispatch may synchronously run another application update.
-    const bool wasDispatching = dispatchingRelease;
-    dispatchingRelease = true;
-    for (unsigned int key = 0; key < held.size(); ++key) if (held[key]) {
-        held[key] = false;
-        SendKey(key, false);
-    }
-    releaseAtCharacterUpdate = characterUpdates;
-    dispatchingRelease = wasDispatching;
 }
 
 bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durationMs, std::string& error) {
+    std::array<bool, 256> desired{};
     if (keys.empty()) {
-        BeginRelease({}, {});
+        pendingStatus.clear();
+        pendingReason.clear();
+        keyInput.Request(desired, durationMs, currentNative.user, GetTickCount64());
         return true;
     }
     if (!currentState->mapKnown || !currentState->characterKnown || !currentState->positionKnown ||
@@ -489,7 +475,6 @@ bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durati
         }
         nativeScanCodesOwner = input;
     }
-    std::array<bool, 256> desired{};
     for (unsigned int key : keys) {
         if (key == 0 || key > 255 || nativeScanCodes[key] == 0 || nativeScanCodes[key] > 255) {
             error = "unsupported_native_key";
@@ -499,28 +484,9 @@ bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durati
         scanCodes[key] = nativeScanCodes[key];
     }
     // A nonblocking Lua keys update replaces the desired set without flickering unchanged keys.
-    releasing = false;
     pendingStatus.clear();
     pendingReason.clear();
-    active = true;
-    controlledCharacter = currentNative.user;
-    deadline = GetTickCount64() + durationMs;
-    for (unsigned int key = 0; key < held.size(); ++key) if (held[key] && !desired[key]) {
-        held[key] = false;
-        SendKey(key, false);
-        if (!active) return true;
-    }
-    for (unsigned int key = 0; key < held.size(); ++key) if (!held[key] && desired[key]) {
-        owned[key] = true;
-        held[key] = true;
-        if (!SendKey(key, true)) {
-            BeginRelease({}, {});
-            error = "input_route_unavailable";
-            return false;
-        }
-        // A synchronous update can stop this input before the next key.
-        if (!active) return true;
-    }
+    keyInput.Request(desired, durationMs, currentNative.user, GetTickCount64());
     return true;
 }
 
@@ -610,6 +576,7 @@ bool Publish(const MapleControl::State& state) {
     else out << "null";
     out << ",\"held_keys\":[";
     bool separator = false;
+    const auto& held = keyInput.Held();
     for (unsigned int key = 0; key < held.size(); ++key) if (held[key]) {
         if (separator) out << ',';
         out << key;
@@ -701,11 +668,11 @@ void ReadCommand() {
             !(stream >> extra) && previousState.ready && previousState.character.values[6] > 0;
     }
     else valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
-    const bool busy = operation != "stop" && (runtime.Running() || active || releasing);
+    const bool busy = operation != "stop" && (runtime.Running() || !keyInput.Released());
     if (!valid || busy) {
         rejectedId = id;
         rejectedReason = busy ? "busy" : "invalid_or_stale_command";
-        if (!runtime.Running() && !active && !releasing) {
+        if (!runtime.Running() && keyInput.Released()) {
             commandId = id; commandStatus = "rejected"; commandReason = rejectedReason;
         }
         return;
@@ -757,16 +724,10 @@ void Tick() {
     haveScene = true;
 
     // CallUpdate may return without advancing its 30ms character step. Confirm the actual consumer.
-    const bool characterConsumedRelease = updatedCharacter == releaseCharacter &&
-        characterUpdates > releaseAtCharacterUpdate;
     const bool oldCharacterExited = native.loginStage ||
         (native.field == 0 && native.stats == 0 && native.user == 0) ||
-        (previousState.characterKnown && previousState.positionKnown && native.user != releaseCharacter);
-    if (releasing && !dispatchingRelease &&
-        (!releaseNeedsCharacterUpdate || characterConsumedRelease || oldCharacterExited)) {
-        releasing = false;
-        owned.fill(false);
-        controlledCharacter = 0;
+        (previousState.characterKnown && previousState.positionKnown && native.user != keyInput.ReleaseCharacter());
+    if (keyInput.ConfirmRelease(updatedCharacter, characterUpdates, oldCharacterExited)) {
         if (!pendingStatus.empty()) {
             commandStatus = pendingStatus;
             commandReason = pendingReason;
@@ -775,7 +736,7 @@ void Tick() {
         pendingReason.clear();
     }
     const bool ready = previousState.ready;
-    if (active && (changed || !ready || previousState.character.values[6] == 0 || now >= deadline))
+    if (keyInput.Active() && (changed || !ready || previousState.character.values[6] == 0 || now >= keyInput.Deadline()))
         BeginRelease({}, {});
 
     ReadCommand();
@@ -791,9 +752,20 @@ void Tick() {
     if (now - lastPublishedAt >= 25) {
         if (!Publish(previousState)) {
             if (runtime.Running()) runtime.Cancel("state_publish_failed");
-            else if (active) BeginRelease({}, {});
+            else if (keyInput.Active()) BeginRelease({}, {});
         }
         lastPublishedAt = now;
+    }
+    // Native delivery may remain in a UI message loop. Lua and management have
+    // already returned, and a superseded delivery frame has no old tail work.
+    if (keyInput.Active() && GetTickCount64() >= keyInput.Deadline()) BeginRelease({}, {});
+    const auto delivered = keyInput.Flush(SendKey, [] { return characterUpdates; });
+    if (delivered.failed && delivered.epoch == keyInput.Epoch()) {
+        semanticResult.reason = "input_route_unavailable";
+        runtime.Cancel("native_input_failed");
+        commandReason = "native_input_failed";
+        pendingReason = "native_input_failed";
+        BeginRelease(pendingStatus, pendingReason);
     }
 }
 
@@ -832,7 +804,6 @@ namespace {
 bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
     semanticResult = MapleControl::ActionResult{};
     if (action.kind == MapleControl::ActionKind::Stop) {
-        semanticResult.dispatched = active;
         semanticResult.reason = "stop_requested";
         BeginRelease({}, {});
         return true;
@@ -841,7 +812,7 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         error = "state_unavailable_or_dead";
         return false;
     }
-    if (active || releasing) { error = "action_in_progress"; return false; }
+    if (!keyInput.Released()) { error = "action_in_progress"; return false; }
     unsigned int key = 0;
     unsigned int duration = action.durationMs == 0 ? 60 : action.durationMs;
     switch (action.kind) {
@@ -889,14 +860,16 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         break;
     }
     if (!ApplyDesiredKeys({key}, duration, error)) return false;
-    semanticResult.dispatched = true;
-    semanticResult.reason = action.kind == MapleControl::ActionKind::UseItem ? "item_use_requested" : "native_action_dispatched";
+    semanticResult.reason = action.kind == MapleControl::ActionKind::UseItem ? "item_use_requested" : "native_action_requested";
     return true;
 }
 
 MapleControl::ActionResult NativeResult() {
     auto result = semanticResult;
-    result.controlReleased = !active && !releasing;
+    result.dispatched = keyInput.Dispatched() && result.reason != "already_facing";
+    result.controlReleased = keyInput.Released();
+    if (result.dispatched && result.reason == "native_action_requested") result.reason = "native_action_dispatched";
+    if (result.dispatched && result.reason == "native_keys_requested") result.reason = "native_keys_dispatched";
     return result;
 }
 
@@ -932,7 +905,10 @@ bool NativeRawKeys(const std::vector<std::string>& names, unsigned int duration,
         if (key == 0) { error = "unsupported: raw_key"; return false; }
         keys.push_back(key);
     }
-    return ApplyDesiredKeys(keys, duration, error);
+    if (!ApplyDesiredKeys(keys, duration, error)) return false;
+    semanticResult = MapleControl::ActionResult{};
+    semanticResult.reason = "native_keys_requested";
+    return true;
 }
 
 bool InvokeNativeSkill(std::uint32_t skillId, int& result, std::string& error) {
