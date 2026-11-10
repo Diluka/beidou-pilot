@@ -94,7 +94,9 @@ public:
     MapleControl::Observation ObserveDomain(const std::string& domain) const override {
         return NativeObservation::Collect(domain);
     }
-    bool Supports(MapleControl::ActionKind) const override { return true; }
+    bool Supports(MapleControl::ActionKind kind) const override {
+        return kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip;
+    }
     bool Begin(const MapleControl::Action& action, std::string& error) override {
         return BeginNativeAction(action, error);
     }
@@ -548,7 +550,7 @@ bool Publish(const MapleControl::State& state) {
         out << ']';
     }
     else out << "null";
-    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"pickup\":true,\"use_item\":true,\"stop\":true,\"raw_keys\":true,\"skill\":true},\"inventory\":";
+    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true},\"inventory\":";
     if (state.inventoryKnown) {
         out << '[';
         bool separator = false;
@@ -898,6 +900,10 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         semanticResult.reason = "item_use_requested";
         return true;
     }
+    case MapleControl::ActionKind::Equip:
+    case MapleControl::ActionKind::Unequip:
+        error = action.kind == MapleControl::ActionKind::Equip ? "unsupported: equip" : "unsupported: unequip";
+        return false;
     case MapleControl::ActionKind::Stop:
         break;
     }

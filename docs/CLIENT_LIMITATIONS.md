@@ -4,10 +4,10 @@
 
 ## 当前使用边界
 
-- **领域读取与交互动作分别支持。** Lua 已通过按需 `game.observe(domain)` 读取 CLI 已有原生领域，`game.state()` 保持轻量。读取 NPC、窗口、装备或商店不表示已有相应 Lua 交互动作。无头任务目前是登录快照，不能当成实时进度。
+- **领域读取与交互动作分别支持。** Lua 已通过按需 `game.observe(domain)` 读取 CLI 已有原生领域，`game.state()` 保持轻量。读取 NPC、窗口或商店不表示已有相应 Lua 交互动作；普通装备操作另按后端能力声明。无头任务目前是登录快照，不能当成实时进度。
 - **原版能显示不等于工具已有命中资料。** `talk`当前会使用可选WZ XML计算NPC点击范围；缺少资料时会明确拒绝。metadata-only NX准备完成也不表示CLI所需XML已具备。静态资料可辅助查询、定位与规划，不能替代本端实时对象和结果。
 - **基础操作与完成目标不同。** 移动、跳跃、普攻、拾取和按键主要表达原生尝试；派发、释放、收束及游戏效果分别判断。现有`move/climb/portal`已有局部到达检查，`use`等也有部分结果确认；它们尚未覆盖完整跨层旅行、目标回收及战斗效果。
-- **后端实现范围不同。** 无头已有属性、点数、装备和技能等读取，不代表NPC、商店、加点、换装、职业技能或复活操作已实现。补齐时使用正常原生语义，不复制无消费者的图形键盘/快捷栏。
+- **后端实现范围不同。** 无头已有属性、点数、装备和技能等读取，并支持普通装备按槽位穿戴/替换/卸下；NPC、商店、加点、职业技能或复活操作仍未实现。补齐时使用正常原生语义，不复制无消费者的图形键盘/快捷栏。
 - **热改策略与更新原生组件成本不同。** Lua源码和活动任务已支持在线追加/替换；原生DLL或二进制变化仍需要构建并按生命周期重新加载。现有Docker、工件清单、指纹核验和实例复用继续使用，准备成本改进不承诺安全DLL热卸载或零重启。
 
 ## 需求索引
@@ -25,7 +25,7 @@
 | 无头正常对话与接交任务 | 已有NPC/任务快照，未交付本端正常交互 | [#48](https://github.com/Diluka/beidou-pilot/issues/48) |
 | 无头普通商店买卖补给 | 不能在同一无头实例内完成商店流程 | [#49](https://github.com/Diluka/beidou-pilot/issues/49) |
 | 无头按明确计划分配AP/SP | 可读取点数，分配操作仍需GUI | [#50](https://github.com/Diluka/beidou-pilot/issues/50) |
-| 无头正常更换装备 | 可读取已装备物品，换装操作未交付 | [#51](https://github.com/Diluka/beidou-pilot/issues/51) |
+| 无头正常更换装备 | `game.equip/unequip` 与 CLI 明确槽位操作，按正常库存更新确认；不自动重试未知结果 | [#51](https://github.com/Diluka/beidou-pilot/issues/51) |
 | 无头实时观察任务变化 | 当前任务域明确live_updates=false | [#52](https://github.com/Diluka/beidou-pilot/issues/52) |
 | 无头施放已学职业技能 | 读取技能不等于可执行，当前直接技能能力未开放 | [#53](https://github.com/Diluka/beidou-pilot/issues/53) |
 | 无头按请求安全复活 | 已有HP读数，缺正常复活流程与确认 | [#54](https://github.com/Diluka/beidou-pilot/issues/54) |
