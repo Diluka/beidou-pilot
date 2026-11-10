@@ -68,6 +68,8 @@ const char* ActionName(ActionKind kind) {
         return "equip";
     case ActionKind::Unequip:
         return "unequip";
+    case ActionKind::Revive:
+        return "revive";
     }
     return "unsupported";
 }
@@ -111,6 +113,8 @@ void PushState(lua_State* lua, const State& state) {
         lua_setfield(lua, -2, "facing");
     }
     ObservedFact(lua, "settled", state.settled);
+    ObservedFact(lua, "dead", state.dead);
+    ObservedFact(lua, "revive_requestable", state.reviveRequestable);
     if (state.monstersKnown) {
         lua_createtable(lua, static_cast<int>(state.monsters.size()), 0);
         lua_Integer index = 1;
@@ -472,7 +476,7 @@ struct Runtime::Impl {
         String(lua, "backend", adapter.Backend());
         for (ActionKind kind :
              {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack, ActionKind::Pickup,
-              ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip, ActionKind::Unequip})
+              ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip, ActionKind::Unequip, ActionKind::Revive})
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
@@ -552,6 +556,10 @@ struct Runtime::Impl {
         const auto itemId = luaL_checkinteger(lua, 1);
         if (itemId < 1 || itemId > 2147483647) return luaL_error(lua, "item id must be a positive int32");
         return BeginSemantic(lua, ActionKind::UseItem, "", 60, static_cast<std::uint32_t>(itemId));
+    }
+
+    static int Revive(lua_State* lua) {
+        return BeginSemantic(lua, ActionKind::Revive, "", Duration(lua, 1, 6, false), 0);
     }
 
     static int ChangeEquipment(lua_State* lua, ActionKind kind) {
@@ -884,6 +892,7 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source, std:
                                       {"use_item", Impl::UseItem},
                                       {"equip", Impl::Equip},
                                       {"unequip", Impl::Unequip},
+                                      {"revive", Impl::Revive},
                                       {"stop", Impl::Stop},
                                       {"press", Impl::Press},
                                       {"keys", Impl::Keys},

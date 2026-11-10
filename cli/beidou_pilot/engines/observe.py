@@ -21,6 +21,8 @@ def read_observation(observer: NativeObserver) -> JsonObject:
             "character_checksum_valid": sampled["character"] is not None if native_checksums else None,
             "native_values_valid": ready,
             "position": sampled["position"], "sample_seq": sampled["seq"],
+            "dead": sampled.get("dead") if ready else None,
+            "revive_requestable": sampled.get("revive_requestable") if ready else None,
             "held_keys": sampled["held_keys"], "bridge_command": sampled["command"],
             "unavailable": [] if ready else ["原生客户端尚未取得完整游戏角色状态。"]}
 

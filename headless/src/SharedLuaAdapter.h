@@ -62,6 +62,7 @@ private:
     };
 
     std::optional<EquipmentChange> equipmentChange;
+    std::optional<std::uint32_t> reviveCharacter;
     std::optional<ms::KeyAction::Id> heldAction;
     std::uint64_t currentTick = 0;
     std::uint64_t releaseTick = 0;

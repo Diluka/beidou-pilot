@@ -13,6 +13,7 @@
 #include "IO/KeyType.h"
 #include "Net/Session.h"
 #include "Net/Packets/InventoryPackets.h"
+#include "Net/Packets/GameplayPackets.h"
 
 #include <array>
 #include <cmath>
@@ -147,6 +148,7 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.monsters.clear();
     state.inventory.clear();
     state.drops.clear();
+    state.dead = state.reviveRequestable = Fact::Unknown;
     if (!state.ready) {
         state.settled = Fact::Unknown;
         return;
@@ -174,6 +176,8 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
                               stats.get_stat(ms::MapleStat::SP),
                               static_cast<std::uint32_t>(stats.get_exp())};
     state.character.known.fill(true);
+    state.dead = state.character.values[6] == 0 ? Fact::True : Fact::False;
+    state.reviveRequestable = state.dead == Fact::True && Released() ? Fact::True : Fact::False;
     state.x = pos.x();
     state.y = pos.y();
     state.facingLeft = !player.getflip();
@@ -231,7 +235,7 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
         Release();
         return true;
     }
-    if (!state.ready || state.character.values[6] == 0) {
+    if (!state.ready || (action.kind != Kind::Revive && state.character.values[6] == 0)) {
         error = "state_unavailable_or_dead";
         return false;
     }
@@ -243,7 +247,20 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     auto& player = stage.get_player();
     result = {};
     result.reason = "native_action_dispatched";
-    if (action.kind == Kind::Face) {
+    if (action.kind == Kind::Revive) {
+        if (state.character.values[6] > 0) {
+            result.effect = "confirmed";
+            result.reason = "already_alive";
+            result.controlReleased = true;
+            result.settled = state.settled;
+            return true;
+        }
+        // The verified server handles death only when target_id != -1; zero selects its normal return map.
+        // The wheel flag stays false. Map arrival can precede the server HP update.
+        ms::ChangeMapPacket(true, 0, "", false).dispatch();
+        reviveCharacter = state.character.id;
+        result.reason = "revive_requested";
+    } else if (action.kind == Kind::Face) {
         player.set_direction(action.direction == "right");
     } else if (action.kind == Kind::UseItem) {
         if (action.itemId / 10000 != 200) {
@@ -377,7 +394,7 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     result.controlReleased = false;
     active = true;
     actionUntilMs = MonotonicMs() + action.durationMs;
-    if (!heldAction && !equipmentChange) ApplyRelease();
+    if (!heldAction && !equipmentChange && !reviveCharacter) ApplyRelease();
     return true;
 }
 
@@ -390,6 +407,8 @@ void SharedLuaAdapter::ApplyRelease() {
     if (equipmentChange && result.reason == "equipment_change_requested")
         result.reason = "equipment_confirmation_stopped";
     equipmentChange.reset();
+    if (reviveCharacter && result.reason == "revive_requested") result.reason = "revive_confirmation_stopped";
+    reviveCharacter.reset();
     active = false;
     releasePending = true;
     releaseTick = currentTick;
@@ -431,7 +450,7 @@ void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
         stream >> scriptId;
         valid = valid && generation == state.sceneGeneration && value <= 0xffffffffULL && scriptId.size() == 32
                 && scriptId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos && !(stream >> extra)
-                && state.ready && state.character.values[6] > 0;
+                && state.ready;
     } else
         valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
     const bool busy = operation != "stop" && (runtime.Running() || !Released() || externalActionBusy);
@@ -490,7 +509,19 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
             commandReason = "stopped";
         }
     }
-    if (active && equipmentChange) {
+    if (active && reviveCharacter) {
+        if (!state.ready || state.character.id != *reviveCharacter) {
+            result.reason = "revive_context_changed";
+            ApplyRelease();
+        } else if (state.dead == Fact::False && state.mapKnown && state.positionKnown) {
+            result.effect = "confirmed";
+            result.reason = "revive_confirmed";
+            ApplyRelease();
+        } else if (MonotonicMs() >= actionUntilMs) {
+            result.reason = "revive_not_confirmed";
+            ApplyRelease();
+        }
+    } else if (active && equipmentChange) {
         const auto& change = *equipmentChange;
         if (!state.ready || state.character.values[6] == 0 || state.character.id != change.characterId
             || state.sceneGeneration != change.sceneGeneration) {
@@ -652,6 +683,8 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                 {"validation_source", "native_objects"},
                 {"skills", std::move(knownSkills)},
                 {"skills_complete", true},
+                {"dead", FactValue(state.dead)},
+                {"revive_requestable", FactValue(state.reviveRequestable)},
                 {"unavailable", Json::array()},
                 {"not_covered",
                  Json::array({"skill_names", "skill_requirements", "skill_effects", "skill_expirations",
@@ -743,6 +776,7 @@ void SharedLuaAdapter::Shutdown() {
     result.controlReleased = true;
     result.settled = Fact::Unknown;
     state.ready = state.inGame = false;
+    state.dead = state.reviveRequestable = Fact::Unknown;
     state.observedAtMs = UnixMs();
     ++state.sequence;
     runtime.Tick();
@@ -775,6 +809,8 @@ Json SharedLuaAdapter::StateDocument() const {
         {"observed_at_ms", state.observedAtMs},
         {"scene_generation", state.sceneGeneration},
         {"ready", state.ready},
+        {"dead", FactValue(state.dead)},
+        {"revive_requestable", FactValue(state.reviveRequestable)},
         {"map_id", state.mapKnown ? Json(state.mapId) : Json(nullptr)},
         {"held_keys", Json::array()},
         {"command",
@@ -796,6 +832,7 @@ Json SharedLuaAdapter::StateDocument() const {
           {"use_item", true},
           {"equip", true},
           {"unequip", true},
+          {"revive", true},
           {"stop", true},
           {"raw_keys", false},
           {"skill", false}}},

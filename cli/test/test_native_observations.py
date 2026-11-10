@@ -109,6 +109,18 @@ class NativeObservationContract(unittest.TestCase):
         self.assertIsNone(sampled["map_checksum_valid"])
         self.assertIsNone(sampled["character_checksum_valid"])
 
+    def test_death_facts_require_a_ready_native_character(self) -> None:
+        self.state.update(dead=True, revive_requestable=True)
+        with patch("beidou_pilot.observations.active_session", return_value=self.session):
+            observer = NativeObserver(self.root, "headless")
+            observer.directory = self.directory
+            for ready in (True, False):
+                self.state["ready"] = ready
+                (self.directory / "state.json").write_text(json.dumps(self.state))
+                sampled = read_observation(observer)
+                self.assertEqual(True if ready else None, sampled["dead"])
+                self.assertEqual(True if ready else None, sampled["revive_requestable"])
+
     def test_response_must_belong_to_current_instance_run_and_domain(self) -> None:
         with patch("beidou_pilot.observations.active_session", return_value=self.session):
             observer = NativeObserver(self.root)

@@ -112,6 +112,9 @@ class NativeObserver:
                 or raw.get("run_id") != self.session.run_id
                 or any(type(raw.get(field)) is not int for field in ("seq", "observed_at_ms", "scene_generation"))):
             raise ClientError("native_observation_not_ready", "原生观察状态不属于当前运行会话。")
+        if any(raw.get(field) is not None and type(raw[field]) is not bool
+               for field in ("dead", "revive_requestable")):
+            raise ClientError("native_observation_not_ready", "原生死亡观察字段无效。")
         age = time.time() - raw["observed_at_ms"] / 1000
         if not -.1 <= age <= max_age:
             raise ClientError("native_observation_not_ready", "原生观察状态尚未恢复有效采样。",

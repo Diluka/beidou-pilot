@@ -118,6 +118,8 @@ class BridgeSnapshot(TypedDict):
     last_skill: NotRequired[NativeSkillResult | None]
     monsters: NotRequired[list[BridgeMonster] | None]
     facing: NotRequired[Literal["Left", "Right"] | None]
+    dead: NotRequired[bool | None]
+    revive_requestable: NotRequired[bool | None]
 
 
 class BridgeClient:
@@ -162,6 +164,9 @@ class BridgeClient:
                 or any(type(key) is not int or not 1 <= key <= 255 for key in raw["held_keys"])
                 or not isinstance(raw.get("command"), dict)):
             raise ClientError("invalid_bridge_state", "原生桥的协议、身份或状态字段无效。")
+        if any(raw.get(field) is not None and type(raw[field]) is not bool
+               for field in ("dead", "revive_requestable")):
+            raise ClientError("invalid_bridge_state", "原生死亡观察字段无效。")
         command = raw["command"]
         character, position, rejected = raw["character"], raw["position"], raw["rejected_command"]
         if ("id" not in command or (command["id"] is not None and not isinstance(command["id"], str))

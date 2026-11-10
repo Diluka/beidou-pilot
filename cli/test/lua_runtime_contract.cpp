@@ -140,9 +140,10 @@ public:
 };
 
 // This boundary controls native completion; it does not simulate inventory packets or equipment rules.
-class EquipmentBoundary final : public NativeBoundary {
+class ConfirmationBoundary final : public NativeBoundary {
 public:
     bool Supports(MapleControl::ActionKind kind) const override {
+        if (kind == MapleControl::ActionKind::Revive) return reviveSupported;
         return (kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip)
                || equipmentSupported;
     }
@@ -177,6 +178,7 @@ public:
     std::vector<MapleControl::Action> requests;
     bool pending = false;
     bool equipmentSupported = true;
+    bool reviveSupported = true;
 };
 
 // The native callback re-enters the real scheduler; it does not model NPCs.
@@ -687,7 +689,7 @@ error("query_resumed_for_another_character")
 }
 
 void EquipmentRequests() {
-    EquipmentBoundary native;
+    ConfirmationBoundary native;
     native.state.inventoryKnown = true;
     native.state.inventory = {{1, 1, 1002001, 1, true}, {1, 2, 1002001, 1, true}};
     MapleControl::Runtime runtime(native);
@@ -727,7 +729,7 @@ assert(removed.reason == "equipment_confirmation_timeout")
 }
 
 void EquipmentCancellationAndRejection() {
-    EquipmentBoundary native;
+    ConfirmationBoundary native;
     MapleControl::Runtime runtime(native);
     std::string error;
     Check(runtime.Start("cancel-equipment", "game.equip(4,-6,0.5); error('resumed_after_cancel')", 5000, error), error);
@@ -760,8 +762,73 @@ game.equip(1,-5)
     Check(native.requests.size() == 1, "rejected_equipment_reached_native_dispatch");
 }
 
+void ReviveRequests() {
+    ConfirmationBoundary native;
+    native.state.character.values[6] = 0;
+    native.state.dead = native.state.reviveRequestable = MapleControl::Fact::True;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("revive-request", R"lua(
+assert(game.capabilities().revive)
+assert(game.state().dead and game.state().revive_requestable)
+local result = game.revive(1.25)
+assert(result.dispatched and result.control_released and result.effect == "confirmed")
+assert(result.reason == "revive_confirmed" and not game.state().dead)
+)lua",
+                        5000, error),
+          error);
+    Advance(runtime, native, 2);
+    Check(native.pending && native.requests.size() == 1, "revive_did_not_wait_for_native_confirmation");
+    Check(native.requests[0].kind == MapleControl::ActionKind::Revive && native.requests[0].durationMs == 1250,
+          "revive_deadline_or_action_kind_lost");
+    ++native.state.sceneGeneration;
+    native.state.mapId = 10000;
+    runtime.Tick(true);
+    Advance(runtime, native, 2);
+    Check(runtime.Running() && native.pending && native.requests.size() == 1,
+          "revive_map_arrival_completed_or_resent_the_request");
+    native.state.character.values[6] = 50;
+    native.state.dead = native.state.reviveRequestable = MapleControl::Fact::False;
+    native.Complete("confirmed", "revive_confirmed");
+    Advance(runtime, native, 3);
+    Check(!runtime.Running() && runtime.CurrentStatus()->status == "completed" && runtime.CurrentStatus()->error.empty()
+              && native.requests.size() == 1,
+          runtime.CurrentStatus()->error);
+
+    Check(runtime.Start("revive-unconfirmed", R"lua(
+local result = game.revive()
+assert(result.dispatched and result.effect == "unknown" and result.reason == "revive_not_confirmed")
+)lua",
+                        8000, error),
+          error);
+    Advance(runtime, native, 1);
+    Check(native.requests.size() == 2 && native.requests.back().durationMs == 6000, "revive_default_deadline_lost");
+    native.Complete("unknown", "revive_not_confirmed");
+    Advance(runtime, native, 3);
+    Check(!runtime.Running() && runtime.CurrentStatus()->error.empty() && native.requests.size() == 2,
+          "unconfirmed_revive_was_replayed_or_reported_successful");
+    native.reviveSupported = false;
+    native.state.dead = native.state.reviveRequestable = MapleControl::Fact::Unknown;
+    Check(runtime.Start("unsupported-revive", R"lua(
+assert(not game.capabilities().revive)
+assert(game.state().dead == nil and game.state().revive_requestable == nil)
+game.revive()
+)lua",
+                        5000, error),
+          error);
+    Advance(runtime, native, 3);
+    Check(runtime.CurrentStatus()->reason == "script_error"
+              && runtime.CurrentStatus()->error.find("unsupported: revive") != std::string::npos
+              && native.requests.size() == 2,
+          "unsupported_revive_reached_native_dispatch");
+}
+
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
+    if (std::string(argv[1]) == "revive-requests") {
+        ReviveRequests();
+        return 0;
+    }
     if (std::string(argv[1]) == "equipment-requests") {
         EquipmentRequests();
         return 0;

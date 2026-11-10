@@ -1,4 +1,4 @@
-"""角色死亡时，通过客户端已经显示的复活确认恢复正常游戏。"""
+"""按明确请求完成本端正常复活，并核对同一角色恢复。"""
 
 import time
 from typing import cast
@@ -9,6 +9,20 @@ from .engines.ui import UIWindow
 
 
 def revive(backend: Backend) -> JsonObject:
+    if backend.name == "headless":
+        from .control_scripts import run_source
+
+        report = run_source(backend, "game.revive()\n", 8)
+        state = cast(JsonObject, report["last_state"])
+        result = cast(JsonObject, state["action_result"])
+        confirmed = report["status"] == "completed" and result["effect"] == "confirmed"
+        projected: JsonObject = {**report, "action_result": result, "state": state,
+                                 "changed": confirmed and result["dispatched"] is True}
+        if report["status"] == "completed":
+            if not confirmed:
+                raise ClientError("revive_not_confirmed", "已请求一次正常复活，尚未确认同一角色恢复，未重试。", projected)
+            projected["status"] = "already_alive" if result["reason"] == "already_alive" else "revived"
+        return projected
     before = backend.read("observe")
     character = cast(JsonObject | None, before["character"])
     if character is None or before["native_values_valid"] is not True:
