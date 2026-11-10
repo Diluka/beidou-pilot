@@ -4,10 +4,10 @@
 
 ## 当前使用边界
 
-- **领域读取与交互动作分别支持。** Lua 已通过按需 `game.observe(domain)` 读取 CLI 已有原生领域，`game.state()` 保持轻量。读取 NPC、窗口或商店不表示已有相应 Lua 交互动作；普通装备操作另按后端能力声明。无头任务目前是登录快照，不能当成实时进度。
-- **静态资料与现场事实分别核对。** 名称、恢复属性、NPC范围与地图地形共用已配置XML/NX；缺项和未支持格式仍明确报告。静态资料可辅助查询、定位与规划，不能替代本端实时对象和结果。
+- **领域读取与交互动作分别支持。** Lua 已通过按需 `game.observe(domain)` 读取 CLI 已有原生领域，`game.state()` 保持轻量。无头通用交互已采用当前页面与原生控件引用；窗口、商店等覆盖仍按后端能力声明。无头任务合并完整角色包和正常增量，原始进度与关联语义不推断。
+- **静态资料与现场事实分别核对。** 名称、恢复属性、NPC范围与地图地形共用已配置XML/NX；缺项和未支持格式仍明确报告。GUI `talk`使用可核实的图形范围定位，无头交互使用当前原生引用。静态资料可辅助查询、定位与规划，不能替代本端实时对象和结果。
 - **基础操作与完成目标不同。** 移动、跳跃、普攻、拾取和按键主要表达原生尝试；派发、释放、收束及游戏效果分别判断。现有`move/climb/portal`已有局部到达检查，`use`等也有部分结果确认；它们尚未覆盖完整跨层旅行、目标回收及战斗效果。
-- **后端实现范围不同。** 无头支持普通装备槽位操作、明确请求的普通复活及首批战士1001004/1001005原生技能；NPC、商店、加点和其他技能仍按各自声明。移动与攻击可同窗持有意图，动画与物理继续沿原生规则。补齐能力不复制无消费者的图形键盘/快捷栏。
+- **后端实现范围不同。** 无头支持普通装备槽位操作、死亡观察、明确请求的普通复活及首批战士1001004/1001005原生技能。通用交互覆盖普通服务端脚本页及由客户端资料、当前状态形成的本地任务页；未支持条件和复杂选择不提供确认控件，商店、加点和其他技能仍按各自声明。移动与攻击可同窗持有意图，动画与物理继续沿原生规则。补齐能力不复制无消费者的图形键盘/快捷栏。
 - **热改策略与更新原生组件成本不同。** Lua源码和活动任务已支持在线追加/替换；原生DLL或二进制变化仍需要构建并按生命周期重新加载。现有Docker、工件清单、指纹核验和实例复用继续使用，准备成本改进不承诺安全DLL热卸载或零重启。
 
 ## 需求索引
@@ -16,17 +16,17 @@
 | --- | --- | --- |
 | Lua直接消费已有领域事实 | `game.observe(domain)` 已接入原生领域；保留各端支持、来源及非实时限制 | [#40](https://github.com/Diluka/beidou-pilot/issues/40) |
 | 同会话连续完成GUI交互与养成 | 已有CLI流程尚无完整Lua语义入口；batch不承担动态判断 | [#41](https://github.com/Diluka/beidou-pilot/issues/41) |
-| 可靠打开可见近距NPC | 当前点击依赖额外图形XML与有效目标信息 | [#42](https://github.com/Diluka/beidou-pilot/issues/42) |
+| 可靠打开可见近距NPC | GUI仍需可核实图形范围与有效目标；无头使用当前原生引用 | [#42](https://github.com/Diluka/beidou-pilot/issues/42) |
 | 知道箱子等对象当前是否存在及已知状态 | 原生内部实现不等于公开结构化观察 | [#43](https://github.com/Diluka/beidou-pilot/issues/43) |
 | 沿已知路线跨层、进入相邻地图并确认到达 | 仍需消费者自行编写逐段组合与确认 | [#44](https://github.com/Diluka/beidou-pilot/issues/44) |
 | 读取真实动作前提、收束和移动能力 | ready不等落地，GUI部分状态未知 | [#45](https://github.com/Diluka/beidou-pilot/issues/45) |
 | 回收指定物品或金币并确认收益 | 普通pickup只尝试；物品看入包、金币看余额 | [#46](https://github.com/Diluka/beidou-pilot/issues/46) |
 | 知道战斗有何原生可核实进展 | 无头提供已收到的服务端目标HP百分比；GUI未知，动作归因仍未知 | [#47](https://github.com/Diluka/beidou-pilot/issues/47) |
-| 无头正常对话与接交任务 | 已有NPC/任务快照，未交付本端正常交互 | [#48](https://github.com/Diluka/beidou-pilot/issues/48) |
+| 无头正常对话与接交任务 | 原生通用页面/控件激活；本地任务页来源明确，接交结果仍以当前原生任务和收益验证 | [#48](https://github.com/Diluka/beidou-pilot/issues/48) |
 | 无头普通商店买卖补给 | 不能在同一无头实例内完成商店流程 | [#49](https://github.com/Diluka/beidou-pilot/issues/49) |
 | 无头按明确计划分配AP/SP | 可读取点数，分配操作仍需GUI | [#50](https://github.com/Diluka/beidou-pilot/issues/50) |
 | 无头正常更换装备 | `game.equip/unequip` 与 CLI 明确槽位操作，按正常库存更新确认；不自动重试未知结果 | [#51](https://github.com/Diluka/beidou-pilot/issues/51) |
-| 无头实时观察任务变化 | 当前任务域明确live_updates=false | [#52](https://github.com/Diluka/beidou-pilot/issues/52) |
+| 无头实时观察任务变化 | 完整角色包与正常任务增量共同维护；原始进度与关联语义不猜测 | [#52](https://github.com/Diluka/beidou-pilot/issues/52) |
 | 无头施放已学职业技能 | 首批1001004/1001005走原生技能链；其他类型明确不支持 | [#53](https://github.com/Diluka/beidou-pilot/issues/53) |
 | 无头按请求安全复活 | 原生死亡事实与单次正常复活已接入；服务端许可及真实覆盖见任务记录 | [#54](https://github.com/Diluka/beidou-pilot/issues/54) |
 | 一次资源准备供查询与规划直接消费 | Catalog统一消费XML/NX，报告来源、指纹和未知版本 | [#55](https://github.com/Diluka/beidou-pilot/issues/55) |

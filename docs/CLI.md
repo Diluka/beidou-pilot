@@ -54,6 +54,7 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | `walk DIR --seconds N`、`face DIR`、`jump` | 有界方向移动、朝向、跳跃尝试 |
 | `attack`、`pickup`、`use_item ID` | 原生尝试；`use_item`不等于消耗和恢复已确认 |
 | `revive` | 无头发一次正常复活请求并确认同角色恢复；GUI 使用已识别死亡确认框；存活时跳过 |
+| `click REF` | 无头激活当前原生控件或NPC目标引用；GUI保留既有引用与桌面点击流程 |
 | `equip ITEM --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头普通装备；明确背包正槽和身上负槽，核对物品 ID 及实际替换结果 |
 | `unequip --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头卸下普通装备；明确身上负槽和空背包正槽 |
 | `move X`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单根绳梯或单个门户；不是通用寻路 |
@@ -99,6 +100,8 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 
 `hunt` 默认普攻、全部怪物、60秒，`--bounds MIN MAX` 可限定横向区域，`--until-level` 指定停级，`--min-hp-ratio` 默认0.35。`--hp-item` 仅使用明确指定、库存已知的恢复品，不购买或替换药品。技能必须已学且当前后端支持；无头首批仅支持战士 `1001004/1001005`，其他类型明确拒绝。攻击距离是策略接近参数，不保证命中。无可确认的进展、无法通过的地形、生命下限或取消都有明确停止；原始日志保留所属实例，最终经验跨级时不直接相减。
 
+已知近距 `pt7` 脚本门户由原生 Up 输入走正常脚本门户请求，静态目标未知时保留未知，到达以在线地图和位置确认。它不补齐通用路线规划或缺失的静态查询资料。
+
 无头 `use` 接受数字ID的200类药品和201类食品。两端普通200类药品均走Lua原生用药，不要求快捷键绑定；按次数使用可不依赖XML，带HP/MP目标时需要资料已知恢复类型。
 
 无头201类食品不带HP/MP目标时为明确单次消费，仅接受 `--count 1`（默认值），满HP/MP仍会提交一次。它不依赖可选XML；结果 `effect="consumption"`、`effect_confirmed=true` 只表示库存已恰减一。前后HP/MP分别保留，观察到增长时 `recovery_confirmed=true`，否则为 `null`，不能把满血消费说成恢复成功。`healing_metadata_known` 与 `metadata_unavailable` 说明静态恢复资料的已知范围。带HP/MP目标时沿用有界恢复流程，仍需资料已知恢复类型。
@@ -114,6 +117,21 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 `skill` 保留 `native_result`、`dispatched/skill_reason` 和未知效果，顶层 `reason` 继续表达脚本终态。原生数值含义随后端不同：无头枚举0表示准入，GUI保留原返回值，不能仅凭零或非零判断命中。对活动脚本发送原CLI的Ctrl+C/SIGTERM取消并等待放键；不要用第二个动作命令抢占。脚本能力及效果判断见 [CONTROL](CONTROL.md)。
 
 无头 `snapshot` 与 `bridge status` 提供 `dead/revive_requestable`：死亡来自已就绪角色的原生 HP=0；读数不可用时保持未知。`revive_requestable` 只表示客户端请求前置已满足，不能预判事件脚本许可。无头 `revive` 通过共享 Lua 默认等待至多6秒，只有同角色 HP>0 且地图、位置有效才返回 `revived`；存活返回 `already_alive`，均无重复请求。未确认返回 `revive_not_confirmed`，取消/断线保留实际结果；检测到死亡本身不触发复活或重连。参数化等待及脚本用法见 [Lua API](LUA_API.md#无头正常复活)。
+
+## 无头控件交互
+
+先用 `snapshot` 观察 `interaction.page` 的正文和控件，再对选定控件执行一次 `click REF`；场景NPC的原生 `ref` 也使用同一激活入口。`REF` 必须替换为当前观察到的引用：
+
+```bash
+./cli/beidou-pilot --backend headless --instance worker-a --json snapshot
+./cli/beidou-pilot --backend headless --instance worker-a --json click CONTROL_REF
+```
+
+页面只有 `source/title/text/controls`，控件只有 `role/text/enabled/ref`。正文或控件未知时为 `null`，`enabled=null` 不改成 `false`。引用由原生单点生产和验证；CLI不解析引用、不按控件角色拼协议参数，也不自动重新选择或重放失效引用。`--double` 与坐标点击仍仅GUI可用。
+
+激活只报告控件处理或页面变化，不能当作任务完成、奖励或消费到账；随后用当前交互页、`inspect quests`、背包及角色核对。服务端普通脚本页和客户端本地任务页使用同一入口。本地页只显示当前状态能证明的任务条目，先读取真实资料详情，再激活确认控件；无法确认的资格不产生可用确认。缺少 `Quest.nx` 只影响本地任务界面；不根据任务ID制造菜单，不增加直接接交的内容命令。
+
+任务观察已合并完整角色包与本端正常增量，`live_updates=true`，`live_update_kinds` 为 `not_started/started/completed`。原生观察保留原始进度串，关联语义未核实，`linked_progress=null`；不靠重登刷新代替持续观察。
 
 ## 原版 GUI
 
@@ -148,7 +166,7 @@ Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/r
 
 | 命令组 | 用途 |
 | --- | --- |
-| `talk TARGET`、`dialog`、`click REF` | 打开NPC对话、按当前正文选择、操作当前引用 |
+| `talk TARGET`、`dialog` | 原版已有NPC桌面消费者；无头使用通用控件交互 |
 | `ui read/open/close/focus` | 已识别窗口和输入焦点；`ui close all`同时处理普通商店 |
 | `equip ITEM` | 正常 GUI 穿戴并核对结果，不接受无头槽位参数 |
 | `stats`、`skills` | 正常GUI AP/SP操作，并核对结果 |

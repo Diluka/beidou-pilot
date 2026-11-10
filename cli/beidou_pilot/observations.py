@@ -19,7 +19,7 @@ from .errors import ClientError, JsonObject, JsonValue
 from .instances import InstancePaths, selected_instance
 
 
-DOMAINS = frozenset({"stage", "scene", "inventory", "character", "quests", "hotkeys", "dialog", "ui", "shop"})
+DOMAINS = frozenset({"stage", "scene", "inventory", "character", "quests", "hotkeys", "dialog", "interaction", "ui", "shop"})
 
 
 def client_root() -> Path:

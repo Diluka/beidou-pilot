@@ -70,6 +70,8 @@ const char* ActionName(ActionKind kind) {
         return "unequip";
     case ActionKind::Revive:
         return "revive";
+    case ActionKind::Activate:
+        return "activate";
     }
     return "unsupported";
 }
@@ -452,8 +454,8 @@ struct Runtime::Impl {
     }
 
     static int ObserveDomain(lua_State* lua) {
-        static const char* domains[]{"stage",   "scene",  "inventory", "character", "quests",
-                                     "hotkeys", "dialog", "ui",        "shop",      nullptr};
+        static const char* domains[]{"stage",  "scene", "inventory", "character",   "quests", "hotkeys",
+                                     "dialog", "ui",    "shop",      "interaction", nullptr};
         const auto domain = domains[luaL_checkoption(lua, 1, nullptr, domains)];
         const auto& adapter = Self(lua).adapter;
         const auto& state = adapter.Observe();
@@ -484,9 +486,9 @@ struct Runtime::Impl {
         const auto& adapter = Self(lua).adapter;
         lua_newtable(lua);
         String(lua, "backend", adapter.Backend());
-        for (ActionKind kind :
-             {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack, ActionKind::Pickup,
-              ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip, ActionKind::Unequip, ActionKind::Revive})
+        for (ActionKind kind : {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack,
+                                ActionKind::Pickup, ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip,
+                                ActionKind::Unequip, ActionKind::Revive, ActionKind::Activate})
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
@@ -495,16 +497,19 @@ struct Runtime::Impl {
         return 1;
     }
 
-    bool Begin(ActionKind kind, const char* direction, std::uint32_t durationMs, std::uint32_t itemId, int sourceSlot,
-               int destinationSlot, lua_State* lua, std::uint32_t skillId) {
-        Action action;
-        action.kind = kind;
-        action.direction = direction;
-        action.durationMs = durationMs;
-        action.itemId = itemId;
-        action.skillId = skillId;
-        action.sourceSlot = sourceSlot;
-        action.destinationSlot = destinationSlot;
+    static int ReturnAction(lua_State* lua, int, lua_KContext) {
+        const auto& runtime = Self(lua);
+        PushResult(lua, runtime.current->result);
+        return 1;
+    }
+
+    static void RequireAction(lua_State* lua, ActionKind kind) {
+        RequireControl(lua);
+        if (!Self(lua).adapter.Supports(kind)) luaL_error(lua, "unsupported: %s", ActionName(kind));
+    }
+
+    bool Begin(const Action& action, lua_State* lua) {
+        CaptureResult();
         std::string error;
         if (!adapter.Begin(action, error)) {
             lua_pushlstring(lua, error.data(), error.size());
@@ -513,25 +518,32 @@ struct Runtime::Impl {
         return true;
     }
 
-    static int ReturnAction(lua_State* lua, int, lua_KContext) {
-        const auto& runtime = Self(lua);
-        PushResult(lua, runtime.current->result);
-        return 1;
+    static int FinishAction(lua_State* lua, bool accepted) {
+        if (!accepted) return lua_error(lua);
+        auto& runtime = Self(lua);
+        runtime.actionOwner = runtime.current;
+        runtime.current->resultReady = false;
+        runtime.current->wait = WaitFor::Action;
+        return lua_yieldk(lua, 0, 0, ReturnAction);
     }
 
     static int BeginSemantic(lua_State* lua, ActionKind kind, const char* direction, std::uint32_t durationMs,
                              std::uint32_t itemId, int sourceSlot = 0, int destinationSlot = 0,
                              std::uint32_t skillId = 0) {
-        RequireControl(lua);
-        auto& runtime = Self(lua);
-        if (!runtime.adapter.Supports(kind)) return luaL_error(lua, "unsupported: %s", ActionName(kind));
-        runtime.CaptureResult();
-        if (!runtime.Begin(kind, direction, durationMs, itemId, sourceSlot, destinationSlot, lua, skillId))
-            return lua_error(lua);
-        runtime.actionOwner = runtime.current;
-        runtime.current->resultReady = false;
-        runtime.current->wait = WaitFor::Action;
-        return lua_yieldk(lua, 0, 0, ReturnAction);
+        RequireAction(lua, kind);
+        bool accepted;
+        {
+            Action action;
+            action.kind = kind;
+            action.direction = direction;
+            action.durationMs = durationMs;
+            action.itemId = itemId;
+            action.skillId = skillId;
+            action.sourceSlot = sourceSlot;
+            action.destinationSlot = destinationSlot;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
     }
 
     static const char* Direction(lua_State* lua, bool vertical) {
@@ -586,6 +598,23 @@ struct Runtime::Impl {
 
     static int Revive(lua_State* lua) {
         return BeginSemantic(lua, ActionKind::Revive, "", Duration(lua, 1, 6, false), 0);
+    }
+
+    static int Activate(lua_State* lua) {
+        if (lua_gettop(lua) != 1) return luaL_error(lua, "activate accepts only a control reference");
+        size_t length = 0;
+        const auto* reference = luaL_checklstring(lua, 1, &length);
+        if (length == 0 || length > 128) return luaL_error(lua, "control reference must contain 1..128 bytes");
+        RequireAction(lua, ActionKind::Activate);
+        bool accepted;
+        {
+            Action action;
+            action.kind = ActionKind::Activate;
+            action.reference.assign(reference, length);
+            action.durationMs = 60;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
     }
 
     static int ChangeEquipment(lua_State* lua, ActionKind kind) {
@@ -920,6 +949,7 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source, std:
                                       {"equip", Impl::Equip},
                                       {"unequip", Impl::Unequip},
                                       {"revive", Impl::Revive},
+                                      {"activate", Impl::Activate},
                                       {"stop", Impl::Stop},
                                       {"press", Impl::Press},
                                       {"keys", Impl::Keys},

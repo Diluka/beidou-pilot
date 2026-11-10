@@ -14,12 +14,17 @@
 #include "Net/Session.h"
 #include "Net/Packets/InventoryPackets.h"
 #include "Net/Packets/GameplayPackets.h"
+#include "Net/Packets/NpcInteractionPackets.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
+#include <nlnx/nx.hpp>
+#include <nlnx/node.hpp>
 #include <sstream>
 #include <unistd.h>
 
@@ -93,7 +98,12 @@ Json ScriptDocument(const MapleControl::Status* script) {
 
 SharedLuaAdapter::SharedLuaAdapter(std::filesystem::path bridgeDirectory, std::string registeredRun)
     : directory(std::move(bridgeDirectory)), runId(std::move(registeredRun)), runtime(*this),
-      taskTransport(directory.string(), runId) {
+      taskTransport(directory.string(), runId),
+      questInteraction(
+          interaction, [this](const QuestRequest& request, std::string& error) { return RequestQuest(request, error); },
+          [this](std::uint32_t objectId, std::int32_t npcId, std::string& error) {
+              return OpenServerNpc(static_cast<std::int32_t>(objectId), npcId, error);
+          }) {
     state.instanceId = std::to_string(getpid()) + "-" + std::to_string(UnixMs()) + "-" + std::to_string(MonotonicMs());
     if (!directory.empty()) std::filesystem::create_directories(directory);
 }
@@ -221,9 +231,22 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.monsters.clear();
     state.inventory.clear();
     state.drops.clear();
+    auto& dialogue = ms::headless_state().dialogue;
+    if (dialogue.scene_generation != state.sceneGeneration) {
+        const auto revision = dialogue.revision + 1;
+        dialogue = {};
+        dialogue.revision = revision;
+        dialogue.scene_generation = state.sceneGeneration;
+        dialogue.closed_by = "scene_changed";
+    }
     state.dead = state.reviveRequestable = Fact::Unknown;
     if (!state.ready) {
         state.settled = Fact::Unknown;
+        questInteraction.Reset();
+        interaction.ResetContext({state.instanceId, 0, state.sceneGeneration});
+        npcTargets.clear();
+        shownDialogueRevision.reset();
+        localQuestUnavailable.clear();
         return;
     }
     auto& stage = ms::Stage::get();
@@ -302,6 +325,156 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
         drop.landed = nativeDrop.is_landed() ? Fact::True : Fact::False;
         state.drops.push_back(drop);
     }
+    CaptureInteraction();
+}
+
+void SharedLuaAdapter::CaptureInteraction() {
+    if (interaction.ResetContext({state.instanceId, state.character.id, state.sceneGeneration})) {
+        questInteraction.Reset();
+        npcTargets.clear();
+        shownDialogueRevision.reset();
+        localQuestUnavailable.clear();
+    }
+    std::set<std::int32_t> current;
+    for (const auto& entry : *ms::Stage::get().get_npcs().get_npcs()) {
+        const auto& npc = static_cast<const ms::Npc&>(*entry.second);
+        if (!npc.is_active()) continue;
+        const auto oid = npc.get_oid();
+        const auto templateId = npc.get_template_id();
+        current.insert(oid);
+        auto existing = npcTargets.find(oid);
+        if (existing != npcTargets.end() && existing->second.templateId == templateId) continue;
+        if (existing != npcTargets.end()) interaction.RemoveTarget(existing->second.reference);
+        npcTargets[oid] = {templateId, interaction.RegisterTarget([this, oid, templateId](std::string& error) {
+                               return OpenNpc(oid, templateId, error);
+                           })};
+    }
+    for (auto target = npcTargets.begin(); target != npcTargets.end();) {
+        if (current.count(target->first)) {
+            ++target;
+            continue;
+        }
+        interaction.RemoveTarget(target->second.reference);
+        target = npcTargets.erase(target);
+    }
+    const auto& dialogue = ms::headless_state().dialogue;
+    if (shownDialogueRevision && *shownDialogueRevision == dialogue.revision) {
+        questInteraction.Refresh(state, ms::Stage::get().get_player().get_quests());
+        return;
+    }
+    shownDialogueRevision = dialogue.revision;
+    questInteraction.Reset();
+    if (!dialogue.open && !dialogue.response_pending) {
+        interaction.ClosePage();
+        return;
+    }
+    if (dialogue.open) localQuestUnavailable.clear();
+    const auto npcId = dialogue.open ? dialogue.npc_id : dialogue.requested_npc_id;
+    const auto name = nl::nx::String["Npc.img"][npcId]["name"].get_string();
+    InteractionPage page;
+    page.source = dialogue.open ? "server" : "client";
+    page.title = name.empty() ? "NPC对话" : name;
+    if (dialogue.open && dialogue.text_known) page.text = dialogue.text;
+    const bool controlsKnown = dialogue.open && dialogue.text_known && dialogue.choices_complete;
+    if (controlsKnown) page.controls = std::vector<InteractionControl>{};
+    interaction.BeginPage(std::move(page));
+    if (!controlsKnown) return;
+    const auto revision = dialogue.revision;
+    interaction.AddControl("button", "结束", Fact::True, [this, revision, type = dialogue.type](std::string& error) {
+        return RespondNpc(revision, type == 4 ? 0 : -1, std::nullopt, error);
+    });
+    if (dialogue.type == 0) {
+        if (dialogue.previous)
+            interaction.AddControl("button", "上一页", Fact::True, [this, revision](std::string& error) {
+                return RespondNpc(revision, 0, std::nullopt, error);
+            });
+        if (dialogue.next)
+            interaction.AddControl("button", "下一页", Fact::True, [this, revision](std::string& error) {
+                return RespondNpc(revision, 1, std::nullopt, error);
+            });
+        if (!dialogue.previous && !dialogue.next)
+            interaction.AddControl("button", "确认", Fact::True, [this, revision](std::string& error) {
+                return RespondNpc(revision, 1, std::nullopt, error);
+            });
+    } else if (dialogue.type == 1 || dialogue.type == 12) {
+        interaction.AddControl("button", "是", Fact::True, [this, revision](std::string& error) {
+            return RespondNpc(revision, 1, std::nullopt, error);
+        });
+        interaction.AddControl("button", "否", Fact::True, [this, revision](std::string& error) {
+            return RespondNpc(revision, 0, std::nullopt, error);
+        });
+    } else if (dialogue.type == 4) {
+        for (const auto& choice : dialogue.choices)
+            interaction.AddControl(
+                "option", choice.text, Fact::True,
+                [this, revision, id = choice.id](std::string& error) { return RespondNpc(revision, 1, id, error); });
+    }
+}
+
+bool SharedLuaAdapter::OpenNpc(std::int32_t objectId, std::int32_t npcId, std::string& error) {
+    const auto& dialogue = ms::headless_state().dialogue;
+    if (dialogue.open || dialogue.response_pending || interaction.CurrentPage() != nullptr) {
+        error = "interaction_busy";
+        return false;
+    }
+    // CaptureInteraction owns current-world target registration for this entry.
+    localQuestUnavailable.clear();
+    if (questInteraction.Open(static_cast<std::uint32_t>(objectId), npcId, state,
+                              ms::Stage::get().get_player().get_quests(), localQuestUnavailable))
+        return true;
+    return OpenServerNpc(objectId, npcId, error);
+}
+
+bool SharedLuaAdapter::OpenServerNpc(std::int32_t objectId, std::int32_t npcId, std::string& error) {
+    // Both callers have already left or ruled out the current interaction.
+    const auto target = ms::Stage::get().get_npcs().get_npcs()->get(objectId);
+    if (!target || !target->is_active() || static_cast<const ms::Npc&>(*target).get_template_id() != npcId) {
+        error = "stale_interaction_reference";
+        return false;
+    }
+    auto& pending = ms::headless_state().dialogue;
+    ++pending.revision;
+    pending.requested_npc_id = npcId;
+    pending.object_id = objectId;
+    pending.response_pending = true;
+    pending.closed_by.clear();
+    ms::TalkToNPCPacket(objectId).dispatch();
+    CaptureInteraction();
+    return true;
+}
+
+bool SharedLuaAdapter::RequestQuest(const QuestRequest& request, std::string& error) {
+    auto& player = ms::Stage::get().get_player();
+    const auto npc = ms::Stage::get().get_npcs().get_npcs()->get(static_cast<std::int32_t>(request.npcObjectId));
+    if (!npc || !npc->is_active() || static_cast<const ms::Npc&>(*npc).get_template_id() != request.npcId) {
+        error = "stale_interaction_reference";
+        return false;
+    }
+    const auto position = player.get_position();
+    ms::QuestActionPacket(request.phase == QuestPhase::Complete, request.questId, request.npcId, position.x(),
+                          position.y(), std::nullopt)
+        .dispatch();
+    return true;
+}
+
+bool SharedLuaAdapter::RespondNpc(std::uint64_t revision, std::int8_t response, std::optional<std::int32_t> selection,
+                                  std::string& error) {
+    auto& dialogue = ms::headless_state().dialogue;
+    if (!dialogue.open || dialogue.revision != revision) {
+        error = "stale_interaction_reference";
+        return false;
+    }
+    const auto type = dialogue.type;
+    dialogue.open = false;
+    dialogue.response_pending = true;
+    dialogue.closed_by = "local_response";
+    ++dialogue.revision;
+    if (selection)
+        ms::NpcTalkMorePacket(*selection).dispatch();
+    else
+        ms::NpcTalkMorePacket(type, response).dispatch();
+    CaptureInteraction();
+    return true;
 }
 
 bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& error) {
@@ -322,7 +495,12 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     auto& player = stage.get_player();
     result = {};
     result.reason = "native_action_dispatched";
-    if (action.kind == Kind::Revive) {
+    if (action.kind == Kind::Activate) {
+        if (!interaction.Activate(action.reference, {state.instanceId, state.character.id, state.sceneGeneration},
+                                  error))
+            return false;
+        result.reason = "control_activated";
+    } else if (action.kind == Kind::Revive) {
         if (state.character.values[6] > 0) {
             result.effect = "confirmed";
             result.reason = "already_alive";
@@ -665,7 +843,8 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                 {"phase", login.phase},
                 {"unavailable", state.ready ? Json::array() : Json::array({"native_client_not_ready"})}};
     }
-    if (domain != "scene" && domain != "inventory" && domain != "character" && domain != "quests") {
+    if (domain != "scene" && domain != "inventory" && domain != "character" && domain != "quests"
+        && domain != "interaction") {
         status = "unsupported";
         error = "unsupported_observation_domain";
         return nullptr;
@@ -699,6 +878,7 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
             npcs.push_back({{"object_id", npc.get_oid()},
                             {"template_id", npc.get_template_id()},
                             {"name", npc.get_name()},
+                            {"ref", npcTargets.at(npc.get_oid()).reference},
                             {"x", position.x()},
                             {"y", position.y()}});
         }
@@ -778,6 +958,36 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                  Json::array({"skill_names", "skill_requirements", "skill_effects", "skill_expirations",
                               "master_level_when_absent_from_client_records", "original_client_secure_checksums"})}};
     }
+    if (domain == "interaction") {
+        const auto* page = interaction.CurrentPage();
+        if (page == nullptr) {
+            const auto unavailable = localQuestUnavailable.empty() || ms::headless_state().dialogue.response_pending
+                                         ? Json::array()
+                                         : Json::array({localQuestUnavailable});
+            return {{"page", nullptr}, {"unavailable", unavailable}, {"not_covered", Json::array()}};
+        }
+        Json controls = nullptr;
+        if (page->controls) {
+            controls = Json::array();
+            for (const auto& control : *page->controls)
+                controls.push_back({{"role", control.role},
+                                    {"text", control.text},
+                                    {"enabled", FactValue(control.enabled)},
+                                    {"ref", control.ref}});
+        }
+        Json unavailable = Json::array();
+        if (page->source == "server" && !page->text)
+            unavailable.push_back("interaction_page_layout_not_supported");
+        else if (page->source == "server" && !page->controls)
+            unavailable.push_back("interaction_controls_not_supported");
+        return {{"page",
+                 {{"source", page->source},
+                  {"title", page->title},
+                  {"text", page->text ? Json(*page->text) : Json(nullptr)},
+                  {"controls", std::move(controls)}}},
+                {"unavailable", std::move(unavailable)},
+                {"not_covered", Json::array()}};
+    }
     const auto& quests = player.get_quests();
     std::map<std::uint16_t, Json> entries;
     for (const auto& entry : quests.get_started()) {
@@ -790,18 +1000,15 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
     }
     Json records = Json::array();
     for (const auto& entry : entries) records.push_back(entry.second);
-    Json linkedProgress = Json::array();
-    for (const auto& entry : quests.get_in_progress())
-        linkedProgress.push_back({{"quest_id", static_cast<std::uint16_t>(entry.first)},
-                                  {"linked_quest_id", static_cast<std::uint16_t>(entry.second.first)},
-                                  {"progress", entry.second.second}});
     return {{"quests", std::move(records)},
-            {"linked_progress", std::move(linkedProgress)},
-            {"source", "character_data_snapshot"},
-            {"live_updates", false},
+            {"linked_progress", nullptr},
+            {"source", "character_data_snapshot_and_updates"},
+            {"live_updates", true},
+            {"live_update_kinds", Json::array({"not_started", "started", "completed"})},
             {"unavailable", Json::array()},
-            {"not_covered", Json::array({"quest_names", "quest_requirements", "progress_string_semantics",
-                                         "available_quests", "linked_progress_semantics", "live_quest_updates"})}};
+            {"not_covered",
+             Json::array({"quest_names", "quest_requirements", "progress_string_semantics", "available_quests",
+                          "linked_progress_semantics", "npc_quest_hint_updates", "quest_expiration_notifications"})}};
 }
 
 void SharedLuaAdapter::ReadObservation() {
@@ -923,6 +1130,7 @@ Json SharedLuaAdapter::StateDocument() const {
           {"equip", true},
           {"unequip", true},
           {"revive", true},
+          {"activate", true},
           {"stop", true},
           {"raw_keys", false},
           {"skill", true},
