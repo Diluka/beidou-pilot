@@ -54,14 +54,16 @@ namespace ms
 			std::string toname;
 			std::string name;
 			bool intramap;
+			bool scripted;
 			bool valid;
 
-			WarpInfo(int32_t m, bool i, std::string tn, std::string n) : mapid(m), intramap(i), toname(tn), name(n)
+			WarpInfo(int32_t m, bool i, bool s, std::string tn, std::string n) : mapid(m), toname(tn), name(n), intramap(i), scripted(s)
 			{
-				valid = mapid < 999999999;
+				// A scripted portal is requestable even when its static destination is unknown.
+				valid = scripted || mapid < 999999999;
 			}
 
-			WarpInfo() : WarpInfo(999999999, false, {}, {}) {}
+			WarpInfo() : WarpInfo(999999999, false, false, {}, {}) {}
 		};
 
 		Portal(const Animation* animation, Type type, std::string name, bool intramap, Point<int16_t> position, int32_t tomap, std::string toname);

@@ -39,6 +39,20 @@ namespace ms
 		ChangeMapPacket() : OutPacket(OutPacket::Opcode::CHANGEMAP) {}
 	};
 
+	// Opcode: CHANGE_MAP_SPECIAL(100)
+	class ChangeMapSpecialPacket : public OutPacket
+	{
+	public:
+		ChangeMapSpecialPacket(const std::string& portal) : OutPacket(OutPacket::Opcode::CHANGE_MAP_SPECIAL)
+		{
+			// The verified server discards the leading byte and trailing short.
+			// These reserved zeros are not claimed as values read from the GUI client.
+			write_byte(0);
+			write_string(portal);
+			write_short(0);
+		}
+	};
+
 	// Opcode: ENTER_CASHSHOP(40)
 	class EnterCashShopPacket : public OutPacket
 	{

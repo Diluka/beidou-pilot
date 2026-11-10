@@ -92,6 +92,7 @@ namespace ms
 			USE_SKILL = 91,
 
 			/// Gameplay 2
+			CHANGE_MAP_SPECIAL = 100,
 			PARTY_OPERATION = 124,
 			ADMIN_COMMAND = 128,
 			MOVE_MONSTER = 188,

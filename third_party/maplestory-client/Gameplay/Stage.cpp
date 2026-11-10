@@ -221,7 +221,12 @@ namespace ms
 		Point<int16_t> playerpos = player.get_position();
 		Portal::WarpInfo warpinfo = portals.find_warp_at(playerpos);
 
-		if (warpinfo.intramap)
+		if (warpinfo.scripted)
+		{
+			// The server resolves script conditions and destination; do not predict a map change.
+			ChangeMapSpecialPacket(warpinfo.name).dispatch();
+		}
+		else if (warpinfo.intramap)
 		{
 			Point<int16_t> spawnpoint = portals.get_portal_by_name(warpinfo.toname);
 			Point<int16_t> startpos = physics.get_y_below(spawnpoint);
