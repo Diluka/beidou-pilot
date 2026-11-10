@@ -7,7 +7,7 @@
 | `Python offline tests` | Ubuntu 24.04、Python 3.14，运行现有 CLI 离线合同测试 |
 | `Headless image build` | Ubuntu 24.04，使用 `docker/headless/Dockerfile` 构建无头镜像 |
 
-两个任务都从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库，无需安装 pip 依赖；编译器和系统库由 `docker/headless/Dockerfile` 的 builder 安装。
+两个任务都从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库，无需安装 pip 依赖；其中 Lua 任务合同使用 runner 自带的 `gcc/g++` 编译真实共享 Runtime 和固定 Lua 源码，适配器只模拟原生输入与释放边界。无头镜像的编译器和系统库由 `docker/headless/Dockerfile` 的 builder 安装。
 
 [Windows 桥工作流](../.github/workflows/agent-bridge.yml) 另在 PR、`main` 推送和手动触发时执行 `Windows bridge build`。它在 Windows 2022 / VS2022 中从固定 Detours 源码构建 x86 库及桥 DLL，并上传含来源清单、日志和许可证的 `maple-agent-bridge-win32` 工件。构建与下载说明见[桥构建文档](../beidou-ijl15/docs/agent-bridge-build.md)。
 
@@ -19,7 +19,7 @@
 git submodule update --init --recursive
 ```
 
-使用 Python 3.14 运行与 CI 相同的离线测试入口：
+准备 Python 3.14、`gcc/g++` 后，运行与 CI 相同的离线测试入口：
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v

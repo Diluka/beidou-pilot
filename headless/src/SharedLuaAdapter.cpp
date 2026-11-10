@@ -37,11 +37,23 @@ Json FactValue(Fact fact) {
 }
 Json ScriptDocument(const MapleControl::Status* script) {
     if (script == nullptr) return nullptr;
+    Json tasks = Json::array();
+    for (const auto& task : script->tasks)
+        tasks.push_back({{"name", task.name}, {"priority", task.priority}, {"status", task.status},
+            {"wait", task.wait}, {"reason", task.reason.empty() ? Json(nullptr) : Json(task.reason)},
+            {"error", task.error.empty() ? Json(nullptr) : Json(task.error)}});
+    const auto& control = script->control;
     return {{"id", script->id}, {"status", script->status},
         {"reason", script->reason.empty() ? Json(nullptr) : Json(script->reason)},
         {"error", script->error.empty() ? Json(nullptr) : Json(script->error)},
         {"resumes", script->resumes}, {"budget_yields", script->budgetYields},
-        {"last_resume_us", script->lastResumeUs}, {"max_resume_us", script->maxResumeUs}};
+        {"last_resume_us", script->lastResumeUs}, {"max_resume_us", script->maxResumeUs},
+        {"tasks", std::move(tasks)}, {"control", {
+            {"owner", control.owner.empty() ? Json(nullptr) : Json(control.owner)},
+            {"pending", control.pending.empty() ? Json(nullptr) : Json(control.pending)},
+            {"from", control.from.empty() ? Json(nullptr) : Json(control.from)},
+            {"to", control.to.empty() ? Json(nullptr) : Json(control.to)},
+            {"reason", control.reason.empty() ? Json(nullptr) : Json(control.reason)}}}};
 }
 }
 

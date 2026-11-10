@@ -52,6 +52,24 @@ class RejectedCommand(TypedDict):
     reason: str
 
 
+class BridgeTask(TypedDict):
+    name: str
+    priority: int
+    status: Literal["running", "waiting", "completed", "cancelled"]
+    wait: Literal["none", "sleep", "action", "raw_keys", "release", "control"]
+    reason: str | None
+    error: str | None
+
+
+BridgeControl = TypedDict("BridgeControl", {
+    "owner": str | None,
+    "pending": str | None,
+    "from": str | None,
+    "to": str | None,
+    "reason": str | None,
+})
+
+
 class BridgeScript(TypedDict):
     id: str
     status: Literal["running", "completed", "cancelled", "rejected"]
@@ -61,6 +79,8 @@ class BridgeScript(TypedDict):
     budget_yields: int
     last_resume_us: float
     max_resume_us: float
+    tasks: NotRequired[list[BridgeTask]]
+    control: NotRequired[BridgeControl]
 
 
 class BridgeMonster(TypedDict):
@@ -170,6 +190,22 @@ class BridgeClient:
                     or any(type(script.get(field)) not in (int, float) or not math.isfinite(script[field])
                            or script[field] < 0 for field in ("last_resume_us", "max_resume_us"))):
                 raise ClientError("invalid_bridge_state", "原生桥的脚本执行状态字段无效。")
+            if "tasks" in script:
+                tasks = script["tasks"]
+                if (not isinstance(tasks, list) or any(not isinstance(task, dict)
+                        or not isinstance(task.get("name"), str) or not task["name"]
+                        or type(task.get("priority")) is not int or not -0x80000000 <= task["priority"] <= 0x7FFFFFFF
+                        or task.get("status") not in ("running", "waiting", "completed", "cancelled")
+                        or task.get("wait") not in ("none", "sleep", "action", "raw_keys", "release", "control")
+                        or any(field not in task or (task[field] is not None and not isinstance(task[field], str))
+                               for field in ("reason", "error")) for task in tasks)):
+                    raise ClientError("invalid_bridge_state", "原生桥的Lua任务状态字段无效。")
+            if "control" in script:
+                control = script["control"]
+                if (not isinstance(control, dict) or any(field not in control
+                        or (control[field] is not None and not isinstance(control[field], str))
+                        for field in ("owner", "pending", "from", "to", "reason"))):
+                    raise ClientError("invalid_bridge_state", "原生桥的Lua控制权字段无效。")
         if "last_skill" in raw and raw["last_skill"] is not None:
             skill = raw["last_skill"]
             if not isinstance(skill, dict) or any(type(skill.get(field)) is not int

@@ -10,6 +10,7 @@ extern "C" {
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace MapleControl {
 namespace {
@@ -152,23 +153,144 @@ unsigned int Duration(lua_State* lua, int argument, double defaultSeconds, bool 
 }
 
 struct Runtime::Impl {
-    enum class WaitFor { None, Sleep, Action, RawKeys, Release };
+    enum class WaitFor { None, Sleep, Action, RawKeys, Release, Control };
+    struct Task {
+        lua_State* coroutine = nullptr;
+        int reference = LUA_NOREF;
+        TaskStatus report;
+        WaitFor wait = WaitFor::None;
+        std::uint64_t wakeAt = 0;
+        std::uint64_t requestOrder = 0;
+        ActionResult result;
+        bool resultReady = false;
+        bool preempted = false;
+        bool finished = false;
+    };
+
     explicit Impl(Adapter& native) : adapter(native) {}
-    ~Impl() { if (main != nullptr) lua_close(main); }
+    ~Impl() { CloseLua(); }
 
     Adapter& adapter;
     lua_State* main = nullptr;
-    lua_State* coroutine = nullptr;
+    std::vector<std::unique_ptr<Task>> tasks;
+    Task* current = nullptr;
+    Task* owner = nullptr;
+    Task* actionOwner = nullptr;
     Status report;
     std::uint32_t actorId = 0;
     std::uint64_t limitAt = 0;
-    std::uint64_t wakeAt = 0;
-    WaitFor wait = WaitFor::None;
+    std::uint64_t nextRequest = 0;
     bool finishing = false;
     std::string finalStatus;
     std::string finalReason;
     std::vector<std::string> logs;
     std::size_t logBytes = 0;
+
+    Task* WaitingControl() const {
+        Task* next = nullptr;
+        for (const auto& task : tasks) {
+            if (task->finished || task.get() == owner || task->wait != WaitFor::Control) continue;
+            if (next == nullptr || task->report.priority > next->report.priority ||
+                (task->report.priority == next->report.priority && task->requestOrder < next->requestOrder))
+                next = task.get();
+        }
+        return next;
+    }
+
+    void UpdateStatus() {
+        report.tasks.clear();
+        for (const auto& task : tasks) {
+            auto status = task->report;
+            switch (task->wait) {
+            case WaitFor::None: status.wait = "none"; break;
+            case WaitFor::Sleep: status.wait = "sleep"; break;
+            case WaitFor::Action: status.wait = "action"; break;
+            case WaitFor::RawKeys: status.wait = "raw_keys"; break;
+            case WaitFor::Release: status.wait = "release"; break;
+            case WaitFor::Control: status.wait = "control"; break;
+            }
+            if (!task->finished && task->wait != WaitFor::None) status.status = "waiting";
+            report.tasks.push_back(std::move(status));
+        }
+        report.control.owner = owner == nullptr ? "" : owner->report.name;
+        const auto* pending = WaitingControl();
+        report.control.pending = pending == nullptr ? "" : pending->report.name;
+    }
+
+    void Transition(const Task* from, const Task* to, const char* reason) {
+        report.control.from = from == nullptr ? "" : from->report.name;
+        report.control.to = to == nullptr ? "" : to->report.name;
+        report.control.reason = reason;
+    }
+
+    void CaptureResult() {
+        if (actionOwner == nullptr || !adapter.Released()) return;
+        auto& task = *actionOwner;
+        if (task.wait == WaitFor::Action) task.result = adapter.Result();
+        else {
+            task.result = ActionResult{};
+            task.result.dispatched = true;
+            task.result.controlReleased = true;
+            task.result.settled = adapter.Observe().settled;
+            task.result.reason = "control_released";
+        }
+        if (task.preempted) task.result.reason = "control_preempted";
+        task.resultReady = true;
+        task.preempted = false;
+        actionOwner = nullptr;
+    }
+
+    void ReleaseControl(Task& task, const char* reason, Task* next = nullptr) {
+        if (owner != &task) return;
+        owner = nullptr;
+        Transition(&task, next, reason);
+        if (actionOwner == &task && next != nullptr) task.preempted = true;
+        if (!adapter.Released() && !adapter.ReleasePending()) adapter.Release();
+        CaptureResult();
+    }
+
+    void GrantControl() {
+        auto* next = WaitingControl();
+        if (next == nullptr) return;
+        if (owner != nullptr && next->report.priority > owner->report.priority)
+            ReleaseControl(*owner, "priority_preempted", next);
+        CaptureResult();
+        if (owner == nullptr && adapter.Released()) {
+            if (report.control.to != next->report.name || report.control.reason != "priority_preempted")
+                Transition(nullptr, next, "acquired");
+            owner = next;
+        }
+    }
+
+    void ReleaseCoroutine(Task& task) {
+        luaL_unref(main, LUA_REGISTRYINDEX, task.reference);
+        task.reference = LUA_NOREF;
+        task.coroutine = nullptr;
+    }
+
+    void FinishTask(Task& task, const char* status, const std::string& reason) {
+        ReleaseControl(task, reason.c_str());
+        task.finished = true;
+        task.report.status = status;
+        task.report.reason = reason;
+        task.wait = WaitFor::None;
+        if (current != &task) ReleaseCoroutine(task);
+    }
+
+    Task& AddTask(const std::string& name, int priority, lua_State* source, int function) {
+        auto task = std::make_unique<Task>();
+        task->report.name = name;
+        task->report.priority = priority;
+        task->report.status = "running";
+        function = lua_absindex(source, function);
+        task->coroutine = lua_newthread(main);
+        task->reference = luaL_ref(main, LUA_REGISTRYINDEX);
+        lua_pushvalue(source, function);
+        lua_xmove(source, task->coroutine, 1);
+        lua_sethook(task->coroutine, Budget, LUA_MASKCOUNT, 50000);
+        tasks.push_back(std::move(task));
+        return *tasks.back();
+    }
 
     static Impl& Self(lua_State* lua) {
         return **static_cast<Impl**>(lua_getextraspace(lua));
@@ -176,8 +298,18 @@ struct Runtime::Impl {
 
     static void RequireRunning(lua_State* lua) {
         const auto& runtime = Self(lua);
-        if (runtime.report.status != "running" || runtime.finishing)
-            luaL_error(lua, "game actions require a running script");
+        if (runtime.report.status != "running" || runtime.finishing || runtime.current->finished)
+            luaL_error(lua, "game actions require a running task");
+    }
+
+    static void RequireControl(lua_State* lua) {
+        RequireRunning(lua);
+        auto& runtime = Self(lua);
+        if (runtime.tasks.size() == 1 && runtime.owner == nullptr && runtime.adapter.Released()) {
+            runtime.owner = runtime.current;
+            runtime.Transition(nullptr, runtime.owner, "acquired");
+        }
+        if (runtime.owner != runtime.current) luaL_error(lua, "control_not_owned: call game.acquire and observe again");
     }
 
     static int Observe(lua_State* lua) {
@@ -214,18 +346,21 @@ struct Runtime::Impl {
 
     static int ReturnAction(lua_State* lua, int, lua_KContext) {
         const auto& runtime = Self(lua);
-        PushResult(lua, runtime.adapter.Result());
+        PushResult(lua, runtime.current->result);
         return 1;
     }
 
     static int BeginSemantic(lua_State* lua, ActionKind kind, const char* direction,
         std::uint32_t durationMs, std::uint32_t itemId) {
-        RequireRunning(lua);
+        RequireControl(lua);
         auto& runtime = Self(lua);
         if (!runtime.adapter.Supports(kind))
             return luaL_error(lua, "unsupported: %s", ActionName(kind));
+        runtime.CaptureResult();
         if (!runtime.Begin(kind, direction, durationMs, itemId, lua)) return lua_error(lua);
-        runtime.wait = WaitFor::Action;
+        runtime.actionOwner = runtime.current;
+        runtime.current->resultReady = false;
+        runtime.current->wait = WaitFor::Action;
         return lua_yieldk(lua, 0, 0, ReturnAction);
     }
 
@@ -270,29 +405,114 @@ struct Runtime::Impl {
     static int Sleep(lua_State* lua) {
         RequireRunning(lua);
         auto& runtime = Self(lua);
-        runtime.wakeAt = NowMs() + Duration(lua, 1, 0, true);
-        runtime.wait = WaitFor::Sleep;
+        runtime.current->wakeAt = NowMs() + Duration(lua, 1, 0, true);
+        runtime.current->wait = WaitFor::Sleep;
         return lua_yield(lua, 0);
     }
 
     static int ReturnRelease(lua_State* lua, int, lua_KContext) {
-        auto& runtime = Self(lua);
-        ActionResult result;
-        result.dispatched = true;
-        result.controlReleased = runtime.adapter.Released();
-        result.settled = runtime.adapter.Observe().settled;
-        result.reason = "control_released";
-        PushResult(lua, result);
+        PushResult(lua, Self(lua).current->result);
         return 1;
     }
 
     static int Stop(lua_State* lua) {
         RequireRunning(lua);
         auto& runtime = Self(lua);
+        auto& task = *runtime.current;
         if (!runtime.adapter.Supports(ActionKind::Stop)) return luaL_error(lua, "unsupported: stop");
-        runtime.adapter.Release();
-        runtime.wait = WaitFor::Release;
+        if (runtime.owner != &task) {
+            if (runtime.actionOwner == &task && !runtime.adapter.Released()) {
+                task.wait = WaitFor::Release;
+                task.resultReady = false;
+                return lua_yieldk(lua, 0, 0, ReturnRelease);
+            }
+            ActionResult result;
+            result.controlReleased = true;
+            result.reason = "control_not_owned";
+            PushResult(lua, result);
+            return 1;
+        }
+        runtime.CaptureResult();
+        task.wait = WaitFor::Release;
+        task.resultReady = false;
+        runtime.actionOwner = &task;
+        runtime.ReleaseControl(task, "released");
         return lua_yieldk(lua, 0, 0, ReturnRelease);
+    }
+
+    static int Spawn(lua_State* lua) {
+        RequireRunning(lua);
+        std::size_t size = 0;
+        const char* name = luaL_checklstring(lua, 1, &size);
+        const auto priority = luaL_checkinteger(lua, 2);
+        luaL_checktype(lua, 3, LUA_TFUNCTION);
+        if (size == 0 || size > 64 || std::memchr(name, '\0', size) != nullptr)
+            return luaL_error(lua, "task name must contain 1..64 bytes without NUL");
+        if (priority < std::numeric_limits<int>::min() || priority > std::numeric_limits<int>::max())
+            return luaL_error(lua, "task priority must be int32");
+        auto& runtime = Self(lua);
+        for (const auto& task : runtime.tasks)
+            if (task->report.name == name) return luaL_error(lua, "task name already exists");
+        runtime.AddTask(name, static_cast<int>(priority), lua, 3);
+        lua_pushvalue(lua, 1);
+        return 1;
+    }
+
+    static int ReturnAcquire(lua_State*, int, lua_KContext) { return 0; }
+
+    static int Acquire(lua_State* lua) {
+        RequireRunning(lua);
+        auto& runtime = Self(lua);
+        auto& task = *runtime.current;
+        if (runtime.owner == &task) return 0;
+        task.requestOrder = ++runtime.nextRequest;
+        task.wait = WaitFor::Control;
+        runtime.GrantControl();
+        return lua_yieldk(lua, 0, 0, ReturnAcquire);
+    }
+
+    static int CancelTask(lua_State* lua) {
+        RequireRunning(lua);
+        const char* name = luaL_checkstring(lua, 1);
+        auto& runtime = Self(lua);
+        Task* target = nullptr;
+        for (const auto& task : runtime.tasks)
+            if (task->report.name == name) { target = task.get(); break; }
+        if (target == nullptr) return luaL_error(lua, "unknown task");
+        const bool cancelled = !target->finished;
+        if (cancelled) runtime.FinishTask(*target, "cancelled", "task_cancelled");
+        if (target == runtime.current && cancelled) return lua_yield(lua, 0);
+        lua_pushboolean(lua, cancelled);
+        return 1;
+    }
+
+    static int Tasks(lua_State* lua) {
+        auto& runtime = Self(lua);
+        runtime.UpdateStatus();
+        lua_newtable(lua);
+        lua_createtable(lua, static_cast<int>(runtime.report.tasks.size()), 0);
+        lua_Integer index = 1;
+        for (const auto& task : runtime.report.tasks) {
+            lua_newtable(lua);
+            String(lua, "name", task.name);
+            lua_pushinteger(lua, task.priority);
+            lua_setfield(lua, -2, "priority");
+            String(lua, "status", task.status);
+            String(lua, "wait", task.wait);
+            if (!task.reason.empty()) String(lua, "reason", task.reason);
+            if (!task.error.empty()) String(lua, "error", task.error);
+            lua_rawseti(lua, -2, index++);
+        }
+        lua_setfield(lua, -2, "tasks");
+        lua_newtable(lua);
+        const auto& control = runtime.report.control;
+        if (!control.owner.empty()) String(lua, "owner", control.owner);
+        if (!control.pending.empty()) String(lua, "pending", control.pending);
+        if (!control.from.empty()) String(lua, "from", control.from);
+        if (!control.to.empty()) String(lua, "to", control.to);
+        if (!control.reason.empty()) String(lua, "reason", control.reason);
+        lua_setfield(lua, -2, "control");
+        return 1;
     }
 
     bool ApplyRawKeys(lua_State* lua, std::uint32_t durationMs) {
@@ -334,20 +554,27 @@ struct Runtime::Impl {
     }
 
     static int Press(lua_State* lua) {
-        RequireRunning(lua);
+        RequireControl(lua);
         CheckRawKeys(lua);
         const auto duration = Duration(lua, 2, 0.06, false);
         auto& runtime = Self(lua);
+        runtime.CaptureResult();
         if (!runtime.ApplyRawKeys(lua, duration)) return lua_error(lua);
-        runtime.wait = WaitFor::RawKeys;
+        runtime.actionOwner = runtime.current;
+        runtime.current->resultReady = false;
+        runtime.current->wait = WaitFor::RawKeys;
         return lua_yieldk(lua, 0, 0, ReturnRelease);
     }
 
     static int Keys(lua_State* lua) {
-        RequireRunning(lua);
+        RequireControl(lua);
         CheckRawKeys(lua);
         const auto duration = Duration(lua, 2, 0.1, false);
-        if (!Self(lua).ApplyRawKeys(lua, duration)) return lua_error(lua);
+        auto& runtime = Self(lua);
+        runtime.CaptureResult();
+        if (!runtime.ApplyRawKeys(lua, duration)) return lua_error(lua);
+        runtime.actionOwner = runtime.current;
+        runtime.current->resultReady = false;
         return 0;
     }
 
@@ -366,7 +593,7 @@ struct Runtime::Impl {
     }
 
     static int Skill(lua_State* lua) {
-        RequireRunning(lua);
+        RequireControl(lua);
         if (!Self(lua).adapter.SupportsSkill()) return luaL_error(lua, "unsupported: skill");
         const auto skillId = luaL_checkinteger(lua, 1);
         if (skillId < 1 || skillId > 2147483647) return luaL_error(lua, "skill id must be a positive int32");
@@ -386,7 +613,8 @@ struct Runtime::Impl {
         const char* text = luaL_checklstring(lua, 1, &size);
         if (size > 4096 || runtime.logBytes + size > 65536)
             return luaL_error(lua, "script log limit exceeded for this resume");
-        runtime.logs.emplace_back(text, size);
+        if (runtime.current->report.name == "main") runtime.logs.emplace_back(text, size);
+        else runtime.logs.push_back("[" + runtime.current->report.name + "] " + std::string(text, size));
         runtime.logBytes += size;
         return 0;
     }
@@ -404,14 +632,24 @@ struct Runtime::Impl {
         finishing = true;
         finalStatus = status;
         finalReason = reason;
-        adapter.Release();
+        owner = nullptr;
+        for (auto& task : tasks) if (!task->finished) {
+            task->finished = true;
+            task->report.status = "cancelled";
+            task->report.reason = reason;
+            task->wait = WaitFor::None;
+        }
+        if (!adapter.Released() && !adapter.ReleasePending()) adapter.Release();
+        UpdateStatus();
     }
 
     void CloseLua() {
         if (main != nullptr) lua_close(main);
         main = nullptr;
-        coroutine = nullptr;
+        tasks.clear();
+        owner = current = actionOwner = nullptr;
     }
+
 };
 
 Runtime::Runtime(Adapter& adapter) : impl(new Impl(adapter)) {}
@@ -428,7 +666,7 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source,
     runtime.report = Status{};
     runtime.report.id = scriptId;
     runtime.report.status = "rejected";
-    runtime.wait = Impl::WaitFor::None;
+    runtime.nextRequest = 0;
     runtime.finishing = false;
     runtime.finalStatus.clear();
     runtime.finalReason.clear();
@@ -463,22 +701,24 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source,
         {"move", Impl::Move}, {"face", Impl::Face}, {"jump", Impl::Jump},
         {"attack", Impl::Attack}, {"pickup", Impl::Pickup}, {"use_item", Impl::UseItem},
         {"stop", Impl::Stop}, {"press", Impl::Press}, {"keys", Impl::Keys}, {"skill", Impl::Skill},
+        {"spawn", Impl::Spawn}, {"acquire", Impl::Acquire}, {"cancel", Impl::CancelTask}, {"tasks", Impl::Tasks},
         {nullptr, nullptr}
     };
     luaL_newlib(runtime.main, functions);
     lua_setglobal(runtime.main, "game");
-    runtime.coroutine = lua_newthread(runtime.main);
-    const int loaded = luaL_loadbufferx(runtime.coroutine, source.data(), source.size(), scriptId.c_str(), "t");
+    const int loaded = luaL_loadbufferx(runtime.main, source.data(), source.size(), scriptId.c_str(), "t");
     if (loaded != LUA_OK) {
-        const char* message = lua_tostring(runtime.coroutine, -1);
+        const char* message = lua_tostring(runtime.main, -1);
         runtime.report.reason = "script_load_error";
         runtime.report.error = message != nullptr ? message : "Lua load failed";
         error = runtime.report.error;
         runtime.CloseLua();
         return false;
     }
-    lua_sethook(runtime.coroutine, Impl::Budget, LUA_MASKCOUNT, 50000);
+    runtime.owner = &runtime.AddTask("main", 0, runtime.main, -1);
+    runtime.Transition(nullptr, runtime.owner, "acquired");
     runtime.report.status = "running";
+    runtime.UpdateStatus();
     return true;
 }
 
@@ -486,8 +726,10 @@ void Runtime::Tick(bool sceneChanged) {
     auto& runtime = *impl;
     if (runtime.report.status != "running") return;
     const auto& state = runtime.adapter.Observe();
+    runtime.CaptureResult();
     if (runtime.finishing) {
         if (!runtime.adapter.Released()) return;
+        runtime.UpdateStatus();
         runtime.report.status = runtime.finalStatus;
         runtime.report.reason = runtime.finalReason;
         runtime.CloseLua();
@@ -506,29 +748,50 @@ void Runtime::Tick(bool sceneChanged) {
         runtime.Finish("cancelled", "time_limit");
         return;
     }
-    if (sceneChanged || runtime.adapter.ReleasePending()) return;
-    if (runtime.wait == Impl::WaitFor::Sleep && now < runtime.wakeAt) return;
-    if ((runtime.wait == Impl::WaitFor::Action || runtime.wait == Impl::WaitFor::RawKeys ||
-        runtime.wait == Impl::WaitFor::Release) && !runtime.adapter.Released()) return;
-    runtime.wait = Impl::WaitFor::None;
-    const auto started = std::chrono::steady_clock::now();
-    int results = 0;
-    const int status = lua_resume(runtime.coroutine, nullptr, 0, &results);
-    const auto elapsed = std::chrono::steady_clock::now() - started;
-    ++runtime.report.resumes;
-    runtime.report.lastResumeUs = std::chrono::duration<double, std::micro>(elapsed).count();
-    runtime.report.maxResumeUs = (std::max)(runtime.report.maxResumeUs, runtime.report.lastResumeUs);
-    if (!runtime.logs.empty() && !runtime.adapter.Logs(runtime.report.id, runtime.logs))
-        runtime.Finish("cancelled", "script_log_write_failed");
-    runtime.logs.clear();
-    runtime.logBytes = 0;
-    if (runtime.finishing) return;
-    if (status == LUA_OK) runtime.Finish("completed", "script_returned");
-    else if (status != LUA_YIELD) {
-        const char* message = lua_tostring(runtime.coroutine, -1);
-        runtime.report.error = message != nullptr ? message : "Lua runtime error";
-        runtime.Finish("cancelled", "script_error");
+    if (sceneChanged) return;
+    runtime.GrantControl();
+    std::vector<Impl::Task*> scheduled;
+    for (const auto& task : runtime.tasks) if (!task->finished) scheduled.push_back(task.get());
+    std::stable_sort(scheduled.begin(), scheduled.end(), [](const auto* left, const auto* right) {
+        return left->report.priority > right->report.priority;
+    });
+    for (auto* task : scheduled) {
+        if (task->finished) continue;
+        if (task->wait == Impl::WaitFor::Sleep && now < task->wakeAt) continue;
+        if ((task->wait == Impl::WaitFor::Action || task->wait == Impl::WaitFor::RawKeys ||
+            task->wait == Impl::WaitFor::Release) && !task->resultReady) continue;
+        if (task->wait == Impl::WaitFor::Control && runtime.owner != task) continue;
+        task->wait = Impl::WaitFor::None;
+        task->resultReady = false;
+        runtime.current = task;
+        const auto started = std::chrono::steady_clock::now();
+        int results = 0;
+        const int status = lua_resume(task->coroutine, nullptr, 0, &results);
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        ++runtime.report.resumes;
+        runtime.report.lastResumeUs = std::chrono::duration<double, std::micro>(elapsed).count();
+        runtime.report.maxResumeUs = (std::max)(runtime.report.maxResumeUs, runtime.report.lastResumeUs);
+        if (!runtime.logs.empty() && !runtime.adapter.Logs(runtime.report.id, runtime.logs))
+            runtime.Finish("cancelled", "script_log_write_failed");
+        runtime.logs.clear();
+        runtime.logBytes = 0;
+        runtime.current = nullptr;
+        if (runtime.finishing) break;
+        if (task->finished) runtime.ReleaseCoroutine(*task);
+        else if (status == LUA_OK) runtime.FinishTask(*task, "completed", "script_returned");
+        else if (status != LUA_YIELD) {
+            const char* message = lua_tostring(task->coroutine, -1);
+            task->report.error = message != nullptr ? message : "Lua runtime error";
+            runtime.report.error = task->report.error;
+            runtime.Finish("cancelled", "script_error");
+            break;
+        }
+        runtime.CaptureResult();
+        runtime.GrantControl();
     }
+    if (!runtime.finishing && std::all_of(runtime.tasks.begin(), runtime.tasks.end(),
+        [](const auto& task) { return task->finished; })) runtime.Finish("completed", "script_returned");
+    runtime.UpdateStatus();
 }
 
 void Runtime::Cancel(const std::string& reason) {
@@ -536,6 +799,9 @@ void Runtime::Cancel(const std::string& reason) {
 }
 
 bool Runtime::Running() const { return impl->report.status == "running"; }
-const Status* Runtime::CurrentStatus() const { return impl->report.id.empty() ? nullptr : &impl->report; }
+const Status* Runtime::CurrentStatus() const {
+    if (impl->main != nullptr) impl->UpdateStatus();
+    return impl->report.id.empty() ? nullptr : &impl->report;
+}
 
 }
