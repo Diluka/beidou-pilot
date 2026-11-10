@@ -121,17 +121,21 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
     if until_mp is not None and not 1 <= until_mp <= before_character["max_mp"]:
         raise ClientError("invalid_mp_target", "目标 MP 须在 1 与当前最大 MP 之间。")
     catalog = Catalog(backend.root)
-    specification = cast(JsonObject, catalog.item(item_id)["spec"])
+    item_data = catalog.item(item_id)
+    specification = cast(JsonObject, item_data["spec"])
     hp_amount, hp_ratio = specification.get("hp", 0), specification.get("hpR", 0)
     mp_amount, mp_ratio = specification.get("mp", 0), specification.get("mpR", 0)
     heals_hp = any(isinstance(value, (int, float)) and value > 0 for value in (hp_amount, hp_ratio))
     heals_mp = any(isinstance(value, (int, float)) and value > 0 for value in (mp_amount, mp_ratio))
     move_to = specification.get("moveTo")
     teleports = type(move_to) is int and move_to > 0
-    native_potion = item_id // 10000 == 200
-    if backend.name == "headless" and not native_potion:
-        raise ClientError("unsupported_capability", "无头端仅支持普通200类HP/MP药品。", {"item_id": item_id})
-    if not heals_hp and not heals_mp and not teleports and not native_potion:
+    native_use = item_id // 10000 == 200 or backend.name == "headless" and item_id // 10000 == 201
+    consume_only = backend.name == "headless" and item_id // 10000 == 201 and until_hp is None and until_mp is None
+    if backend.name == "headless" and not native_use:
+        raise ClientError("unsupported_capability", "无头端仅支持200类药品和201类食品。", {"item_id": item_id})
+    if consume_only and count != 1:
+        raise ClientError("invalid_food_options", "无头食品按次数使用时仅支持明确单次消费；连续恢复须指定HP/MP目标。")
+    if not heals_hp and not heals_mp and not teleports and not native_use:
         raise ClientError("consumable_not_supported", "当前 use 支持 HP/MP 恢复药与 moveTo 回城/传送卷。",
                           {"item_id": item_id, "spec": specification})
     teleport_before = None
@@ -158,7 +162,7 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
         raise ClientError("healing_metadata_missing", "本地 WZ 未说明该物品恢复 HP，无法按目标 HP 连续使用。")
     if until_mp is not None and not heals_mp:
         raise ClientError("healing_metadata_missing", "本地 WZ 未说明该物品恢复 MP，无法按目标 MP 连续使用。")
-    if native_potion:
+    if native_use:
         from .control_scripts import run_strategy
 
         before_inventory = read_inventory(backend, 2)
@@ -182,7 +186,7 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
             "item_id": item_id, "count": count, "seconds": budget,
             "target_hp": until_hp, "target_mp": until_mp,
             "heals_hp": heals_hp, "heals_mp": heals_mp,
-            "healing_known": heals_hp or heals_mp,
+            "healing_known": heals_hp or heals_mp, "consume_only": consume_only,
         }, min(600, max(3, budget + 2)))
         final = cast(JsonObject, report["last_state"])
         after_character = cast(Character | None, final.get("character"))
@@ -203,7 +207,7 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
             reason = report.get("reason")
         elif target_reached:
             reason = "target_reached"
-        elif after_character is not None and (
+        elif not consume_only and after_character is not None and (
                 ((heals_hp or heals_mp) and (not heals_hp or after_character["hp"] >= after_character["max_hp"])
                  and (not heals_mp or after_character["mp"] >= after_character["max_mp"]))
                 or (not heals_hp and not heals_mp and after_character["hp"] >= after_character["max_hp"]
@@ -215,13 +219,18 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
             reason = "stock_exhausted"
         else:
             reason = "time_budget"
+        effect_confirmed = used > 0 if report["status"] == "completed" and used is not None else None
+        recovery_confirmed = effect_confirmed if not consume_only else (
+            True if effect_confirmed and hp_after is not None and mp_after is not None
+            and (hp_after > before_character["hp"] or mp_after > before_character["mp"]) else None)
         return {**report, "item_id": item_id, "used": used,
                 "quantity_before": quantity_before, "quantity_after": quantity_after,
                 "hp_before": before_character["hp"], "hp_after": hp_after,
                 "mp_before": before_character["mp"], "mp_after": mp_after,
                 "target_hp": until_hp, "target_mp": until_mp, "target_reached": target_reached,
-                "reason": reason, "effect": "recovery",
-                "effect_confirmed": used > 0 if report["status"] == "completed" and used is not None else None,
+                "reason": reason, "effect": "consumption" if consume_only else "recovery",
+                "effect_confirmed": effect_confirmed, "recovery_confirmed": recovery_confirmed,
+                "healing_metadata_known": heals_hp or heals_mp, "metadata_unavailable": item_data["unavailable"],
                 "input_method": "native_lua", "key": None,
                 "inventory_opened": False, "inventory_closed": False,
                 "game_focused": game_focused,
