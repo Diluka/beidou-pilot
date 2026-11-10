@@ -14,6 +14,22 @@
 
 - 客户端运行实例统一为Docker容器，后台常驻到显式关闭；Docker相关定义统一放在`docker/`：`docker/headless/Dockerfile`是无头镜像唯一构建定义，`docker/gui/Dockerfile`构建原版GUI环境，`docker/compose.yaml`负责GUI容器装配。根`.dockerignore`按无头构建上下文保留。宿主不直接运行游戏客户端，不维护宿主PID查杀或进程期限兼容。Docker负责进程/资源生命周期，桥仍负责单次Lua取消、放键和游戏效果确认。游戏资源、私密profile与桥目录外置挂载，不进入镜像或构建上下文。
 
+## 开发工作目录
+
+- 开发工作区以本仓库的主检出目录为根；在链接 worktree 中工作时，也从 `git worktree list --porcelain` 确认主目录，不在链接 worktree 中再嵌套新工作区。
+- 项目开发临时资料与分支检出统一使用以下结构，子目录按实际需要创建：
+
+  ```text
+  tmp/<任务标识>/                 草稿、日志、构建产物、临时参考仓库
+    notes/、logs/、artifacts/、refs/ 按需选用，不预建空目录
+  .worktrees/<Issue号>-<简述>/     每个工作分支的 Git worktree
+  ```
+
+- 不在仓库同级、父目录或宿主 `/tmp` 新建项目开发工作区与临时资料。需要标准临时目录的开发命令，先建立本任务目录，再将该命令的 `TMPDIR` 指向它；容器内部临时目录、工具自身缓存及已有实例状态目录仍按所属组件管理。
+- 实际建立目录时，在根 `.gitignore` 排除 `/tmp/`、`/.worktrees/`；两者不提交，且不得进入镜像构建上下文。临时参考仓库优先浅 clone 到本任务的 `refs/`；可复用结论再整理进正式文档或 Issue。
+- 游戏资源、私密 profile、桥目录和原始验收证据保持已有配置及所属环境，不因开发目录整理擅自迁移运行路径，也不把开发 `tmp/` 当作长期运行或验收环境。
+- 存量外部 worktree 先登记路径、分支、提交和工作区状态，再确认使用者、开放 PR 及子模块后逐个处理；迁移通过 Git 管理，不直接移动活动检出、不删除未提交工作，也不附带清理分支。
+
 ## 需求收集与需求池
 
 - 使用 GitHub Issue 的 `需求池` 标签聚合需求：[查看待处理需求](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20label%3A%E9%9C%80%E6%B1%82%E6%B1%A0)。每个可独立验收的用户故事创建一个 Issue；入池不代表排期或授权开发。
