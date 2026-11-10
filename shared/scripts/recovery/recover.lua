@@ -33,7 +33,7 @@ while used < options.count do
         and (not options.target_hp or c.hp < options.target_hp)
     local mp_needed = (options.heals_mp or not options.healing_known) and c.mp < c.max_mp
         and (not options.target_mp or c.mp < options.target_mp)
-    if not hp_needed and not mp_needed then return end
+    if not hp_needed and not mp_needed and not options.consume_only then return end
     if game.time() >= deadline then return end
     if quantity == 0 then
         assert(used > 0, "item_missing")
@@ -51,7 +51,7 @@ while used < options.count do
         local recovered = options.healing_known and hp_confirmed and mp_confirmed
             or not options.healing_known and
                 ((hp_needed and after.character.hp > c.hp) or (mp_needed and after.character.mp > c.mp))
-        if after_quantity == quantity - 1 and recovered then break end
+        if after_quantity == quantity - 1 and (options.consume_only or recovered) then break end
         assert(game.time() < confirm_until,
             after_quantity == quantity - 1 and "healing_not_confirmed" or "use_not_confirmed")
         game.sleep(0.05)
