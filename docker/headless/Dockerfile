@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS build
+FROM debian:bookworm-slim AS build
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends g++ gcc make binutils liblz4-dev \
@@ -22,32 +22,13 @@ RUN make -C headless -j"${BUILD_JOBS}" \
         CXXFLAGS='-std=c++20 -O2 -DNDEBUG -ffunction-sections -fdata-sections' \
     && strip headless/build/beidou-headless
 
-RUN set -eu; \
-    mkdir -p /runtime/bin /runtime/data /runtime/bridge /runtime/run /runtime/usr/share/licenses/beidou-pilot /licenses/system; \
-    cp headless/build/beidou-headless /runtime/bin/beidou-headless; \
-    ldd headless/build/beidou-headless > /licenses/runtime-libraries.txt; \
-    for library in $(sed -n 's/.*=> \(\/[^ ]*\).*/\1/p;s/^[[:space:]]*\(\/[^ ]*\) (.*/\1/p' /licenses/runtime-libraries.txt); do \
-        cp --parents --dereference "$library" /runtime; \
-        owner="$(dpkg-query --search "*/$(basename "$library")")"; \
-        printf '%s\n' "$owner" | sed 's/: \/.*//' >> /licenses/runtime-packages.txt; \
-    done; \
-    sort -u /licenses/runtime-packages.txt -o /licenses/runtime-packages.txt; \
-    for package in $(cat /licenses/runtime-packages.txt); do \
-        cp --dereference "/usr/share/doc/${package%%:*}/copyright" "/licenses/system/${package%%:*}.copyright"; \
-    done; \
-    for license in /usr/share/common-licenses/*; do \
-        if grep --fixed-strings --quiet "$license" /licenses/system/*.copyright; then \
-            cp --dereference "$license" /licenses/system/; \
-        fi; \
-    done; \
-    multiarch="$(gcc -print-multiarch)"; \
-    mkdir -p "/runtime/usr/lib/${multiarch}"; \
-    cp -a "/usr/lib/${multiarch}/gconv" "/runtime/usr/lib/${multiarch}/gconv"; \
-    cp -a /licenses/. /runtime/usr/share/licenses/beidou-pilot/
-
-
-FROM scratch AS runtime
-COPY --from=build /runtime/ /
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libstdc++6 liblz4-1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /data /bridge
+COPY --from=build /source/headless/build/beidou-headless /bin/beidou-headless
+COPY --from=build /licenses/ /usr/share/licenses/beidou-pilot/
 LABEL org.opencontainers.image.title="beidou-pilot" \
       org.opencontainers.image.description="Persistent native headless game client instance" \
       org.opencontainers.image.licenses="AGPL-3.0-only"
