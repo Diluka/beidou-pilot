@@ -78,6 +78,41 @@ class UnifiedControlContract(unittest.TestCase):
             self.assertEqual(2000003, item_id)
             self.assertEqual({"count": 2, "until_hp": None, "until_mp": None, "seconds": None}, use.call_args.kwargs)
 
+    def test_headless_revive_uses_one_lua_request_and_requires_confirmation(self) -> None:
+        for reason, effect, dispatched, code in (
+            ("already_alive", "confirmed", False, 0),
+            ("revive_confirmed", "confirmed", True, 0),
+            ("revive_not_confirmed", "unknown", True, 2),
+        ):
+            with self.subTest(reason=reason):
+                report = {
+                    "status": "completed",
+                    "last_state": {
+                        "action_result": {
+                            "dispatched": dispatched,
+                            "control_released": True,
+                            "effect": effect,
+                            "reason": reason,
+                        }
+                    },
+                }
+                with patch("beidou_pilot.control_scripts.run_source", return_value=report) as run:
+                    with patch.object(Backend, "_run") as desktop:
+                        output = io.StringIO()
+                        with redirect_stdout(output):
+                            self.assertEqual(
+                                code, main(["--root", str(self.root), "--backend", "headless", "--json", "revive"])
+                            )
+                self.assertEqual(1, run.call_count)
+                self.assertEqual(("game.revive()\n", 8), run.call_args.args[1:])
+                desktop.assert_not_called()
+                result = json.loads(output.getvalue())
+                if code == 0:
+                    self.assertEqual("revived" if dispatched else "already_alive", result["data"]["status"])
+                    self.assertEqual(dispatched, result["data"]["changed"])
+                else:
+                    self.assertEqual("revive_not_confirmed", result["error"]["code"])
+
     def test_headless_equipment_loads_one_lua_request_and_requires_native_confirmation(self) -> None:
         equipped = ["equip", "1002001", "--slot", "2", "--to-slot", "-5", "--seconds", "1.25"]
         removed = ["unequip", "--slot", "-5", "--to-slot", "7"]

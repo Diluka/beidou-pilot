@@ -32,7 +32,7 @@ class Backend:
         if name in {"clientctl", "runtime-ui"}:
             command = [sys.executable, str(self.root / (name + ".py")), *arguments]
         elif name in engines:
-            command = [sys.executable, "-m", "beidou_pilot.engines." + name.replace("-", "_"), *arguments]
+            command = [sys.executable, "-P", "-m", "beidou_pilot.engines." + name.replace("-", "_"), *arguments]
         else:
             raise ClientError("unknown_engine", "未知客户端引擎。", {"engine": name})
         environment = os.environ.copy()

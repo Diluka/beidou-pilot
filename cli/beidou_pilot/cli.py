@@ -97,7 +97,7 @@ def parser() -> Parser:
     q = command("use_item", "按物品ID尝试原生使用；按客户端能力准入")
     q.add_argument("id", type=int)
     command("stop", "释放当前客户端遗留控制；活动命令用Ctrl+C取消")
-    command("revive", "确认当前死亡复活提示并核对恢复；存活时跳过")
+    command("revive", "请求一次本端正常复活并核对恢复；存活时跳过")
     q = command("snapshot", "场景、角色、对话与可操作引用")
     q.add_argument("--all", action="store_true", help="含画外实体")
     q.add_argument("-i", "--interactive", action="store_true", help="简洁列出NPC/对话/掉落")
@@ -304,6 +304,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "attack",
         "pickup",
         "use_item",
+        "revive",
         "stop",
         "move",
         "climb",

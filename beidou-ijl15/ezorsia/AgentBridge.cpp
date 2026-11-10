@@ -97,7 +97,8 @@ public:
     }
 
     bool Supports(MapleControl::ActionKind kind) const override {
-        return kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip;
+        return kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip
+               && kind != MapleControl::ActionKind::Revive;
     }
 
     bool Begin(const MapleControl::Action& action, std::string& error) override {
@@ -567,7 +568,7 @@ bool Publish(const MapleControl::State& state) {
         out << ']';
     } else
         out << "null";
-    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true},\"inventory\":";
+    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"revive\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true},\"inventory\":";
     if (state.inventoryKnown) {
         out << '[';
         bool separator = false;
@@ -963,6 +964,9 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
     case MapleControl::ActionKind::Equip:
     case MapleControl::ActionKind::Unequip:
         error = action.kind == MapleControl::ActionKind::Equip ? "unsupported: equip" : "unsupported: unequip";
+        return false;
+    case MapleControl::ActionKind::Revive:
+        error = "unsupported: revive";
         return false;
     case MapleControl::ActionKind::Stop:
         break;

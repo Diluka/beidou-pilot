@@ -43,19 +43,20 @@
 | `game.use_item(item_id)` | 整数 `1..2147483647`；两端接受普通 `200` 类药品，无头另接受 `201` 类食品 | 是 | 动作结果 |
 | `game.equip(backpack_slot, equipped_slot, seconds)` | 无头普通装备；背包正槽、身上负槽；默认确认期限 `3` 秒，`0 < seconds <= 30` | 是，等待槽位变化或本次执行结束 | 动作结果 |
 | `game.unequip(equipped_slot, backpack_slot, seconds)` | 无头普通装备；身上负槽、空背包正槽；确认期限同 `equip` | 是，等待槽位变化或本次执行结束 | 动作结果 |
+| `game.revive(seconds)` | 无头普通复活；默认确认期限 `6` 秒，`0 < seconds <= 30` | 是，等待同角色恢复或期限结束 | 动作结果 |
 | `game.stop()` | 无 | 是，等待释放确认 | 动作结果 |
 | `game.log(text)` | 字符串，限制见[日志与预算](#日志与预算) | 否 | 无 |
 | `game.keys(keys, seconds)` | 原版可选；默认租期 `0.1`，`0 < seconds <= 30` | 否 | 无 |
 | `game.press(keys, seconds)` | 原版可选；默认 `0.06`，`0 < seconds <= 30` | 是，等待释放确认 | 动作结果 |
 | `game.skill(skill_id)` | 原版可选；整数 `1..2147483647` | 否 | [技能结果](#原版直接技能) |
 
-移动、战斗和按键函数等待原生输入释放或该动作的本地执行边界，服务器效果另行判断；普通换装等待正常库存更新中的源、目的槽位确认。一次函数调用也不保证只发生一次原生重复输入、只攻击一个目标或只拾取一个物品。
+移动、战斗和按键函数等待原生输入释放或该动作的本地执行边界，服务器效果另行判断；普通换装等待正常库存更新中的源、目的槽位确认，普通复活等待同一角色实际恢复。一次函数调用也不保证只发生一次原生重复输入、只攻击一个目标或只拾取一个物品。
 
 ## 任务与控制权
 
 `spawn` 创建由共享运行时调度的独立 Lua 任务。一个任务等待动作、控制权或 `sleep` 时，其他任务仍可调用 `state/observe/time/log/tasks`，观察和判断。任务共享 Lua 全局变量与闭包，不开放用户自行创建协程的入口。
 
-普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/equip/unequip/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
+普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/equip/unequip/revive/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
 
 优先级越大越先取得控制。高优先级任务请求接管时，旧任务立即停止派发冲突动作，运行时请求释放原生输入，确认释放后才授权新任务；等待释放期间其他任务仍可观察。相同优先级保持当前控制者，等待者按请求顺序取得控制。控制权跨 `sleep()` 保留，直到 `stop()`、任务完成、任务取消或更高优先级接管。
 
@@ -128,6 +129,7 @@ end
 | `backend` | string | 当前为 `headless` 或 `beidou` |
 | `move`、`face`、`jump`、`attack`、`pickup`、`use_item`、`stop` | boolean | 后端是否实现该语义动作；当前两端均实现 |
 | `equip`、`unequip` | boolean | 是否实现普通装备穿戴/卸下；当前 headless 为 `true`，原版 Lua 为 `false` |
+| `revive` | boolean | 是否实现正常复活请求与确认；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `raw_keys` | boolean | 是否实现 `keys/press`；当前 headless 为 `false`，原版为 `true` |
 | `skill` | boolean | 是否实现直接技能；当前 headless 为 `false`，原版为 `true` |
 
@@ -155,6 +157,8 @@ end
 | `position` | table | `x/y` 为地图世界坐标数值，通常向右 x 增加、向下 y 增加；不是桌面像素位置 |
 | `facing` | string | `Left` 或 `Right`，注意大小写与动作参数不同 |
 | `settled` | boolean | 已知的本地物理/攻击收束状态；`nil` 表示未观察到该事实 |
+| `dead` | boolean | 无头已就绪角色的原生 HP 为零时为 `true`，HP 为正时为 `false`；读数不可用或后端未提供该事实时为 `nil` |
+| `revive_requestable` | boolean | 无头已知死亡且当前原生控制已释放，可提交一次普通复活请求；不表示服务器或事件脚本必定允许复活，未知为 `nil` |
 | `monsters` | array | 当前客户端已知怪物，元素结构见下文 |
 | `inventory` | array | 五类背包的已占用正槽；不含身上装备负槽 |
 | `drops` | array | 当前客户端已知掉落，元素结构见下文 |
@@ -263,7 +267,7 @@ end
 | `dispatched` | boolean | 本地动作或释放请求是否已派发；不等于游戏效果成功 |
 | `control_released` | boolean | 原生控制是否已确认释放 |
 | `settled` | boolean 或 nil | 本地动作/物理是否已收束，未知为 nil |
-| `effect` | string | 普通换装在源、目的槽位结果已确认时为 `confirmed`；其余动作或未确认的换装为 `unknown`，不能据此认定命中、拾取或恢复 |
+| `effect` | string | 普通换装槽位或普通复活的同角色恢复已确认时为 `confirmed`；其余动作或未确认的变化为 `unknown`，不能据此认定命中、拾取或恢复 |
 | `reason` | string 或 nil | 原生执行说明；例如 `native_action_dispatched`、`already_facing`、`native_attack_not_allowed`、`item_use_requested`、`control_released` |
 
 原生暂不准入可以返回 `dispatched=false`，例如 headless 攻击尚未允许或原版已朝目标方向。它与抛出 Lua 错误不同。`reason` 是诊断信息，不是完整稳定的业务枚举；优先根据状态和结果事实决定下一步。
@@ -281,6 +285,14 @@ end
 `game.use_item(item_id)` 两端接受 `item_id // 10000 == 200` 的普通 HP/MP 药品，无头另接受 `201` 类食品，包括正常任务给予的苹果类物品；库存必须存在。单次原生请求不因 HP/MP 已满而省略，是否需要使用由调用方判断。GUI按物品ID选择消费背包的真实正槽，在既有原生更新阶段直接调用普通用药入口，不读取或修改快捷键绑定；原绑定、改绑和解除绑定使用相同调用。GUI 的非200类食品与传送卷仍由其既有 CLI 背包工作流处理，Lua 不新增支持。
 
 共享层使用60毫秒动作请求，headless 可能立即进入原生释放阶段；GUI为不持键的单次原生调用，在Lua恢复栈之外派发。原生入口没有可消费的成功返回值，`dispatched=true` 只确认进入原生调用，`effect` 仍为 `unknown`。原生准入、库存消耗和HP/MP恢复分别观察，不能以控制释放或脚本完成作为药效成功依据。重复用药、目标阈值与每次消耗确认由 `recovery/recover.lua` 负责；无头 CLI 的201类单次消费只确认库存恰减一，恢复效果另按前后 HP/MP 观察。
+
+### 无头正常复活
+
+`game.revive([seconds])` 仅在调用方明确请求时执行。已就绪且存活时返回 `dispatched=false`、`effect="confirmed"`、`reason="already_alive"`，不发复活请求；原生角色状态不可用时拒绝。已死亡时发出一次不使用复活道具的正常地图请求，并等待同一角色 HP 为正、地图和位置有效。服务器可能先转场再恢复 HP，等待允许这个场景代次变化。
+
+恢复确认后为 `effect="confirmed"`、`reason="revive_confirmed"`；期限内未确认、角色变化或取消时保留 `effect="unknown"` 及本次派发事实，不重发。事件脚本等服务端许可不能由当前客户端预判，`revive_requestable=true` 仅说明客户端请求前置已满足。动作结果和最新 `game.state()` 共同决定后续策略，不自动继续此前战斗、复活或重连。
+
+该 Lua 能力仅 headless 提供。原版 Lua 声明 `revive=false`，调用报 `unsupported: revive`；原版 CLI `revive` 保留已识别 GUI 确认框流程。无头死亡时可以装载只读观察或显式复活 Lua；移动、攻击、用物等原有动作仍拒绝死亡角色。
 
 ### 无头普通换装
 

@@ -15,7 +15,7 @@ BUTTONS = {1: "confirm", 2: "end", 6: "yes", 7: "no", 8192: "back", 8193: "next"
 def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False) -> JsonObject:
     stage = backend.read("stage")
     result: JsonObject = {"stage": stage["stage"], "running": stage["running"],
-                          "channel": stage.get("channel"), "refs": {}}
+                          "channel": stage.get("channel"), "dead": None, "revive_requestable": None, "refs": {}}
     if stage["stage"] != "IN_GAME":
         result["login"] = stage.get("login")
         result["unavailable"] = stage.get("unavailable", [])
@@ -33,6 +33,7 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
     quests = backend.read("quests")
     character_data = backend.read("character")
     catalog = Catalog(backend.root)
+    result.update(dead=observation.get("dead"), revive_requestable=observation.get("revive_requestable"))
     character = cast(JsonObject, observation["character"])
     player = cast(JsonObject, observation["position"])
     map_id = cast(int, observation["map_id"])
