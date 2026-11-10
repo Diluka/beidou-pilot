@@ -13,7 +13,7 @@ namespace MapleControl {
 
 // Unknown is kept separate from a known false value in both Lua and host results.
 enum class Fact { Unknown, False, True };
-enum class ActionKind { Move, Face, Jump, Attack, Pickup, UseItem, Stop };
+enum class ActionKind { Move, Face, Jump, Attack, Pickup, UseItem, Stop, Equip, Unequip };
 
 struct Character {
     std::uint32_t id = 0;
@@ -82,6 +82,8 @@ struct Action {
     std::string direction; // left/right/up/down; Face accepts left/right.
     std::uint32_t durationMs = 0;
     std::uint32_t itemId = 0;
+    int sourceSlot = 0;
+    int destinationSlot = 0;
 };
 
 struct ActionResult {

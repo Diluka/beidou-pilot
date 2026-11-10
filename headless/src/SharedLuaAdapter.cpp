@@ -4,6 +4,7 @@
 #include "LoginState.h"
 
 #include "Character/Player.h"
+#include "Data/EquipData.h"
 #include "Gameplay/Stage.h"
 #include "Gameplay/MapleMap/Mob.h"
 #include "Gameplay/MapleMap/Npc.h"
@@ -11,6 +12,7 @@
 #include "Gameplay/MapleMap/MesoDrop.h"
 #include "IO/KeyType.h"
 #include "Net/Session.h"
+#include "Net/Packets/InventoryPackets.h"
 
 #include <array>
 #include <cmath>
@@ -254,6 +256,92 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
         }
         player.use_item(action.itemId);
         result.reason = "item_use_requested";
+    } else if (action.kind == Kind::Equip || action.kind == Kind::Unequip) {
+        const bool equipping = action.kind == Kind::Equip;
+        const auto& inventory = player.get_inventory();
+        const int backpackSlot = equipping ? action.sourceSlot : action.destinationSlot;
+        const int equippedSignedSlot = equipping ? action.destinationSlot : action.sourceSlot;
+        if (equippedSignedSlot < -ms::EquipSlot::BELT) {
+            error = "unsupported: ordinary_equipment_slot_required";
+            return false;
+        }
+        const int equippedSlot = -equippedSignedSlot;
+        if (backpackSlot > inventory.get_slotmax(ms::InventoryType::EQUIP)) {
+            error = "equipment_backpack_slot_out_of_range";
+            return false;
+        }
+        const auto source = inventory.get_equip(equipping ? ms::InventoryType::EQUIP : ms::InventoryType::EQUIPPED,
+                                                equipping ? backpackSlot : equippedSlot);
+        const auto destination = inventory.get_equip(equipping ? ms::InventoryType::EQUIPPED : ms::InventoryType::EQUIP,
+                                                     equipping ? equippedSlot : backpackSlot);
+        if (!source) {
+            error = "equipment_source_missing";
+            return false;
+        }
+        if (!equipping && destination) {
+            error = "equipment_destination_occupied";
+            return false;
+        }
+        const auto& data = ms::EquipData::get(source->get_item_id());
+        if (!data.is_valid() || data.get_itemdata().is_cashitem() || data.get_eqslot() == ms::EquipSlot::NONE) {
+            error = "unsupported: ordinary_equipment_required";
+            return false;
+        }
+        const bool ringSlot = data.get_eqslot() == ms::EquipSlot::RING1
+                              && (equippedSlot == ms::EquipSlot::RING1 || equippedSlot == ms::EquipSlot::RING2
+                                  || equippedSlot == ms::EquipSlot::RING3 || equippedSlot == ms::EquipSlot::RING4);
+        if (equippedSlot != data.get_eqslot() && !ringSlot) {
+            error = "equipment_slot_mismatch";
+            return false;
+        }
+        if (player.get_look().get_alerted()) {
+            error = "equipment_change_while_alerted";
+            return false;
+        }
+        if (equipping) {
+            if (destination && ms::EquipData::get(destination->get_item_id()).get_itemdata().is_cashitem()) {
+                error = "unsupported: ordinary_equipment_required";
+                return false;
+            }
+            const auto& stats = player.get_stats();
+            const auto gender = data.get_itemdata().get_gender();
+            if ((gender == 0 && stats.get_female()) || (gender == 1 && !stats.get_female())) {
+                error = "equipment_gender_requirement";
+                return false;
+            }
+            const auto job = stats.get_job().get_id() / 100;
+            const auto requiredJob = data.get_reqstat(ms::MapleStat::JOB);
+            const bool allowedJob =
+                requiredJob == 0 || ((requiredJob == 1 || requiredJob == 3) && (job == 1 || job >= 20))
+                || ((requiredJob == 2 || requiredJob == 3) && job == 2) || (requiredJob == 4 && job == 3)
+                || (requiredJob == 8 && job == 4) || (requiredJob == 16 && job == 5);
+            if (!allowedJob) {
+                error = "equipment_job_requirement";
+                return false;
+            }
+            if (data.get_reqstat(ms::MapleStat::LEVEL) > stats.get_stat(ms::MapleStat::LEVEL)) {
+                error = "equipment_level_requirement";
+                return false;
+            }
+            for (const auto& [base, total] : std::array{std::pair{ms::MapleStat::STR, ms::EquipStat::STR},
+                                                        std::pair{ms::MapleStat::DEX, ms::EquipStat::DEX},
+                                                        std::pair{ms::MapleStat::INT, ms::EquipStat::INT},
+                                                        std::pair{ms::MapleStat::LUK, ms::EquipStat::LUK}}) {
+                if (data.get_reqstat(base) > stats.get_total(total)) {
+                    error = "equipment_attribute_requirement";
+                    return false;
+                }
+            }
+        }
+        equipmentChange = EquipmentChange{action.sourceSlot, action.destinationSlot, source.get(),
+                                          destination.get(), state.character.id,     state.sceneGeneration};
+        if (equipping)
+            ms::EquipItemPacket(backpackSlot, static_cast<ms::EquipSlot::Id>(equippedSlot)).dispatch();
+        else {
+            // EQUIPPED is an internal container (7); MOVE_ITEM uses EQUIP and a negative source slot.
+            ms::MoveItemPacket(ms::InventoryType::EQUIP, action.sourceSlot, backpackSlot, 1).dispatch();
+        }
+        result.reason = "equipment_change_requested";
     } else {
         ms::KeyAction::Id key = ms::KeyAction::LENGTH;
         if (action.kind == Kind::Move) {
@@ -289,7 +377,7 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     result.controlReleased = false;
     active = true;
     actionUntilMs = MonotonicMs() + action.durationMs;
-    if (!heldAction) ApplyRelease();
+    if (!heldAction && !equipmentChange) ApplyRelease();
     return true;
 }
 
@@ -299,6 +387,9 @@ void SharedLuaAdapter::ApplyRelease() {
         heldAction.reset();
         ++inputEvents;
     }
+    if (equipmentChange && result.reason == "equipment_change_requested")
+        result.reason = "equipment_confirmation_stopped";
+    equipmentChange.reset();
     active = false;
     releasePending = true;
     releaseTick = currentTick;
@@ -399,7 +490,30 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
             commandReason = "stopped";
         }
     }
-    if (active && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs))
+    if (active && equipmentChange) {
+        const auto& change = *equipmentChange;
+        if (!state.ready || state.character.values[6] == 0 || state.character.id != change.characterId
+            || state.sceneGeneration != change.sceneGeneration) {
+            result.reason = "equipment_context_changed";
+            ApplyRelease();
+        } else {
+            const auto& inventory = ms::Stage::get().get_player().get_inventory();
+            const bool equipping = change.sourceSlot > 0;
+            const auto source = inventory.get_equip(equipping ? ms::InventoryType::EQUIP : ms::InventoryType::EQUIPPED,
+                                                    equipping ? change.sourceSlot : -change.sourceSlot);
+            const auto destination =
+                inventory.get_equip(equipping ? ms::InventoryType::EQUIPPED : ms::InventoryType::EQUIP,
+                                    equipping ? -change.destinationSlot : change.destinationSlot);
+            if (destination.get() == change.source && source.get() == change.destination) {
+                result.effect = "confirmed";
+                result.reason = "equipment_change_confirmed";
+                ApplyRelease();
+            } else if (MonotonicMs() >= actionUntilMs) {
+                result.reason = "equipment_not_confirmed";
+                ApplyRelease();
+            }
+        }
+    } else if (active && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs))
         ApplyRelease();
     ReadCommand(externalActionBusy);
     runtime.Tick(changed);
@@ -680,6 +794,8 @@ Json SharedLuaAdapter::StateDocument() const {
           {"attack", true},
           {"pickup", true},
           {"use_item", true},
+          {"equip", true},
+          {"unequip", true},
           {"stop", true},
           {"raw_keys", false},
           {"skill", false}}},

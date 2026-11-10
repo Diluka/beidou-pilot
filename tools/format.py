@@ -12,7 +12,10 @@ SOURCES = {
     "ruff": (
         "tools/format.py",
         "harness/**/*.py",
+        "cli/beidou_pilot/cli.py",
+        "cli/beidou_pilot/control_scripts.py",
         "cli/beidou_pilot/task_management.py",
+        "cli/test/test_unified_control.py",
         "cli/test/test_task_management.py",
         "cli/test/test_lua_runtime.py",
         "cli/test/test_task_transport.py",

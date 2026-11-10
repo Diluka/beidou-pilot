@@ -45,6 +45,8 @@ Python、Lua 按现有模块职责组织。harness 的 CLI、Controller、协议
 
 白名单以 [format.py](../tools/format.py) 为唯一来源。本批覆盖格式入口自身、近期 harness、任务管理、共享 Runtime、无头适配接线、GUI 原生输入/物品核心及直接合同；Lua 仅覆盖列入白名单的示例。未列入的历史 CLI、策略脚手架和上游改造文件保留周边惯例。
 
+装备接线整合只额外纳入实际触及的 `cli.py`、`control_scripts.py` 和 `test_unified_control.py`，不因此扩大到其余历史 CLI 文件。
+
 第三方原始源码、生成文件、Docker 安装文件、Shell 和 Makefile 不在本批自动整理范围。Shell 按模块保留周边写法：GUI 脚本的块缩进为两空格，harness 入口的块缩进为四空格，续行沿用各自现有形式；Makefile 命令行保留语法必需的 Tab。此范围外的文件不因缺少格式检查而被宣称已经统一。
 
 `beidou-ijl15/` 的历史 Windows 项目保留现有 GBK、带 BOM 的 UTF-8、UTF-16LE 及混合换行事实；`.editorconfig` 对该目录取消通用字符集、LF、末尾换行和行尾空白设置，避免保存时顺手转码或重排历史文件。新自维护源码通常使用 UTF-8；参与既有 GUI 构建且含中文的新文件按[原构建约定](../beidou-ijl15/tools/build-agent-bridge.ps1)保存为带 BOM 的 UTF-8。格式白名单与编码例外独立，本批不转换历史编码，不改 MSVC 编译编码。

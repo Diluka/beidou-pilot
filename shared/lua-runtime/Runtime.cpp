@@ -64,6 +64,10 @@ const char* ActionName(ActionKind kind) {
         return "use_item";
     case ActionKind::Stop:
         return "stop";
+    case ActionKind::Equip:
+        return "equip";
+    case ActionKind::Unequip:
+        return "unequip";
     }
     return "unsupported";
 }
@@ -466,20 +470,24 @@ struct Runtime::Impl {
         const auto& adapter = Self(lua).adapter;
         lua_newtable(lua);
         String(lua, "backend", adapter.Backend());
-        for (ActionKind kind : {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack,
-                                ActionKind::Pickup, ActionKind::UseItem, ActionKind::Stop})
+        for (ActionKind kind :
+             {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack, ActionKind::Pickup,
+              ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip, ActionKind::Unequip})
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
         return 1;
     }
 
-    bool Begin(ActionKind kind, const char* direction, std::uint32_t durationMs, std::uint32_t itemId, lua_State* lua) {
+    bool Begin(ActionKind kind, const char* direction, std::uint32_t durationMs, std::uint32_t itemId, int sourceSlot,
+               int destinationSlot, lua_State* lua) {
         Action action;
         action.kind = kind;
         action.direction = direction;
         action.durationMs = durationMs;
         action.itemId = itemId;
+        action.sourceSlot = sourceSlot;
+        action.destinationSlot = destinationSlot;
         std::string error;
         if (!adapter.Begin(action, error)) {
             lua_pushlstring(lua, error.data(), error.size());
@@ -495,12 +503,13 @@ struct Runtime::Impl {
     }
 
     static int BeginSemantic(lua_State* lua, ActionKind kind, const char* direction, std::uint32_t durationMs,
-                             std::uint32_t itemId) {
+                             std::uint32_t itemId, int sourceSlot = 0, int destinationSlot = 0) {
         RequireControl(lua);
         auto& runtime = Self(lua);
         if (!runtime.adapter.Supports(kind)) return luaL_error(lua, "unsupported: %s", ActionName(kind));
         runtime.CaptureResult();
-        if (!runtime.Begin(kind, direction, durationMs, itemId, lua)) return lua_error(lua);
+        if (!runtime.Begin(kind, direction, durationMs, itemId, sourceSlot, destinationSlot, lua))
+            return lua_error(lua);
         runtime.actionOwner = runtime.current;
         runtime.current->resultReady = false;
         runtime.current->wait = WaitFor::Action;
@@ -544,6 +553,25 @@ struct Runtime::Impl {
         if (itemId < 1 || itemId > 2147483647) return luaL_error(lua, "item id must be a positive int32");
         return BeginSemantic(lua, ActionKind::UseItem, "", 60, static_cast<std::uint32_t>(itemId));
     }
+
+    static int ChangeEquipment(lua_State* lua, ActionKind kind) {
+        const auto sourceSlot = luaL_checkinteger(lua, 1);
+        const auto destinationSlot = luaL_checkinteger(lua, 2);
+        if (sourceSlot < std::numeric_limits<int>::min() || sourceSlot > std::numeric_limits<int>::max()
+            || destinationSlot < std::numeric_limits<int>::min() || destinationSlot > std::numeric_limits<int>::max())
+            return luaL_error(lua, "equipment slots must fit an int");
+        if (kind == ActionKind::Equip) {
+            if (sourceSlot <= 0 || destinationSlot >= 0)
+                return luaL_error(lua, "equip requires a positive backpack slot and a negative equipped slot");
+        } else if (sourceSlot >= 0 || destinationSlot <= 0)
+            return luaL_error(lua, "unequip requires a negative equipped slot and a positive backpack slot");
+        return BeginSemantic(lua, kind, "", Duration(lua, 3, 3, false), 0, static_cast<int>(sourceSlot),
+                             static_cast<int>(destinationSlot));
+    }
+
+    static int Equip(lua_State* lua) { return ChangeEquipment(lua, ActionKind::Equip); }
+
+    static int Unequip(lua_State* lua) { return ChangeEquipment(lua, ActionKind::Unequip); }
 
     static int Sleep(lua_State* lua) {
         RequireRunning(lua);
@@ -854,6 +882,8 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source, std:
                                       {"attack", Impl::Attack},
                                       {"pickup", Impl::Pickup},
                                       {"use_item", Impl::UseItem},
+                                      {"equip", Impl::Equip},
+                                      {"unequip", Impl::Unequip},
                                       {"stop", Impl::Stop},
                                       {"press", Impl::Press},
                                       {"keys", Impl::Keys},
