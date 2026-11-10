@@ -114,7 +114,8 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
                   quest_observation={key: quests[key] for key in ("data_source", "live_updates", "live_update_kinds", "not_covered") if key in quests},
                   refs=refs)
     if interaction is not None:
-        result["interaction"] = {"page": interaction["page"]}
+        result["interaction"] = {"page": interaction["page"],
+                                 **{key: interaction[key] for key in ("unavailable", "not_covered") if key in interaction}}
     else:
         result["dialog"] = offer
     if debug:

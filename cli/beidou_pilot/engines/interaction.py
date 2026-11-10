@@ -2,7 +2,7 @@
 """读取当前原生交互页面；控件引用保持原样。"""
 
 import json
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 
 from ..observations import observe_domain
 
@@ -23,6 +23,8 @@ class InteractionPage(TypedDict):
 
 class InteractionSnapshot(TypedDict):
     page: InteractionPage | None
+    unavailable: NotRequired[list[str]]
+    not_covered: NotRequired[list[str]]
 
 
 def read_interaction() -> InteractionSnapshot:

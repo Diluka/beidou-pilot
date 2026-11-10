@@ -142,6 +142,22 @@ public:
 // This boundary controls native completion; it does not simulate inventory packets or equipment rules.
 class ConfirmationBoundary final : public NativeBoundary {
 public:
+    MapleControl::Observation ObserveDomain(const std::string& domain) const override {
+        if (domain != "interaction") return NativeBoundary::ObserveDomain(domain);
+        using MapleControl::Value;
+        return {"ok",
+                Value::Object(
+                    {{"page", Value::Object(
+                                  {{"source", "native_fixture"},
+                                   {"title", "Panel"},
+                                   {"text", "Current page"},
+                                   {"controls", Value::Array({Value::Object({{"role", "button"},
+                                                                             {"text", "Next"},
+                                                                             {"enabled", true},
+                                                                             {"ref", "opaque-native-control"}})})}})}}),
+                {}};
+    }
+
     bool Supports(MapleControl::ActionKind kind) const override {
         if (kind == MapleControl::ActionKind::Revive) return reviveSupported;
         if (kind == MapleControl::ActionKind::Activate) return activateSupported;
@@ -832,7 +848,11 @@ void ActivationRequests() {
     Check(runtime.Start("activation", R"lua(
 assert(game.capabilities().activate)
 assert(game.talk == nil and game.respond == nil and game.quest_start == nil and game.quest_complete == nil)
-local result = game.activate("opaque-native-control")
+local observed = game.observe("interaction")
+assert(observed.status == "ok")
+local control = observed.data.page.controls[1]
+assert(control.role == "button" and control.text == "Next" and control.enabled)
+local result = game.activate(control.ref)
 assert(result.dispatched and result.control_released and result.effect == "unknown")
 assert(result.reason == "control_activated")
 )lua",

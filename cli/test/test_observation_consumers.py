@@ -121,12 +121,16 @@ class SnapshotConsumerContract(unittest.TestCase):
 
     def test_unknown_interaction_text_and_controls_stay_unknown(self) -> None:
         self.backend.name = "headless"
-        page = {"source": "client", "title": "NPC对话", "text": None, "controls": None}
-        self.domains["interaction"]["page"] = page
+        page = {"source": "server", "title": "NPC对话", "text": None, "controls": None}
+        self.domains["interaction"].update(page=page, unavailable=["interaction_page_layout_not_supported"],
+                                           not_covered=[], client={"container_id": "native-metadata"})
         with patch("beidou_pilot.control_scripts.run_source") as run:
             report = collect(self.backend)
         run.assert_not_called()
         self.assertEqual(page, report["interaction"]["page"])
+        self.assertEqual(["interaction_page_layout_not_supported"], report["interaction"]["unavailable"])
+        self.assertEqual([], report["interaction"]["not_covered"])
+        self.assertNotIn("client", report["interaction"])
         self.assertIn("交互正文：未知", format_snapshot(report))
         self.assertIn("交互控件：未知", format_snapshot(report))
 
