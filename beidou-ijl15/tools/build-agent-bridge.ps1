@@ -53,6 +53,7 @@ $env:CL = '/source-charset:.936 /execution-charset:.936'
 try {
     & $msbuild ezorsia.sln /m /t:Rebuild /nologo `
         /p:Configuration=Release /p:Platform=x86 /p:PlatformToolset=v143 `
+        /p:LanguageStandard=stdcpp17 `
         "/p:WindowsTargetPlatformVersion=$sdkVersion" `
         /verbosity:minimal /fileLogger '/fileLoggerParameters:LogFile=out/build.log;Verbosity=normal'
     if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE." }
@@ -125,6 +126,7 @@ $manifest = [ordered]@{
     }
     toolchain = [ordered]@{
         platform_toolset = 'v143'
+        language_standard = 'C++17'
         msvc_version = $msvcVersion
         msbuild_version = $msbuildVersion
         windows_sdk_version = $sdkVersion
