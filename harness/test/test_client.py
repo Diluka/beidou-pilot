@@ -10,7 +10,7 @@ import unittest
 from beidou_game_ai.client import GameClient, GameClientError
 
 
-FAKE_CLI = r'''
+FAKE_CLI = r"""
 import json
 import os
 from pathlib import Path
@@ -76,7 +76,7 @@ elif command[:2] == ["script", "run"]:
         result({"status": "completed", "cancelled": False, "last_state": state, "parsed_code": code})
 else:
     raise SystemExit("unexpected command")
-'''
+"""
 
 
 class ClientContract(unittest.IsolatedAsyncioTestCase):
@@ -85,16 +85,28 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.cli = self.root / "fake-cli"
-        self.cli.write_text("#!" + sys.executable + "\n" + FAKE_CLI.replace(
-            "__CLI_SOURCE__", repr(str(Path(__file__).resolve().parents[2] / "cli"))))
+        self.cli.write_text(
+            "#!"
+            + sys.executable
+            + "\n"
+            + FAKE_CLI.replace("__CLI_SOURCE__", repr(str(Path(__file__).resolve().parents[2] / "cli")))
+        )
         self.cli.chmod(0o700)
         (self.root / "status.json").write_text('{"running":true,"stage":"IN_GAME"}')
         self.path = self.root / "bridge.json"
-        self.path.write_text(json.dumps({
-            "instance_id": "native-alpha", "run_id": "run-a", "seq": 1,
-            "observed_at_ms": 0, "held_keys": [], "script": None,
-            "command": {"id": None, "status": "idle"},
-        }))
+        self.path.write_text(
+            json.dumps(
+                {
+                    "instance_id": "native-alpha",
+                    "run_id": "run-a",
+                    "seq": 1,
+                    "observed_at_ms": 0,
+                    "held_keys": [],
+                    "script": None,
+                    "command": {"id": None, "status": "idle"},
+                }
+            )
+        )
         self.client = GameClient(self.cli, self.root, "headless", "alpha")
 
     async def wait_for_held_input(self) -> None:
@@ -108,9 +120,11 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
     async def test_observes_and_executes_using_only_fixed_cli_identity(self) -> None:
         observation = await self.client.observe()
         self.assertTrue(observation["running"])
-        self.assertEqual(("native-alpha", "run-a", "IN_GAME"),
-                         (observation["instance_id"], observation["run_id"], observation["snapshot"]["stage"]))
-        code = '--观察\n' + r'game.log("中文：\"ok\"")' + '\n'
+        self.assertEqual(
+            ("native-alpha", "run-a", "IN_GAME"),
+            (observation["instance_id"], observation["run_id"], observation["snapshot"]["stage"]),
+        )
+        code = "--观察\n" + r'game.log("中文：\"ok\"")' + "\n"
         report = await self.client.run_lua(code, 1.25)
         self.assertEqual("completed", report["status"])
         self.assertEqual(code, report["parsed_code"])
@@ -120,8 +134,8 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
         commands = []
         for call in self.calls():
             arguments = call["arguments"]
-            self.assertEqual(prefix, arguments[:len(prefix)])
-            commands.append(arguments[len(prefix):])
+            self.assertEqual(prefix, arguments[: len(prefix)])
+            commands.append(arguments[len(prefix) :])
         self.assertIn(["script", "run", "--code=" + code, "--seconds", "1.25"], commands)
         self.assertNotIn(["close"], commands)
         self.assertFalse(self.client.running)
@@ -148,8 +162,9 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
         (self.root / "allow-release").touch()
         state = await cancellation
         report = await script
-        self.assertEqual(([], "cancelled", "completed"),
-                         (state["held_keys"], state["script"]["status"], state["command"]["status"]))
+        self.assertEqual(
+            ([], "cancelled", "completed"), (state["held_keys"], state["script"]["status"], state["command"]["status"])
+        )
         self.assertEqual("cancelled", report["status"])
         runs = [call for call in self.calls() if "run" in call["arguments"]]
         self.assertEqual(1, len(runs))

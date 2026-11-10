@@ -1,0 +1,39 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{py,lua}]
+indent_style = space
+indent_size = 4
+
+[docker/gui/*.sh]
+indent_style = space
+indent_size = 2
+
+[docker/harness/*.sh]
+indent_style = space
+indent_size = 4
+
+[{Makefile,**/Makefile}]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false
+
+[third_party/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset
+
+[beidou-ijl15/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset

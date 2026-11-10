@@ -1,0 +1,40 @@
+name: Code format
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  code-format:
+    name: Code format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Install pinned formatters
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          versions = json.loads(Path("tools/format_versions.json").read_text())
+          subprocess.run([sys.executable, "-m", "pip", "install",
+                          "ruff==" + versions["ruff"], "clang-format==" + versions["clang-format"]], check=True)
+          subprocess.run(["npm", "install", "--prefix", str(Path.home() / ".local/format-tools"),
+                          "--no-audit", "--no-fund", "@johnnymorganz/stylua-bin@" + versions["stylua"]], check=True)
+          PY
+          echo "$HOME/.local/format-tools/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Check self-maintained source batch
+        run: python3 tools/format.py --check

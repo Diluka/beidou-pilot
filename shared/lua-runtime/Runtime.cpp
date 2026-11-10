@@ -15,8 +15,9 @@ extern "C" {
 namespace MapleControl {
 namespace {
 std::uint64_t NowMs() {
-    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count());
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
 }
 
 void Integer(lua_State* lua, const char* name, std::uint64_t value) {
@@ -40,22 +41,33 @@ void String(lua_State* lua, const char* name, const std::string& value) {
 }
 
 void ObservedFact(lua_State* lua, const char* name, Fact value) {
-    if (value == Fact::Unknown) lua_pushnil(lua);
-    else lua_pushboolean(lua, value == Fact::True);
+    if (value == Fact::Unknown)
+        lua_pushnil(lua);
+    else
+        lua_pushboolean(lua, value == Fact::True);
     lua_setfield(lua, -2, name);
 }
 
 const char* ActionName(ActionKind kind) {
     switch (kind) {
-    case ActionKind::Move: return "move";
-    case ActionKind::Face: return "face";
-    case ActionKind::Jump: return "jump";
-    case ActionKind::Attack: return "attack";
-    case ActionKind::Pickup: return "pickup";
-    case ActionKind::UseItem: return "use_item";
-    case ActionKind::Stop: return "stop";
-    case ActionKind::Equip: return "equip";
-    case ActionKind::Unequip: return "unequip";
+    case ActionKind::Move:
+        return "move";
+    case ActionKind::Face:
+        return "face";
+    case ActionKind::Jump:
+        return "jump";
+    case ActionKind::Attack:
+        return "attack";
+    case ActionKind::Pickup:
+        return "pickup";
+    case ActionKind::UseItem:
+        return "use_item";
+    case ActionKind::Stop:
+        return "stop";
+    case ActionKind::Equip:
+        return "equip";
+    case ActionKind::Unequip:
+        return "unequip";
     }
     return "unsupported";
 }
@@ -82,10 +94,8 @@ void PushState(lua_State* lua, const State& state) {
         lua_newtable(lua);
         Integer(lua, "id", state.character.id);
         String(lua, "name", state.character.name);
-        static const char* names[]{
-            "level", "job", "strength", "dexterity", "intelligence", "luck", "hp", "max_hp",
-            "mp", "max_mp", "ability_points", "skill_points", "experience"
-        };
+        static const char* names[]{"level",  "job", "strength", "dexterity",      "intelligence", "luck",      "hp",
+                                   "max_hp", "mp",  "max_mp",   "ability_points", "skill_points", "experience"};
         for (std::size_t index = 0; index < state.character.values.size(); ++index)
             if (state.character.known[index]) Integer(lua, names[index], state.character.values[index]);
         lua_setfield(lua, -2, "character");
@@ -149,14 +159,19 @@ void PushState(lua_State* lua, const State& state) {
 
 void PushValue(lua_State* lua, const Value& value) {
     switch (value.Type()) {
-    case Value::Kind::Null: lua_pushnil(lua); break;
-    case Value::Kind::Boolean: lua_pushboolean(lua, value.Boolean()); break;
+    case Value::Kind::Null:
+        lua_pushnil(lua);
+        break;
+    case Value::Kind::Boolean:
+        lua_pushboolean(lua, value.Boolean());
+        break;
     case Value::Kind::Number: {
         const auto number = value.Number();
         const auto minimum = static_cast<double>(std::numeric_limits<lua_Integer>::min());
         if (number >= minimum && number < -minimum && std::trunc(number) == number)
             lua_pushinteger(lua, static_cast<lua_Integer>(number));
-        else lua_pushnumber(lua, number);
+        else
+            lua_pushnumber(lua, number);
         break;
     }
     case Value::Kind::String:
@@ -193,10 +208,13 @@ unsigned int Duration(lua_State* lua, int argument, double defaultSeconds, bool 
 struct Runtime::Impl {
     struct UpdateScope {
         bool& updating;
+
         explicit UpdateScope(bool& flag) : updating(flag) { updating = true; }
+
         ~UpdateScope() { updating = false; }
     };
     enum class WaitFor { None, Sleep, Action, RawKeys, Release, Control };
+
     struct Task {
         lua_State* coroutine = nullptr;
         int reference = LUA_NOREF;
@@ -211,6 +229,7 @@ struct Runtime::Impl {
     };
 
     explicit Impl(Adapter& native) : adapter(native) {}
+
     ~Impl() { CloseLua(); }
 
     Adapter& adapter;
@@ -261,8 +280,8 @@ struct Runtime::Impl {
         Task* next = nullptr;
         for (const auto& task : tasks) {
             if (task->finished || task.get() == owner || task->wait != WaitFor::Control) continue;
-            if (next == nullptr || task->report.priority > next->report.priority ||
-                (task->report.priority == next->report.priority && task->requestOrder < next->requestOrder))
+            if (next == nullptr || task->report.priority > next->report.priority
+                || (task->report.priority == next->report.priority && task->requestOrder < next->requestOrder))
                 next = task.get();
         }
         return next;
@@ -273,12 +292,24 @@ struct Runtime::Impl {
         for (const auto& task : tasks) {
             auto status = task->report;
             switch (task->wait) {
-            case WaitFor::None: status.wait = "none"; break;
-            case WaitFor::Sleep: status.wait = "sleep"; break;
-            case WaitFor::Action: status.wait = "action"; break;
-            case WaitFor::RawKeys: status.wait = "raw_keys"; break;
-            case WaitFor::Release: status.wait = "release"; break;
-            case WaitFor::Control: status.wait = "control"; break;
+            case WaitFor::None:
+                status.wait = "none";
+                break;
+            case WaitFor::Sleep:
+                status.wait = "sleep";
+                break;
+            case WaitFor::Action:
+                status.wait = "action";
+                break;
+            case WaitFor::RawKeys:
+                status.wait = "raw_keys";
+                break;
+            case WaitFor::Release:
+                status.wait = "release";
+                break;
+            case WaitFor::Control:
+                status.wait = "control";
+                break;
             }
             if (!task->finished && task->wait != WaitFor::None) status.status = "waiting";
             report.tasks.push_back(std::move(status));
@@ -303,8 +334,7 @@ struct Runtime::Impl {
             task.result.controlReleased = true;
             task.result.settled = adapter.Observe().settled;
             task.result.reason = "control_released";
-        }
-        else {
+        } else {
             task.result = adapter.Result();
             task.result.controlReleased = true;
         }
@@ -384,9 +414,7 @@ struct Runtime::Impl {
         UpdateStatus();
     }
 
-    static Impl& Self(lua_State* lua) {
-        return **static_cast<Impl**>(lua_getextraspace(lua));
-    }
+    static Impl& Self(lua_State* lua) { return **static_cast<Impl**>(lua_getextraspace(lua)); }
 
     static void RequireRunning(lua_State* lua) {
         const auto& runtime = Self(lua);
@@ -410,14 +438,14 @@ struct Runtime::Impl {
     }
 
     static int ObserveDomain(lua_State* lua) {
-        static const char* domains[]{"stage", "scene", "inventory", "character", "quests",
-            "hotkeys", "dialog", "ui", "shop", nullptr};
+        static const char* domains[]{"stage",   "scene",  "inventory", "character", "quests",
+                                     "hotkeys", "dialog", "ui",        "shop",      nullptr};
         const auto domain = domains[luaL_checkoption(lua, 1, nullptr, domains)];
         const auto& adapter = Self(lua).adapter;
         const auto& state = adapter.Observe();
         const auto observation = !state.ready && std::strcmp(domain, "stage") != 0
-            ? Observation{"unavailable", {}, "native_client_not_in_game"}
-            : adapter.ObserveDomain(domain);
+                                     ? Observation{"unavailable", {}, "native_client_not_in_game"}
+                                     : adapter.ObserveDomain(domain);
         lua_newtable(lua);
         String(lua, "domain", domain);
         String(lua, "status", observation.status);
@@ -442,17 +470,17 @@ struct Runtime::Impl {
         const auto& adapter = Self(lua).adapter;
         lua_newtable(lua);
         String(lua, "backend", adapter.Backend());
-        for (ActionKind kind : {ActionKind::Move, ActionKind::Face, ActionKind::Jump,
-            ActionKind::Attack, ActionKind::Pickup, ActionKind::UseItem, ActionKind::Stop,
-            ActionKind::Equip, ActionKind::Unequip})
+        for (ActionKind kind :
+             {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack, ActionKind::Pickup,
+              ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip, ActionKind::Unequip})
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
         return 1;
     }
 
-    bool Begin(ActionKind kind, const char* direction, std::uint32_t durationMs, std::uint32_t itemId,
-        int sourceSlot, int destinationSlot, lua_State* lua) {
+    bool Begin(ActionKind kind, const char* direction, std::uint32_t durationMs, std::uint32_t itemId, int sourceSlot,
+               int destinationSlot, lua_State* lua) {
         Action action;
         action.kind = kind;
         action.direction = direction;
@@ -474,14 +502,14 @@ struct Runtime::Impl {
         return 1;
     }
 
-    static int BeginSemantic(lua_State* lua, ActionKind kind, const char* direction,
-        std::uint32_t durationMs, std::uint32_t itemId, int sourceSlot = 0, int destinationSlot = 0) {
+    static int BeginSemantic(lua_State* lua, ActionKind kind, const char* direction, std::uint32_t durationMs,
+                             std::uint32_t itemId, int sourceSlot = 0, int destinationSlot = 0) {
         RequireControl(lua);
         auto& runtime = Self(lua);
-        if (!runtime.adapter.Supports(kind))
-            return luaL_error(lua, "unsupported: %s", ActionName(kind));
+        if (!runtime.adapter.Supports(kind)) return luaL_error(lua, "unsupported: %s", ActionName(kind));
         runtime.CaptureResult();
-        if (!runtime.Begin(kind, direction, durationMs, itemId, sourceSlot, destinationSlot, lua)) return lua_error(lua);
+        if (!runtime.Begin(kind, direction, durationMs, itemId, sourceSlot, destinationSlot, lua))
+            return lua_error(lua);
         runtime.actionOwner = runtime.current;
         runtime.current->resultReady = false;
         runtime.current->wait = WaitFor::Action;
@@ -490,8 +518,8 @@ struct Runtime::Impl {
 
     static const char* Direction(lua_State* lua, bool vertical) {
         const char* direction = luaL_checkstring(lua, 1);
-        if (std::strcmp(direction, "left") == 0 || std::strcmp(direction, "right") == 0 ||
-            (vertical && (std::strcmp(direction, "up") == 0 || std::strcmp(direction, "down") == 0)))
+        if (std::strcmp(direction, "left") == 0 || std::strcmp(direction, "right") == 0
+            || (vertical && (std::strcmp(direction, "up") == 0 || std::strcmp(direction, "down") == 0)))
             return direction;
         luaL_error(lua, "unsupported direction");
         return "";
@@ -529,26 +557,21 @@ struct Runtime::Impl {
     static int ChangeEquipment(lua_State* lua, ActionKind kind) {
         const auto sourceSlot = luaL_checkinteger(lua, 1);
         const auto destinationSlot = luaL_checkinteger(lua, 2);
-        if (sourceSlot < std::numeric_limits<int>::min() || sourceSlot > std::numeric_limits<int>::max() ||
-            destinationSlot < std::numeric_limits<int>::min() || destinationSlot > std::numeric_limits<int>::max())
+        if (sourceSlot < std::numeric_limits<int>::min() || sourceSlot > std::numeric_limits<int>::max()
+            || destinationSlot < std::numeric_limits<int>::min() || destinationSlot > std::numeric_limits<int>::max())
             return luaL_error(lua, "equipment slots must fit an int");
         if (kind == ActionKind::Equip) {
             if (sourceSlot <= 0 || destinationSlot >= 0)
                 return luaL_error(lua, "equip requires a positive backpack slot and a negative equipped slot");
-        }
-        else if (sourceSlot >= 0 || destinationSlot <= 0)
+        } else if (sourceSlot >= 0 || destinationSlot <= 0)
             return luaL_error(lua, "unequip requires a negative equipped slot and a positive backpack slot");
-        return BeginSemantic(lua, kind, "", Duration(lua, 3, 3, false), 0,
-            static_cast<int>(sourceSlot), static_cast<int>(destinationSlot));
+        return BeginSemantic(lua, kind, "", Duration(lua, 3, 3, false), 0, static_cast<int>(sourceSlot),
+                             static_cast<int>(destinationSlot));
     }
 
-    static int Equip(lua_State* lua) {
-        return ChangeEquipment(lua, ActionKind::Equip);
-    }
+    static int Equip(lua_State* lua) { return ChangeEquipment(lua, ActionKind::Equip); }
 
-    static int Unequip(lua_State* lua) {
-        return ChangeEquipment(lua, ActionKind::Unequip);
-    }
+    static int Unequip(lua_State* lua) { return ChangeEquipment(lua, ActionKind::Unequip); }
 
     static int Sleep(lua_State* lua) {
         RequireRunning(lua);
@@ -669,8 +692,7 @@ struct Runtime::Impl {
             std::size_t size = 0;
             const char* value = lua_tolstring(lua, 1, &size);
             keys.emplace_back(value, size);
-        }
-        else {
+        } else {
             const auto count = lua_rawlen(lua, 1);
             for (std::size_t index = 0; index < count; ++index) {
                 lua_rawgeti(lua, 1, static_cast<lua_Integer>(index + 1));
@@ -761,8 +783,10 @@ struct Runtime::Impl {
         const char* text = luaL_checklstring(lua, 1, &size);
         if (size > 4096 || runtime.logBytes + size > 65536)
             return luaL_error(lua, "script log limit exceeded for this resume");
-        if (runtime.current->report.name == "main") runtime.logs.emplace_back(text, size);
-        else runtime.logs.push_back("[" + runtime.current->report.name + "] " + std::string(text, size));
+        if (runtime.current->report.name == "main")
+            runtime.logs.emplace_back(text, size);
+        else
+            runtime.logs.push_back("[" + runtime.current->report.name + "] " + std::string(text, size));
         runtime.logBytes += size;
         return 0;
     }
@@ -782,12 +806,13 @@ struct Runtime::Impl {
         finalStatus = status;
         finalReason = reason;
         owner = nullptr;
-        for (auto& task : tasks) if (!task->finished) {
-            task->finished = true;
-            task->report.status = "cancelled";
-            task->report.reason = reason;
-            task->wait = WaitFor::None;
-        }
+        for (auto& task : tasks)
+            if (!task->finished) {
+                task->finished = true;
+                task->report.status = "cancelled";
+                task->report.reason = reason;
+                task->wait = WaitFor::None;
+            }
         if (!adapter.Released() && !adapter.ReleasePending()) adapter.Release();
         UpdateStatus();
     }
@@ -799,14 +824,13 @@ struct Runtime::Impl {
         tasks.clear();
         owner = current = actionOwner = nullptr;
     }
-
 };
 
 Runtime::Runtime(Adapter& adapter) : impl(new Impl(adapter)) {}
+
 Runtime::~Runtime() = default;
 
-bool Runtime::Start(const std::string& scriptId, const std::string& source,
-    std::uint32_t limitMs, std::string& error) {
+bool Runtime::Start(const std::string& scriptId, const std::string& source, std::uint32_t limitMs, std::string& error) {
     if (Running()) {
         error = "script_running";
         return false;
@@ -834,30 +858,41 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source,
         return false;
     }
     *static_cast<Impl**>(lua_getextraspace(runtime.main)) = &runtime;
-    static const luaL_Reg libraries[]{
-        {LUA_GNAME, luaopen_base}, {LUA_TABLIBNAME, luaopen_table},
-        {LUA_STRLIBNAME, luaopen_string}, {LUA_MATHLIBNAME, luaopen_math},
-        {LUA_UTF8LIBNAME, luaopen_utf8}, {nullptr, nullptr}
-    };
+    static const luaL_Reg libraries[]{{LUA_GNAME, luaopen_base},        {LUA_TABLIBNAME, luaopen_table},
+                                      {LUA_STRLIBNAME, luaopen_string}, {LUA_MATHLIBNAME, luaopen_math},
+                                      {LUA_UTF8LIBNAME, luaopen_utf8},  {nullptr, nullptr}};
     for (const auto* library = libraries; library->func != nullptr; ++library) {
         luaL_requiref(runtime.main, library->name, library->func, 1);
         lua_pop(runtime.main, 1);
     }
-    for (const char* name : {"dofile", "loadfile", "load", "print", "pcall", "xpcall",
-        "setmetatable", "getmetatable"}) {
+    for (const char* name :
+         {"dofile", "loadfile", "load", "print", "pcall", "xpcall", "setmetatable", "getmetatable"}) {
         lua_pushnil(runtime.main);
         lua_setglobal(runtime.main, name);
     }
-    static const luaL_Reg functions[]{
-        {"state", Impl::Observe}, {"observe", Impl::ObserveDomain}, {"capabilities", Impl::Capabilities},
-        {"time", Impl::Time}, {"sleep", Impl::Sleep}, {"log", Impl::Log},
-        {"move", Impl::Move}, {"face", Impl::Face}, {"jump", Impl::Jump},
-        {"attack", Impl::Attack}, {"pickup", Impl::Pickup}, {"use_item", Impl::UseItem},
-        {"equip", Impl::Equip}, {"unequip", Impl::Unequip},
-        {"stop", Impl::Stop}, {"press", Impl::Press}, {"keys", Impl::Keys}, {"skill", Impl::Skill},
-        {"spawn", Impl::Spawn}, {"acquire", Impl::Acquire}, {"cancel", Impl::CancelTask}, {"tasks", Impl::Tasks},
-        {nullptr, nullptr}
-    };
+    static const luaL_Reg functions[]{{"state", Impl::Observe},
+                                      {"observe", Impl::ObserveDomain},
+                                      {"capabilities", Impl::Capabilities},
+                                      {"time", Impl::Time},
+                                      {"sleep", Impl::Sleep},
+                                      {"log", Impl::Log},
+                                      {"move", Impl::Move},
+                                      {"face", Impl::Face},
+                                      {"jump", Impl::Jump},
+                                      {"attack", Impl::Attack},
+                                      {"pickup", Impl::Pickup},
+                                      {"use_item", Impl::UseItem},
+                                      {"equip", Impl::Equip},
+                                      {"unequip", Impl::Unequip},
+                                      {"stop", Impl::Stop},
+                                      {"press", Impl::Press},
+                                      {"keys", Impl::Keys},
+                                      {"skill", Impl::Skill},
+                                      {"spawn", Impl::Spawn},
+                                      {"acquire", Impl::Acquire},
+                                      {"cancel", Impl::CancelTask},
+                                      {"tasks", Impl::Tasks},
+                                      {nullptr, nullptr}};
     luaL_newlib(runtime.main, functions);
     lua_setglobal(runtime.main, "game");
     const int loaded = luaL_loadbufferx(runtime.main, source.data(), source.size(), scriptId.c_str(), "t");
@@ -903,22 +938,25 @@ void Runtime::Tick(bool sceneChanged) {
         runtime.Finish("cancelled", "time_limit");
         return;
     }
-    if (runtime.changeResult.status == "pending" && runtime.changeOperation == TaskOperation::Replace &&
-        state.sceneGeneration != runtime.replacementGeneration)
+    if (runtime.changeResult.status == "pending" && runtime.changeOperation == TaskOperation::Replace
+        && state.sceneGeneration != runtime.replacementGeneration)
         runtime.CancelTaskChange("task_context_changed");
     runtime.CompleteTaskChange();
     if (sceneChanged) return;
     runtime.GrantControl();
     std::vector<Impl::Task*> scheduled;
-    for (const auto& task : runtime.tasks) if (!task->finished) scheduled.push_back(task.get());
+    for (const auto& task : runtime.tasks)
+        if (!task->finished) scheduled.push_back(task.get());
     std::stable_sort(scheduled.begin(), scheduled.end(), [](const auto* left, const auto* right) {
         return left->report.priority > right->report.priority;
     });
     for (auto* task : scheduled) {
         if (task->finished) continue;
         if (task->wait == Impl::WaitFor::Sleep && now < task->wakeAt) continue;
-        if ((task->wait == Impl::WaitFor::Action || task->wait == Impl::WaitFor::RawKeys ||
-            task->wait == Impl::WaitFor::Release) && !task->resultReady) continue;
+        if ((task->wait == Impl::WaitFor::Action || task->wait == Impl::WaitFor::RawKeys
+             || task->wait == Impl::WaitFor::Release)
+            && !task->resultReady)
+            continue;
         if (task->wait == Impl::WaitFor::Control && runtime.owner != task) continue;
         task->wait = Impl::WaitFor::None;
         task->resultReady = false;
@@ -936,8 +974,10 @@ void Runtime::Tick(bool sceneChanged) {
         runtime.logBytes = 0;
         runtime.current = nullptr;
         if (runtime.finishing) break;
-        if (task->finished) runtime.ReleaseCoroutine(*task);
-        else if (status == LUA_OK) runtime.FinishTask(*task, "completed", "script_returned");
+        if (task->finished)
+            runtime.ReleaseCoroutine(*task);
+        else if (status == LUA_OK)
+            runtime.FinishTask(*task, "completed", "script_returned");
         else if (status != LUA_YIELD) {
             const char* message = lua_tostring(task->coroutine, -1);
             task->report.error = message != nullptr ? message : "Lua runtime error";
@@ -948,9 +988,9 @@ void Runtime::Tick(bool sceneChanged) {
         runtime.CaptureResult();
         runtime.GrantControl();
     }
-    if (!runtime.finishing && runtime.changeResult.status != "pending" &&
-        std::all_of(runtime.tasks.begin(), runtime.tasks.end(),
-        [](const auto& task) { return task->finished; })) runtime.Finish("completed", "script_returned");
+    if (!runtime.finishing && runtime.changeResult.status != "pending"
+        && std::all_of(runtime.tasks.begin(), runtime.tasks.end(), [](const auto& task) { return task->finished; }))
+        runtime.Finish("completed", "script_returned");
     runtime.UpdateStatus();
 }
 
@@ -992,8 +1032,7 @@ TaskChangeResult Runtime::ManageTask(const TaskChange& change) {
             result.reason = "task_name_exists";
             return result;
         }
-    }
-    else {
+    } else {
         if (target == nullptr) {
             result.reason = "unknown_task";
             return result;
@@ -1013,8 +1052,8 @@ TaskChangeResult Runtime::ManageTask(const TaskChange& change) {
     if (change.operation != TaskOperation::Stop) {
         const int top = lua_gettop(runtime.main);
         const auto chunkName = change.scriptId + "/" + change.name + "/" + change.requestId;
-        const int loaded = luaL_loadbufferx(runtime.main, change.source.data(), change.source.size(),
-            chunkName.c_str(), "t");
+        const int loaded =
+            luaL_loadbufferx(runtime.main, change.source.data(), change.source.size(), chunkName.c_str(), "t");
         if (loaded != LUA_OK) {
             const char* message = lua_tostring(runtime.main, -1);
             result.reason = "task_load_error";
@@ -1043,7 +1082,8 @@ TaskChangeResult Runtime::ManageTask(const TaskChange& change) {
     result.changed = !target->finished;
     runtime.changeResult = result;
     if (!target->finished)
-        runtime.FinishTask(*target, "cancelled", change.operation == TaskOperation::Replace ? "task_replaced" : "task_stopped");
+        runtime.FinishTask(*target, "cancelled",
+                           change.operation == TaskOperation::Replace ? "task_replaced" : "task_stopped");
     runtime.CaptureResult();
     runtime.CompleteTaskChange();
     runtime.UpdateStatus();
@@ -1054,7 +1094,10 @@ const TaskChangeResult* Runtime::CurrentTaskChange() const {
     return impl->changeResult.requestId.empty() ? nullptr : &impl->changeResult;
 }
 
-bool Runtime::Running() const { return impl->report.status == "running"; }
+bool Runtime::Running() const {
+    return impl->report.status == "running";
+}
+
 const Status* Runtime::CurrentStatus() const {
     if (impl->main != nullptr) impl->UpdateStatus();
     return impl->report.id.empty() ? nullptr : &impl->report;

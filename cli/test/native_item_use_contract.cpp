@@ -37,23 +37,28 @@ public:
     }
 
     const char* Backend() const override { return "native-item-contract"; }
+
     const MapleControl::State& Observe() const override { return state; }
+
     bool Supports(MapleControl::ActionKind kind) const override {
         return kind == MapleControl::ActionKind::UseItem || kind == MapleControl::ActionKind::Stop;
     }
+
     bool Begin(const MapleControl::Action& action, std::string& error) override {
-        const auto item = std::find_if(state.inventory.begin(), state.inventory.end(), [&](const MapleControl::Item& value) {
-            return value.inventoryType == 2 && value.slot > 0 && value.itemId == action.itemId
-                && value.quantityKnown && value.quantity > 0;
-        });
-        if (action.kind != MapleControl::ActionKind::UseItem || action.itemId / 10000 != 200
-            || !Released() || item == state.inventory.end()) {
+        const auto item =
+            std::find_if(state.inventory.begin(), state.inventory.end(), [&](const MapleControl::Item& value) {
+                return value.inventoryType == 2 && value.slot > 0 && value.itemId == action.itemId
+                       && value.quantityKnown && value.quantity > 0;
+            });
+        if (action.kind != MapleControl::ActionKind::UseItem || action.itemId / 10000 != 200 || !Released()
+            || item == state.inventory.end()) {
             error = "native_item_unavailable";
             return false;
         }
         use.Request({state.character.id, state.sceneGeneration, context, item->slot, item->itemId});
         return true;
     }
+
     MapleControl::ActionResult Result() const override {
         MapleControl::ActionResult result;
         result.dispatched = use.Dispatched();
@@ -61,9 +66,16 @@ public:
         result.reason = "native_item_request";
         return result;
     }
-    void Release() override { use.Cancel(); keys.Release(); }
+
+    void Release() override {
+        use.Cancel();
+        keys.Release();
+    }
+
     bool Released() const override { return keys.Released() && !use.Pending(); }
+
     bool ReleasePending() const override { return keys.ReleasePending(); }
+
     bool Logs(const std::string&, const std::vector<std::string>&) override { return true; }
 
     void Resume() {
@@ -72,18 +84,22 @@ public:
         insideVm = false;
         Check(runtime->CurrentStatus()->error.empty(), runtime->CurrentStatus()->error);
     }
+
     void Update() {
         ++state.sequence;
         ++characterUpdates;
         keys.ConfirmRelease(state.character.id, characterUpdates, false);
         Resume();
-        const auto result = keys.Flush([&](unsigned int, bool, std::uint64_t epoch) {
-            ++keyEvents;
-            keys.MarkDispatched(epoch);
-            return true;
-        }, [&]() { return characterUpdates; });
+        const auto result = keys.Flush(
+            [&](unsigned int, bool, std::uint64_t epoch) {
+                ++keyEvents;
+                keys.MarkDispatched(epoch);
+                return true;
+            },
+            [&]() { return characterUpdates; });
         Check(!result.failed, "unexpected_key_failure");
     }
+
     void Invoked(const BeiDouBridge::NativeItemUse::Item& item) {
         Check(!insideVm && !use.Pending() && use.Dispatched(), "native_entry_ran_inside_lua_or_before_dispatch");
         invoked.push_back(item);
@@ -112,30 +128,35 @@ void RuntimeDispatch() {
         Check(runtime.Start("native-item", R"lua(
 local result = game.use_item(2000000)
 assert(result.dispatched and result.control_released and result.effect == "unknown")
-)lua", 3000, error), error);
+)lua",
+                            3000, error),
+              error);
         native.Resume();
         Check(runtime.CurrentStatus()->resumes == 1 && runtime.CurrentStatus()->tasks.front().wait == "action"
-              && native.use.Pending() && !native.use.Dispatched() && native.invoked.empty(),
+                  && native.use.Pending() && !native.use.Dispatched() && native.invoked.empty(),
               "accepted_item_was_dispatched_before_yield");
         if (mode == 1) runtime.Cancel("cancel_before_entry");
-        const auto result = native.use.Consume(native.state.character.id, native.state.sceneGeneration, native.context,
-            [&](const BeiDouBridge::NativeItemUse::Item& item) {
-                native.Invoked(item);
-                if (mode == 2) runtime.Cancel("cancel_after_entry");
-                native.Resume();
-                native.Resume();
-                Check(!runtime.Running(), "native_callback_could_not_finish_session");
-            });
+        const auto result =
+            native.use.Consume(native.state.character.id, native.state.sceneGeneration, native.context,
+                               [&](const BeiDouBridge::NativeItemUse::Item& item) {
+                                   native.Invoked(item);
+                                   if (mode == 2) runtime.Cancel("cancel_after_entry");
+                                   native.Resume();
+                                   native.Resume();
+                                   Check(!runtime.Running(), "native_callback_could_not_finish_session");
+                               });
         for (int tick = 0; tick < 4 && runtime.Running(); ++tick) native.Update();
-        Check(!runtime.Running() && native.Released() && native.keyEvents == 0, "native_item_kept_session_or_used_keys");
+        Check(!runtime.Running() && native.Released() && native.keyEvents == 0,
+              "native_item_kept_session_or_used_keys");
         if (mode == 1) {
             Check(result == BeiDouBridge::NativeItemUse::Consumption::None && native.invoked.empty()
-                  && !native.use.Dispatched(), "cancelled_pending_item_reached_native_entry");
-        }
-        else {
+                      && !native.use.Dispatched(),
+                  "cancelled_pending_item_reached_native_entry");
+        } else {
             Check(result == BeiDouBridge::NativeItemUse::Consumption::Dispatched && native.invoked.size() == 1
-                  && native.invoked.front().slot == 7 && native.invoked.front().itemId == 2000000
-                  && native.use.Dispatched(), "void_native_entry_arguments_or_dispatch_fact_lost");
+                      && native.invoked.front().slot == 7 && native.invoked.front().itemId == 2000000
+                      && native.use.Dispatched(),
+                  "void_native_entry_arguments_or_dispatch_fact_lost");
         }
         Check(runtime.CurrentStatus()->status == (mode == 0 ? "completed" : "cancelled"),
               "item_session_terminal_result_changed");
@@ -152,47 +173,56 @@ void CallbackAndIdentity() {
 assert(game.use_item(2000000).dispatched)
 local result = game.use_item(2000001)
 assert(result.dispatched and result.control_released and result.effect == "unknown")
-)lua", 3000, error), error);
+)lua",
+                            3000, error),
+              error);
         native.Resume();
-        const auto first = native.use.Consume(native.state.character.id, native.state.sceneGeneration, native.context,
+        const auto first = native.use.Consume(
+            native.state.character.id, native.state.sceneGeneration, native.context,
             [&](const BeiDouBridge::NativeItemUse::Item& item) {
                 native.Invoked(item);
                 native.Resume(); // The suspended Lua task submits its next item in this callback.
                 Check(native.use.Pending() && !native.use.Dispatched(), "new_item_request_missing_inside_callback");
                 if (cancelNext) runtime.Cancel("cancel_new_item_inside_old_entry");
             });
-        Check(first == BeiDouBridge::NativeItemUse::Consumption::Dispatched
-              && native.use.Pending() == !cancelNext && !native.use.Dispatched(),
+        Check(first == BeiDouBridge::NativeItemUse::Consumption::Dispatched && native.use.Pending() == !cancelNext
+                  && !native.use.Dispatched(),
               "old_entry_return_overwrote_new_request_or_cancel");
         const auto second = native.use.Consume(native.state.character.id, native.state.sceneGeneration, native.context,
-            [&](const BeiDouBridge::NativeItemUse::Item& item) {
-                native.Invoked(item);
-                native.Resume();
-                native.Resume();
-            });
+                                               [&](const BeiDouBridge::NativeItemUse::Item& item) {
+                                                   native.Invoked(item);
+                                                   native.Resume();
+                                                   native.Resume();
+                                               });
         for (int tick = 0; tick < 4 && runtime.Running(); ++tick) native.Update();
         Check(!runtime.Running() && native.Released() && native.keyEvents == 0, "callback_item_did_not_settle");
         if (cancelNext) {
             Check(second == BeiDouBridge::NativeItemUse::Consumption::None && native.invoked.size() == 1
-                  && runtime.CurrentStatus()->status == "cancelled", "cancelled_new_item_was_invoked");
-        }
-        else Check(second == BeiDouBridge::NativeItemUse::Consumption::Dispatched && native.invoked.size() == 2
-                   && native.invoked[1].slot == 9 && native.invoked[1].itemId == 2000001
-                   && runtime.CurrentStatus()->status == "completed", "new_item_identity_or_completion_lost");
+                      && runtime.CurrentStatus()->status == "cancelled",
+                  "cancelled_new_item_was_invoked");
+        } else
+            Check(second == BeiDouBridge::NativeItemUse::Consumption::Dispatched && native.invoked.size() == 2
+                      && native.invoked[1].slot == 9 && native.invoked[1].itemId == 2000001
+                      && runtime.CurrentStatus()->status == "completed",
+                  "new_item_identity_or_completion_lost");
     }
 
     BeiDouBridge::NativeItemUse use;
     const BeiDouBridge::NativeItemUse::Item item{7, 3, 0x1234, 7, 2000000};
     for (int mismatch = 0; mismatch < 3; ++mismatch) {
         auto current = item;
-        if (mismatch == 0) ++current.character;
-        else if (mismatch == 1) ++current.scene;
-        else ++current.context;
+        if (mismatch == 0)
+            ++current.character;
+        else if (mismatch == 1)
+            ++current.scene;
+        else
+            ++current.context;
         use.Request(item);
-        const auto result = use.Consume(current.character, current.scene, current.context,
+        const auto result = use.Consume(
+            current.character, current.scene, current.context,
             [](const BeiDouBridge::NativeItemUse::Item&) { Check(false, "foreign_item_context_was_invoked"); });
-        Check(result == BeiDouBridge::NativeItemUse::Consumption::ContextChanged
-              && !use.Pending() && !use.Dispatched(), "foreign_context_not_rejected");
+        Check(result == BeiDouBridge::NativeItemUse::Consumption::ContextChanged && !use.Pending() && !use.Dispatched(),
+              "foreign_context_not_rejected");
     }
 }
 }
@@ -200,7 +230,10 @@ assert(result.dispatched and result.control_released and result.effect == "unkno
 int main(int argc, char** argv) {
     Check(argc == 2, "expected native item scenario");
     const std::string scenario = argv[1];
-    if (scenario == "runtime") RuntimeDispatch();
-    else if (scenario == "callback-identity") CallbackAndIdentity();
-    else Check(false, "unknown native item scenario");
+    if (scenario == "runtime")
+        RuntimeDispatch();
+    else if (scenario == "callback-identity")
+        CallbackAndIdentity();
+    else
+        Check(false, "unknown native item scenario");
 }

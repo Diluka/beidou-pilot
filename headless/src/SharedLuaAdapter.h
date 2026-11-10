@@ -11,7 +11,9 @@
 #include <optional>
 #include <string>
 
-namespace ms { class Equip; }
+namespace ms {
+class Equip;
+}
 
 // The same Lua runtime is linked into both hosts. This class only adapts the
 // original open-source client state/actions and its local management transport.
@@ -38,8 +40,7 @@ private:
     void Capture(std::uint64_t nativeTick);
     void ReadCommand(bool externalActionBusy);
     void ReadObservation();
-    nlohmann::json ObservationData(const std::string& domain, std::string& status,
-        std::string& error) const;
+    nlohmann::json ObservationData(const std::string& domain, std::string& status, std::string& error) const;
     void Publish();
     void ApplyRelease();
     nlohmann::json StateDocument() const;
@@ -50,6 +51,7 @@ private:
     MapleControl::Runtime runtime;
     MapleControl::TaskTransport taskTransport;
     MapleControl::ActionResult result;
+
     struct EquipmentChange {
         int sourceSlot;
         int destinationSlot;
@@ -58,6 +60,7 @@ private:
         std::uint32_t characterId;
         std::uint64_t sceneGeneration;
     };
+
     std::optional<EquipmentChange> equipmentChange;
     std::optional<ms::KeyAction::Id> heldAction;
     std::uint64_t currentTick = 0;

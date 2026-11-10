@@ -38,18 +38,46 @@ class SessionServer(AppServer):
         if method == "initialize":
             return {"userAgent": "contract"}
         if method == "config/read":
-            return {"config": {"project_doc_max_bytes": 0, "features": {
-                **{name: False for name in ("shell_tool", "apps", "multi_agent", "memories", "goals", "hooks",
-                                          "plugins", "image_generation", "view_image", "sleep_tool")},
-                "code_mode": {"excluded_tool_namespaces": ["functions", "clock"]}}}}
+            return {
+                "config": {
+                    "project_doc_max_bytes": 0,
+                    "features": {
+                        **{
+                            name: False
+                            for name in (
+                                "shell_tool",
+                                "apps",
+                                "multi_agent",
+                                "memories",
+                                "goals",
+                                "hooks",
+                                "plugins",
+                                "image_generation",
+                                "view_image",
+                                "sleep_tool",
+                            )
+                        },
+                        "code_mode": {"excluded_tool_namespaces": ["functions", "clock"]},
+                    },
+                }
+            }
         if method == "skills/list":
             return {"data": [{"cwd": "/game", "skills": []}]}
         if method == "mcpServerStatus/list":
             return {"data": []}
         if method == "model/list":
-            return {"data": [{"model": "gpt-6-luna", "defaultReasoningEffort": "medium",
-                "supportedReasoningEfforts": [{"reasoningEffort": effort, "description": effort}
-                                              for effort in self.efforts]}], "nextCursor": None}
+            return {
+                "data": [
+                    {
+                        "model": "gpt-6-luna",
+                        "defaultReasoningEffort": "medium",
+                        "supportedReasoningEfforts": [
+                            {"reasoningEffort": effort, "description": effort} for effort in self.efforts
+                        ],
+                    }
+                ],
+                "nextCursor": None,
+            }
         if method in {"thread/start", "thread/resume"}:
             return {"thread": {"id": "game-thread"}, "instructionSources": []}
         if method == "turn/start":
@@ -96,8 +124,12 @@ class ControlledGame(GameClient):
 
     async def observe(self) -> JsonObject:
         self.observations += 1
-        return {"instance_id": "actor", "run_id": "run", "seq": self.observations,
-                "snapshot": {"position": {"x": self.observations}}}
+        return {
+            "instance_id": "actor",
+            "run_id": "run",
+            "seq": self.observations,
+            "snapshot": {"position": {"x": self.observations}},
+        }
 
     async def script_status(self) -> JsonObject:
         return {"instance_id": "actor", "run_id": "run", "held_keys": [39] if self.active else []}
@@ -115,8 +147,13 @@ class ControlledGame(GameClient):
             self.cancel_requested.set()
             await self.release.wait()
             self.active = False
-        return {"instance_id": "actor", "run_id": "run", "held_keys": [],
-                "script": {"status": "cancelled"}, "command": {"status": "completed"}}
+        return {
+            "instance_id": "actor",
+            "run_id": "run",
+            "held_keys": [],
+            "script": {"status": "cancelled"},
+            "command": {"status": "completed"},
+        }
 
 
 class ControllerContract(unittest.IsolatedAsyncioTestCase):
@@ -126,9 +163,21 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         self.state = Path(directory.name)
         self.server = SessionServer(["medium", "low"])
         self.game = ControlledGame()
-        self.binding: JsonObject = {"root": "/dedicated/client", "backend": "headless", "instance": "worker", "read_only": False}
-        self.controller = Controller(self.server, self.game, self.state, "gpt-6-luna",
-                                     "保留角色养成路线", "在安全区域验证移动与停止", self.binding)
+        self.binding: JsonObject = {
+            "root": "/dedicated/client",
+            "backend": "headless",
+            "instance": "worker",
+            "read_only": False,
+        }
+        self.controller = Controller(
+            self.server,
+            self.game,
+            self.state,
+            "gpt-6-luna",
+            "保留角色养成路线",
+            "在安全区域验证移动与停止",
+            self.binding,
+        )
         output = redirect_stdout(io.StringIO())
         output.__enter__()
         self.addCleanup(output.__exit__, None, None, None)
@@ -161,8 +210,16 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         resume = next(params for method, params in second_server.calls if method == "thread/resume")
         self.assertEqual("game-thread", resume["threadId"])
         self.assertFalse(any(method == "thread/start" for method, _ in second_server.calls))
-        read_only = Controller(self.server, self.game, self.state, "gpt-6-luna", "只读角色", "观察",
-                               {**self.binding, "read_only": True}, read_only=True)
+        read_only = Controller(
+            self.server,
+            self.game,
+            self.state,
+            "gpt-6-luna",
+            "只读角色",
+            "观察",
+            {**self.binding, "read_only": True},
+            read_only=True,
+        )
         with self.assertRaises(AppServerError) as mismatch:
             await read_only.initialize()
         self.assertEqual("binding_mismatch", mismatch.exception.code)
@@ -171,20 +228,42 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         await self.controller.initialize()
         self.pumps.append(asyncio.create_task(self.controller.events()))
         await self.controller.message("执行当前任务")
-        await self.server.events.put({"id": 77, "method": "item/tool/requestUserInput", "params": {
-            "questions": [{"id": "proceed", "question": "是否继续补充观察？"}]}})
+        await self.server.events.put(
+            {
+                "id": 77,
+                "method": "item/tool/requestUserInput",
+                "params": {"questions": [{"id": "proceed", "question": "是否继续补充观察？"}]},
+            }
+        )
         await self.wait_until(lambda: 77 in self.controller.questions)
         read_fd, write_fd = os.pipe()
         reader = os.fdopen(read_fd)
         try:
             with patch("sys.stdin", reader):
                 incoming = asyncio.create_task(commands(self.controller))
-                os.write(write_fd, (json.dumps({"id": "answer", "command": "answer", "request_id": 77,
-                    "answers": {"proceed": {"answers": ["继续"]}}}) + "\n").encode())
+                os.write(
+                    write_fd,
+                    (
+                        json.dumps(
+                            {
+                                "id": "answer",
+                                "command": "answer",
+                                "request_id": 77,
+                                "answers": {"proceed": {"answers": ["继续"]}},
+                            }
+                        )
+                        + "\n"
+                    ).encode(),
+                )
                 await self.wait_until(lambda: 77 in self.server.responses)
                 self.assertEqual({"answers": {"proceed": {"answers": ["继续"]}}}, self.server.responses[77])
-                await self.server.events.put({"id": 88, "method": "item/tool/call", "params": {
-                    "tool": "game_run_lua", "arguments": {"code": "safe_move", "seconds": 1}}})
+                await self.server.events.put(
+                    {
+                        "id": 88,
+                        "method": "item/tool/call",
+                        "params": {"tool": "game_run_lua", "arguments": {"code": "safe_move", "seconds": 1}},
+                    }
+                )
                 await self.wait_until(lambda: self.controller.last_script is not None)
                 await self.wait_until(lambda: any(method == "turn/steer" for method, _ in self.server.calls))
                 steer = next(params for method, params in self.server.calls if method == "turn/steer")
@@ -205,8 +284,13 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         await self.controller.message("开始")
         # 开发AI在工具请求已受理、回复尚未完成时暂停，Lua任务尚未获得执行机会。
         self.server.pause_before_reply = self.controller
-        await self.server.events.put({"id": 1, "method": "item/tool/call", "params": {
-            "tool": "game_run_lua", "arguments": {"code": "must_not_start_after_pause", "seconds": 1}}})
+        await self.server.events.put(
+            {
+                "id": 1,
+                "method": "item/tool/call",
+                "params": {"tool": "game_run_lua", "arguments": {"code": "must_not_start_after_pause", "seconds": 1}},
+            }
+        )
         await self.wait_until(lambda: 1 in self.server.responses)
         await self.wait_until(lambda: self.controller.execution is not None and self.controller.execution.done())
         self.assertEqual([], self.game.codes)
@@ -220,8 +304,13 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         self.assertIn(revised_task, resume_message["input"][0]["text"])
         self.assertEqual(1, self.game.observations)
         self.game.release.clear()
-        await self.server.events.put({"id": 2, "method": "item/tool/call", "params": {
-            "tool": "game_run_lua", "arguments": {"code": "hold", "seconds": 1}}})
+        await self.server.events.put(
+            {
+                "id": 2,
+                "method": "item/tool/call",
+                "params": {"tool": "game_run_lua", "arguments": {"code": "hold", "seconds": 1}},
+            }
+        )
         await self.wait_until(lambda: self.game.running)
         pause = asyncio.create_task(self.controller.control("pause"))
         await self.game.cancel_requested.wait()
@@ -252,8 +341,13 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(("game-thread", "turn-1"), (interrupted["threadId"], interrupted["turnId"]))
         self.assertEqual("paused", self.controller.mode)
         self.assertIsNone(self.controller.turn_id)
-        await self.server.events.put({"id": 102, "method": "item/tool/call", "params": {
-            "tool": "game_run_lua", "arguments": {"code": "must_not_run", "seconds": 1}}})
+        await self.server.events.put(
+            {
+                "id": 102,
+                "method": "item/tool/call",
+                "params": {"tool": "game_run_lua", "arguments": {"code": "must_not_run", "seconds": 1}},
+            }
+        )
         await self.wait_until(lambda: 102 in self.server.responses)
         reply = self.server.responses[102]
         self.assertFalse(reply["success"])
@@ -268,8 +362,12 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         await self.controller.control("pause")
         await self.controller.control("resume")
         self.assertEqual("turn-2", self.controller.status()["turn_id"])
-        await self.server.events.put({"method": "turn/completed", "params": {
-            "threadId": "game-thread", "turn": {"id": "turn-1", "status": "interrupted"}}})
+        await self.server.events.put(
+            {
+                "method": "turn/completed",
+                "params": {"threadId": "game-thread", "turn": {"id": "turn-1", "status": "interrupted"}},
+            }
+        )
         await self.wait_until(self.server.events.empty)
         status = self.controller.status()
         self.assertEqual(("turn-2", "running"), (status["turn_id"], status["mode"]))
@@ -280,15 +378,27 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         interrupted = [params for method, params in self.server.calls if method == "turn/interrupt"][-1]
         self.assertEqual("turn-2", interrupted["turnId"])
         await self.controller.control("resume")
-        await self.server.events.put({"method": "turn/completed", "params": {
-            "threadId": "game-thread", "turn": {"id": "turn-3", "status": "completed"}}})
+        await self.server.events.put(
+            {
+                "method": "turn/completed",
+                "params": {"threadId": "game-thread", "turn": {"id": "turn-3", "status": "completed"}},
+            }
+        )
         await self.wait_until(self.server.events.empty)
         status = self.controller.status()
         self.assertEqual((None, "ready"), (status["turn_id"], status["mode"]))
 
     async def test_read_only_surface_rejects_lua_and_never_cancels_another_operator(self) -> None:
-        read_only = Controller(self.server, self.game, self.state, "gpt-6-luna", "只观察角色", "核对现状",
-                               {**self.binding, "read_only": True}, read_only=True)
+        read_only = Controller(
+            self.server,
+            self.game,
+            self.state,
+            "gpt-6-luna",
+            "只观察角色",
+            "核对现状",
+            {**self.binding, "read_only": True},
+            read_only=True,
+        )
         await read_only.initialize()
         start = next(params for method, params in self.server.calls if method == "thread/start")
         tools = {tool["name"] for namespace in start["dynamicTools"] for tool in namespace["tools"]}
@@ -298,8 +408,13 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         # 另一个明确操作者的Lua仍在执行，只读会话不得接管或取消。
         self.game.active = True
         self.game.release.clear()
-        await self.server.events.put({"id": 100, "method": "item/tool/call", "params": {
-            "tool": "game_run_lua", "arguments": {"code": "must_not_run", "seconds": 1}}})
+        await self.server.events.put(
+            {
+                "id": 100,
+                "method": "item/tool/call",
+                "params": {"tool": "game_run_lua", "arguments": {"code": "must_not_run", "seconds": 1}},
+            }
+        )
         await self.wait_until(lambda: 100 in self.server.responses)
         reply = self.server.responses[100]
         self.assertFalse(reply["success"])
@@ -318,8 +433,13 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         self.pumps.append(asyncio.create_task(self.controller.events()))
         await self.controller.message("执行有界任务")
         self.server.fail_steer = True
-        await self.server.events.put({"id": 101, "method": "item/tool/call", "params": {
-            "tool": "game_run_lua", "arguments": {"code": "safe_move", "seconds": 1}}})
+        await self.server.events.put(
+            {
+                "id": 101,
+                "method": "item/tool/call",
+                "params": {"tool": "game_run_lua", "arguments": {"code": "safe_move", "seconds": 1}},
+            }
+        )
         await asyncio.wait_for(self.controller.done.wait(), 2)
         self.assertEqual("error", self.controller.mode)
         self.assertEqual(["safe_move"], self.game.codes)
@@ -336,12 +456,17 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         await self.controller.initialize()
         self.server.fail_response = True
         pump = asyncio.create_task(self.controller.events())
-        await self.server.events.put({"id": 9, "method": "item/tool/call", "params": {
-            "tool": "game_observe", "arguments": {}}})
+        await self.server.events.put(
+            {"id": 9, "method": "item/tool/call", "params": {"tool": "game_observe", "arguments": {}}}
+        )
         with self.assertRaises(ExceptionGroup) as failure:
             await asyncio.wait_for(pump, 2)
-        self.assertTrue(any(isinstance(error, AppServerError) and error.code == "transport_closed"
-                            for error in failure.exception.exceptions))
+        self.assertTrue(
+            any(
+                isinstance(error, AppServerError) and error.code == "transport_closed"
+                for error in failure.exception.exceptions
+            )
+        )
 
 
 if __name__ == "__main__":

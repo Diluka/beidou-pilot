@@ -25,10 +25,20 @@ class NativeObservationContract(unittest.TestCase):
         self.directory = self.root / "runtime/bridge"
         self.directory.mkdir(parents=True)
         self.session = Session("container", "run", self.root / "runtime/runs/run", "beidou", "sha256:image")
-        self.state = {"protocol": 1, "run_id": "run", "instance_id": "native-1", "seq": 1,
-                      "scene_generation": 1, "observed_at_ms": int(time.time() * 1000),
-                      "ready": True, "map_id": 100, "character": {"id": 6},
-                      "position": {"x": 10, "y": 20}, "held_keys": [], "command": {"status": "running"}}
+        self.state = {
+            "protocol": 1,
+            "run_id": "run",
+            "instance_id": "native-1",
+            "seq": 1,
+            "scene_generation": 1,
+            "observed_at_ms": int(time.time() * 1000),
+            "ready": True,
+            "map_id": 100,
+            "character": {"id": 6},
+            "position": {"x": 10, "y": 20},
+            "held_keys": [],
+            "command": {"status": "running"},
+        }
         (self.directory / "state.json").write_text(json.dumps(self.state))
 
     @contextmanager
@@ -37,12 +47,19 @@ class NativeObservationContract(unittest.TestCase):
 
         def respond():
             request = self.directory / "observation-request.txt"
-            while not stop.wait(.001):
+            while not stop.wait(0.001):
                 if request.is_file():
                     _, instance, request_id, domain = request.read_text().split()
-                    response = {**self.state, "instance_id": instance, "request_id": request_id,
-                                "domain": domain, "status": status, "data": data, "error": None,
-                                **(override or {})}
+                    response = {
+                        **self.state,
+                        "instance_id": instance,
+                        "request_id": request_id,
+                        "domain": domain,
+                        "status": status,
+                        "data": data,
+                        "error": None,
+                        **(override or {}),
+                    }
                     temporary = self.directory / "response.tmp"
                     temporary.write_text(json.dumps(response))
                     temporary.replace(self.directory / "observation.json")
@@ -63,7 +80,7 @@ class NativeObservationContract(unittest.TestCase):
         with patch("beidou_pilot.observations.active_session", return_value=self.session):
             observer = NativeObserver(self.root)
             with self.responder(domain):
-                result = observer.observe("inventory", timeout=.2)
+                result = observer.observe("inventory", timeout=0.2)
         self.assertTrue(result["native_values_valid"])
         self.assertTrue(result["checksums_valid"])
         self.assertEqual("client-native-api", result["source"])
@@ -74,10 +91,15 @@ class NativeObservationContract(unittest.TestCase):
         with patch("beidou_pilot.observations.active_session", return_value=self.session):
             observer = NativeObserver(self.root, "headless")
             observer.directory = self.directory
-            domain = {"items": [], "checksums_valid": None, "native_values_valid": True,
-                      "source": "character_data_snapshot", "live_updates": False}
+            domain = {
+                "items": [],
+                "checksums_valid": None,
+                "native_values_valid": True,
+                "source": "character_data_snapshot",
+                "live_updates": False,
+            }
             with self.responder(domain):
-                result = observer.observe("inventory", timeout=.2)
+                result = observer.observe("inventory", timeout=0.2)
             sampled = read_observation(observer)
         self.assertTrue(result["native_values_valid"])
         self.assertIsNone(result["checksums_valid"])
@@ -94,34 +116,38 @@ class NativeObservationContract(unittest.TestCase):
                 with self.subTest(override=override):
                     (self.directory / "observation-request.txt").unlink(missing_ok=True)
                     with self.responder({}, override=override), self.assertRaises(ClientError) as failure:
-                        observer.observe("scene", timeout=.2)
+                        observer.observe("scene", timeout=0.2)
                     self.assertEqual("native_observation_invalid", failure.exception.code)
 
     def test_unsupported_and_no_response_are_explicit_and_bounded(self) -> None:
         with patch("beidou_pilot.observations.active_session", return_value=self.session):
             observer = NativeObserver(self.root)
             with self.responder({}, status="unsupported"), self.assertRaises(ClientError) as failure:
-                observer.observe("ui", timeout=.2)
+                observer.observe("ui", timeout=0.2)
             self.assertEqual("unsupported_capability", failure.exception.code)
             with self.assertRaises(ClientError) as failure:
-                observer.observe("scene", timeout=.03)
+                observer.observe("scene", timeout=0.03)
             self.assertEqual("native_observation_timeout", failure.exception.code)
 
     def test_login_bootstrap_does_not_require_a_registered_maple_session(self) -> None:
-        container = {"Id": "container", "Image": "sha256:image",
-                     "HostConfig": {"Privileged": False, "PortBindings": {}, "NetworkMode": "isolated"},
-                     "Config": {"Env": ["RUN_ID=first-launch"]}}
+        container = {
+            "Id": "container",
+            "Image": "sha256:image",
+            "HostConfig": {"Privileged": False, "PortBindings": {}, "NetworkMode": "isolated"},
+            "Config": {"Env": ["RUN_ID=first-launch"]},
+        }
         with patch("beidou_pilot.observations._docker", side_effect=["container\n", json.dumps([container])]):
             with patch("beidou_pilot.observations.verify_binaries", return_value=True):
                 session = active_session(self.root, "beidou")
         self.assertEqual("first-launch", session.run_id)
         session.run_dir.mkdir(parents=True)
-        (session.run_dir / "renderer.log").write_text(
-            "OpenGL renderer string: Mesa Intel(R) Graphics (ADL GT2)\n")
+        (session.run_dir / "renderer.log").write_text("OpenGL renderer string: Mesa Intel(R) Graphics (ADL GT2)\n")
         with patch("beidou_pilot.observations.active_session", return_value=None):
             self.assertEqual("STOPPED", read_stage(self.root)["stage"])
         with patch("beidou_pilot.observations.active_session", return_value=session):
-            with patch.object(NativeObserver, "observe", side_effect=ClientError("native_observation_not_ready", "starting")):
+            with patch.object(
+                NativeObserver, "observe", side_effect=ClientError("native_observation_not_ready", "starting")
+            ):
                 with patch("beidou_pilot.engines.stage.project_geometry", side_effect=lambda report: report):
                     stage = read_stage(self.root)
         self.assertEqual("STARTING", stage["stage"])

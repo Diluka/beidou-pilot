@@ -28,10 +28,25 @@ class TaskManagementContract(unittest.TestCase):
         (self.files.root / "clientctl.py").touch()
         self.session = "a" * 32
         self.files.state["script"] = {
-            "id": self.session, "status": "running", "reason": None, "error": None,
-            "resumes": 1, "budget_yields": 0, "last_resume_us": 1.0, "max_resume_us": 1.0,
-            "tasks": [{"name": "main", "revision": 1, "priority": 0, "status": "waiting",
-                       "wait": "action", "reason": None, "error": None}],
+            "id": self.session,
+            "status": "running",
+            "reason": None,
+            "error": None,
+            "resumes": 1,
+            "budget_yields": 0,
+            "last_resume_us": 1.0,
+            "max_resume_us": 1.0,
+            "tasks": [
+                {
+                    "name": "main",
+                    "revision": 1,
+                    "priority": 0,
+                    "status": "waiting",
+                    "wait": "action",
+                    "reason": None,
+                    "error": None,
+                }
+            ],
         }
         self.files.state["command"] = {"id": "c" * 32, "status": "running", "reason": None}
         self.files.state["held_keys"] = [39]
@@ -59,8 +74,19 @@ class TaskManagementContract(unittest.TestCase):
     def cli(self, *arguments, backend="beidou", instance="default"):
         output = io.StringIO()
         with redirect_stdout(output):
-            exit_code = main(["--root", str(self.files.root), "--backend", backend,
-                              "--instance", instance, "--json", "task", *arguments])
+            exit_code = main(
+                [
+                    "--root",
+                    str(self.files.root),
+                    "--backend",
+                    backend,
+                    "--instance",
+                    instance,
+                    "--json",
+                    "task",
+                    *arguments,
+                ]
+            )
         return exit_code, json.loads(output.getvalue())
 
     def request(self):
@@ -70,7 +96,7 @@ class TaskManagementContract(unittest.TestCase):
             try:
                 fields = path.read_text(encoding="ascii").split()
             except FileNotFoundError:
-                time.sleep(.005)
+                time.sleep(0.005)
                 continue
             path.unlink()
             return fields
@@ -78,18 +104,26 @@ class TaskManagementContract(unittest.TestCase):
 
     def reply(self, overrides: JsonObject | None = None):
         fields = self.request()
-        source = ((self.files.directory / "scripts" / (fields[10] + ".lua")).read_bytes()
-                  if fields[10] != "-" else None)
+        source = (self.files.directory / "scripts" / (fields[10] + ".lua")).read_bytes() if fields[10] != "-" else None
         self.files.publish()
         result = {
-            "protocol": 1, "instance_id": fields[1], "run_id": fields[2], "script_id": fields[3],
-            "scene_generation": int(fields[4]), "seq": self.files.state["seq"],
-            "observed_at_ms": self.files.state["observed_at_ms"], "request_id": fields[5],
-            "operation": fields[6], "name": bytes.fromhex(fields[7]).decode("utf-8"),
+            "protocol": 1,
+            "instance_id": fields[1],
+            "run_id": fields[2],
+            "script_id": fields[3],
+            "scene_generation": int(fields[4]),
+            "seq": self.files.state["seq"],
+            "observed_at_ms": self.files.state["observed_at_ms"],
+            "request_id": fields[5],
+            "operation": fields[6],
+            "name": bytes.fromhex(fields[7]).decode("utf-8"),
             "expected_revision": int(fields[8]),
             "revision": int(fields[8]) + 1 if fields[6] != "stop" else int(fields[8]),
-            "status": "completed", "reason": None, "error": None,
-            "changed": True, "control_released": True,
+            "status": "completed",
+            "reason": None,
+            "error": None,
+            "changed": True,
+            "control_released": True,
         }
         result.update(overrides or {})
         directory = self.files.directory / "task-results"
@@ -115,32 +149,48 @@ class TaskManagementContract(unittest.TestCase):
                 self.files.state["script"]["tasks"] = self.files.state["script"]["tasks"][:1]
                 if revision:
                     self.files.state["script"]["tasks"].append(
-                        {"name": name, "revision": revision, "priority": priority, "status": "waiting",
-                         "wait": "sleep", "reason": None, "error": None})
+                        {
+                            "name": name,
+                            "revision": revision,
+                            "priority": priority,
+                            "status": "waiting",
+                            "wait": "sleep",
+                            "reason": None,
+                            "error": None,
+                        }
+                    )
                 paths = self.prepare_instance(backend, instance)
                 with self.hold_session(paths), ThreadPoolExecutor(max_workers=1) as pool:
                     peer = pool.submit(self.reply)
-                    code, report = self.cli(operation, name, "--session", self.session, *options,
-                                            backend=backend, instance=instance)
+                    code, report = self.cli(
+                        operation, name, "--session", self.session, *options, backend=backend, instance=instance
+                    )
                     fields, source = peer.result(3)
                     self.assertEqual(0, code, report)
                     self.assertEqual((backend, instance), (report["backend"], report["instance"]))
                     self.assertEqual(["1", backend + "-" + instance, "bridge-contract", self.session, "1"], fields[:5])
-                    self.assertEqual((operation, name, revision, priority),
-                                     (fields[6], bytes.fromhex(fields[7]).decode("utf-8"), int(fields[8]), int(fields[9])))
+                    self.assertEqual(
+                        (operation, name, revision, priority),
+                        (fields[6], bytes.fromhex(fields[7]).decode("utf-8"), int(fields[8]), int(fields[9])),
+                    )
                     self.assertEqual(expected_source, source)
                     self.assertEqual(self.original_command, (paths.bridge / "command.txt").read_bytes())
                     result_code, result = self.cli("result", fields[5], backend=backend, instance=instance)
                     self.assertEqual((0, report["data"]), (result_code, result["data"]))
 
     def test_management_rejects_foreign_result_identity(self) -> None:
-        for field, value in (("instance_id", "other-native"), ("script_id", "b" * 32),
-                             ("request_id", "b" * 32), ("expected_revision", 99)):
+        for field, value in (
+            ("instance_id", "other-native"),
+            ("script_id", "b" * 32),
+            ("request_id", "b" * 32),
+            ("expected_revision", 99),
+        ):
             with self.subTest(field=field), ThreadPoolExecutor(max_workers=1) as pool:
                 self.files.publish()
                 peer = pool.submit(self.reply, {field: value})
-                code, report = self.cli("add", "observer", "--session", self.session,
-                                        "--priority", "0", "--code", "game.sleep(0)")
+                code, report = self.cli(
+                    "add", "observer", "--session", self.session, "--priority", "0", "--code", "game.sleep(0)"
+                )
                 peer.result(3)
                 self.assertEqual((2, "invalid_task_result"), (code, report["error"]["code"]))
                 self.assertEqual(self.original_command, (self.files.directory / "command.txt").read_bytes())
@@ -159,9 +209,28 @@ class TaskManagementContract(unittest.TestCase):
             with self.subTest(signal=interrupt), self.hold_session(paths):
                 self.files.publish()
                 process = subprocess.Popen(
-                    [sys.executable, "-m", "beidou_pilot", "--root", str(self.files.root), "--json", "task",
-                     "add", "observer", "--session", self.session, "--priority", "0", "--code", "game.sleep(0)"],
-                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment,
+                    [
+                        sys.executable,
+                        "-m",
+                        "beidou_pilot",
+                        "--root",
+                        str(self.files.root),
+                        "--json",
+                        "task",
+                        "add",
+                        "observer",
+                        "--session",
+                        self.session,
+                        "--priority",
+                        "0",
+                        "--code",
+                        "game.sleep(0)",
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=environment,
                 )
                 try:
                     fields = self.request()

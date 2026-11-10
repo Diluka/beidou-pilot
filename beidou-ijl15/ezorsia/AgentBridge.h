@@ -3,6 +3,6 @@
 #include <cstdint>
 
 namespace AgentBridge {
-    bool Install();
-    void CharacterUpdated(std::uintptr_t player);
+bool Install();
+void CharacterUpdated(std::uintptr_t player);
 }

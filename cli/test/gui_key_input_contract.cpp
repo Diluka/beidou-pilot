@@ -19,8 +19,8 @@ void Check(bool condition, const std::string& message) {
 }
 
 std::uint64_t Now() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
 }
 
 bool Any(const BeiDouBridge::NativeKeyInput::Mask& keys) {
@@ -33,7 +33,10 @@ enum class NativeCall { Ordinary, Modal, Handoff, Cancel };
 // Desired input, epoch invalidation and release ACKs use the production core.
 class NativeBoundary final : public MapleControl::Adapter {
 public:
-    struct Event { unsigned int key; bool down; };
+    struct Event {
+        unsigned int key;
+        bool down;
+    };
 
     explicit NativeBoundary(NativeCall call) : call(call) {
         state.instanceId = "gui-input-contract";
@@ -46,12 +49,16 @@ public:
     }
 
     const char* Backend() const override { return "gui-input-contract"; }
+
     const MapleControl::State& Observe() const override { return state; }
+
     bool Supports(MapleControl::ActionKind kind) const override { return kind == MapleControl::ActionKind::Stop; }
+
     bool Begin(const MapleControl::Action&, std::string& error) override {
         error = "unsupported_contract_semantic_action";
         return false;
     }
+
     MapleControl::ActionResult Result() const override {
         MapleControl::ActionResult result;
         result.dispatched = input.Dispatched();
@@ -59,20 +66,33 @@ public:
         result.reason = "native_key_input";
         return result;
     }
+
     void Release() override { input.Release(); }
+
     bool Released() const override { return input.Released(); }
+
     bool ReleasePending() const override { return input.ReleasePending(); }
+
     bool Logs(const std::string&, const std::vector<std::string>&) override { return true; }
+
     bool SupportsRawKeys() const override { return true; }
+
     bool RawKeys(const std::vector<std::string>& names, std::uint32_t duration, std::string& error) override {
         BeiDouBridge::NativeKeyInput::Mask desired{};
         for (const auto& name : names) {
             unsigned int key = 0;
-            if (name == "space") key = 32;
-            else if (name == "Left") key = 37;
-            else if (name == "Right") key = 39;
-            else if (name == "Control_L") key = 17;
-            else { error = "unsupported_contract_key"; return false; }
+            if (name == "space")
+                key = 32;
+            else if (name == "Left")
+                key = 37;
+            else if (name == "Right")
+                key = 39;
+            else if (name == "Control_L")
+                key = 17;
+            else {
+                error = "unsupported_contract_key";
+                return false;
+            }
             desired[key] = true;
         }
         input.Request(desired, duration, state.character.id, Now());
@@ -89,9 +109,9 @@ public:
 
     void FlushNative() {
         const auto previousUpReturns = upReturns;
-        const auto result = input.Flush(
-            [this](unsigned int key, bool down, std::uint64_t epoch) { return Send(key, down, epoch); },
-            [this]() { return characterUpdates; });
+        const auto result =
+            input.Flush([this](unsigned int key, bool down, std::uint64_t epoch) { return Send(key, down, epoch); },
+                        [this]() { return characterUpdates; });
         Check(!result.failed, "native_dispatch_failed");
         if (upReturns != previousUpReturns && input.ReleasePending())
             Check(!input.ConfirmRelease(state.character.id, characterUpdates, false),
@@ -100,8 +120,9 @@ public:
 
     void Update() {
         ++state.sequence;
-        state.observedAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+        state.observedAtMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
         ++characterUpdates; // A real fixture character-update event, including modal updates.
         if (input.ConfirmRelease(state.character.id, characterUpdates, false)) {
             Check(!Any(physicalKeys), "release_acked_while_native_keys_still_down");
@@ -129,8 +150,7 @@ public:
             Check(releaseAcks == previousAcks && !input.Released(), "release_acked_inside_keyup_dispatch");
             ++upReturns;
             lastUpReturnedAt = characterUpdates;
-        }
-        else if (key == 32 && call != NativeCall::Ordinary && !modalOpen) {
+        } else if (key == 32 && call != NativeCall::Ordinary && !modalOpen) {
             modalOpen = true;
             Check(runtime->CurrentStatus()->resumes > 0, "modal_entered_before_first_resume_returned");
             if (call == NativeCall::Cancel) runtime->Cancel("modal_cancel");
@@ -208,7 +228,8 @@ game.spawn("old", 10, function()
     local result = game.press({"Control_L","space","Right"},0.5)
     assert(result.dispatched and result.control_released and result.reason == "control_preempted")
 end)
-)lua" : "game.press({'Control_L','space','Right'},0.5)";
+)lua"
+                                                         : "game.press({'Control_L','space','Right'},0.5)";
         Check(runtime.Start("modal-slot", source, 3000, error), error);
         const auto deadline = Now() + 1500;
         while (runtime.Running() && Now() < deadline) {
@@ -222,11 +243,12 @@ end)
               "old_held_batch_lost_keyup_or_dispatch_fact");
         if (mode == NativeCall::Handoff) {
             Check(runtime.CurrentStatus()->status == "completed" && native.Count(37, true) == 1
-                  && native.Count(37, false) == 1, "successor_input_was_lost_or_released_by_old_batch");
+                      && native.Count(37, false) == 1,
+                  "successor_input_was_lost_or_released_by_old_batch");
             Check(native.releaseAcks == 2, "handoff_missing_release_ack");
-        }
-        else Check(runtime.CurrentStatus()->status == "cancelled" && native.repeatedStop && native.releaseAcks == 1,
-                   "modal_cancel_or_full_keyup_batch_did_not_finish");
+        } else
+            Check(runtime.CurrentStatus()->status == "cancelled" && native.repeatedStop && native.releaseAcks == 1,
+                  "modal_cancel_or_full_keyup_batch_did_not_finish");
     }
 
     NativeBoundary native(NativeCall::Ordinary);
@@ -239,7 +261,9 @@ game.sleep(0)
 game.keys("Left",1)
 game.keys("Right",1)
 game.sleep(1)
-)lua", 3000, error), error);
+)lua",
+                        3000, error),
+          error);
     native.RunVm();
     native.FlushNative();
     Check(native.Count(39, true) == 1 && native.input.Held()[39], "initial_right_not_held");
@@ -249,8 +273,8 @@ game.sleep(1)
           "overwritten_target_flickered_held_key");
     runtime.Cancel("latest_target_cleanup");
     for (int tick = 0; tick < 10 && runtime.Running(); ++tick) native.Update();
-    Check(!runtime.Running() && native.input.Released() && native.Count(39, false) == 1
-          && native.Count(37, true) == 0, "latest_target_cleanup_lost_release");
+    Check(!runtime.Running() && native.input.Released() && native.Count(39, false) == 1 && native.Count(37, true) == 0,
+          "latest_target_cleanup_lost_release");
 }
 
 void UndispatchedRequests() {
@@ -259,10 +283,12 @@ void UndispatchedRequests() {
         MapleControl::Runtime runtime(native);
         native.runtime = &runtime;
         std::string error;
-        const auto* source = scenario == 0 ? "game.press('space',0.08)" : scenario == 1 ? "game.keys('space',0.08)" :
-            scenario == 2 ? "game.keys('space',0.08);local r=game.stop();assert(r.dispatched and r.control_released)" :
-            "assert(game.press('space',0.01).dispatched);game.keys({},0.08);"
-            "local r=game.stop();assert(r.dispatched and r.control_released)";
+        const auto* source =
+            scenario == 0   ? "game.press('space',0.08)"
+            : scenario == 1 ? "game.keys('space',0.08)"
+            : scenario == 2 ? "game.keys('space',0.08);local r=game.stop();assert(r.dispatched and r.control_released)"
+                            : "assert(game.press('space',0.01).dispatched);game.keys({},0.08);"
+                              "local r=game.stop();assert(r.dispatched and r.control_released)";
         Check(runtime.Start("undispatched", source, 3000, error), error);
         native.RunVm();
         if (scenario == 0) runtime.Cancel("before_native_phase");
@@ -271,7 +297,7 @@ void UndispatchedRequests() {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         Check(!runtime.Running() && native.input.Released() && !native.Result().dispatched
-              && native.events.size() == (scenario == 3 ? 2u : 0u),
+                  && native.events.size() == (scenario == 3 ? 2u : 0u),
               "ended_request_was_dispatched_afterwards");
         Check(runtime.CurrentStatus()->status == (scenario == 0 ? "cancelled" : "completed"),
               "undispatched_request_result_changed");
@@ -282,8 +308,12 @@ void UndispatchedRequests() {
 int main(int argc, char** argv) {
     Check(argc == 2, "expected GUI input scenario");
     const std::string scenario = argv[1];
-    if (scenario == "modal") ModalProgress();
-    else if (scenario == "slot-changes") ModalSlotChanges();
-    else if (scenario == "undispatched") UndispatchedRequests();
-    else Check(false, "unknown GUI input scenario");
+    if (scenario == "modal")
+        ModalProgress();
+    else if (scenario == "slot-changes")
+        ModalSlotChanges();
+    else if (scenario == "undispatched")
+        UndispatchedRequests();
+    else
+        Check(false, "unknown GUI input scenario");
 }

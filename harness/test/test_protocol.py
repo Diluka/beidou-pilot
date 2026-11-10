@@ -9,7 +9,7 @@ import unittest
 from beidou_game_ai.protocol import AppServer, AppServerError
 
 
-SERVER = r'''
+SERVER = r"""
 import json
 import sys
 
@@ -34,15 +34,16 @@ for line in sys.stdin:
         sys.exit(0)
     elif method is None:
         send({"method": "answer_received", "params": {"id": message["id"], "result": message["result"]}})
-'''
+"""
 
 
 class AppServerContract(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.server = await AppServer.start([sys.executable, "-u", "-c", SERVER],
-                                            Path(directory.name) / "app-server.stderr.log")
+        self.server = await AppServer.start(
+            [sys.executable, "-u", "-c", SERVER], Path(directory.name) / "app-server.stderr.log"
+        )
         self.addAsyncCleanup(self.server.close)
 
     async def test_bidirectional_ids_and_notifications_do_not_steal_pending_response(self) -> None:
@@ -51,8 +52,10 @@ class AppServerContract(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((1, "item/tool/call"), (request["id"], request["method"]))
         self.assertEqual("thread/started", (await self.server.events.get())["method"])
         await self.server.respond(1, {"observed": True})
-        self.assertEqual({"method": "answer_received", "params": {"id": 1, "result": {"observed": True}}},
-                         await self.server.events.get())
+        self.assertEqual(
+            {"method": "answer_received", "params": {"id": 1, "result": {"observed": True}}},
+            await self.server.events.get(),
+        )
         await self.server.notify("initialized", {})
         self.assertEqual("notice_received", (await self.server.events.get())["method"])
         with self.assertRaises(AppServerError) as rejected:

@@ -49,8 +49,9 @@ public:
 
     bool ConfirmRelease(std::uint32_t updatedCharacter, std::uint64_t characterUpdates, bool oldCharacterExited) {
         if (!releasing || !releaseReady || Any(requiredUp) || Any(upInFlight)) return false;
-        if (releaseNeedsCharacterUpdate && !oldCharacterExited &&
-            (updatedCharacter != releaseCharacter || characterUpdates <= releaseAtCharacterUpdate)) return false;
+        if (releaseNeedsCharacterUpdate && !oldCharacterExited
+            && (updatedCharacter != releaseCharacter || characterUpdates <= releaseAtCharacterUpdate))
+            return false;
         releasing = false;
         owned.fill(false);
         controlledCharacter = 0;
@@ -69,45 +70,54 @@ public:
         FlushResult result;
         // Explicit releases and failed keyups must finish. Ordinary target
         // differences stay replaceable until their native delivery begins.
-        for (unsigned int key = 0; key < held.size(); ++key) if (
-            (requiredUp[key] || (held[key] && !desired[key])) && !upInFlight[key]) {
-            requiredUp[key] = false;
-            held[key] = false;
-            upInFlight[key] = true;
-            const auto releaseEpoch = epoch;
-            const bool sent = send(key, false, releaseEpoch);
-            upInFlight[key] = false;
-            if (!sent) {
-                requiredUp[key] = true;
-                result = {true, releaseEpoch};
+        for (unsigned int key = 0; key < held.size(); ++key)
+            if ((requiredUp[key] || (held[key] && !desired[key])) && !upInFlight[key]) {
+                requiredUp[key] = false;
+                held[key] = false;
+                upInFlight[key] = true;
+                const auto releaseEpoch = epoch;
+                const bool sent = send(key, false, releaseEpoch);
+                upInFlight[key] = false;
+                if (!sent) {
+                    requiredUp[key] = true;
+                    result = {true, releaseEpoch};
+                }
             }
-        }
         if (releasing && !releaseReady && !Any(requiredUp) && !Any(upInFlight)) {
             releaseAtCharacterUpdate = readCharacterUpdates();
             releaseReady = true;
         }
         if (batchEpoch != epoch || !active || Any(requiredUp) || Any(upInFlight)) return result;
-        for (unsigned int key = 0; key < desired.size(); ++key) if (desired[key] && !held[key]) {
-            owned[key] = true;
-            held[key] = true;
-            const bool sent = send(key, true, batchEpoch);
-            if (batchEpoch != epoch) return result;
-            if (!sent) {
-                held[key] = false;
-                return {true, batchEpoch};
+        for (unsigned int key = 0; key < desired.size(); ++key)
+            if (desired[key] && !held[key]) {
+                owned[key] = true;
+                held[key] = true;
+                const bool sent = send(key, true, batchEpoch);
+                if (batchEpoch != epoch) return result;
+                if (!sent) {
+                    held[key] = false;
+                    return {true, batchEpoch};
+                }
             }
-        }
         return result;
     }
 
     const Mask& Held() const { return held; }
+
     const Mask& Owned() const { return owned; }
+
     bool Active() const { return active; }
+
     bool Released() const { return !active && !releasing; }
+
     bool ReleasePending() const { return releasing; }
+
     std::uint64_t Deadline() const { return deadline; }
+
     std::uint32_t ReleaseCharacter() const { return releaseCharacter; }
+
     std::uint64_t Epoch() const { return epoch; }
+
     bool Dispatched() const { return dispatched; }
 
 private:

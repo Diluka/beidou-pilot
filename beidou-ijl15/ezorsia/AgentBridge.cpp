@@ -79,7 +79,6 @@ std::uint64_t inputEvents = 0;
 MapleControl::ActionResult semanticResult;
 ULONGLONG lastPublishedAt = 0;
 
-
 void BeginRelease(const std::string& status, const std::string& reason);
 bool BeginNativeAction(const MapleControl::Action& action, std::string& error);
 MapleControl::ActionResult NativeResult();
@@ -90,29 +89,41 @@ bool NativeLogs(const std::string& scriptId, const std::vector<std::string>& lin
 class BeiDouAdapter final : public MapleControl::Adapter {
 public:
     const char* Backend() const override { return "beidou"; }
+
     const MapleControl::State& Observe() const override { return previousState; }
+
     MapleControl::Observation ObserveDomain(const std::string& domain) const override {
         return NativeObservation::Collect(domain);
     }
+
     bool Supports(MapleControl::ActionKind kind) const override {
         return kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip;
     }
+
     bool Begin(const MapleControl::Action& action, std::string& error) override {
         return BeginNativeAction(action, error);
     }
+
     MapleControl::ActionResult Result() const override { return NativeResult(); }
+
     void Release() override { BeginRelease({}, {}); }
+
     bool Released() const override { return keyInput.Released() && !itemUse.Pending(); }
+
     bool ReleasePending() const override { return keyInput.ReleasePending(); }
+
     bool Logs(const std::string& scriptId, const std::vector<std::string>& lines) override {
         return NativeLogs(scriptId, lines);
     }
+
     bool SupportsRawKeys() const override { return true; }
-    bool RawKeys(const std::vector<std::string>& keys, std::uint32_t duration,
-        std::string& error) override {
+
+    bool RawKeys(const std::vector<std::string>& keys, std::uint32_t duration, std::string& error) override {
         return NativeRawKeys(keys, duration, error);
     }
+
     bool SupportsSkill() const override { return true; }
+
     bool Skill(std::uint32_t id, int& result, std::string& error) override {
         return InvokeNativeSkill(id, result, error);
     }
@@ -122,23 +133,23 @@ BeiDouAdapter adapter;
 MapleControl::Runtime runtime(adapter);
 std::unique_ptr<MapleControl::TaskTransport> taskTransport;
 
-template <typename T>
-bool ReadAt(std::uintptr_t address, T& value) {
+template <typename T> bool ReadAt(std::uintptr_t address, T& value) {
     SIZE_T count = 0;
-    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address),
-        &value, sizeof(value), &count) && count == sizeof(value);
+    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), &value, sizeof(value), &count)
+           && count == sizeof(value);
 }
 
 std::string Quote(const std::string& text) {
     std::ostringstream out;
     out << '"';
     for (unsigned char byte : text) {
-        if (byte == '"' || byte == '\\') out << '\\' << byte;
+        if (byte == '"' || byte == '\\')
+            out << '\\' << byte;
         else if (byte < 0x20) {
-            out << "\\u00" << std::hex << std::setw(2) << std::setfill('0')
-                << static_cast<unsigned int>(byte) << std::dec;
-        }
-        else out << byte;
+            out << "\\u00" << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(byte)
+                << std::dec;
+        } else
+            out << byte;
     }
     out << '"';
     return out.str();
@@ -149,11 +160,10 @@ std::string Utf8Name(const char* name, int length) {
     if (wideLength == 0) return {};
     std::wstring wide(wideLength, L'\0');
     MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, name, length, &wide[0], wideLength);
-    const int utf8Length = WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength,
-        nullptr, 0, nullptr, nullptr);
+    const int utf8Length = WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength, nullptr, 0, nullptr, nullptr);
     std::string result(utf8Length, '\0');
-    if (utf8Length != 0) WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength,
-        &result[0], utf8Length, nullptr, nullptr);
+    if (utf8Length != 0)
+        WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength, &result[0], utf8Length, nullptr, nullptr);
     return result;
 }
 
@@ -191,8 +201,9 @@ bool CaptureMonsters(std::vector<MapleControl::Monster>& monsters) {
     std::uint32_t pool = 0;
     std::uint32_t vtable = 0;
     std::array<std::uint32_t, 3> membership{};
-    if (!ReadAt(0x00BEBFA4, pool) || pool == 0 || !ReadAt(pool, vtable) ||
-        vtable != 0x00AF8378 || !ReadAt(pool + 0x24, membership) || membership[0] > 512) return false;
+    if (!ReadAt(0x00BEBFA4, pool) || pool == 0 || !ReadAt(pool, vtable) || vtable != 0x00AF8378
+        || !ReadAt(pool + 0x24, membership) || membership[0] > 512)
+        return false;
     auto position = membership[1];
     while (position != 0 && monsters.size() < membership[0]) {
         std::uint32_t object = 0;
@@ -201,10 +212,11 @@ bool CaptureMonsters(std::vector<MapleControl::Monster>& monsters) {
         std::uint32_t entry = 0;
         MapleControl::Monster monster;
         std::uint32_t activeValue = 0;
-        if (!ReadAt(position + 4, object) || object == 0 || !ReadAt(object, vtables) ||
-            vtables != std::array<std::uint32_t, 3>{0x00AF8270, 0x00AF824C, 0x00AF8248} ||
-            !ReadAt(object + 0x510, coordinates) || !SecureInteger(object + 0x17C, monster.objectId) ||
-            !SecureInteger(object + 0x124, activeValue) || !ReadAt(object + 0x188, entry)) return false;
+        if (!ReadAt(position + 4, object) || object == 0 || !ReadAt(object, vtables)
+            || vtables != std::array<std::uint32_t, 3>{0x00AF8270, 0x00AF824C, 0x00AF8248}
+            || !ReadAt(object + 0x510, coordinates) || !SecureInteger(object + 0x17C, monster.objectId)
+            || !SecureInteger(object + 0x124, activeValue) || !ReadAt(object + 0x188, entry))
+            return false;
         monster.x = coordinates[0];
         monster.y = coordinates[1];
         monster.active = activeValue != 0;
@@ -213,12 +225,13 @@ bool CaptureMonsters(std::vector<MapleControl::Monster>& monsters) {
             monster.templateKnown = true;
             std::uint32_t name = 0;
             std::uint32_t nameLength = 0;
-            if (ReadAt(entry + 0x30, name) && name != 0 && ReadAt(name - 4, nameLength) &&
-                nameLength > 0 && nameLength <= 512) {
+            if (ReadAt(entry + 0x30, name) && name != 0 && ReadAt(name - 4, nameLength) && nameLength > 0
+                && nameLength <= 512) {
                 std::array<char, 513> bytes{};
                 SIZE_T read = 0;
                 if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(name), bytes.data(),
-                    nameLength + 1, &read) && read == nameLength + 1 && bytes[nameLength] == 0)
+                                      nameLength + 1, &read)
+                    && read == nameLength + 1 && bytes[nameLength] == 0)
                     monster.name = Utf8Name(bytes.data(), static_cast<int>(nameLength));
             }
         }
@@ -228,17 +241,16 @@ bool CaptureMonsters(std::vector<MapleControl::Monster>& monsters) {
         position = node == 0 ? 0 : node + 16;
     }
     std::array<std::uint32_t, 3> after{};
-    return position == 0 && monsters.size() == membership[0] && ReadAt(pool + 0x24, after) &&
-        after == membership;
+    return position == 0 && monsters.size() == membership[0] && ReadAt(pool + 0x24, after) && after == membership;
 }
-
 
 bool CaptureDrops(std::vector<MapleControl::Drop>& drops) {
     std::uint32_t pool = 0;
     std::uint32_t vtable = 0;
     std::array<std::uint32_t, 3> membership{};
-    if (!ReadAt(0x00BED6AC, pool) || pool == 0 || !ReadAt(pool, vtable) ||
-        vtable != 0x00AF3700 || !ReadAt(pool + 0x28, membership) || membership[0] > 512) return false;
+    if (!ReadAt(0x00BED6AC, pool) || pool == 0 || !ReadAt(pool, vtable) || vtable != 0x00AF3700
+        || !ReadAt(pool + 0x28, membership) || membership[0] > 512)
+        return false;
     auto position = membership[1];
     while (position != 0 && drops.size() < membership[0]) {
         std::uint32_t object = 0;
@@ -248,10 +260,10 @@ bool CaptureDrops(std::vector<MapleControl::Drop>& drops) {
         std::uint32_t x = 0;
         std::uint32_t y = 0;
         MapleControl::Drop drop;
-        if (!ReadAt(position + 4, object) || object == 0 ||
-            !ReadAt(object + 0x20, drop.objectId) || !ReadAt(object + 0x30, money) ||
-            !ReadAt(object + 0x34, value) || !ReadAt(object + 0x48, landed) ||
-            !SecureValue(object + 0x74, x) || !SecureValue(object + 0x68, y)) return false;
+        if (!ReadAt(position + 4, object) || object == 0 || !ReadAt(object + 0x20, drop.objectId)
+            || !ReadAt(object + 0x30, money) || !ReadAt(object + 0x34, value) || !ReadAt(object + 0x48, landed)
+            || !SecureValue(object + 0x74, x) || !SecureValue(object + 0x68, y))
+            return false;
         drop.x = static_cast<std::int32_t>(x);
         drop.y = static_cast<std::int32_t>(y);
         drop.itemKnown = money == 0;
@@ -272,8 +284,9 @@ bool CaptureInventory(std::uint32_t stats, std::vector<MapleControl::Item>& inve
     for (int type = 1; type <= 5; ++type) {
         std::uint32_t array = 0;
         std::uint32_t length = 0;
-        if (!ReadAt(stats + 0x447 + type * 4, array) || array == 0 ||
-            !ReadAt(array - 4, length) || length == 0 || length > 257) return false;
+        if (!ReadAt(stats + 0x447 + type * 4, array) || array == 0 || !ReadAt(array - 4, length) || length == 0
+            || length > 257)
+            return false;
         for (std::uint32_t slot = 1; slot < length; ++slot) {
             std::uint32_t object = 0;
             if (!ReadAt(array + slot * 8 + 4, object)) return false;
@@ -282,14 +295,13 @@ bool CaptureInventory(std::uint32_t stats, std::vector<MapleControl::Item>& inve
             MapleControl::Item item;
             item.inventoryType = type;
             item.slot = static_cast<int>(slot);
-            if (!ReadAt(object, vtable) ||
-                (vtable != 0x00AF310C && vtable != 0x00AF318C && vtable != 0x00AF3204) ||
-                !SecureValue(object + 0x0C, item.itemId)) return false;
+            if (!ReadAt(object, vtable) || (vtable != 0x00AF310C && vtable != 0x00AF318C && vtable != 0x00AF3204)
+                || !SecureValue(object + 0x0C, item.itemId))
+                return false;
             if (vtable == 0x00AF310C) {
                 item.quantity = 1;
                 item.quantityKnown = true;
-            }
-            else if (vtable == 0x00AF318C) {
+            } else if (vtable == 0x00AF318C) {
                 std::array<unsigned char, 8> data{};
                 if (!ReadAt(object + 0x28, data)) return false;
                 std::uint32_t checksum = 0xBAADF00D;
@@ -321,9 +333,8 @@ bool BindingKey(std::uint32_t id, unsigned int& key, std::string& error) {
     std::uint32_t input = 0;
     std::uint32_t vtable = 0;
     std::array<unsigned char, 89 * 5> table{};
-    if (!ReadAt(0x00BED5A0, mapped) || mapped == 0 || !ReadAt(mapped, vtable) ||
-        vtable != 0x00AF5650 || !ReadAt(mapped + 4, table) ||
-        !ReadAt(0x00BEC33C, input) || input == 0) {
+    if (!ReadAt(0x00BED5A0, mapped) || mapped == 0 || !ReadAt(mapped, vtable) || vtable != 0x00AF5650
+        || !ReadAt(mapped + 4, table) || !ReadAt(0x00BEC33C, input) || input == 0) {
         error = "native_binding_unavailable";
         return false;
     }
@@ -333,8 +344,9 @@ bool BindingKey(std::uint32_t id, unsigned int& key, std::string& error) {
         if (table[index * 5] != 5 || actionId != id) continue;
         // Extended navigation keys share the low seven DIK bits used by CFuncKeyMappedMan.
         unsigned int scan = index;
-        if (index == 71 || index == 72 || index == 73 || index == 75 || index == 77 ||
-            index == 79 || index == 80 || index == 81 || index == 82 || index == 83) scan |= 0x80;
+        if (index == 71 || index == 72 || index == 73 || index == 75 || index == 77 || index == 79 || index == 80
+            || index == 81 || index == 82 || index == 83)
+            scan |= 0x80;
         if (!ReadAt(input + 0x424 + scan * 4, key) || key == 0 || key > 255) continue;
         return true;
     }
@@ -349,18 +361,15 @@ MapleControl::State CaptureState(NativeContext& native) {
     native.loginStage = native.field != 0 && ReadAt(native.field, stageType) && stageType == 0x00AF6B24;
     if (native.field != 0) state.mapKnown = SecureValue(native.field + 0x138, state.mapId);
     std::uint32_t context = 0;
-    if (ReadAt(0x00BE7918, context) && context != 0 &&
-        ReadAt(context + 0x20B8, native.stats) && native.stats != 0) {
+    if (ReadAt(0x00BE7918, context) && context != 0 && ReadAt(context + 0x20B8, native.stats) && native.stats != 0) {
         std::array<unsigned char, 0x100> data{};
         if (ReadAt(native.stats, data)) {
             std::memcpy(&state.character.id, data.data(), sizeof(state.character.id));
             int nameLength = 0;
             while (nameLength < 13 && data[4 + nameLength] != 0) ++nameLength;
             state.character.name = Utf8Name(reinterpret_cast<const char*>(data.data() + 4), nameLength);
-            const std::array<unsigned int, 13> offsets{
-                0x33, 0x39, 0x41, 0x49, 0x51, 0x59, 0x61, 0x69,
-                0x71, 0x79, 0x81, 0x89, 0x91
-            };
+            const std::array<unsigned int, 13> offsets{0x33, 0x39, 0x41, 0x49, 0x51, 0x59, 0x61,
+                                                       0x69, 0x71, 0x79, 0x81, 0x89, 0x91};
             state.characterKnown = true;
             for (unsigned int field = 0; field < offsets.size(); ++field) {
                 const unsigned int size = field == 0 ? 1 : field == 12 ? 4 : 2;
@@ -375,14 +384,14 @@ MapleControl::State CaptureState(NativeContext& native) {
                     value = key ^ ((encrypted << 5) | (encrypted >> 27));
                     const std::uint32_t mixed = key ^ checksum;
                     checksum = encrypted + ((mixed >> 5) | (mixed << 27));
-                }
-                else for (unsigned int index = 0; index < size; ++index) {
-                    const unsigned char key = data[offset + index];
-                    const unsigned char encrypted = data[offset + size + index];
-                    const std::uint32_t mixed = key ^ checksum;
-                    checksum = encrypted + ((mixed >> 5) | (mixed << 27));
-                    value |= static_cast<std::uint32_t>(key ^ encrypted) << (index * 8);
-                }
+                } else
+                    for (unsigned int index = 0; index < size; ++index) {
+                        const unsigned char key = data[offset + index];
+                        const unsigned char encrypted = data[offset + size + index];
+                        const std::uint32_t mixed = key ^ checksum;
+                        checksum = encrypted + ((mixed >> 5) | (mixed << 27));
+                        value |= static_cast<std::uint32_t>(key ^ encrypted) << (index * 8);
+                    }
                 std::uint32_t expected = 0;
                 std::memcpy(&expected, data.data() + offset + size * 2, sizeof(expected));
                 if (checksum != expected) state.characterKnown = false;
@@ -393,8 +402,8 @@ MapleControl::State CaptureState(NativeContext& native) {
     if (ReadAt(0x00BEBF98, native.user) && native.user != 0) {
         std::array<std::uint32_t, 2> vtables{};
         std::array<int, 2> position{};
-        state.positionKnown = ReadAt(native.user, vtables) && vtables[0] == 0x00B3D20C &&
-            vtables[1] == 0x00B3D1E8 && ReadAt(native.user + 0x116C, position);
+        state.positionKnown = ReadAt(native.user, vtables) && vtables[0] == 0x00B3D20C && vtables[1] == 0x00B3D1E8
+                              && ReadAt(native.user + 0x116C, position);
         if (state.positionKnown) {
             state.x = position[0];
             state.y = position[1];
@@ -438,16 +447,17 @@ unsigned int __fastcall KeyPressedHook(InputSystem* input, void*, int key) {
 bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
     std::uint32_t windowManager = 0;
     std::uint32_t input = 0;
-    if (!ReadAt(0x00BEC20C, windowManager) || windowManager == 0 ||
-        !ReadAt(0x00BEC33C, input) || input == 0) return false;
+    if (!ReadAt(0x00BEC20C, windowManager) || windowManager == 0 || !ReadAt(0x00BEC33C, input) || input == 0)
+        return false;
     unsigned int flags = ((scanCodes[key] & 0x7F) | ((scanCodes[key] & 0x80) << 1)) << 16;
     // 0x59B1EB's low flags encode modifiers, not a Win32 repeat count.
     flags |= inputModifiers(reinterpret_cast<InputSystem*>(input));
     if (!down) flags |= 0x80000000;
     // Native keyboard polling emits the aggregate VK and retains the side in DIK/flags.
-    const unsigned int messageKey = key == VK_LSHIFT || key == VK_RSHIFT ? VK_SHIFT :
-        key == VK_LCONTROL || key == VK_RCONTROL ? VK_CONTROL :
-        key == VK_LMENU || key == VK_RMENU ? VK_MENU : key;
+    const unsigned int messageKey = key == VK_LSHIFT || key == VK_RSHIFT       ? VK_SHIFT
+                                    : key == VK_LCONTROL || key == VK_RCONTROL ? VK_CONTROL
+                                    : key == VK_LMENU || key == VK_RMENU       ? VK_MENU
+                                                                               : key;
     if (down && epoch != keyInput.Epoch()) return true;
     keyInput.MarkDispatched(epoch);
     ++inputEvents;
@@ -470,8 +480,8 @@ bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durati
         keyInput.Request(desired, durationMs, currentNative.user, GetTickCount64());
         return true;
     }
-    if (!currentState->mapKnown || !currentState->characterKnown || !currentState->positionKnown ||
-        currentState->character.values[6] == 0) {
+    if (!currentState->mapKnown || !currentState->characterKnown || !currentState->positionKnown
+        || currentState->character.values[6] == 0) {
         error = "state_unavailable_or_dead";
         return false;
     }
@@ -505,34 +515,40 @@ bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durati
 bool Publish(const MapleControl::State& state) {
     const bool ready = state.ready;
     std::ostringstream out;
-    out << "{\"protocol\":1,\"instance_id\":" << Quote(instanceId)
-        << ",\"pid\":" << GetCurrentProcessId() << ",\"run_id\":" << Quote(runId)
-        << ",\"seq\":" << state.sequence << ",\"observed_at_ms\":" << state.observedAtMs
-        << ",\"scene_generation\":" << sceneGeneration
+    out << "{\"protocol\":1,\"instance_id\":" << Quote(instanceId) << ",\"pid\":" << GetCurrentProcessId()
+        << ",\"run_id\":" << Quote(runId) << ",\"seq\":" << state.sequence
+        << ",\"observed_at_ms\":" << state.observedAtMs << ",\"scene_generation\":" << sceneGeneration
         << ",\"ready\":" << (ready ? "true" : "false") << ",\"map_id\":";
-    if (state.mapKnown) out << state.mapId;
-    else out << "null";
+    if (state.mapKnown)
+        out << state.mapId;
+    else
+        out << "null";
     out << ",\"character\":";
     if (state.characterKnown) {
         out << "{\"id\":" << state.character.id << ",\"name\":" << Quote(state.character.name);
         const std::array<const char*, 13> names{
-            "level", "job", "strength", "dexterity", "intelligence", "luck", "hp", "max_hp",
-            "mp", "max_mp", "ability_points", "skill_points", "experience"
-        };
+            "level",  "job", "strength", "dexterity",      "intelligence", "luck",      "hp",
+            "max_hp", "mp",  "max_mp",   "ability_points", "skill_points", "experience"};
         for (unsigned int index = 0; index < names.size(); ++index) {
             out << ',' << Quote(names[index]) << ':';
-            if (state.character.known[index]) out << state.character.values[index];
-            else out << "null";
+            if (state.character.known[index])
+                out << state.character.values[index];
+            else
+                out << "null";
         }
         out << '}';
-    }
-    else out << "null";
+    } else
+        out << "null";
     out << ",\"position\":";
-    if (state.positionKnown) out << "{\"x\":" << state.x << ",\"y\":" << state.y << '}';
-    else out << "null";
+    if (state.positionKnown)
+        out << "{\"x\":" << state.x << ",\"y\":" << state.y << '}';
+    else
+        out << "null";
     out << ",\"facing\":";
-    if (state.facingKnown) out << Quote(state.facingLeft ? "Left" : "Right");
-    else out << "null";
+    if (state.facingKnown)
+        out << Quote(state.facingLeft ? "Left" : "Right");
+    else
+        out << "null";
     out << ",\"monsters\":";
     if (state.monstersKnown) {
         out << '[';
@@ -541,15 +557,16 @@ bool Publish(const MapleControl::State& state) {
             if (separator) out << ',';
             separator = true;
             out << "{\"object_id\":" << monster.objectId << ",\"template_id\":";
-            if (monster.templateKnown) out << monster.templateId;
-            else out << "null";
-            out << ",\"name\":" << (monster.name.empty() ? "null" : Quote(monster.name))
-                << ",\"x\":" << monster.x << ",\"y\":" << monster.y
-                << ",\"active\":" << (monster.active ? "true" : "false") << '}';
+            if (monster.templateKnown)
+                out << monster.templateId;
+            else
+                out << "null";
+            out << ",\"name\":" << (monster.name.empty() ? "null" : Quote(monster.name)) << ",\"x\":" << monster.x
+                << ",\"y\":" << monster.y << ",\"active\":" << (monster.active ? "true" : "false") << '}';
         }
         out << ']';
-    }
-    else out << "null";
+    } else
+        out << "null";
     out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true},\"inventory\":";
     if (state.inventoryKnown) {
         out << '[';
@@ -559,13 +576,15 @@ bool Publish(const MapleControl::State& state) {
             separator = true;
             out << "{\"inventory_type\":" << item.inventoryType << ",\"slot\":" << item.slot
                 << ",\"item_id\":" << item.itemId << ",\"quantity\":";
-            if (item.quantityKnown) out << item.quantity;
-            else out << "null";
+            if (item.quantityKnown)
+                out << item.quantity;
+            else
+                out << "null";
             out << '}';
         }
         out << ']';
-    }
-    else out << "null";
+    } else
+        out << "null";
     out << ",\"drops\":";
     if (state.dropsKnown) {
         out << '[';
@@ -573,36 +592,47 @@ bool Publish(const MapleControl::State& state) {
         for (const auto& drop : state.drops) {
             if (separator) out << ',';
             separator = true;
-            out << "{\"object_id\":" << drop.objectId << ",\"x\":" << drop.x
-                << ",\"y\":" << drop.y << ",\"item_id\":";
-            if (drop.itemKnown) out << drop.itemId; else out << "null";
+            out << "{\"object_id\":" << drop.objectId << ",\"x\":" << drop.x << ",\"y\":" << drop.y << ",\"item_id\":";
+            if (drop.itemKnown)
+                out << drop.itemId;
+            else
+                out << "null";
             out << ",\"money\":";
-            if (drop.moneyKnown) out << drop.money; else out << "null";
+            if (drop.moneyKnown)
+                out << drop.money;
+            else
+                out << "null";
             out << ",\"landed\":";
-            if (drop.landed == MapleControl::Fact::Unknown) out << "null";
-            else out << (drop.landed == MapleControl::Fact::True ? "true" : "false");
+            if (drop.landed == MapleControl::Fact::Unknown)
+                out << "null";
+            else
+                out << (drop.landed == MapleControl::Fact::True ? "true" : "false");
             out << '}';
         }
         out << ']';
-    }
-    else out << "null";
+    } else
+        out << "null";
     out << ",\"held_keys\":[";
     bool separator = false;
     const auto& held = keyInput.Held();
-    for (unsigned int key = 0; key < held.size(); ++key) if (held[key]) {
-        if (separator) out << ',';
-        out << key;
-        separator = true;
-    }
+    for (unsigned int key = 0; key < held.size(); ++key)
+        if (held[key]) {
+            if (separator) out << ',';
+            out << key;
+            separator = true;
+        }
     out << "],\"command\":{\"id\":" << (commandId.empty() ? "null" : Quote(commandId))
-        << ",\"status\":" << Quote(commandStatus) << ",\"reason\":"
-        << (commandReason.empty() ? "null" : Quote(commandReason)) << "},\"rejected_command\":";
-    if (rejectedReason.empty()) out << "null";
-    else out << "{\"id\":" << (rejectedId.empty() ? "null" : Quote(rejectedId))
-        << ",\"status\":\"rejected\",\"reason\":" << Quote(rejectedReason) << '}';
+        << ",\"status\":" << Quote(commandStatus)
+        << ",\"reason\":" << (commandReason.empty() ? "null" : Quote(commandReason)) << "},\"rejected_command\":";
+    if (rejectedReason.empty())
+        out << "null";
+    else
+        out << "{\"id\":" << (rejectedId.empty() ? "null" : Quote(rejectedId))
+            << ",\"status\":\"rejected\",\"reason\":" << Quote(rejectedReason) << '}';
     out << ",\"script\":";
     const auto* script = runtime.CurrentStatus();
-    if (script == nullptr) out << "null";
+    if (script == nullptr)
+        out << "null";
     else {
         out << "{\"id\":" << Quote(script->id) << ",\"status\":" << Quote(script->status)
             << ",\"reason\":" << (script->reason.empty() ? "null" : Quote(script->reason))
@@ -614,8 +644,8 @@ bool Publish(const MapleControl::State& state) {
         for (const auto& task : script->tasks) {
             if (taskSeparator) out << ',';
             out << "{\"name\":" << Quote(task.name) << ",\"revision\":" << task.revision
-                << ",\"priority\":" << task.priority
-                << ",\"status\":" << Quote(task.status) << ",\"wait\":" << Quote(task.wait)
+                << ",\"priority\":" << task.priority << ",\"status\":" << Quote(task.status)
+                << ",\"wait\":" << Quote(task.wait)
                 << ",\"reason\":" << (task.reason.empty() ? "null" : Quote(task.reason))
                 << ",\"error\":" << (task.error.empty() ? "null" : Quote(task.error)) << '}';
             taskSeparator = true;
@@ -628,30 +658,32 @@ bool Publish(const MapleControl::State& state) {
             << ",\"reason\":" << (control.reason.empty() ? "null" : Quote(control.reason)) << "}}";
     }
     out << ",\"last_skill\":";
-    if (haveSkillResult) out << "{\"skill_id\":" << lastSkillId << ",\"native_result\":" << lastSkillResult << '}';
-    else out << "null";
+    if (haveSkillResult)
+        out << "{\"skill_id\":" << lastSkillId << ",\"native_result\":" << lastSkillResult << '}';
+    else
+        out << "null";
     const auto actionResult = NativeResult();
     out << ",\"action_result\":{\"dispatched\":" << (actionResult.dispatched ? "true" : "false")
-        << ",\"control_released\":" << (actionResult.controlReleased ? "true" : "false")
-        << ",\"settled\":";
-    if (actionResult.settled == MapleControl::Fact::Unknown) out << "null";
-    else out << (actionResult.settled == MapleControl::Fact::True ? "true" : "false");
-    out << ",\"effect\":" << Quote(actionResult.effect)
-        << ",\"reason\":" << Quote(actionResult.reason) << '}';
+        << ",\"control_released\":" << (actionResult.controlReleased ? "true" : "false") << ",\"settled\":";
+    if (actionResult.settled == MapleControl::Fact::Unknown)
+        out << "null";
+    else
+        out << (actionResult.settled == MapleControl::Fact::True ? "true" : "false");
+    out << ",\"effect\":" << Quote(actionResult.effect) << ",\"reason\":" << Quote(actionResult.reason) << '}';
     out << ",\"input_events\":" << inputEvents << "}\n";
     const std::string bytes = out.str();
     const std::string temporary = directory + "\\state.tmp";
-    const HANDLE file = CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
-        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE file =
+        CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0;
-    const bool complete = WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written,
-        nullptr) && written == bytes.size();
+    const bool complete =
+        WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) && written == bytes.size();
     const bool closed = CloseHandle(file) != FALSE;
-    return complete && closed && MoveFileExA(temporary.c_str(), (directory + "\\state.json").c_str(),
-        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    return complete && closed
+           && MoveFileExA(temporary.c_str(), (directory + "\\state.json").c_str(),
+                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
 }
-
 
 void ReadCommand() {
     std::ifstream input(directory + "\\command.txt");
@@ -665,31 +697,41 @@ void ReadCommand() {
     std::uint64_t generation = 0;
     std::uint64_t value = 0;
     std::string targetInstance, id, operation, scriptId, extra;
-    const bool header = line.size() <= 1024 &&
-        static_cast<bool>(stream >> protocol >> targetInstance >> generation >> id >> operation >> value);
-    if (!header) { rejectedId = id; rejectedReason = "invalid_command"; return; }
+    const bool header =
+        line.size() <= 1024
+        && static_cast<bool>(stream >> protocol >> targetInstance >> generation >> id >> operation >> value);
+    if (!header) {
+        rejectedId = id;
+        rejectedReason = "invalid_command";
+        return;
+    }
     if (id == lastConsumedId) return;
     lastConsumedId = id;
-    rejectedId.clear(); rejectedReason.clear();
-    bool valid = protocol == 1 && targetInstance == instanceId && !id.empty() && id.size() <= 64 &&
-        id.find_first_not_of("0123456789abcdefABCDEF-") == std::string::npos;
+    rejectedId.clear();
+    rejectedReason.clear();
+    bool valid = protocol == 1 && targetInstance == instanceId && !id.empty() && id.size() <= 64
+                 && id.find_first_not_of("0123456789abcdefABCDEF-") == std::string::npos;
     if (operation == "script") {
         stream >> scriptId;
-        valid = valid && generation == sceneGeneration && value <= 0xffffffffULL &&
-            scriptId.size() == 32 && scriptId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos &&
-            !(stream >> extra) && previousState.ready && previousState.character.values[6] > 0;
-    }
-    else valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
+        valid = valid && generation == sceneGeneration && value <= 0xffffffffULL && scriptId.size() == 32
+                && scriptId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos && !(stream >> extra)
+                && previousState.ready && previousState.character.values[6] > 0;
+    } else
+        valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
     const bool busy = operation != "stop" && (runtime.Running() || !adapter.Released());
     if (!valid || busy) {
         rejectedId = id;
         rejectedReason = busy ? "busy" : "invalid_or_stale_command";
         if (!runtime.Running() && adapter.Released()) {
-            commandId = id; commandStatus = "rejected"; commandReason = rejectedReason;
+            commandId = id;
+            commandStatus = "rejected";
+            commandReason = rejectedReason;
         }
         return;
     }
-    commandId = id; commandStatus = "running"; commandReason.clear();
+    commandId = id;
+    commandStatus = "running";
+    commandReason.clear();
     if (operation == "stop") {
         runtime.Cancel("stopped");
         scriptCommand = false;
@@ -711,20 +753,22 @@ void ReadCommand() {
     }
     std::string error;
     if (!sourceValid || !runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)) {
-        scriptCommand = false; commandStatus = "rejected";
+        scriptCommand = false;
+        commandStatus = "rejected";
         commandReason = error.empty() ? "script_file_unavailable" : "script_load_error";
-    }
-    else scriptCommand = true;
+    } else
+        scriptCommand = true;
 }
 
 void Tick() {
     const ULONGLONG now = GetTickCount64();
     NativeContext native;
     MapleControl::State state = CaptureState(native);
-    const bool changed = haveScene && (native.field != currentNative.field ||
-        native.stats != currentNative.stats || state.mapKnown != previousState.mapKnown ||
-        (state.mapKnown && state.mapId != previousState.mapId) ||
-        (state.characterKnown && state.character.id != previousState.character.id));
+    const bool changed =
+        haveScene
+        && (native.field != currentNative.field || native.stats != currentNative.stats
+            || state.mapKnown != previousState.mapKnown || (state.mapKnown && state.mapId != previousState.mapId)
+            || (state.characterKnown && state.character.id != previousState.character.id));
     if (changed) ++sceneGeneration;
     state.instanceId = instanceId;
     state.sequence = ++sequence;
@@ -736,9 +780,9 @@ void Tick() {
     haveScene = true;
 
     // CallUpdate may return without advancing its 30ms character step. Confirm the actual consumer.
-    const bool oldCharacterExited = native.loginStage ||
-        (native.field == 0 && native.stats == 0 && native.user == 0) ||
-        (previousState.characterKnown && previousState.positionKnown && native.user != keyInput.ReleaseCharacter());
+    const bool oldCharacterExited =
+        native.loginStage || (native.field == 0 && native.stats == 0 && native.user == 0)
+        || (previousState.characterKnown && previousState.positionKnown && native.user != keyInput.ReleaseCharacter());
     if (keyInput.ConfirmRelease(updatedCharacter, characterUpdates, oldCharacterExited)) {
         if (!pendingStatus.empty()) {
             commandStatus = pendingStatus;
@@ -748,7 +792,8 @@ void Tick() {
         pendingReason.clear();
     }
     const bool ready = previousState.ready;
-    if (keyInput.Active() && (changed || !ready || previousState.character.values[6] == 0 || now >= keyInput.Deadline()))
+    if (keyInput.Active()
+        && (changed || !ready || previousState.character.values[6] == 0 || now >= keyInput.Deadline()))
         BeginRelease({}, {});
 
     ReadCommand();
@@ -763,16 +808,19 @@ void Tick() {
     NativeObservation::Tick(directory, instanceId, runId, sceneGeneration, sequence);
     if (now - lastPublishedAt >= 25) {
         if (!Publish(previousState)) {
-            if (runtime.Running()) runtime.Cancel("state_publish_failed");
-            else if (keyInput.Active() || itemUse.Pending()) BeginRelease({}, {});
+            if (runtime.Running())
+                runtime.Cancel("state_publish_failed");
+            else if (keyInput.Active() || itemUse.Pending())
+                BeginRelease({}, {});
         }
         lastPublishedAt = now;
     }
     if (itemUse.Pending()) {
         std::uint32_t context = 0;
         if (!ReadAt(0x00BE7918, context)) context = 0;
-        const auto consumed = itemUse.Consume(previousState.characterKnown ? previousState.character.id : 0,
-            sceneGeneration, context, [](const BeiDouBridge::NativeItemUse::Item& item) {
+        const auto consumed = itemUse.Consume(
+            previousState.characterKnown ? previousState.character.id : 0, sceneGeneration, context,
+            [](const BeiDouBridge::NativeItemUse::Item& item) {
                 useItem(reinterpret_cast<ClientContext*>(item.context), item.slot, static_cast<int>(item.itemId));
             });
         if (consumed == BeiDouBridge::NativeItemUse::Consumption::ContextChanged) {
@@ -814,8 +862,7 @@ bool AgentBridge::Install() {
     FILETIME created{}, exited{}, kernel{}, user{};
     if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return false;
     std::ostringstream identity;
-    identity << GetCurrentProcessId() << '-' << std::hex << created.dwHighDateTime << '-'
-        << created.dwLowDateTime;
+    identity << GetCurrentProcessId() << '-' << std::hex << created.dwHighDateTime << '-' << created.dwLowDateTime;
     instanceId = identity.str();
     if (!Memory::SetHook(true, reinterpret_cast<void**>(&originalKeyPressed), KeyPressedHook)) return false;
     if (!Memory::SetHook(true, reinterpret_cast<void**>(&originalUpdate), UpdateHook)) {
@@ -838,17 +885,27 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         error = "state_unavailable_or_dead";
         return false;
     }
-    if (!adapter.Released()) { error = "action_in_progress"; return false; }
+    if (!adapter.Released()) {
+        error = "action_in_progress";
+        return false;
+    }
     unsigned int key = 0;
     unsigned int duration = action.durationMs == 0 ? 60 : action.durationMs;
     switch (action.kind) {
     case MapleControl::ActionKind::Move:
     case MapleControl::ActionKind::Face:
-        if (action.direction == "left") key = VK_LEFT;
-        else if (action.direction == "right") key = VK_RIGHT;
-        else if (action.direction == "up" && action.kind == MapleControl::ActionKind::Move) key = VK_UP;
-        else if (action.direction == "down" && action.kind == MapleControl::ActionKind::Move) key = VK_DOWN;
-        else { error = "unsupported: direction"; return false; }
+        if (action.direction == "left")
+            key = VK_LEFT;
+        else if (action.direction == "right")
+            key = VK_RIGHT;
+        else if (action.direction == "up" && action.kind == MapleControl::ActionKind::Move)
+            key = VK_UP;
+        else if (action.direction == "down" && action.kind == MapleControl::ActionKind::Move)
+            key = VK_DOWN;
+        else {
+            error = "unsupported: direction";
+            return false;
+        }
         if (action.kind == MapleControl::ActionKind::Face) {
             if (currentState->facingKnown && currentState->facingLeft == (key == VK_LEFT)) {
                 semanticResult.reason = "already_facing";
@@ -872,7 +929,10 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
             error = "unsupported: ordinary HP/MP potion required";
             return false;
         }
-        if (!currentState->inventoryKnown) { error = "inventory_unavailable"; return false; }
+        if (!currentState->inventoryKnown) {
+            error = "inventory_unavailable";
+            return false;
+        }
         int slot = 0;
         bool quantityUnknown = false;
         for (const auto& item : currentState->inventory) {
@@ -921,36 +981,66 @@ MapleControl::ActionResult NativeResult() {
     return result;
 }
 
-bool NativeRawKeys(const std::vector<std::string>& names, unsigned int duration,
-    std::string& error) {
-    struct NamedKey { const char* name; unsigned int code; };
-    static const NamedKey named[]{
-        {"Left", VK_LEFT}, {"Right", VK_RIGHT}, {"Up", VK_UP}, {"Down", VK_DOWN},
-        {"Control_L", VK_LCONTROL}, {"Control_R", VK_RCONTROL}, {"Ctrl", VK_LCONTROL},
-        {"Control", VK_LCONTROL}, {"Alt_L", VK_LMENU}, {"Alt_R", VK_RMENU}, {"Alt", VK_LMENU},
-        {"Shift_L", VK_LSHIFT}, {"Shift_R", VK_RSHIFT}, {"Shift", VK_LSHIFT},
-        {"space", VK_SPACE}, {"Return", VK_RETURN}, {"Escape", VK_ESCAPE}, {"Tab", VK_TAB},
-        {"Home", VK_HOME}, {"End", VK_END}, {"Prior", VK_PRIOR}, {"Next", VK_NEXT},
-        {"Insert", VK_INSERT}, {"Delete", VK_DELETE}, {"BackSpace", VK_BACK}
+bool NativeRawKeys(const std::vector<std::string>& names, unsigned int duration, std::string& error) {
+    struct NamedKey {
+        const char* name;
+        unsigned int code;
     };
+
+    static const NamedKey named[]{{"Left", VK_LEFT},
+                                  {"Right", VK_RIGHT},
+                                  {"Up", VK_UP},
+                                  {"Down", VK_DOWN},
+                                  {"Control_L", VK_LCONTROL},
+                                  {"Control_R", VK_RCONTROL},
+                                  {"Ctrl", VK_LCONTROL},
+                                  {"Control", VK_LCONTROL},
+                                  {"Alt_L", VK_LMENU},
+                                  {"Alt_R", VK_RMENU},
+                                  {"Alt", VK_LMENU},
+                                  {"Shift_L", VK_LSHIFT},
+                                  {"Shift_R", VK_RSHIFT},
+                                  {"Shift", VK_LSHIFT},
+                                  {"space", VK_SPACE},
+                                  {"Return", VK_RETURN},
+                                  {"Escape", VK_ESCAPE},
+                                  {"Tab", VK_TAB},
+                                  {"Home", VK_HOME},
+                                  {"End", VK_END},
+                                  {"Prior", VK_PRIOR},
+                                  {"Next", VK_NEXT},
+                                  {"Insert", VK_INSERT},
+                                  {"Delete", VK_DELETE},
+                                  {"BackSpace", VK_BACK}};
     std::vector<unsigned int> keys;
     for (const auto& name : names) {
         unsigned int key = 0;
-        for (const auto& entry : named) if (name == entry.name) { key = entry.code; break; }
+        for (const auto& entry : named)
+            if (name == entry.name) {
+                key = entry.code;
+                break;
+            }
         if (key == 0 && name.size() == 1) {
-            if (name[0] >= 'a' && name[0] <= 'z') key = name[0] - 'a' + 'A';
-            else if ((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= '0' && name[0] <= '9')) key = name[0];
+            if (name[0] >= 'a' && name[0] <= 'z')
+                key = name[0] - 'a' + 'A';
+            else if ((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= '0' && name[0] <= '9'))
+                key = name[0];
         }
-        if (key == 0 && name.size() >= 2 && name.size() <= 3 && name[0] == 'F' &&
-            name[1] >= '1' && name[1] <= '9') {
+        if (key == 0 && name.size() >= 2 && name.size() <= 3 && name[0] == 'F' && name[1] >= '1' && name[1] <= '9') {
             unsigned int number = name[1] - '0';
             if (name.size() == 3) {
-                if (name[2] < '0' || name[2] > '9') { error = "unsupported: raw_key"; return false; }
+                if (name[2] < '0' || name[2] > '9') {
+                    error = "unsupported: raw_key";
+                    return false;
+                }
                 number = number * 10 + name[2] - '0';
             }
             if (number <= 12) key = VK_F1 + number - 1;
         }
-        if (key == 0) { error = "unsupported: raw_key"; return false; }
+        if (key == 0) {
+            error = "unsupported: raw_key";
+            return false;
+        }
         keys.push_back(key);
     }
     if (!ApplyDesiredKeys(keys, duration, error)) return false;
@@ -961,8 +1051,8 @@ bool NativeRawKeys(const std::vector<std::string>& names, unsigned int duration,
 }
 
 bool InvokeNativeSkill(std::uint32_t skillId, int& result, std::string& error) {
-    if (!currentState->mapKnown || !currentState->characterKnown || !currentState->positionKnown ||
-        currentState->character.values[6] == 0) {
+    if (!currentState->mapKnown || !currentState->characterKnown || !currentState->positionKnown
+        || currentState->character.values[6] == 0) {
         error = "state_unavailable_or_dead";
         return false;
     }
@@ -980,17 +1070,19 @@ bool InvokeNativeSkill(std::uint32_t skillId, int& result, std::string& error) {
 
 bool NativeLogs(const std::string& scriptId, const std::vector<std::string>& lines) {
     std::ostringstream records;
-    for (const auto& line : lines) records << "{\"script_id\":" << Quote(scriptId)
-        << ",\"at_ms\":" << GetTickCount64() << ",\"text\":" << Quote(line) << "}\n";
+    for (const auto& line : lines)
+        records << "{\"script_id\":" << Quote(scriptId) << ",\"at_ms\":" << GetTickCount64()
+                << ",\"text\":" << Quote(line) << "}\n";
     const std::string bytes = records.str();
-    const HANDLE file = CreateFileA((directory + "\\script-events.jsonl").c_str(), FILE_APPEND_DATA,
-        FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE file =
+        CreateFileA((directory + "\\script-events.jsonl").c_str(), FILE_APPEND_DATA,
+                    FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
         return false;
     }
     DWORD written = 0;
-    const bool complete = WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written,
-        nullptr) && written == bytes.size();
+    const bool complete =
+        WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) && written == bytes.size();
     CloseHandle(file);
     return complete;
 }

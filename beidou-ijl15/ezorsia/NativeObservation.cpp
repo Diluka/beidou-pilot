@@ -20,8 +20,9 @@ std::uint64_t UnixMs() {
 void Copy(std::uintptr_t address, void* output, std::size_t size) {
     if (size == 0) return;
     SIZE_T copied = 0;
-    if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address),
-        output, size, &copied) || copied != size) throw ReadError("native object read unavailable");
+    if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), output, size, &copied)
+        || copied != size)
+        throw ReadError("native object read unavailable");
 }
 
 std::vector<unsigned char> Bytes(std::uintptr_t address, std::size_t size) {
@@ -32,8 +33,8 @@ std::vector<unsigned char> Bytes(std::uintptr_t address, std::size_t size) {
 
 std::string Utf8(const std::string& text) {
     if (text.empty()) return {};
-    const int count = MultiByteToWideChar(936, MB_ERR_INVALID_CHARS,
-        text.data(), static_cast<int>(text.size()), nullptr, 0);
+    const int count =
+        MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
     if (count == 0) throw ReadError("native text is not valid CP936");
     std::wstring wide(count, L'\0');
     MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), &wide[0], count);
@@ -85,33 +86,35 @@ std::uint32_t SecureValue(std::uintptr_t address) {
 MapleControl::Observation Collect(const std::string& domain) {
     using Collector = Value (*)();
     const std::pair<const char*, Collector> collectors[]{
-        {"stage", Stage}, {"scene", Scene}, {"inventory", Inventory}, {"character", Character},
-        {"quests", Quests}, {"hotkeys", Hotkeys}, {"dialog", Dialog}, {"ui", Ui}, {"shop", Shop}
-    };
+        {"stage", Stage},         {"scene", Scene},   {"inventory", Inventory},
+        {"character", Character}, {"quests", Quests}, {"hotkeys", Hotkeys},
+        {"dialog", Dialog},       {"ui", Ui},         {"shop", Shop}};
     Collector selected = nullptr;
-    for (const auto& entry : collectors) if (domain == entry.first) selected = entry.second;
+    for (const auto& entry : collectors)
+        if (domain == entry.first) selected = entry.second;
     MapleControl::Observation result;
     if (selected != nullptr) {
         const auto started = std::chrono::steady_clock::now();
         try {
             result.data = selected();
-            result.data["read_seconds"] = std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - started).count();
+            result.data["read_seconds"] =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        } catch (const ReadError& failure) {
+            result.status = "unavailable";
+            result.error = failure.what();
         }
-        catch (const ReadError& failure) { result.status = "unavailable"; result.error = failure.what(); }
-    }
-    else {
+    } else {
         result.status = "unsupported";
         result.error = "unsupported observation domain";
     }
     return result;
 }
 
-void Tick(const std::string& directory, const std::string& instance,
-    const std::string& run, std::uint64_t generation, std::uint64_t sequence) {
+void Tick(const std::string& directory, const std::string& instance, const std::string& run, std::uint64_t generation,
+          std::uint64_t sequence) {
     const std::string path = directory + "\\observation-request.txt";
-    const HANDLE input = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
-        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE input = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
+                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (input == INVALID_HANDLE_VALUE) return;
     std::array<char, 513> bytes{};
     DWORD length = 0;
@@ -121,23 +124,33 @@ void Tick(const std::string& directory, const std::string& instance,
     std::istringstream request(std::string(bytes.data(), length));
     int protocol = 0;
     std::string target, id, domain, extra;
-    if (!complete || length == 512 || !(request >> protocol >> target >> id >> domain) ||
-        request >> extra || protocol != 1 || target != instance || id.size() != 32 ||
-        id.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) return;
+    if (!complete || length == 512 || !(request >> protocol >> target >> id >> domain) || request >> extra
+        || protocol != 1 || target != instance || id.size() != 32
+        || id.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+        return;
     const auto observation = Collect(domain);
-    const auto output = Value::Object({{"protocol", 1}, {"instance_id", instance}, {"run_id", run},
-        {"request_id", id}, {"domain", domain}, {"seq", sequence}, {"scene_generation", generation},
-        {"observed_at_ms", UnixMs()}, {"status", observation.status}, {"data", observation.data},
-        {"error", observation.error.empty() ? Value{} : Value(observation.error)}}).Dump();
+    const auto output = Value::Object({{"protocol", 1},
+                                       {"instance_id", instance},
+                                       {"run_id", run},
+                                       {"request_id", id},
+                                       {"domain", domain},
+                                       {"seq", sequence},
+                                       {"scene_generation", generation},
+                                       {"observed_at_ms", UnixMs()},
+                                       {"status", observation.status},
+                                       {"data", observation.data},
+                                       {"error", observation.error.empty() ? Value{} : Value(observation.error)}})
+                            .Dump();
     const std::string temporary = directory + "\\observation.tmp";
-    const HANDLE file = CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
-        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE file =
+        CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return;
     DWORD written = 0;
-    const bool saved = WriteFile(file, output.data(), static_cast<DWORD>(output.size()), &written,
-        nullptr) && written == output.size();
+    const bool saved = WriteFile(file, output.data(), static_cast<DWORD>(output.size()), &written, nullptr)
+                       && written == output.size();
     CloseHandle(file);
-    if (saved) MoveFileExA(temporary.c_str(), (directory + "\\observation.json").c_str(),
-        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    if (saved)
+        MoveFileExA(temporary.c_str(), (directory + "\\observation.json").c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
 }
 }

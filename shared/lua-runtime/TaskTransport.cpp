@@ -46,10 +46,13 @@ std::string Quote(const std::string& value) {
     std::ostringstream output;
     output << '"';
     for (unsigned char byte : value) {
-        if (byte == '"' || byte == '\\') output << '\\' << byte;
-        else if (byte < 32) output << "\\u00" << std::hex << std::setfill('0')
-            << std::setw(2) << static_cast<unsigned int>(byte) << std::dec;
-        else output << byte;
+        if (byte == '"' || byte == '\\')
+            output << '\\' << byte;
+        else if (byte < 32)
+            output << "\\u00" << std::hex << std::setfill('0') << std::setw(2) << static_cast<unsigned int>(byte)
+                   << std::dec;
+        else
+            output << byte;
     }
     output << '"';
     return output.str();
@@ -80,6 +83,7 @@ struct TaskTransport::Request {
 
 TaskTransport::TaskTransport(std::string bridgeDirectory, std::string registeredRun)
     : directory(std::move(bridgeDirectory)), runId(std::move(registeredRun)) {}
+
 TaskTransport::~TaskTransport() = default;
 
 bool TaskTransport::Publish(const Request& request, const TaskChangeResult& result, const State& state) {
@@ -87,22 +91,21 @@ bool TaskTransport::Publish(const Request& request, const TaskChangeResult& resu
     if (!MakeResultsDirectory(results)) return false;
     // Malformed packets without a safe request ID still leave an inspectable
     // rejection; their untrusted ID is never used as a path.
-    const auto target = results + "/" + (Identifier(request.change.requestId)
-        ? request.change.requestId : "invalid-request") + ".json";
+    const auto target =
+        results + "/" + (Identifier(request.change.requestId) ? request.change.requestId : "invalid-request") + ".json";
     const auto temporary = target + ".tmp";
     std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
     if (!output) return false;
-    output << "{\"protocol\":1,\"instance_id\":" << Quote(state.instanceId)
-        << ",\"run_id\":" << Quote(runId) << ",\"script_id\":" << Quote(result.scriptId)
-        << ",\"scene_generation\":" << state.sceneGeneration << ",\"seq\":" << state.sequence
-        << ",\"observed_at_ms\":" << state.observedAtMs << ",\"request_id\":" << Quote(result.requestId)
-        << ",\"operation\":" << Quote(request.operation) << ",\"name\":" << Quote(result.name)
-        << ",\"expected_revision\":" << request.change.expectedRevision << ",\"revision\":" << result.revision
-        << ",\"status\":" << Quote(result.status)
-        << ",\"reason\":" << (result.reason.empty() ? "null" : Quote(result.reason))
-        << ",\"error\":" << (result.error.empty() ? "null" : Quote(result.error))
-        << ",\"changed\":" << (result.changed ? "true" : "false")
-        << ",\"control_released\":" << (result.controlReleased ? "true" : "false") << "}\n";
+    output << "{\"protocol\":1,\"instance_id\":" << Quote(state.instanceId) << ",\"run_id\":" << Quote(runId)
+           << ",\"script_id\":" << Quote(result.scriptId) << ",\"scene_generation\":" << state.sceneGeneration
+           << ",\"seq\":" << state.sequence << ",\"observed_at_ms\":" << state.observedAtMs
+           << ",\"request_id\":" << Quote(result.requestId) << ",\"operation\":" << Quote(request.operation)
+           << ",\"name\":" << Quote(result.name) << ",\"expected_revision\":" << request.change.expectedRevision
+           << ",\"revision\":" << result.revision << ",\"status\":" << Quote(result.status)
+           << ",\"reason\":" << (result.reason.empty() ? "null" : Quote(result.reason))
+           << ",\"error\":" << (result.error.empty() ? "null" : Quote(result.error))
+           << ",\"changed\":" << (result.changed ? "true" : "false")
+           << ",\"control_released\":" << (result.controlReleased ? "true" : "false") << "}\n";
     output.close();
     return static_cast<bool>(output) && Replace(temporary, target);
 }
@@ -131,9 +134,9 @@ bool TaskTransport::Tick(Runtime& runtime, const State& state) {
     unsigned int protocol = 0;
     long long priority = 0;
     std::istringstream stream(line);
-    const bool header = static_cast<bool>(stream >> protocol >> instance >> registeredRun
-        >> request.change.scriptId >> generation >> request.change.requestId >> request.operation
-        >> encodedName >> expectedRevision >> priority >> sourceId);
+    const bool header = static_cast<bool>(stream >> protocol >> instance >> registeredRun >> request.change.scriptId
+                                          >> generation >> request.change.requestId >> request.operation >> encodedName
+                                          >> expectedRevision >> priority >> sourceId);
     TaskChangeResult rejected;
     rejected.requestId = request.change.requestId;
     rejected.scriptId = request.change.scriptId;
@@ -141,9 +144,9 @@ bool TaskTransport::Tick(Runtime& runtime, const State& state) {
     rejected.reason = "invalid_task_request";
     if (!header || line.size() > 1024 || protocol != 1 || !Identifier(request.change.requestId)
         || !Identifier(request.change.scriptId) || !Unsigned(generation, request.generation)
-        || !Unsigned(expectedRevision, request.change.expectedRevision)
-        || priority < (std::numeric_limits<int>::min)() || priority > (std::numeric_limits<int>::max)()
-        || !DecodeName(encodedName, request.change.name) || (stream >> extra)) {
+        || !Unsigned(expectedRevision, request.change.expectedRevision) || priority < (std::numeric_limits<int>::min)()
+        || priority > (std::numeric_limits<int>::max)() || !DecodeName(encodedName, request.change.name)
+        || (stream >> extra)) {
         rejected.name = request.change.name;
         return Publish(request, rejected, state);
     }
@@ -151,10 +154,14 @@ bool TaskTransport::Tick(Runtime& runtime, const State& state) {
     const auto existingPath = directory + "/task-results/" + request.change.requestId + ".json";
     std::ifstream existing(existingPath, std::ios::binary);
     if (existing) return true; // A retained response makes repeated IDs read-only.
-    if (request.operation == "add") request.change.operation = TaskOperation::Add;
-    else if (request.operation == "replace") request.change.operation = TaskOperation::Replace;
-    else if (request.operation == "stop") request.change.operation = TaskOperation::Stop;
-    else return Publish(request, rejected, state);
+    if (request.operation == "add")
+        request.change.operation = TaskOperation::Add;
+    else if (request.operation == "replace")
+        request.change.operation = TaskOperation::Replace;
+    else if (request.operation == "stop")
+        request.change.operation = TaskOperation::Stop;
+    else
+        return Publish(request, rejected, state);
     if (instance != state.instanceId || registeredRun != runId
         || (request.change.operation != TaskOperation::Stop && request.generation != state.sceneGeneration)) {
         rejected.reason = "task_identity_mismatch";
@@ -175,8 +182,8 @@ bool TaskTransport::Tick(Runtime& runtime, const State& state) {
         }
         request.change.source.resize(static_cast<std::size_t>(size));
         source.seekg(0);
-        if (!request.change.source.empty()) source.read(&request.change.source[0],
-            static_cast<std::streamsize>(request.change.source.size()));
+        if (!request.change.source.empty())
+            source.read(&request.change.source[0], static_cast<std::streamsize>(request.change.source.size()));
         if (!source) {
             rejected.reason = "task_source_unavailable";
             return Publish(request, rejected, state);

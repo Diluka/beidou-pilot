@@ -33,7 +33,8 @@ class AppServer:
     async def start(cls, command: list[str], stderr: Path) -> "AppServer":
         with stderr.open("ab") as stream:
             process = await asyncio.create_subprocess_exec(
-                *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=stream)
+                *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=stream
+            )
         return cls(process)
 
     async def _send(self, message: JsonObject) -> None:
@@ -86,9 +87,11 @@ class AppServer:
                     failure = AppServerError("invalid_json_rpc", "Codex app-server 响应缺少请求身份或结果。")
                     break
                 remote_error = message.get("error")
-                if "error" in message and (not isinstance(remote_error, dict)
-                        or type(remote_error.get("code")) is not int
-                        or not isinstance(remote_error.get("message"), str)):
+                if "error" in message and (
+                    not isinstance(remote_error, dict)
+                    or type(remote_error.get("code")) is not int
+                    or not isinstance(remote_error.get("message"), str)
+                ):
                     failure = AppServerError("invalid_json_rpc", "Codex app-server 错误响应字段无效。")
                     break
                 pending = self._pending.get(identifier) if type(identifier) is int else None
@@ -96,8 +99,9 @@ class AppServer:
                     continue
                 if remote_error is not None:
                     error = cast(JsonObject, remote_error)
-                    pending.set_exception(AppServerError(cast(int, error["code"]),
-                                                        cast(str, error["message"]), error.get("data")))
+                    pending.set_exception(
+                        AppServerError(cast(int, error["code"]), cast(str, error["message"]), error.get("data"))
+                    )
                 else:
                     pending.set_result(message["result"])
         except OSError as error:
@@ -106,8 +110,16 @@ class AppServer:
             for pending in self._pending.values():
                 if not pending.done():
                     pending.set_exception(failure)
-            await self.events.put({"method": "transport/closed", "params": {
-                "code": failure.code, "message": failure.message, "returncode": self._process.returncode}})
+            await self.events.put(
+                {
+                    "method": "transport/closed",
+                    "params": {
+                        "code": failure.code,
+                        "message": failure.message,
+                        "returncode": self._process.returncode,
+                    },
+                }
+            )
 
     async def close(self) -> None:
         self._closing = True
