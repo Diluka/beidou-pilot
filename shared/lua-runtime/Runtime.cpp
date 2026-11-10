@@ -83,6 +83,11 @@ void PushResult(lua_State* lua, const ActionResult& result) {
     ObservedFact(lua, "settled", result.settled);
     String(lua, "effect", result.effect);
     if (!result.reason.empty()) String(lua, "reason", result.reason);
+    if (result.skillRequested) {
+        Boolean(lua, "skill_dispatched", result.skill.dispatched);
+        if (result.skill.nativeResultKnown) Integer(lua, "skill_native_result", result.skill.nativeResult);
+        if (!result.skill.reason.empty()) String(lua, "skill_reason", result.skill.reason);
+    }
 }
 
 void PushState(lua_State* lua, const State& state) {
@@ -128,6 +133,11 @@ void PushState(lua_State* lua, const State& state) {
             Number(lua, "x", monster.x);
             Number(lua, "y", monster.y);
             Boolean(lua, "active", monster.active);
+            if (monster.hpSequence != 0) {
+                Integer(lua, "hp_percent", monster.hpPercent);
+                Integer(lua, "hp_sequence", monster.hpSequence);
+                String(lua, "hp_source", "server_mob_hp");
+            }
             lua_rawseti(lua, -2, index++);
         }
         lua_setfield(lua, -2, "monsters");
@@ -482,6 +492,8 @@ struct Runtime::Impl {
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
+        Boolean(lua, "attack_move", adapter.Supports(ActionKind::Attack));
+        Boolean(lua, "monster_hp_percent", adapter.SupportsMonsterHpPercent());
         return 1;
     }
 
@@ -516,7 +528,8 @@ struct Runtime::Impl {
     }
 
     static int BeginSemantic(lua_State* lua, ActionKind kind, const char* direction, std::uint32_t durationMs,
-                             std::uint32_t itemId, int sourceSlot = 0, int destinationSlot = 0) {
+                             std::uint32_t itemId, int sourceSlot = 0, int destinationSlot = 0,
+                             std::uint32_t skillId = 0) {
         RequireAction(lua, kind);
         bool accepted;
         {
@@ -525,6 +538,7 @@ struct Runtime::Impl {
             action.direction = direction;
             action.durationMs = durationMs;
             action.itemId = itemId;
+            action.skillId = skillId;
             action.sourceSlot = sourceSlot;
             action.destinationSlot = destinationSlot;
             accepted = Self(lua).Begin(action, lua);
@@ -557,7 +571,19 @@ struct Runtime::Impl {
     }
 
     static int Attack(lua_State* lua) {
-        return BeginSemantic(lua, ActionKind::Attack, "", Duration(lua, 1, 0.06, false), 0);
+        const auto duration = Duration(lua, 1, 0.06, false);
+        const char* direction = "";
+        if (!lua_isnoneornil(lua, 2)) {
+            direction = luaL_checkstring(lua, 2);
+            if (std::strcmp(direction, "left") != 0 && std::strcmp(direction, "right") != 0)
+                return luaL_error(lua, "unsupported attack direction");
+        }
+        const auto skillId = lua_isnoneornil(lua, 3) ? 0 : luaL_checkinteger(lua, 3);
+        if (!lua_isnoneornil(lua, 3) && (skillId < 1 || skillId > 2147483647))
+            return luaL_error(lua, "skill id must be a positive int32");
+        if (skillId != 0 && !Self(lua).adapter.SupportsSkill()) return luaL_error(lua, "unsupported: skill");
+        return BeginSemantic(lua, ActionKind::Attack, direction, duration, 0, 0, 0,
+                             static_cast<std::uint32_t>(skillId));
     }
 
     static int Pickup(lua_State* lua) {
@@ -786,16 +812,17 @@ struct Runtime::Impl {
     }
 
     bool CallSkill(lua_State* lua, std::uint32_t skillId) {
-        int nativeResult = 0;
+        SkillResult result;
         std::string error;
-        if (!adapter.Skill(skillId, nativeResult, error)) {
+        if (!adapter.Skill(skillId, result, error)) {
             lua_pushlstring(lua, error.data(), error.size());
             return false;
         }
         lua_newtable(lua);
-        lua_pushinteger(lua, nativeResult);
-        lua_setfield(lua, -2, "native_result");
-        Boolean(lua, "dispatched", true);
+        if (result.nativeResultKnown) Integer(lua, "native_result", result.nativeResult);
+        Boolean(lua, "dispatched", result.dispatched);
+        String(lua, "effect", "unknown");
+        if (!result.reason.empty()) String(lua, "reason", result.reason);
         return true;
     }
 

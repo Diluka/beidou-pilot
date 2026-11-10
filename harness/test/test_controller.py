@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from beidou_game_ai.cli import commands
-from beidou_game_ai.client import GameClient
+from beidou_game_ai.client import GameClient, HuntRequest
 from beidou_game_ai.controller import Controller
 from beidou_game_ai.protocol import AppServer, AppServerError, JsonObject, JsonValue
 
@@ -112,6 +112,7 @@ class ControlledGame(GameClient):
     def __init__(self) -> None:
         self.active = False
         self.codes: list[str] = []
+        self.hunts: list[HuntRequest] = []
         self.observations = 0
         self.release = asyncio.Event()
         self.release.set()
@@ -136,6 +137,13 @@ class ControlledGame(GameClient):
 
     async def run_lua(self, code: str, seconds: float) -> JsonObject:
         self.codes.append(code)
+        self.active = True
+        await self.release.wait()
+        self.active = False
+        return {"status": "completed", "cancelled": False}
+
+    async def hunt(self, request: HuntRequest) -> JsonObject:
+        self.hunts.append(request)
         self.active = True
         await self.release.wait()
         self.active = False
@@ -209,6 +217,8 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(("game-thread", "none"), (second.thread_id, second.effort))
         resume = next(params for method, params in second_server.calls if method == "thread/resume")
         self.assertEqual("game-thread", resume["threadId"])
+        self.assertNotIn("dynamicTools", resume)
+        self.assertEqual("hunt-v1", json.loads((self.state / "checkpoint.json").read_text())["tool_surface"])
         self.assertFalse(any(method == "thread/start" for method, _ in second_server.calls))
         read_only = Controller(
             self.server,
@@ -223,6 +233,76 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(AppServerError) as mismatch:
             await read_only.initialize()
         self.assertEqual("binding_mismatch", mismatch.exception.code)
+
+    async def test_legacy_checkpoint_keeps_its_original_tools_and_history(self) -> None:
+        (self.state / "checkpoint.json").write_text(
+            json.dumps({"thread_id": "game-thread", "binding": self.binding, "model": "gpt-6-luna", "task": "原任务"})
+        )
+        await self.controller.initialize()
+        resumed = next(params for method, params in self.server.calls if method == "thread/resume")
+        self.assertEqual("game-thread", resumed["threadId"])
+        self.assertNotIn("dynamicTools", resumed)
+        self.assertNotIn("game_hunt", resumed["developerInstructions"])
+        self.assertFalse(any(method == "thread/start" for method, _ in self.server.calls))
+        events = [json.loads(line) for line in (self.state / "events.jsonl").read_text().splitlines()]
+        startup = next(event for event in events if event["event"] == "startup")
+        self.assertEqual(
+            {"game_observe", "game_run_lua", "game_script_status"}, set(startup["declared_game_capabilities"])
+        )
+        legacy = next(event for event in events if event["event"] == "legacy_tool_surface")
+        self.assertFalse(legacy["game_hunt_available"])
+        self.assertEqual("lua-v1", json.loads((self.state / "checkpoint.json").read_text())["tool_surface"])
+
+    async def test_continuous_hunt_uses_shared_execution_and_pause_release(self) -> None:
+        await self.controller.initialize()
+        self.game.release.clear()
+        self.pumps.append(asyncio.create_task(self.controller.events()))
+        await self.server.events.put(
+            {"id": 119, "method": "item/tool/call", "params": {"tool": "game_hunt", "arguments": {"target": "all\x00"}}}
+        )
+        await self.wait_until(lambda: 119 in self.server.responses)
+        self.assertEqual(
+            "invalid_tool_arguments", json.loads(self.server.responses[119]["contentItems"][0]["text"])["error"]["code"]
+        )
+        self.assertEqual([], self.game.hunts)
+        await self.server.events.put(
+            {
+                "id": 120,
+                "method": "item/tool/call",
+                "params": {
+                    "tool": "game_hunt",
+                    "arguments": {"target": "100100", "skill_id": 1001004, "range": 75, "continuous": True},
+                },
+            }
+        )
+        await self.wait_until(lambda: 120 in self.server.responses and bool(self.game.hunts))
+        reply = json.loads(self.server.responses[120]["contentItems"][0]["text"])
+        self.assertEqual(
+            ("starting", True, None), tuple(reply["data"][key] for key in ("status", "continuous", "seconds"))
+        )
+        self.assertEqual(
+            [{"target": "100100", "skill_id": 1001004, "attack_range": 75, "seconds": None}], self.game.hunts
+        )
+        await self.server.events.put(
+            {
+                "id": 121,
+                "method": "item/tool/call",
+                "params": {"tool": "game_run_lua", "arguments": {"code": "must_not_interleave", "seconds": 1}},
+            }
+        )
+        await self.wait_until(lambda: 121 in self.server.responses)
+        self.assertEqual(
+            "input_busy", json.loads(self.server.responses[121]["contentItems"][0]["text"])["error"]["code"]
+        )
+        pause = asyncio.create_task(self.controller.control("pause"))
+        await self.game.cancel_requested.wait()
+        self.assertFalse(pause.done())
+        self.game.release.set()
+        await pause
+        await self.controller.execution
+        self.assertEqual("paused", self.controller.mode)
+        self.assertEqual([], self.game.codes)
+        self.assertFalse(any(method in {"turn/start", "turn/steer"} for method, _ in self.server.calls))
 
     async def test_question_answer_and_finished_lua_continue_the_same_session(self) -> None:
         await self.controller.initialize()
@@ -408,18 +488,18 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         # 另一个明确操作者的Lua仍在执行，只读会话不得接管或取消。
         self.game.active = True
         self.game.release.clear()
-        await self.server.events.put(
-            {
-                "id": 100,
-                "method": "item/tool/call",
-                "params": {"tool": "game_run_lua", "arguments": {"code": "must_not_run", "seconds": 1}},
-            }
-        )
-        await self.wait_until(lambda: 100 in self.server.responses)
-        reply = self.server.responses[100]
-        self.assertFalse(reply["success"])
-        failure = json.loads(reply["contentItems"][0]["text"])
-        self.assertEqual("read_only", failure["error"]["code"])
+        for identifier, tool, arguments in (
+            (100, "game_run_lua", {"code": "must_not_run", "seconds": 1}),
+            (101, "game_hunt", {"continuous": True}),
+        ):
+            await self.server.events.put(
+                {"id": identifier, "method": "item/tool/call", "params": {"tool": tool, "arguments": arguments}}
+            )
+            await self.wait_until(lambda: identifier in self.server.responses)
+            reply = self.server.responses[identifier]
+            self.assertFalse(reply["success"])
+            failure = json.loads(reply["contentItems"][0]["text"])
+            self.assertEqual("read_only", failure["error"]["code"])
         await read_only.control("pause")
         await read_only.control("resume")
         await read_only.control("stop")

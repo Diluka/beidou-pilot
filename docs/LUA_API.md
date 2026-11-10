@@ -38,7 +38,7 @@
 | `game.move(direction, seconds)` | 方向 `left/right/up/down`；默认 `0.3`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | [动作结果](#动作结果) |
 | `game.face(direction)` | 只接受 `left/right` | 是 | 动作结果 |
 | `game.jump(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
-| `game.attack(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
+| `game.attack(seconds, direction, skill_id)` | 默认 `0.06`；可选 `direction=left/right` 同窗保持移动，可选 `skill_id` 请求指定技能；`0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果及本窗技能准入 |
 | `game.pickup(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
 | `game.use_item(item_id)` | 整数 `1..2147483647`；两端接受普通 `200` 类药品，无头另接受 `201` 类食品 | 是 | 动作结果 |
 | `game.equip(backpack_slot, equipped_slot, seconds)` | 无头普通装备；背包正槽、身上负槽；默认确认期限 `3` 秒，`0 < seconds <= 30` | 是，等待槽位变化或本次执行结束 | 动作结果 |
@@ -49,7 +49,7 @@
 | `game.log(text)` | 字符串，限制见[日志与预算](#日志与预算) | 否 | 无 |
 | `game.keys(keys, seconds)` | 原版可选；默认租期 `0.1`，`0 < seconds <= 30` | 否 | 无 |
 | `game.press(keys, seconds)` | 原版可选；默认 `0.06`，`0 < seconds <= 30` | 是，等待释放确认 | 动作结果 |
-| `game.skill(skill_id)` | 原版可选；整数 `1..2147483647` | 否 | [技能结果](#原版直接技能) |
+| `game.skill(skill_id)` | 后端可选；整数 `1..2147483647` | 否 | [技能结果](#直接技能) |
 
 移动、战斗和按键函数等待原生输入释放或该动作的本地执行边界，服务器效果另行判断；普通换装等待正常库存更新中的源、目的槽位确认，普通复活等待同一角色实际恢复。一次函数调用也不保证只发生一次原生重复输入、只攻击一个目标或只拾取一个物品。
 
@@ -133,7 +133,9 @@ end
 | `revive` | boolean | 是否实现正常复活请求与确认；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `activate` | boolean | 是否实现原生控件引用激活；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `raw_keys` | boolean | 是否实现 `keys/press`；当前 headless 为 `false`，原版为 `true` |
-| `skill` | boolean | 是否实现直接技能；当前 headless 为 `false`，原版为 `true` |
+| `skill` | boolean | 是否实现直接技能入口；两端为 `true`，具体技能类型随后端支持范围 |
+| `attack_move` | boolean | 是否支持 `attack` 的方向与技能窗口参数；新两端构建均为 `true`，旧构建缺失时不能假定额外参数有效 |
+| `monster_hp_percent` | boolean | 是否能读取服务端目标HP百分比；headless 为 `true`，原版为 `false` |
 
 能力只表示有实现，不保证当前角色、地图、装备、库存或动作状态允许执行。可选函数在两端均已注册；`if game.skill then ...` 不能用于判断支持，必须读取能力表。没有 `native_skill`、`skills` 等能力别名。
 
@@ -188,6 +190,8 @@ end
 
 - `object_id` 是本次场景对象 ID，`template_id` 是怪物模板 ID，不可混用。
 - `active` 来自本地模型，不等于服务器确认的 HP 或击杀。
+- `hp_percent`、`hp_sequence`、`hp_source` 在无头收到该对象的服务端HP包后才提供，分别为0..100百分比、该对象生命周期中的包更新序号及 `server_mob_hp`。未收包、旧对象或GUI未支持时为未知，不能把默认0当已知0。
+- HP下降证明观察到目标状态变化；该包没有攻击者或动作ID，不可归因为本次攻击、精确伤害或击杀。结合实例、场景与OID使用序号，新对象的序号重新开始。
 - 没有怪物 `hp/max_hp` 字段，也没有通过任意 OID 强制命中的攻击接口。
 
 ### inventory 的元素
@@ -217,7 +221,7 @@ end
 | `quests` | 两端；`quests` 元素含 `quest_id/state/progress`，状态为 `started/completed`，进度保留原始文本。无头从完整角色包和本端正常增量维护记录；未核实的 `linked_progress` 为 nil |
 | `hotkeys` | GUI；原生快捷键与快捷栏映射、已知布局和限制；无头不支持 |
 | `interaction` | 无头；`data.page` 是当前通用页面或 nil，页面和控件结构见[控件交互](#控件交互)；GUI未支持 |
-| `dialog` | GUI既有对话观察；无头不支持此内容领域，使用 `interaction` |
+| `dialog` | GUI；`dialog_open`、`npc_id`、`dialog_type`、`lines`、`choices`、`buttons` 及来源窗口说明；无头不支持此内容领域，使用 `interaction` |
 | `ui` | GUI；`windows`、`dialog` 与原生游戏区布局；无头不支持 |
 | `shop` | GUI；`open`、`npc_id`、`buy_items/sell_items`、选择/滚动位置、`busy` 和数量窗口状态；无头不支持 |
 
@@ -280,6 +284,8 @@ end
 - `move` 是方向输入，不是“走到坐标”；`up/down` 按原生状态用于攀爬、门户等。没有独立的 `game.climb` 函数。坐标到达、绳梯目标和转场确认由复合策略实现。
 - `face` 可能造成少量移动。共享层请求短动作，headless 直接设置方向，原版可能短按方向或已同向时无需派发；不能据此要求两端固定同样时长或位置完全不变。
 - `jump/attack/pickup` 的可选时间是输入持续时间，不是完整动画时长。攻击、空中运动和惯性可能在释放输入后继续。
+- `attack(0.15, "right")` 同窗保持向右和普攻输入；`attack(0.15, "right", 1001004)` 同时保持方向并请求一次指定技能。Lua决定下一窗口是否继续，适配器不自动重施技能。移动派发与技能准入分别报告为标准 `dispatched` 和 `skill_dispatched/skill_native_result/skill_reason`，移动成功不代表技能已准入。
+- 移动和攻击可以同时持有意图；攻击动画是否实际限制位移、空中是否能出手由各端原生规则决定，不要求先落地或结束移动再攻击。绳梯输入等仍需策略按真实状态安排。
 - `stop` 释放当前任务控制后继续执行，不结束任务或 Lua 会话。结束任务用 `return` 或自然运行完毕。其结果的 `dispatched=true` 表示释放请求，不表示向游戏服务器发出了动作。
 - 不要在 `game.keys` 持键期间立即接另一个语义动作；先用 `game.stop()` 等待释放，再开始新的独立动作。
 
@@ -374,7 +380,7 @@ end
 
 `press`先提交期望输入并让出，在原生更新阶段派发，等待真实释放确认后返回标准动作结果。`dispatched`保留实际派发事实，消费前已撤销的请求为 `false`；它不识别宏表达式或 `Left+Alt:0.2` 这类文本。
 
-## 原版直接技能
+## 直接技能
 
 ```lua
 if game.capabilities().skill then
@@ -383,13 +389,15 @@ if game.capabilities().skill then
 end
 ```
 
-返回值只有：
+返回值：
 
 ```text
-{ native_result = integer, dispatched = true }
+{ native_result = integer, dispatched = boolean, reason = string, effect = "unknown" }
 ```
 
-这里的 `dispatched=true` 表示已调用原生入口。`native_result=0` 表示原生本地拒绝，非零仍不能证明动画、MP消耗、命中或服务器效果。技能调用不让出，也不等待技能完成；持续/蓄力/特殊技能需要按实际原生行为另行验证。调用失败或后端不支持时抛错，没有标准动作结果的 `effect/settled/control_released` 字段。
+GUI 的 `dispatched=true` 表示已进入原生技能入口，`native_result` 保留真实返回，0为原生本地拒绝。无头首批支持战士普通近战 `1001004/1001005`，原生准入枚举0为成功，拒绝由 `dispatched=false` 和 `reason` 说明，包括未学、职业、武器、HP/MP、冷却或动作条件；其他技能类型明确不支持。原生数值不能跨后端解释，也不能证明命中或效果。
+
+技能调用不让出，也不等待动画完成；持续策略应正常让出并根据原生结果再决定。它没有标准动作结果的 `settled/control_released` 字段。复合 `attack` 窗口会等待所属输入释放，其 `skill_*` 字段只记录本窗单次技能请求，效果仍为未知。
 
 ## 错误、期限与生命周期
 

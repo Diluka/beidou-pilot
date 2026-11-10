@@ -75,10 +75,11 @@ namespace ms
 		);
 	}
 
-	void Combat::use_move(int32_t move_id)
+	SpecialMove::ForbidReason Combat::use_move(int32_t move_id)
 	{
-		if (!player.can_attack())
-			return;
+		const auto attack_reason = player.attack_forbid_reason();
+		if (attack_reason != SpecialMove::ForbidReason::FBR_NONE)
+			return attack_reason;
 
 		const SpecialMove& move = get_move(move_id);
 		SpecialMove::ForbidReason reason = player.can_use(move);
@@ -93,6 +94,7 @@ namespace ms
 			ForbidSkillMessage(reason, weapontype).drop();
 			break;
 		}
+		return reason;
 	}
 
 	void Combat::apply_move(const SpecialMove& move)

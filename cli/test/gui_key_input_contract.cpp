@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "NativeKeyInput.h"
+#include "NativeSkillUse.h"
 #include "Runtime.h"
 
 #include <algorithm>
@@ -303,6 +304,101 @@ void UndispatchedRequests() {
               "undispatched_request_result_changed");
     }
 }
+
+void SkillConsumption() {
+    BeiDouBridge::NativeKeyInput input;
+    BeiDouBridge::NativeSkillUse skills;
+    BeiDouBridge::NativeKeyInput::Mask desired{};
+    desired[39] = true;
+    input.Request(desired, 100, 200, 1000);
+    BeiDouBridge::NativeSkillUse::Skill skill{1001004, 7, 200, 3, input.Epoch(), 1100, 1};
+    BeiDouBridge::NativeSkillUse::Context context{7, 200, 3, input.Epoch(), 1000, 200, 4, true, true};
+    int calls = 0;
+    const auto invoke = [&](std::uint32_t id, int& nativeResult, std::string&) {
+        Check(id == 1001004 && !skills.Pending(), "skill_reentered_with_pending_old_request");
+        ++calls;
+        Check(skills.Consume(context,
+                             [](std::uint32_t, int&, std::string&) {
+                                 Check(false, "nested_update_replayed_skill");
+                                 return true;
+                             }),
+              "nested_update_failed");
+        nativeResult = 7;
+        return true;
+    };
+    skills.Request(skill);
+    Check(!skills.Result().nativeResultKnown && skills.Consume(context, invoke) && calls == 0,
+          "skill_invoked_before_direction_delivery");
+    const auto flushed = input.Flush(
+        [&](unsigned int key, bool down, std::uint64_t epoch) {
+            Check(key == 39 && down, "unexpected_skill_direction");
+            input.MarkDispatched(epoch);
+            return true;
+        },
+        [&]() { return context.characterUpdates; });
+    Check(!flushed.failed && input.Held()[39] && input.Dispatched(), "direction_not_delivered");
+    skills.DirectionDelivered(input.Epoch(), context.characterUpdates);
+    Check(skills.Consume(context, invoke) && calls == 0, "delivery_was_mistaken_for_character_consumption");
+    ++context.characterUpdates;
+    Check(skills.Consume(context, invoke) && calls == 0, "skill_invoked_before_direction_matched");
+    context.facingLeft = false;
+    Check(skills.Consume(context, invoke) && calls == 1 && !skills.Pending() && skills.Result().dispatched
+              && skills.Result().nativeResultKnown && skills.Result().nativeResult == 7
+              && skills.Result().reason == "native_skill_admitted",
+          "consumed_direction_did_not_admit_skill");
+    skills.Consume(context, invoke);
+    Check(calls == 1, "completed_skill_replayed");
+
+    skills.Request(skill);
+    skills.Cancel("cancel_requested");
+    ++context.characterUpdates;
+    skills.Consume(context, invoke);
+    Check(calls == 1 && !skills.Pending() && !skills.Result().nativeResultKnown, "cancelled_skill_was_late_dispatched");
+    skills.Request(skill);
+    context.now = skill.deadline;
+    skills.Consume(context, invoke);
+    context.now = 1000;
+    skills.Consume(context, invoke);
+    Check(calls == 1 && !skills.Pending() && !skills.Result().nativeResultKnown
+              && skills.Result().reason == "native_skill_expired",
+          "expired_skill_was_late_dispatched");
+    skills.Request(skill);
+    ++context.inputEpoch;
+    skills.Consume(context, invoke);
+    Check(calls == 1 && !skills.Pending() && skills.Result().reason == "native_skill_context_changed",
+          "replaced_input_dispatched_old_skill");
+
+    skill.direction = 0;
+    skill.inputEpoch = context.inputEpoch;
+    skills.Request(skill);
+    Check(skills.Consume(context,
+                         [&](std::uint32_t, int& nativeResult, std::string&) {
+                             ++calls;
+                             nativeResult = 0;
+                             return true;
+                         })
+              && calls == 2 && !skills.Result().dispatched && skills.Result().nativeResultKnown
+              && skills.Result().nativeResult == 0 && skills.Result().reason == "native_skill_rejected",
+          "native_zero_was_reported_as_skill_admission");
+    skills.Request(skill);
+    Check(!skills.Consume(context,
+                          [](std::uint32_t, int&, std::string& error) {
+                              error = "character_changed";
+                              return false;
+                          })
+              && !skills.Result().nativeResultKnown && skills.Result().reason == "character_changed",
+          "failed_entry_was_reported_as_native_result");
+    skills.Request(skill);
+    Check(skills.Consume(context,
+                         [&](std::uint32_t, int&, std::string& error) {
+                             skills.Request(skill);
+                             error = "old_entry_failed";
+                             return false;
+                         })
+              && skills.Pending() && !skills.Result().nativeResultKnown
+              && skills.Result().reason == "native_skill_pending",
+          "old_callback_overwrote_or_failed_successor_request");
+}
 }
 
 int main(int argc, char** argv) {
@@ -314,6 +410,8 @@ int main(int argc, char** argv) {
         ModalSlotChanges();
     else if (scenario == "undispatched")
         UndispatchedRequests();
+    else if (scenario == "skill-consumption")
+        SkillConsumption();
     else
         Check(false, "unknown GUI input scenario");
 }

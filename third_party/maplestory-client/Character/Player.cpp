@@ -229,16 +229,29 @@ namespace ms
 
 	bool Player::can_attack() const
 	{
-		return !attacking && !is_climbing() && !is_sitting() && look.get_equips().has_weapon();
+		return attack_forbid_reason() == SpecialMove::ForbidReason::FBR_NONE;
+	}
+
+	SpecialMove::ForbidReason Player::attack_forbid_reason() const
+	{
+		if (attacking)
+			return SpecialMove::ForbidReason::FBR_ATTACKING;
+		if (is_climbing())
+			return SpecialMove::ForbidReason::FBR_CLIMBING;
+		if (is_sitting())
+			return SpecialMove::ForbidReason::FBR_SITTING;
+		if (!look.get_equips().has_weapon())
+			return SpecialMove::ForbidReason::FBR_NO_WEAPON;
+		return SpecialMove::ForbidReason::FBR_NONE;
 	}
 
 	SpecialMove::ForbidReason Player::can_use(const SpecialMove& move) const
 	{
 		if (move.is_skill() && state == Char::State::PRONE)
-			return SpecialMove::ForbidReason::FBR_OTHER;
+			return SpecialMove::ForbidReason::FBR_SKILL_STATE;
 
 		if (move.is_attack() && (state == Char::State::LADDER || state == Char::State::ROPE))
-			return SpecialMove::ForbidReason::FBR_OTHER;
+			return SpecialMove::ForbidReason::FBR_CLIMBING;
 
 		if (has_cooldown(move.get_id()))
 			return SpecialMove::ForbidReason::FBR_COOLDOWN;

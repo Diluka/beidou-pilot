@@ -41,6 +41,9 @@ class LuaRuntimeContract(unittest.TestCase):
     def test_tasks_handoff_replan_and_cancel_without_releasing_successor(self) -> None:
         subprocess.run([str(self.executable), "collaboration"], check=True, timeout=10)
 
+    def test_compound_combat_preserves_admission_unknown_hp_and_cancellation(self) -> None:
+        subprocess.run([str(self.executable), "combat-contract"], check=True, timeout=10)
+
     def test_domain_reads_preserve_native_unknowns_source_and_fresh_scene_identity(self) -> None:
         subprocess.run([str(self.executable), "domain-observations"], check=True, timeout=10)
 

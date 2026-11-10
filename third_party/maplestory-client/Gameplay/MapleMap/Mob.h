@@ -105,6 +105,7 @@ namespace ms
 		// Return the head position
 		Point<int16_t> get_head_position() const;
 		int8_t get_hp_percent() const;
+		uint64_t get_hp_update_sequence() const;
 		bool has_control() const;
 		const std::string& get_name() const;
 		int32_t get_template_id() const { return id; }
@@ -186,6 +187,7 @@ namespace ms
 		FlyDirection flydirection;
 		float walkforce;
 		int8_t hppercent;
+		uint64_t hp_update_sequence = 0;
 		bool fading;
 		bool fadein;
 		Linear<float> opacity;

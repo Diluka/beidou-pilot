@@ -44,10 +44,11 @@ elif command == ["bridge", "status"]:
     result(state)
 elif command == ["snapshot"]:
     result({"stage": "IN_GAME", "character": {"level": 8}, "position": {"x": 3, "y": 4}})
-elif command[:2] == ["script", "run"]:
+elif command[:2] == ["script", "run"] or command[0] == "hunt":
     state = json.loads(path.read_text())
     from beidou_pilot.cli import parser
-    code = parser().parse_args(arguments).code
+    parsed = parser().parse_args(arguments)
+    code = parsed.code if parsed.command == "script" else "hold" if parsed.continuous else "hunt"
     if code in ("hold", "fail_release"):
         def interrupt(number, frame):
             (root / "cancel-requested").write_text(str(os.getpid()))
@@ -73,7 +74,10 @@ elif command[:2] == ["script", "run"]:
         while True:
             time.sleep(0.005)
     else:
-        result({"status": "completed", "cancelled": False, "last_state": state, "parsed_code": code})
+        result({"status": "completed", "cancelled": False, "last_state": state, "parsed_code": code,
+                "parsed_hunt": {"target": parsed.mob, "skill_id": parsed.skill, "range": parsed.attack_range,
+                                "seconds": parsed.seconds, "continuous": parsed.continuous}
+                if parsed.command == "hunt" else None})
 else:
     raise SystemExit("unexpected command")
 """
@@ -146,6 +150,36 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
         self.path.unlink()
         self.assertEqual({"running": False, "status": status}, await self.client.observe())
         self.assertEqual([["status"]], [call["arguments"][-1:] for call in self.calls()])
+
+    async def test_hunt_uses_fixed_cli_and_cancels_the_same_owned_process(self) -> None:
+        report = await self.client.hunt(
+            {"target": "--min-hp-ratio=0.0001", "skill_id": 1001004, "attack_range": 75, "seconds": 12}
+        )
+        self.assertEqual(
+            {"target": "--min-hp-ratio=0.0001", "skill_id": 1001004, "range": 75, "seconds": 12, "continuous": False},
+            report["parsed_hunt"],
+        )
+        hunt = asyncio.create_task(
+            self.client.hunt({"target": "all", "skill_id": None, "attack_range": 60, "seconds": None})
+        )
+        await self.wait_for_held_input()
+        with self.assertRaises(GameClientError) as busy:
+            await self.client.run_lua("game.attack()", 1)
+        self.assertEqual("input_busy", busy.exception.code)
+        cancellation = asyncio.create_task(self.client.cancel())
+        async with asyncio.timeout(3):
+            while not (self.root / "cancel-requested").exists():
+                await asyncio.sleep(0.005)
+        self.assertFalse(cancellation.done())
+        (self.root / "allow-release").touch()
+        state, result = await asyncio.gather(cancellation, hunt)
+        self.assertEqual(([], "cancelled"), (state["held_keys"], result["status"]))
+        calls = self.calls()
+        controlled = [call for call in calls if "hunt" in call["arguments"]]
+        self.assertEqual(2, len(controlled))
+        self.assertIn("--continuous", controlled[-1]["arguments"])
+        self.assertEqual(str(controlled[-1]["pid"]), (self.root / "cancel-requested").read_text())
+        self.assertFalse(any("stop" in call["arguments"] or "close" in call["arguments"] for call in calls))
 
     async def test_cancel_waits_for_original_process_and_bridge_release(self) -> None:
         script = asyncio.create_task(self.client.run_lua("hold", 60))

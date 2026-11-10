@@ -72,7 +72,7 @@ def parser() -> Parser:
     q.add_argument("--revision", type=int, help="替换或停止的预期任务revision")
     q.add_argument("--priority", type=int, help="新增或替换任务的优先级")
     q.add_argument("--timeout", type=float, default=3, help="管理结果等待秒数，不改变会话期限")
-    q = command("skill", "通过Lua调用原版原生技能入口，仅报告原始调用结果")
+    q = command("skill", "通过Lua调用本后端支持的原生技能，分别报告派发与原始返回值")
     q.add_argument("id", type=int)
     q = command("open", "启动并正常登录入图；已就绪时自动复用")
     q.add_argument("--channel", type=int, help="新会话默认CH1；复用游戏中会话时默认保留当前频道")
@@ -186,6 +186,17 @@ def parser() -> Parser:
     q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"))
     q.add_argument("--retreat-x", type=int)
     q.add_argument("--loot", action="store_true", help="启用同层落地物品定向拾取")
+    q = command("hunt", "当前单一场景内自主找怪、换层和连续攻击；场景变化即停止")
+    q.add_argument("mob", nargs="?", default="all", help="怪物名称、模板ID或all（默认全部怪物）")
+    q.add_argument("--skill", type=int, help="指定已学且本后端支持的技能ID；省略时使用普攻")
+    q.add_argument("--range", type=float, default=60, dest="attack_range", help="接近目标的攻击距离，默认60")
+    duration = q.add_mutually_exclusive_group()
+    duration.add_argument("--seconds", type=float, default=60, help="狩猎期限，默认60秒")
+    duration.add_argument("--continuous", action="store_true", help="持续到取消或安全停止，Ctrl+C取消并等待放键")
+    q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"), help="限定本场景横向狩猎范围")
+    q.add_argument("--until-level", type=int, help="到达指定等级停止；仍受当前转职节点限制")
+    q.add_argument("--min-hp-ratio", type=float, default=0.35, help="HP安全下限比例，默认0.35")
+    q.add_argument("--hp-item", type=int, help="低HP时使用的明确回血物品ID，不自动买药")
     q = command("screenshot", "保存原图及游戏裁剪，不直接向会话加载图片")
     q.add_argument("name", nargs="?")
     q = command("record", "有界采集当前游戏画面与逐帧时间戳，不发送输入")
@@ -311,6 +322,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "climb",
         "portal",
         "fight",
+        "hunt",
         "batch",
         "use",
         "equip",
@@ -702,6 +714,20 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             shop.buy(backend, args.item, args.count)
             if args.action == "buy"
             else shop.sell(backend, args.item, args.count, slot=args.slot)
+        )
+    if cmd == "hunt":
+        from .hunting import hunt
+
+        return hunt(
+            backend,
+            args.mob,
+            seconds=None if args.continuous else args.seconds,
+            skill_id=args.skill,
+            attack_range=args.attack_range,
+            bounds=tuple(args.bounds) if args.bounds is not None else None,
+            stop_level=args.until_level,
+            min_hp_ratio=args.min_hp_ratio,
+            hp_item_id=args.hp_item,
         )
     if cmd == "fight":
         from .bridge import BridgeClient
