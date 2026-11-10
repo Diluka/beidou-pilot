@@ -204,7 +204,7 @@ end
 
 `game.observe(domain)` 在当前原生更新线程同步读取指定领域，不需要动作控制权，也不触碰主机桥文件或经过 Python 反馈。只有调用时才采集该领域；`game.state()` 的每帧轻量采样不因此增加全量任务、技能或 UI 遍历。按业务决策需要查询，长循环仍通过 `sleep` 或动作函数让出执行权。
 
-`domain` 精确接受下列九个名称。未知名称或缺少参数会产生 Lua 参数错误；合法但后端未实现的领域返回 `status="unsupported"`。
+`domain` 精确接受下表名称。未知名称或缺少参数会产生 Lua 参数错误；合法但后端未实现的领域返回 `status="unsupported"`。
 
 | 领域 | 两端支持与主要原生字段 |
 | --- | --- |
@@ -218,11 +218,11 @@ end
 | `ui` | GUI；`windows`、`dialog` 与原生游戏区布局；无头不支持 |
 | `invitations` | GUI；当前好友/组队邀请的类型、来源、原生引用、期限、可用按钮和窗口；无头不支持 |
 | `party` | GUI；本端已知队伍 ID、队长和成员的 ID、姓名、职业、等级、频道与地图；无头不支持 |
+| `shop` | GUI；`open`、`npc_id`、`buy_items/sell_items`、选择/滚动位置、`busy` 和数量窗口状态；无头不支持 |
 
 `invitations.data.invitations` 中每项保留 `id/kind/sender_id/sender_name/party_id`、`expires_at_ms/remaining_ms`、`pending/available`、`window/buttons`。`kind` 为 `friend` 或 `party`；好友申请可知发送者 ID，组队邀请保留发送者姓名和队伍 ID，未知 ID 为 `nil`。`pending` 只说明原生请求仍待处理；`available` 还要求当前窗口和响应按钮可用。按钮 `control_id=2000/2001` 对应 `accept/reject`，坐标属于当前窗口；Lua 不包含 CLI 派生的 `@invite` 引用或桌面根坐标。事件和旧 `id` 不能作为仍有效的操作证明。
 
 `party.data` 保留 `party_id/leader_id/members`；`party_id=0` 表示本端当前未组队。成员字段为 `id/name/job/level/channel/channel_index/map_id/leader`，`channel_index` 保留原生值，仅已知的正常频道投影为从1开始的 `channel`，其余为 `nil`。成员在线状态尚未独立确认，不能根据列表存在推断在线。
-| `shop` | GUI；`open`、`npc_id`、`buy_items/sell_items`、选择/滚动位置、`busy` 和数量窗口状态；无头不支持 |
 
 每次返回的外层结构为：
 
