@@ -13,7 +13,7 @@ LDFLAGS ?= -Wl,--gc-sections
 LDLIBS := -pthread -l:liblz4.so.1
 ENGINE_SOURCES := $(shell find $(ENGINE)/Audio $(ENGINE)/Character $(ENGINE)/Data $(ENGINE)/Gameplay $(ENGINE)/Graphics $(ENGINE)/IO $(ENGINE)/Net $(ENGINE)/Util -name '*.cpp' ! -name SocketWinsock.cpp) $(ENGINE)/Configuration.cpp $(wildcard $(NX)/*.cpp)
 SOURCES := $(wildcard src/*.cpp)
-OBJECTS := $(patsubst $(ENGINE)/%.cpp,build/engine/%.o,$(ENGINE_SOURCES)) $(patsubst %.cpp,build/%.o,$(SOURCES)) build/shared/Runtime.o $(LUA_OBJECTS)
+OBJECTS := $(patsubst $(ENGINE)/%.cpp,build/engine/%.o,$(ENGINE_SOURCES)) $(patsubst %.cpp,build/%.o,$(SOURCES)) build/shared/Runtime.o build/shared/TaskTransport.o $(LUA_OBJECTS)
 DEPS := $(OBJECTS:.o=.d)
 
 .PHONY: all objects clean
@@ -27,7 +27,7 @@ build/engine/%.o: $(ENGINE)/%.cpp
 build/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
-build/shared/Runtime.o: $(RUNTIME_ROOT)/Runtime.cpp $(RUNTIME_ROOT)/Runtime.h
+build/shared/%.o: $(RUNTIME_ROOT)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -I$(LUA_ROOT) -MMD -MP -c $< -o $@
 build/lua/%.o: $(LUA_ROOT)/%.c

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "AgentBridge.h"
 #include "Runtime.h"
+#include "TaskTransport.h"
 #include "NativeObservation.h"
 
 #include <array>
@@ -8,6 +9,7 @@
 #include <cstring>
 #include <iomanip>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -114,6 +116,7 @@ public:
 
 BeiDouAdapter adapter;
 MapleControl::Runtime runtime(adapter);
+std::unique_ptr<MapleControl::TaskTransport> taskTransport;
 
 template <typename T>
 bool ReadAt(std::uintptr_t address, T& value) {
@@ -623,7 +626,8 @@ bool Publish(const MapleControl::State& state) {
         bool taskSeparator = false;
         for (const auto& task : script->tasks) {
             if (taskSeparator) out << ',';
-            out << "{\"name\":" << Quote(task.name) << ",\"priority\":" << task.priority
+            out << "{\"name\":" << Quote(task.name) << ",\"revision\":" << task.revision
+                << ",\"priority\":" << task.priority
                 << ",\"status\":" << Quote(task.status) << ",\"wait\":" << Quote(task.wait)
                 << ",\"reason\":" << (task.reason.empty() ? "null" : Quote(task.reason))
                 << ",\"error\":" << (task.error.empty() ? "null" : Quote(task.error)) << '}';
@@ -767,6 +771,7 @@ void Tick() {
 
     ReadCommand();
     runtime.Tick(changed);
+    if (!taskTransport->Tick(runtime, previousState)) runtime.Cancel("task_result_write_failed");
     if (scriptCommand && !runtime.Running()) {
         const auto* script = runtime.CurrentStatus();
         commandStatus = script->status;
@@ -799,6 +804,7 @@ bool AgentBridge::Install() {
     std::array<char, 128> run{};
     const DWORD runLength = GetEnvironmentVariableA("RUN_ID", run.data(), static_cast<DWORD>(run.size()));
     if (runLength < run.size()) runId.assign(run.data(), runLength);
+    taskTransport.reset(new MapleControl::TaskTransport(directory, runId));
     FILETIME created{}, exited{}, kernel{}, user{};
     if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return false;
     std::ostringstream identity;

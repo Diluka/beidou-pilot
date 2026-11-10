@@ -55,10 +55,32 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点及近距拾取尝试 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
 | `script run FILE`、`script run --code CODE` | 文件或直接源码二选一，使用同一 Lua 执行链；默认限时，持续模式须明确声明 |
+| `task add/replace/stop` | 向指定活动Lua会话管理独立任务，不取得整会话动作锁 |
+| `task result REQUEST_ID` | 只读查询已保留的任务管理结果，包括超时后的结果 |
 | `stop`、`bridge stop` | 无其他活动动作控制者时清理遗留控制 |
 | `key KEYS --seconds N`、`skill ID` | 原版专属Lua扩展；无头明确拒绝 |
 
 `--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。CLI 不拼接、展开或改写源码。文件方式每次读取当前 UTF-8 内容。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
+
+在已有脚本会话中调整一项任务，先用 `script status` 取得 `script.id` 和该任务的 `revision`，再明确传给任务管理入口：
+
+```bash
+./cli/beidou-pilot --backend headless --instance worker-a --json task add observer \
+  --session SCRIPT_ID --priority 0 --code 'while true do game.log("观察中"); game.sleep(1) end'
+./cli/beidou-pilot --backend headless --instance worker-a --json task replace chase /path/chase.lua \
+  --session SCRIPT_ID --revision 2 --priority 10
+./cli/beidou-pilot --backend headless --instance worker-a --json task stop chase \
+  --session SCRIPT_ID --revision 3
+./cli/beidou-pilot --backend headless --instance worker-a --json task result REQUEST_ID
+```
+
+新增和替换必须提供 `--priority` 与文件或 `--code`，停止只提供任务名、`--session` 和预期 `--revision`。任务名是1至64字节的非NUL文本，可包含中文和空格；`main` 由整会话入口管理。新增不能复用会话历史中的名称；替换为同名的新版本，分配新的 `revision`，旧版本历史仍可查看。停止已结束的当前版本返回 `changed=false`；旧版本请求被拒绝，不会停止新版本。
+
+任务源码直接作为独立chunk运行，共享本次会话的全局变量和 `game` API，不能访问旧任务的局部变量。动作任务先 `game.acquire()`，取得控制后重新采样与规划；原会话中已有的动作逻辑也需遵守这一多任务约定。替换先编译，编译失败保留旧任务及其输入；编译成功后停止旧版本，确认其输入释放后安装新版本。任一任务运行后的Lua错误继续停止整个会话，不能把替换理解为执行副作用可回滚。
+
+管理结果的 `completed` 表示任务已安装或指定版本已停止并完成其释放确认，实际游戏效果需另行观察；`control_released` 只针对被替换或停止的旧任务，其他任务仍可持有输入。`--timeout` 默认3秒，只限制本次管理等待。
+
+请求发布前，例如等待 `task.lock` 时，Ctrl+C/SIGTERM返回通用 `interrupted` 和退出码130，此时没有已发布的 `request_id`；等待管理锁超时返回 `task_management_busy`。请求发布后，等待结果超时返回 `task_result_unconfirmed`，Ctrl+C/SIGTERM返回 `task_request_interrupted` 和退出码130，这两种结果都保留已发布的 `request_id`。管理等待失败不停止整会话，也不自动重放请求；已发布的请求可用 `task result` 查询最终结果，再决定后续操作。查询结果属于响应中记录的历史实例和会话，不代表当前角色效果。
 
 移动和战斗参数只对当前场景有效。门户和部分规划依赖可选静态 WZ XML，资料不足时明确拒绝；换层、身份变化、低HP或未确认到达会停止后续动作。特殊任务、材料或职业技能策略应自行写Lua，没有未实现的占位选项。
 

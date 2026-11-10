@@ -55,6 +55,16 @@ def parser() -> Parser:
     duration = q.add_mutually_exclusive_group()
     duration.add_argument("--seconds", type=float, default=30, help="客户端内脚本时限，默认30秒")
     duration.add_argument("--continuous", action="store_true", help="明确持续执行，Ctrl+C取消并等待放键")
+    q = command("task", "向活动Lua会话新增、替换或停止独立任务，或查询管理结果")
+    q.add_argument("action", choices=["add", "replace", "stop", "result"])
+    q.add_argument("name", help="任务名称；result操作填写管理request_id")
+    source = q.add_mutually_exclusive_group()
+    source.add_argument("file", type=Path, nargs="?", help="任务主体的UTF-8 Lua文件")
+    source.add_argument("--code", help="任务主体的直接Lua源码")
+    q.add_argument("--session", help="script status中的script.id")
+    q.add_argument("--revision", type=int, help="替换或停止的预期任务revision")
+    q.add_argument("--priority", type=int, help="新增或替换任务的优先级")
+    q.add_argument("--timeout", type=float, default=3, help="管理结果等待秒数，不改变会话期限")
     q = command("skill", "通过Lua调用原版原生技能入口，仅报告原始调用结果")
     q.add_argument("id", type=int)
     q = command("open", "启动并正常登录入图；已就绪时自动复用")
@@ -242,7 +252,7 @@ def floor_bounds(metadata: JsonObject, x: int, y: int) -> list[int] | None:
 def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     cmd = args.command
     if backend.name == "headless" and cmd not in {
-            "status", "instances", "capabilities", "doctor", "bridge", "script", "skill", "open", "close", "snapshot", "watch", "inspect",
+            "status", "instances", "capabilities", "doctor", "bridge", "script", "task", "skill", "open", "close", "snapshot", "watch", "inspect",
             "walk", "face", "jump", "attack", "pickup", "use_item", "stop", "move", "climb", "portal", "fight", "batch", "use"}:
         raise ClientError("unsupported_capability", "该客户端尚未提供这个窗口、原始按键或玩法接口。", {"command": cmd})
     if cmd == "status":
@@ -293,6 +303,26 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         if args.file is None and args.code is None:
             raise ClientError("usage", "script run需要UTF-8本地Lua文件或--code源码。")
         return bridge.run_script(args.file, seconds=None if args.continuous else args.seconds, code=args.code)
+    if cmd == "task":
+        from .task_management import change_task, task_result
+
+        if args.action == "result":
+            if any(value is not None for value in (args.file, args.code, args.session, args.revision, args.priority)):
+                raise ClientError("usage", "task result只接收管理request_id与公共选项。")
+            return task_result(backend, args.name)
+        if args.session is None:
+            raise ClientError("usage", "任务管理需要--session明确目标script.id。")
+        if args.action in {"add", "replace"}:
+            if args.file is None and args.code is None or args.priority is None:
+                raise ClientError("usage", "新增或替换任务需要Lua文件或--code，以及--priority。")
+        elif args.file is not None or args.code is not None or args.priority is not None:
+            raise ClientError("usage", "task stop不接收源码或优先级。")
+        if (args.action == "add" and args.revision is not None
+                or args.action in {"replace", "stop"} and args.revision is None):
+            raise ClientError("usage", "新增任务不接收--revision；替换或停止需要预期--revision。")
+        return change_task(backend, args.action, args.name, script_id=args.session,
+                           expected_revision=args.revision, priority=args.priority or 0,
+                           path=args.file, code=args.code, timeout=args.timeout)
     if cmd == "open":
         from .headless import any_running as headless_running
         if backend.name == "headless":
@@ -562,7 +592,13 @@ def main(argv: list[str] | None = None) -> int:
         backend = Backend(getattr(args, "root", Path(__file__).resolve().parents[1]), getattr(args, "backend", "beidou"),
                           getattr(args, "instance", "default"))
         readonly = args.command in ("status", "instances", "capabilities", "doctor", "snapshot", "watch", "inspect", "screenshot", "record", "hotkeys") or (args.command == "bridge" and args.action == "status") or (args.command == "script" and args.action == "status") or (args.command == "dialog" and args.action == "read") or (args.command == "ui" and args.action == "read") or (args.command == "shop" and args.action == "read")
-        if readonly:
+        if args.command == "task":
+            previous_handler = signal.signal(signal.SIGTERM, signal.default_int_handler)
+            try:
+                result = dispatch(backend, args)
+            finally:
+                signal.signal(signal.SIGTERM, previous_handler)
+        elif readonly:
             result = dispatch(backend, args)
         else:
             with control(backend, args.command):
@@ -577,7 +613,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except ClientError as error:
         print(json.dumps({"ok": False, "error": {"code": error.code, "message": error.message, "details": error.details}}, ensure_ascii=False), file=sys.stdout if json_output else sys.stderr)
-        return 2
+        return 130 if error.code == "task_request_interrupted" else 2
     except json.JSONDecodeError as error:
         print(json.dumps({"ok": False, "error": {"code": "invalid_json", "message": error.msg}}, ensure_ascii=False), file=sys.stdout if json_output else sys.stderr)
         return 2

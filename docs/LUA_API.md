@@ -58,7 +58,7 @@
 
 被接管的有界动作仍返回标准动作结果，`reason="control_preempted"`；`dispatched` 保留本次动作是否已派发的事实，`effect` 仍是 `unknown`。运行时分别保存每项任务的结果。被接管任务再次 `acquire()` 后读取当前角色、场景、位置和目标，重新规划；运行时不排队重放旧动作，也不撤销已发生的动画、惯性、药品消耗或服务器效果。
 
-`game.stop()` 只释放当前任务拥有的控制，不结束任务。非控制者调用时不触碰其他任务输入；自己原有输入仍在交接释放时等待确认，否则返回 `dispatched=false`、`control_released=true`、`effect="unknown"`、`reason="control_not_owned"`，其中释放事实只针对调用任务。`game.cancel(name)` 停止指定任务；未知名称报错，已经结束则返回 `false`。停止旧任务不会释放后续控制者的输入。任务正常返回会释放自己仍持有的控制；任一 Lua 错误沿用 `script_error`，取消本次会话全部任务并等待放键。
+`game.stop()` 只释放当前任务拥有的控制，不结束任务。非控制者调用时不触碰其他任务输入；自己原有输入仍在交接释放时等待确认，否则返回 `dispatched=false`、`control_released=true`、`effect="unknown"`、`reason="control_not_owned"`，其中释放事实只针对调用任务。`game.cancel(name)` 停止指定名称的当前最新版本；未知名称报错，已经结束则返回 `false`。停止旧任务不会释放后续控制者的输入。任务正常返回会释放自己仍持有的控制；任一 Lua 错误沿用 `script_error`，取消本次会话全部任务并等待放键。
 
 任务结束或取消后，运行时解除协程的保活引用，局部变量与返回值可由 Lua 回收；任务名称和状态历史保留到会话结束。取消自身会先让出，再在本次协程恢复返回后解除引用。
 
@@ -67,10 +67,10 @@
 ```lua
 {
     tasks = {
-        {name = "main", priority = 0, status = "completed", wait = "none",
+        {name = "main", revision = 1, priority = 0, status = "completed", wait = "none",
          reason = "script_returned"},
-        {name = "chase", priority = 10, status = "waiting", wait = "control"},
-        {name = "retreat", priority = 20, status = "waiting", wait = "action"}
+        {name = "chase", revision = 2, priority = 10, status = "waiting", wait = "control"},
+        {name = "retreat", revision = 3, priority = 20, status = "waiting", wait = "action"}
     },
     control = {
         owner = "retreat", pending = "chase",
@@ -79,7 +79,7 @@
 }
 ```
 
-任务 `status` 为 `running/waiting/completed/cancelled`，`wait` 为 `none/sleep/action/raw_keys/release/control`；`reason/error` 已知时提供字符串。`control.owner` 是当前控制者，`pending` 是等待取得控制的首个任务，`from/to/reason` 记录最近一次交接；没有对应值时为 `nil`。CLI `script status` 的 `script.tasks` 和 `script.control` 提供相同状态，JSON 中未知文本为 `null`。旧桥未提供这些字段时，CLI 保留缺失事实。
+任务 `status` 为 `running/waiting/completed/cancelled`，`wait` 为 `none/sleep/action/raw_keys/release/control`；`reason/error` 已知时提供字符串。`revision` 是会话内分配的非零版本号，每个新任务或替换版本都不同。同名替换后的历史版本保留，当前版本是该名称的最新revision。`control.owner` 是当前控制者名称，`pending` 是等待取得控制的首个任务，`from/to/reason` 记录最近一次交接；没有对应值时为 `nil`。CLI `script status` 的 `script.tasks` 和 `script.control` 提供相同状态，JSON 中未知文本为 `null`。旧桥未提供这些字段时，CLI 保留缺失事实，并明确拒绝缺少revision的任务管理请求。
 
 下面只演示同层追击坐标与撤退的协调。调用方依据已核实场景提供目标坐标、撤退坐标和触发秒数；实际策略还须核对角色、场景、安全范围和目标有效性。
 
@@ -107,7 +107,9 @@ end
 -- 在调用方脚本中以已确认的场景参数调用 start_pair。
 ```
 
-运行期间可由已有 Lua 任务按条件调用 `spawn()` 补充逻辑。当前 CLI 仍由单个活动会话持有动作控制；它不接受向活动会话另行注入全新源码。需要提交另一份代码时，先结束原会话。
+运行期间可由已有 Lua 任务按条件调用 `spawn()` 补充逻辑，也可由调用方通过 `task add/replace/stop` 管理独立任务，具体命令见 [CLI参考](CLI.md)。新源码是共享本会话全局环境的独立chunk，不捕获旧任务局部变量；主任务 `main` 保留给整会话入口。`spawn()` 的历史名称唯一规则保持，外部显式替换才允许创建同名新版本。
+
+替换源码的编译失败只拒绝该管理请求，旧任务和控制权保持；新版本运行后发生Lua错误，仍沿用整会话 `script_error` 语义。外部管理不延长原会话期限、不创建第二个动作控制者。整会话结束后需重新 `script run`，不能向已经结束的会话追加任务。
 
 ## 能力表
 

@@ -180,11 +180,38 @@ struct Runtime::Impl {
     std::uint32_t actorId = 0;
     std::uint64_t limitAt = 0;
     std::uint64_t nextRequest = 0;
+    std::uint64_t nextRevision = 0;
+    TaskChangeResult changeResult;
+    Task* changeTarget = nullptr;
+    TaskOperation changeOperation = TaskOperation::Add;
+    int replacementReference = LUA_NOREF;
+    int replacementPriority = 0;
+    std::uint64_t replacementGeneration = 0;
     bool finishing = false;
     std::string finalStatus;
     std::string finalReason;
     std::vector<std::string> logs;
     std::size_t logBytes = 0;
+
+    Task* FindTask(const std::string& name) const {
+        for (auto task = tasks.rbegin(); task != tasks.rend(); ++task)
+            if ((*task)->report.name == name) return task->get();
+        return nullptr;
+    }
+
+    void DropReplacement() {
+        if (replacementReference == LUA_NOREF) return;
+        luaL_unref(main, LUA_REGISTRYINDEX, replacementReference);
+        replacementReference = LUA_NOREF;
+    }
+
+    void CancelTaskChange(const std::string& reason) {
+        if (changeResult.status != "pending") return;
+        DropReplacement();
+        changeTarget = nullptr;
+        changeResult.status = "cancelled";
+        changeResult.reason = reason;
+    }
 
     Task* WaitingControl() const {
         Task* next = nullptr;
@@ -280,6 +307,7 @@ struct Runtime::Impl {
     Task& AddTask(const std::string& name, int priority, lua_State* source, int function) {
         auto task = std::make_unique<Task>();
         task->report.name = name;
+        task->report.revision = ++nextRevision;
         task->report.priority = priority;
         task->report.status = "running";
         function = lua_absindex(source, function);
@@ -290,6 +318,23 @@ struct Runtime::Impl {
         lua_sethook(task->coroutine, Budget, LUA_MASKCOUNT, 50000);
         tasks.push_back(std::move(task));
         return *tasks.back();
+    }
+
+    void CompleteTaskChange() {
+        if (changeResult.status != "pending" || actionOwner == changeTarget) return;
+        if (changeOperation == TaskOperation::Replace) {
+            lua_rawgeti(main, LUA_REGISTRYINDEX, replacementReference);
+            auto& replacement = AddTask(changeResult.name, replacementPriority, main, -1);
+            lua_pop(main, 1);
+            DropReplacement();
+            changeResult.revision = replacement.report.revision;
+        }
+        changeResult.status = "completed";
+        changeResult.reason = changeOperation == TaskOperation::Replace ? "task_replaced" : "task_stopped";
+        changeResult.changed = changeOperation == TaskOperation::Replace || changeResult.changed;
+        changeResult.controlReleased = true;
+        changeTarget = nullptr;
+        UpdateStatus();
     }
 
     static Impl& Self(lua_State* lua) {
@@ -475,9 +520,7 @@ struct Runtime::Impl {
         RequireRunning(lua);
         const char* name = luaL_checkstring(lua, 1);
         auto& runtime = Self(lua);
-        Task* target = nullptr;
-        for (const auto& task : runtime.tasks)
-            if (task->report.name == name) { target = task.get(); break; }
+        auto* target = runtime.FindTask(name);
         if (target == nullptr) return luaL_error(lua, "unknown task");
         const bool cancelled = !target->finished;
         if (cancelled) runtime.FinishTask(*target, "cancelled", "task_cancelled");
@@ -495,6 +538,8 @@ struct Runtime::Impl {
         for (const auto& task : runtime.report.tasks) {
             lua_newtable(lua);
             String(lua, "name", task.name);
+            lua_pushinteger(lua, static_cast<lua_Integer>(task.revision));
+            lua_setfield(lua, -2, "revision");
             lua_pushinteger(lua, task.priority);
             lua_setfield(lua, -2, "priority");
             String(lua, "status", task.status);
@@ -629,6 +674,7 @@ struct Runtime::Impl {
     }
 
     void Finish(const std::string& status, const std::string& reason) {
+        CancelTaskChange(reason);
         finishing = true;
         finalStatus = status;
         finalReason = reason;
@@ -644,6 +690,7 @@ struct Runtime::Impl {
     }
 
     void CloseLua() {
+        DropReplacement();
         if (main != nullptr) lua_close(main);
         main = nullptr;
         tasks.clear();
@@ -667,6 +714,9 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source,
     runtime.report.id = scriptId;
     runtime.report.status = "rejected";
     runtime.nextRequest = 0;
+    runtime.nextRevision = 0;
+    runtime.changeResult = TaskChangeResult{};
+    runtime.changeTarget = nullptr;
     runtime.finishing = false;
     runtime.finalStatus.clear();
     runtime.finalReason.clear();
@@ -748,6 +798,10 @@ void Runtime::Tick(bool sceneChanged) {
         runtime.Finish("cancelled", "time_limit");
         return;
     }
+    if (runtime.changeResult.status == "pending" && runtime.changeOperation == TaskOperation::Replace &&
+        state.sceneGeneration != runtime.replacementGeneration)
+        runtime.CancelTaskChange("task_context_changed");
+    runtime.CompleteTaskChange();
     if (sceneChanged) return;
     runtime.GrantControl();
     std::vector<Impl::Task*> scheduled;
@@ -789,13 +843,109 @@ void Runtime::Tick(bool sceneChanged) {
         runtime.CaptureResult();
         runtime.GrantControl();
     }
-    if (!runtime.finishing && std::all_of(runtime.tasks.begin(), runtime.tasks.end(),
+    if (!runtime.finishing && runtime.changeResult.status != "pending" &&
+        std::all_of(runtime.tasks.begin(), runtime.tasks.end(),
         [](const auto& task) { return task->finished; })) runtime.Finish("completed", "script_returned");
     runtime.UpdateStatus();
 }
 
 void Runtime::Cancel(const std::string& reason) {
     if (Running() && !impl->finishing) impl->Finish("cancelled", reason);
+}
+
+TaskChangeResult Runtime::ManageTask(const TaskChange& change) {
+    auto& runtime = *impl;
+    TaskChangeResult result;
+    result.requestId = change.requestId;
+    result.scriptId = change.scriptId;
+    result.name = change.name;
+    result.status = "rejected";
+    if (change.scriptId != runtime.report.id) {
+        result.reason = "script_session_mismatch";
+        return result;
+    }
+    if (!Running() || runtime.finishing) {
+        result.reason = "script_session_unavailable";
+        return result;
+    }
+    if (runtime.changeResult.status == "pending") {
+        result.reason = "task_management_busy";
+        return result;
+    }
+    if (change.name.empty() || change.name.size() > 64 || change.name.find('\0') != std::string::npos) {
+        result.reason = "invalid_task_name";
+        return result;
+    }
+    if (change.name == "main") {
+        result.reason = "reserved_task_name";
+        return result;
+    }
+    auto* target = runtime.FindTask(change.name);
+    if (change.operation == TaskOperation::Add) {
+        if (target != nullptr) {
+            result.reason = "task_name_exists";
+            return result;
+        }
+    }
+    else {
+        if (target == nullptr) {
+            result.reason = "unknown_task";
+            return result;
+        }
+        result.revision = target->report.revision;
+        if (change.expectedRevision != target->report.revision) {
+            result.reason = "task_revision_mismatch";
+            return result;
+        }
+    }
+    if (change.operation == TaskOperation::Stop && target->finished && runtime.actionOwner != target) {
+        result.status = "completed";
+        result.reason = "task_already_finished";
+        result.controlReleased = true;
+        return result;
+    }
+    if (change.operation != TaskOperation::Stop) {
+        const int top = lua_gettop(runtime.main);
+        const auto chunkName = change.scriptId + "/" + change.name + "/" + change.requestId;
+        const int loaded = luaL_loadbufferx(runtime.main, change.source.data(), change.source.size(),
+            chunkName.c_str(), "t");
+        if (loaded != LUA_OK) {
+            const char* message = lua_tostring(runtime.main, -1);
+            result.reason = "task_load_error";
+            result.error = message != nullptr ? message : "Lua load failed";
+            lua_settop(runtime.main, top);
+            return result;
+        }
+        if (change.operation == TaskOperation::Add) {
+            auto& task = runtime.AddTask(change.name, change.priority, runtime.main, -1);
+            result.revision = task.report.revision;
+            result.status = "completed";
+            result.reason = "task_added";
+            result.changed = result.controlReleased = true;
+            lua_settop(runtime.main, top);
+            runtime.UpdateStatus();
+            return result;
+        }
+        runtime.replacementReference = luaL_ref(runtime.main, LUA_REGISTRYINDEX);
+        runtime.replacementPriority = change.priority;
+        runtime.replacementGeneration = runtime.adapter.Observe().sceneGeneration;
+        lua_settop(runtime.main, top);
+    }
+    runtime.changeOperation = change.operation;
+    runtime.changeTarget = target;
+    result.status = "pending";
+    result.changed = !target->finished;
+    runtime.changeResult = result;
+    if (!target->finished)
+        runtime.FinishTask(*target, "cancelled", change.operation == TaskOperation::Replace ? "task_replaced" : "task_stopped");
+    runtime.CaptureResult();
+    runtime.CompleteTaskChange();
+    runtime.UpdateStatus();
+    return runtime.changeResult;
+}
+
+const TaskChangeResult* Runtime::CurrentTaskChange() const {
+    return impl->changeResult.requestId.empty() ? nullptr : &impl->changeResult;
 }
 
 bool Runtime::Running() const { return impl->report.status == "running"; }
