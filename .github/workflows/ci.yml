@@ -33,3 +33,23 @@ jobs:
           submodules: recursive
       - name: Build headless image
         run: docker build --file docker/headless/Dockerfile --tag local/beidou-pilot:ci .
+
+  game-ai-harness:
+    name: Game AI harness contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Build isolated Codex image
+        run: docker build --tag local/beidou-game-ai:ci docker/harness
+      - name: Run harness contracts without authentication or a real model
+        env:
+          BEIDOU_GAME_AI_IMAGE: local/beidou-game-ai:ci
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONPATH: harness
+        run: |
+          mkdir -p tmp/harness-ci
+          TMPDIR="$GITHUB_WORKSPACE/tmp/harness-ci" python3 -m unittest discover -s harness/test -v

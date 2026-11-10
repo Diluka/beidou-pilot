@@ -1,12 +1,13 @@
 # beidou-pilot
 
-面向脚本和 AI 的游戏客户端工具：脚本承担主要驱动工作，AI 在客户端外部负责决策。工具负责管理实例、读取结构化状态、执行原生动作和 Lua。无头端用于多实例，北斗 GUI 适配器用于按需验证与排障。客户端不集成模型、性格、长期目标或玩家记忆。
+面向脚本和 AI 的游戏客户端工具：脚本承担主要驱动工作，AI 在客户端外部负责决策。工具负责管理实例、读取结构化状态、执行原生动作和 Lua。无头端用于多实例，北斗 GUI 适配器用于按需验证与排障。客户端运行体不集成模型、性格、长期目标或玩家记忆；同仓 `harness/` 独立消费这些客户端能力，持有游戏 AI 的模型会话、角色设定与经历。
 
 ## 组件布局
 
 ```text
 cli/             命令入口、实例管理、观察、测试
-docker/          两个镜像的构建定义、GUI Compose 与启动脚本
+docker/          客户端及独立 Codex 镜像、GUI Compose 与启动脚本
+harness/         游戏 AI 宿主薄控制器、独立模型会话与专用协作入口
 headless/        无头客户端宿主和适配器
 beidou-ijl15/    原版客户端 DLL 工程和适配器
 shared/
@@ -53,6 +54,7 @@ docker build -t local/beidou-v17-client:intel docker/gui
 
 ## 文档与开发
 
+- [游戏 AI harness](docs/HARNESS.md)：隔离 Codex、角色上下文、游戏工具与开发 AI 协作。
 - [命令使用](docs/CLI.md)：实例、观察、动作、GUI 入口和错误结果。
 - [Lua API 参考](docs/LUA_API.md)：写脚本使用的状态字段、函数参数、返回值与错误语义。
 - [Lua 与控制协议](docs/CONTROL.md)：脚本、控制权、取消和效果边界。

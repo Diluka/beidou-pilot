@@ -8,14 +8,17 @@
 | `shared/scripts/` | 按travel/combat/recovery分类的复合能力，examples保存少量公共API示例 |
 | `shared/lua-runtime/` | 两端共用的Lua调度、预算、状态模型与game API，独立于具体客户端 |
 | `headless/src/` | 无渲染登录、网络与游戏更新宿主、共享桥适配 |
-| `docker/` | 无头与 GUI 镜像构建定义、GUI Compose、资源装配和容器启动脚本 |
+| `docker/` | 无头与 GUI 镜像构建定义、GUI Compose、资源装配和容器启动脚本；`docker/harness/` 构建独立 Codex 环境 |
+| `harness/` | 宿主薄控制器、模型会话、角色设定与经历、开发 AI 专用协作；通过既有 CLI 消费客户端 |
 | `beidou-ijl15/` | 北斗客户端 `ijl15.dll` 工程，新增桥直接实现共同契约，保留必要原生逻辑 |
 | `third_party/` | 固定上游依赖与包含本地适配的派生引擎/资源转换器 |
 | `cli/test/` | 客户端离线合同测试 |
 
 Python 负责参数、静态资料规划、脚本装载/取消和最终结果。持续角色判断在客户端更新线程的 Lua 中执行，各适配器调用自己的原生游戏逻辑。普通命令与观察不会逐帧经过模型或截图。
 
-客户端只拥有执行和观察能力，主要由 Lua 脚本驱动。AI 位于客户端外部的决策层，通过 harness 获取观察并调度脚本。后续 bot 中心可通过 harness 管理性格、目标、记忆、模型与实例，服务端和数据库不属于客户端项目。
+客户端运行体只拥有执行和观察能力，主要由 Lua 脚本驱动。同仓 `harness/` 是独立的决策消费者，持有模型会话、角色设定、目标与游戏经历，通过既有 CLI 获取观察并调度脚本；`cli/beidou_pilot/`、原生适配器及共享 Lua Runtime 不依赖模型或角色记忆。服务端和数据库不纳入本仓库。
+
+Codex app-server 在独立 harness 容器中运行，宿主薄控制器分派少量动态游戏工具并调用固定 root/backend/instance 的 CLI。模型容器不挂开发仓库、宿主 Codex 配置或 Docker socket。客户端和 harness 各有生命周期；暂停或停止玩法需取消原 Lua CLI 并确认所属实例放键，停止 harness 不关闭客户端。具体配置与协作入口见 [HARNESS](HARNESS.md)。
 
 ## 容器与控制生命周期
 

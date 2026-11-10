@@ -45,6 +45,13 @@ Separately licensed components
 - JSON for Modern C++: MIT license, third_party/json/LICENSE.MIT
 - Microsoft Detours: MIT license,
   third_party/detours/LICENSE.md
+- OpenAI Codex 0.167.0, distributed separately in the game AI container:
+  https://github.com/openai/codex
+  Source commit: 086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a
+  Apache-2.0. The unmodified Linux amd64 executables are obtained from the
+  fixed @openai/codex 0.167.0-linux-x64 package during image construction.
+  Its LICENSE, NOTICE (including Ratatui attribution), and release metadata
+  are retained in the image under /usr/share/licenses/codex/.
 - GLFW: zlib/libpng license,
   third_party/maplestory-client/includes/glfw-3.3.2.bin.WIN64/LICENSE.md
 - LZ4 headers: BSD-2-Clause license in
