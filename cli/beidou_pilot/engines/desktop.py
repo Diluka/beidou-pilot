@@ -10,6 +10,8 @@ import subprocess
 import sys
 from typing import Literal, TypedDict
 
+from ..runtime import load_runtime
+
 
 class HoldAction(TypedDict):
     action: Literal["hold"]
@@ -42,7 +44,6 @@ DesktopActions = list[Action]
 CONTAINER_DESKTOP = r'''
 import json
 from pathlib import Path
-import os
 import re
 import signal
 import subprocess
@@ -99,7 +100,7 @@ def focus_keyboard():
         if content_y <= outer_y:
             raise RuntimeError("未找到可安全单击的标题栏区域。")
         points = [outer_x + width * 2 // 5, outer_x + width * 3 // 5]
-        state_path = Path("/work/runs") / os.environ["RUN_ID"] / "keyboard-activation.json"
+        state_path = Path(payload["run_dir"]) / "keyboard-activation.json"
         previous = json.loads(state_path.read_text()) if state_path.exists() else None
         x = max(points, key=lambda point: abs(point - previous["x"])) if previous else points[0]
         activation_point = {"x": x, "y": (outer_y + content_y) // 2}
@@ -274,9 +275,7 @@ def main() -> None:
     scroll.add_argument("direction", choices=["up", "down"])
     scroll.add_argument("--ticks", type=int, default=1)
     args = parser.parse_args()
-    root = Path(os.environ.get("CLIENT_ROOT", Path(__file__).resolve().parents[2])).resolve()
-    if not (root / "clientctl.py").is_file():
-        parser.error("CLIENT_ROOT须指向客户端运行目录。")
+    root = Path(os.environ.get("CLIENT_ROOT", "/work")).resolve()
     actions: DesktopActions = []
     if args.action == "execute":
         try:
@@ -288,23 +287,15 @@ def main() -> None:
     cancel_name = args.cancel_file if args.action == "execute" else None
     if cancel_name and not re.fullmatch(r"[A-Za-z0-9_-]+", cancel_name):
         parser.error("取消标记名只允许字母、数字、短横线和下划线。")
-    ids = subprocess.check_output([
-        "docker", "ps", "-q", "--filter", "label=beidou.task=client-v17-maintained",
-        "--filter", "label=beidou.client.root=" + str(root),
-    ], text=True).split()
-    if len(ids) != 1:
-        raise SystemExit("本目录必须恰有一个运行中的客户端，未发送桌面输入。")
-    container = json.loads(subprocess.check_output(["docker", "inspect", ids[0]], text=True))[0]
-    config = container["HostConfig"]
-    if config["Privileged"] or config["PortBindings"] or config["NetworkMode"] == "host":
-        raise SystemExit("客户端容器边界不符合约定，未发送桌面输入。")
+    runtime = load_runtime(root, "beidou", os.environ.get("MAPLE_INSTANCE", "default"))
+    if not runtime.running:
+        raise SystemExit("本容器客户端已经退出，未发送桌面输入。")
+    environment = dict(os.environ, DISPLAY=":97")
     if args.action == "scroll":
-        subprocess.run(["docker", "exec", "--user", "1000:1000", container["Id"], "env", "DISPLAY=:97",
-                        "xdotool", "click", "--repeat", str(args.ticks), "--delay", "50",
-                        "4" if args.direction == "up" else "5"], capture_output=True, check=True)
+        subprocess.run(["xdotool", "click", "--repeat", str(args.ticks), "--delay", "50",
+                        "4" if args.direction == "up" else "5"], env=environment, capture_output=True, check=True)
         print(json.dumps({"action": "scroll", "input_dispatched": True, "secret_logged": False}))
         return
-    env = dict(value.split("=", 1) for value in container["Config"]["Env"])
     target = None
     crop_target = None
     screenshot_path = None
@@ -312,21 +303,20 @@ def main() -> None:
     if args.action == "screenshot":
         if not re.fullmatch(r"[A-Za-z0-9_-]+", args.name):
             parser.error("截图名只允许字母、数字、短横线和下划线。")
-        target = root / "runtime/runs" / env["RUN_ID"] / (args.name + ".png")
+        target = runtime.run_dir / (args.name + ".png")
         if target.exists():
             raise SystemExit("截图已存在，拒绝覆盖。")
-        screenshot_path = "/work/runs/" + env["RUN_ID"] + "/" + target.name
+        screenshot_path = str(target)
         if args.game_crop:
             crop_target = target.with_name(target.stem + "-game.png")
             if crop_target.exists():
                 raise SystemExit("游戏裁剪图已存在，拒绝覆盖。")
-            crop = "/work/runs/" + env["RUN_ID"] + "/" + crop_target.name
+            crop = str(crop_target)
     payload = json.dumps({"actions": actions, "screenshot": screenshot_path, "game_crop": crop,
-                          "cancel_file": "/work/runs/" + env["RUN_ID"] + "/" + cancel_name if cancel_name else None}).encode()
-    result = subprocess.run([
-        "docker", "exec", "-i", "--user", "1000:1000", container["Id"], "env", "DISPLAY=:97",
-        "python3", "-c", CONTAINER_DESKTOP,
-    ], input=payload, capture_output=True, check=True)
+                          "run_dir": str(runtime.run_dir),
+                          "cancel_file": str(runtime.run_dir / cancel_name) if cancel_name else None}).encode()
+    result = subprocess.run([sys.executable, "-c", CONTAINER_DESKTOP],
+                            input=payload, env=environment, capture_output=True, check=True)
     report = json.loads(result.stdout)
     report.update({"action": args.action, "input_dispatched": bool(actions), "secret_logged": False,
                    "screenshot": str(target) if target else None,

@@ -17,6 +17,7 @@ import uuid
 from .binaries import CLIENT_SHA256, verify_binaries
 from .errors import ClientError, JsonObject, JsonValue
 from .instances import InstancePaths, selected_instance
+from .runtime import load_runtime
 
 
 DOMAINS = frozenset({"stage", "scene", "inventory", "character", "quests", "hotkeys", "dialog", "interaction", "ui", "shop"})
@@ -30,14 +31,6 @@ def selected_backend() -> str:
     return os.environ.get("MAPLE_BACKEND", "beidou")
 
 
-def _docker(*arguments: str) -> str:
-    try:
-        return subprocess.run(["docker", *arguments], text=True, capture_output=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError) as error:
-        detail = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) else str(error)
-        raise ClientError("observation_runtime_unavailable", "无法核验客户端观察目标。", {"reason": detail}) from error
-
-
 @dataclass(frozen=True)
 class Session:
     container_id: str
@@ -48,48 +41,12 @@ class Session:
 
 
 def active_session(root: Path, backend: str, instance: str = "default") -> Session | None:
-    if backend not in {"beidou", "headless"}:
-        raise ClientError("unsupported_backend", "未知客户端后端。", {"backend": backend})
-    task = "client-v17-maintained" if backend == "beidou" else "maple-headless-maintained"
-    filters = ["label=beidou.task=" + task, "label=beidou.client.root=" + str(root)]
-    registration = None
-    if backend == "headless":
-        try:
-            registration = json.loads(InstancePaths(root, backend, instance).registration.read_text())
-        except FileNotFoundError:
-            return None
-        except (OSError, json.JSONDecodeError) as error:
-            raise ClientError("observation_session_unavailable", "无法读取当前无头会话登记。") from error
-        if (not isinstance(registration, dict) or any(not isinstance(registration.get(field), str)
-                for field in ("container_id", "run_id", "image", "run_dir"))):
-            raise ClientError("observation_session_unavailable", "无头会话登记字段无效。")
-        if not registration["container_id"]:
-            return None
-        filters.append("id=" + registration["container_id"])
-    identifiers = _docker("ps", "-q", *(value for condition in filters for value in ("--filter", condition))).split()
-    if not identifiers:
+    runtime = load_runtime(root, backend, instance)
+    if not runtime.running:
         return None
-    if len(identifiers) != 1:
-        raise ClientError("observation_target_not_unique", "当前后端有多个客户端，未选择观察目标。")
-    container = json.loads(_docker("inspect", identifiers[0]))[0]
-    host = container["HostConfig"]
-    if host["Privileged"] or host["PortBindings"] or host["NetworkMode"] == "host":
-        raise ClientError("observation_target_invalid", "客户端容器不符合观察边界。")
-    if backend == "beidou":
-        if not verify_binaries(root):
-            raise ClientError("native_observation_unsupported", "当前客户端未登记原生观察构建。")
-        environment = dict(entry.split("=", 1) for entry in container["Config"]["Env"])
-        run_id = environment["RUN_ID"]
-        directory = root / "runtime/runs" / run_id
-    else:
-        assert registration is not None
-        if (registration.get("container_id") != container["Id"]
-                or registration.get("image") != container["Image"]
-                or container["Config"]["Labels"].get("beidou.client.instance", "default") != instance):
-            raise ClientError("observation_session_mismatch", "无头客户端与会话登记不符。")
-        run_id = registration["run_id"]
-        directory = Path(registration["run_dir"])
-    return Session(container["Id"], run_id, directory, backend, container["Image"])
+    if backend == "beidou" and not verify_binaries(root):
+        raise ClientError("native_observation_unsupported", "当前客户端未登记原生观察构建。")
+    return Session(runtime.container_id, runtime.run_id, runtime.run_dir, backend, runtime.image)
 
 
 class NativeObserver:
@@ -229,9 +186,13 @@ def observe_domain(domain: str, root: Path | None = None, backend: str | None = 
     return NativeObserver(root, backend).observe(domain)
 
 
-def content_geometry(container_id: str) -> JsonObject | None:
-    tree = _docker("exec", "--user", "1000:1000", container_id,
-                   "env", "DISPLAY=:97", "xwininfo", "-root", "-tree")
+def content_geometry() -> JsonObject | None:
+    try:
+        tree = subprocess.run(["xwininfo", "-root", "-tree"], env={**os.environ, "DISPLAY": ":97"},
+                              text=True, capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) else str(error)
+        raise ClientError("observation_runtime_unavailable", "无法读取本容器的窗口布局。", {"reason": detail}) from error
     windows = [match for line in tree.splitlines() if (match := re.match(
         r'^(\s*)(0x[0-9a-f]+)\s+.*?\s+(\d+)x(\d+)[+-]\d+[+-]\d+\s+([+-]\d+)([+-]\d+)\s*$', line))]
     games = [window for window in windows if '("beidou.exe" "beidou.exe")' in window[0]
@@ -260,7 +221,7 @@ def project_geometry(report: JsonObject) -> JsonObject:
     if not isinstance(client, dict) or not isinstance(client.get("container_id"), str):
         raise ClientError("observation_identity_unavailable", "原生观察结果缺少当前容器身份。")
     try:
-        geometry = content_geometry(client["container_id"])
+        geometry = content_geometry()
     except ClientError as error:
         geometry = None
         unavailable = report.setdefault("unavailable", [])

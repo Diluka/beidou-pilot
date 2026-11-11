@@ -35,14 +35,14 @@ def export_prototype(workspace: Path, output: Path) -> ExportSummary:
                 files[path] = destination / path.relative_to(source)
 
     files[workspace / "cli/beidou-pilot"] = Path("cli/beidou-pilot")
-    for name in ["LICENSE", "NOTICE", ".dockerignore", ".gitignore", "README.md", "AGENTS.md"]:
+    for name in ["beidou-pilot", "LICENSE", "NOTICE", ".dockerignore", ".gitignore", "README.md", "AGENTS.md"]:
         files[workspace / name] = Path(name)
-    for name in ["clientctl.py", "runtime-ui.py", "config/target.example.json", "config/resources.example.json"]:
+    for name in ["runtime-ui.py", "config/target.example.json", "config/resources.example.json"]:
         files[workspace / "cli" / name] = Path("cli") / name
     tree(workspace / "cli/beidou_pilot", Path("cli/beidou_pilot"), {".py"})
     tree(workspace / "cli/tools", Path("cli/tools"), {".py"})
     tree(workspace / "cli/test", Path("cli/test"), {".py", ".cpp"})
-    for name in ["compose.yaml", "headless/Dockerfile", "gui/Dockerfile", "gui/entrypoint.sh",
+    for name in ["compose.yaml", "compose.metadata.yaml", "compose.scripts.yaml", "runtime/entrypoint.py", "headless/Dockerfile", "gui/Dockerfile", "gui/entrypoint.sh",
                  "gui/bootstrap.sh", "gui/prepare-client.sh", "gui/chinese-fontlink.reg", "gui/LICENSE"]:
         files[workspace / "docker" / name] = Path("docker") / name
     for name in ["Makefile", "agent", "LICENSE", "NOTICE", "Settings"]:
@@ -104,7 +104,7 @@ def export_prototype(workspace: Path, output: Path) -> ExportSummary:
     manifest = {
         "format": "beidou-pilot-source-v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "source_layout": {"cli": "cli", "headless": "headless", "beidou_ijl15": "beidou-ijl15", "shared": "shared", "third_party": "third_party"},
+        "source_layout": {"launcher": "beidou-pilot", "docker": "docker", "cli": "cli", "headless": "headless", "beidou_ijl15": "beidou-ijl15", "shared": "shared", "third_party": "third_party"},
         "files": records,
         "generated": ["PROTOTYPE-MANIFEST.json"],
         "excluded": ["private configs and credentials", "runtime state and logs", "game assets and converted NX/XML",

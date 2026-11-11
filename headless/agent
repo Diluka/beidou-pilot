@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ ${1:-} != check || $# -ne 2 ]]; then
-    printf 'Usage: %s check resources-dir\nGame sessions: use ../cli/beidou-pilot --backend headless\n' "$0" >&2
+    printf 'Usage: %s check resources-dir\nGame sessions: use ../beidou-pilot --workbench DIR --backend headless open\n' "$0" >&2
     exit 2
 fi
 resources_dir="$2"
@@ -10,4 +10,4 @@ if [[ ! -d $resources_dir ]]; then
     exit 2
 fi
 resources_dir="$(realpath -- "$resources_dir")"
-exec docker run --rm --pull=never --network none --read-only --cpus 2 --memory 1g --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" -v "$resources_dir:/data:ro" "${HEADLESS_CLIENT_IMAGE:-local/beidou-pilot:local}" --check-resources /data
+exec docker run --rm --pull=never --network none --read-only --cpus 2 --memory 1g --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" -v "$resources_dir:/data:ro" --entrypoint /bin/beidou-headless "${HEADLESS_CLIENT_IMAGE:-local/beidou-pilot:local}" --check-resources /data

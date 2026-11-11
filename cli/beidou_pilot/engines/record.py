@@ -6,6 +6,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
+
+from ..runtime import load_runtime
 
 
 CAPTURE = r'''
@@ -138,30 +141,19 @@ def main():
         parser.error("录制时长须为0.1至120秒，目标帧率须为1至20。")
     if not args.cancel_file.replace("-", "").replace("_", "").isalnum():
         parser.error("取消标记名无效。")
-    root = Path(os.environ["CLIENT_ROOT"]).resolve()
-    ids = subprocess.check_output([
-        "docker", "ps", "-q", "--filter", "label=beidou.task=client-v17-maintained",
-        "--filter", "label=beidou.client.root=" + str(root),
-    ], text=True).split()
-    if len(ids) != 1:
-        raise SystemExit("本目录必须恰有一个运行中的客户端，未录制。")
-    container = json.loads(subprocess.check_output(["docker", "inspect", ids[0]], text=True))[0]
-    config = container["HostConfig"]
-    if config["Privileged"] or config["PortBindings"] or config["NetworkMode"] == "host":
-        raise SystemExit("客户端容器边界不符合约定，未录制。")
-    environment = dict(value.split("=", 1) for value in container["Config"]["Env"])
-    run_id = environment["RUN_ID"]
-    directory = root / "runtime/runs" / run_id / ("record-" + args.name)
+    root = Path(os.environ.get("CLIENT_ROOT", "/work")).resolve()
+    runtime = load_runtime(root, "beidou", os.environ.get("MAPLE_INSTANCE", "default"))
+    if not runtime.running:
+        raise SystemExit("本容器客户端已经退出，未录制。")
+    directory = runtime.run_dir / ("record-" + args.name)
     if directory.exists():
         raise SystemExit("录制目录已存在，拒绝覆盖。")
-    request = {"directory": "/work/runs/" + run_id + "/" + directory.name,
-               "cancel_file": "/work/runs/" + run_id + "/" + args.cancel_file,
+    request = {"directory": str(directory),
+               "cancel_file": str(runtime.run_dir / args.cancel_file),
                "seconds": args.seconds, "fps": args.fps,
-               "client": {"container_id": container["Id"], "run_id": run_id}}
-    result = subprocess.run([
-        "docker", "exec", "-i", "--user", "1000:1000", container["Id"],
-        "env", "DISPLAY=:97", "python3", "-c", CAPTURE,
-    ], input=json.dumps(request), text=True, capture_output=True, check=True)
+               "client": {"container_id": runtime.container_id, "run_id": runtime.run_id}}
+    result = subprocess.run([sys.executable, "-c", CAPTURE], input=json.dumps(request),
+                            env=dict(os.environ, DISPLAY=":97"), text=True, capture_output=True, check=True)
     summary = json.loads(result.stdout)
     summary.update(directory=str(directory), journal=str(directory / "frames.jsonl"),
                    summary_file=str(directory / "summary.json"), readonly=True)

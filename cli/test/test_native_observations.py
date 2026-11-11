@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -14,6 +15,7 @@ from beidou_pilot.engines.observe import read_observation
 from beidou_pilot.engines.stage import read_stage
 from beidou_pilot.errors import ClientError
 from beidou_pilot.observations import NativeObserver, Session, active_session
+from .test_bridge import BridgeFiles
 
 
 class NativeObservationContract(unittest.TestCase):
@@ -21,20 +23,22 @@ class NativeObservationContract(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        (self.root / "clientctl.py").touch()
-        self.directory = self.root / "runtime/bridge"
-        self.directory.mkdir(parents=True)
-        self.session = Session("container", "run", self.root / "runtime/runs/run", "beidou", "sha256:image")
+        self.files = BridgeFiles(self.root)
+        self.enterContext(patch.dict(os.environ, self.files.environment))
+        self.directory = self.files.directory
+        self.session = Session(
+            "bridge-container", "bridge-contract", Path(self.files.runtime["run_dir"]), "beidou", "sha256:image"
+        )
         self.state = {
             "protocol": 1,
-            "run_id": "run",
+            "run_id": "bridge-contract",
             "instance_id": "native-1",
             "seq": 1,
             "scene_generation": 1,
             "observed_at_ms": int(time.time() * 1000),
             "ready": True,
             "map_id": 100,
-            "character": {"id": 6},
+            "character": {"id": 4},
             "position": {"x": 10, "y": 20},
             "held_keys": [],
             "command": {"status": "running"},
@@ -141,18 +145,10 @@ class NativeObservationContract(unittest.TestCase):
                 observer.observe("scene", timeout=0.03)
             self.assertEqual("native_observation_timeout", failure.exception.code)
 
-    def test_login_bootstrap_does_not_require_a_registered_maple_session(self) -> None:
-        container = {
-            "Id": "container",
-            "Image": "sha256:image",
-            "HostConfig": {"Privileged": False, "PortBindings": {}, "NetworkMode": "isolated"},
-            "Config": {"Env": ["RUN_ID=first-launch"]},
-        }
-        with patch("beidou_pilot.observations._docker", side_effect=["container\n", json.dumps([container])]):
-            with patch("beidou_pilot.observations.verify_binaries", return_value=True):
-                session = active_session(self.root, "beidou")
-        self.assertEqual("first-launch", session.run_id)
-        session.run_dir.mkdir(parents=True)
+    def test_bootstrap_uses_this_container_before_native_observation_is_ready(self) -> None:
+        with patch("beidou_pilot.observations.verify_binaries", return_value=True):
+            session = active_session(self.root, "beidou")
+        self.assertEqual("bridge-contract", session.run_id)
         (session.run_dir / "renderer.log").write_text("OpenGL renderer string: Mesa Intel(R) Graphics (ADL GT2)\n")
         with patch("beidou_pilot.observations.active_session", return_value=None):
             self.assertEqual("STOPPED", read_stage(self.root)["stage"])
@@ -167,6 +163,7 @@ class NativeObservationContract(unittest.TestCase):
         self.assertEqual("intel", stage["renderer"])
 
     def test_engine_module_uses_source_package_before_an_old_runtime_copy(self) -> None:
+        self.files.register("headless")
         engines = self.root / "beidou_pilot/engines"
         engines.mkdir(parents=True)
         (engines.parent / "__init__.py").write_text("")
@@ -176,6 +173,7 @@ class NativeObservationContract(unittest.TestCase):
         self.assertIn("--interval", help_text)
 
     def test_backend_forwards_selected_backend_to_observation_engine(self) -> None:
+        self.files.register("headless")
         with patch("beidou_pilot.backend.subprocess.run") as run:
             run.return_value.stdout = '{"quests": []}'
             self.assertEqual({"quests": []}, Backend(self.root, "headless").read("quests"))

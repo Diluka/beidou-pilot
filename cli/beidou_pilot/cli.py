@@ -30,17 +30,15 @@ def parser() -> Parser:
     common.add_argument(
         "--json", action="store_true", default=argparse.SUPPRESS, help="单个JSON结果；仅独立watch使用JSONL"
     )
-    common.add_argument("--root", type=Path, default=argparse.SUPPRESS, help="客户端目录，默认入口所在目录")
+    common.add_argument("--root", type=Path, default=argparse.SUPPRESS, help="本容器运行目录，默认CLIENT_ROOT")
     common.add_argument("--debug", action="store_true", default=argparse.SUPPRESS, help="保留引擎原始来源和布局细节")
     common.add_argument(
         "--backend",
         choices=["beidou", "headless"],
         default=argparse.SUPPRESS,
-        help="明确选择北斗原版或开源无头客户端，默认beidou",
+        help="核对本容器后端，默认MAPLE_BACKEND",
     )
-    common.add_argument(
-        "--instance", default=argparse.SUPPRESS, help="无头实例名，默认default；每个实例拥有独立控制与运行目录"
-    )
+    common.add_argument("--instance", default=argparse.SUPPRESS, help="核对本容器实例名，默认MAPLE_INSTANCE")
     p = Parser(prog="beidou-pilot", description="北斗客户端：登录、状态观察、Lua脚本与游戏操作。", parents=[common])
     p.add_argument("--version", action="version", version="beidou-pilot " + __version__)
     sub = p.add_subparsers(dest="command", required=True, parser_class=Parser)
@@ -74,14 +72,11 @@ def parser() -> Parser:
     q.add_argument("--timeout", type=float, default=3, help="管理结果等待秒数，不改变会话期限")
     q = command("skill", "通过Lua调用本后端支持的原生技能，分别报告派发与原始返回值")
     q.add_argument("id", type=int)
-    q = command("open", "启动并正常登录入图；已就绪时自动复用")
+    q = command("open", "完成本容器登录并确认已有角色入图")
     q.add_argument("--target", type=Path)
     q.add_argument("--profile", type=Path, required=True, help="已有账号和角色的 0600 私密配置")
-    q.add_argument("--workspace-server", action="store_true", help="显式使用已授权的工作区服务")
-    q.add_argument("--project", default="beidou-ms")
-    q.add_argument("--service", default="beidou-server-all")
     q.add_argument("--timeout", type=float, default=90)
-    command("close", "正常结束本目录客户端并核验释放")
+    command("close", "提示通过宿主工作台生命周期入口关闭本容器")
     q = command("walk", "原生语义移动；方向与有界时间")
     q.add_argument("direction", choices=["left", "right", "up", "down"])
     q.add_argument("--seconds", type=float, default=0.3)
@@ -205,14 +200,11 @@ def parser() -> Parser:
 @contextmanager
 def control(backend: Backend, name: str) -> Iterator[None]:
     backend.paths.state_directory.mkdir(parents=True, exist_ok=True)
-    lifecycle = backend.name == "headless" and name in {"open", "close"}
-    path = backend.paths.state_directory / "container.lock" if lifecycle else backend.paths.input_lock
+    path = backend.paths.input_lock
     with path.open("a+") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            if lifecycle:
-                raise ClientError("lifecycle_busy", "另一个命令正在启动或关闭该客户端容器。") from error
             raise ClientError("input_busy", "另一个beidou-pilot命令正在控制客户端；只读命令仍可使用。") from error
         handle.seek(0)
         handle.truncate()
@@ -238,6 +230,9 @@ def status(backend: Backend) -> JsonObject:
         "channel": stage.get("channel"),
         "character": stage.get("character"),
         "unavailable": stage.get("unavailable", []),
+        "image": backend.runtime.image,
+        "source_revision": backend.runtime.source_revision,
+        "run_id": backend.runtime.run_id,
     }
     if stage["stage"] == "IN_GAME":
         state = backend.read("observe")
@@ -328,9 +323,21 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     if cmd == "status":
         return status(backend)
     if cmd == "instances":
-        from .headless import list_instances
-
-        return {"instances": list_instances(backend.root)}
+        runtime = backend.runtime
+        return {
+            "instances": [
+                {
+                    "name": runtime.instance,
+                    "backend": runtime.backend,
+                    "container_id": runtime.container_id,
+                    "run_id": runtime.run_id,
+                    "running": runtime.running,
+                    "character_id": runtime.character_id,
+                    "image": runtime.image,
+                    "source_revision": runtime.source_revision,
+                }
+            ]
+        }
     if cmd == "capabilities":
         from .bridge import BridgeClient
         from .observations import DOMAINS
@@ -356,25 +363,22 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             "native_actions": cast(JsonObject | None, state.get("capabilities")) if state is not None else None,
         }
     if cmd == "doctor":
-        if backend.name == "headless":
-            from .headless import docker
+        from .resources import load_resources
 
-            return {
-                "backend": "headless",
-                "root": str(backend.root),
-                "image": docker(
-                    "image",
-                    "inspect",
-                    os.environ.get("HEADLESS_CLIENT_IMAGE", "local/beidou-pilot:local"),
-                    "--format",
-                    "{{.Id}}",
-                ).strip(),
-                "state": status(backend),
-            }
+        resources = load_resources(backend.root)
+        if backend.name == "beidou":
+            from .binaries import verify_binaries
+
+            available = verify_binaries(backend.root)
+        else:
+            available = resources.headless_resources.is_dir()
         return {
+            "backend": backend.name,
             "root": str(backend.root),
-            "check": json.loads(backend.text("clientctl", "check")),
-            "stage": backend.read("stage"),
+            "image": backend.runtime.image,
+            "source_revision": backend.runtime.source_revision,
+            "check": {"static_configuration_valid": available, "image_available": True, "client_started": False},
+            "state": status(backend),
         }
     if cmd == "bridge":
         from .bridge import BridgeClient
@@ -437,7 +441,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             timeout=args.timeout,
         )
     if cmd == "open":
-        from .headless import any_running as headless_running
         from .profile import load_profile
 
         profile = load_profile(args.profile)
@@ -450,20 +453,14 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 target=args.target,
                 profile=profile,
                 timeout=args.timeout,
-                workspace_server=args.workspace_server,
                 instance=backend.instance,
             )
-        if headless_running(backend.root):
-            raise ClientError("client_already_running", "无头客户端仍在运行；先正常关闭再切换客户端。")
         from .session import open_game
 
         opened = open_game(
             backend,
             profile=profile,
             target=args.target,
-            project=args.project,
-            service=args.service,
-            workspace_server=args.workspace_server,
             timeout=args.timeout,
         )
         character = cast(JsonObject, opened["character"])
@@ -472,13 +469,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             opened["next_action"] = "revive"
         return opened
     if cmd == "close":
-        if backend.name == "headless":
-            from .headless import close_game as close_native
-
-            return close_native(backend.root, backend.instance)
-        from .session import close_game
-
-        return close_game(backend)
+        raise ClientError("host_lifecycle_required", "请通过宿主工作台入口 close 关闭并确认所属容器退出。")
     if cmd in {"walk", "face", "jump", "attack", "pickup", "use_item"}:
         from .control_scripts import action
 
@@ -811,9 +802,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parser().parse_args(arguments)
         backend = Backend(
-            getattr(args, "root", Path(__file__).resolve().parents[1]),
-            getattr(args, "backend", "beidou"),
-            getattr(args, "instance", "default"),
+            getattr(args, "root", Path(os.environ.get("CLIENT_ROOT", "/work"))),
+            getattr(args, "backend", os.environ.get("MAPLE_BACKEND", "beidou")),
+            getattr(args, "instance", os.environ.get("MAPLE_INSTANCE", "default")),
         )
         readonly = (
             args.command
@@ -835,7 +826,9 @@ def main(argv: list[str] | None = None) -> int:
             or (args.command == "ui" and args.action == "read")
             or (args.command == "shop" and args.action == "read")
         )
-        if args.command == "task":
+        if args.command == "close":
+            result = dispatch(backend, args)
+        elif args.command == "task":
             previous_handler = signal.signal(signal.SIGTERM, signal.default_int_handler)
             try:
                 result = dispatch(backend, args)

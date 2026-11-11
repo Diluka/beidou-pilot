@@ -1,4 +1,4 @@
-"""宿主适配器到假 CLI 的消费合同，不验证 Lua 解释或游戏效果。"""
+"""harness 到宿主 Docker 薄入口的消费合同，不替代容器信号或游戏验收。"""
 
 import asyncio
 import json
@@ -20,7 +20,7 @@ import time
 
 sys.path.insert(0, __CLI_SOURCE__)
 arguments = sys.argv[1:]
-root = Path(arguments[arguments.index("--root") + 1])
+root = Path(arguments[arguments.index("--workbench") + 1])
 command = arguments[arguments.index("--json") + 1:]
 with (root / "calls.jsonl").open("a") as stream:
     stream.write(json.dumps({"arguments": arguments, "pid": os.getpid()}) + "\n")
@@ -47,7 +47,7 @@ elif command == ["snapshot"]:
 elif command[:2] == ["script", "run"] or command[0] == "hunt":
     state = json.loads(path.read_text())
     from beidou_pilot.cli import parser
-    parsed = parser().parse_args(arguments)
+    parsed = parser().parse_args(command)
     code = parsed.code if parsed.command == "script" else "hold" if parsed.continuous else "hunt"
     if code in ("hold", "fail_release"):
         def interrupt(number, frame):
@@ -111,7 +111,7 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
                 }
             )
         )
-        self.client = GameClient(self.cli, self.root, "headless", "alpha")
+        self.client = GameClient(self.cli, self.root, "alpha")
 
     async def wait_for_held_input(self) -> None:
         async with asyncio.timeout(3):
@@ -134,7 +134,7 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code, report["parsed_code"])
         status = await self.client.script_status()
         self.assertEqual(("run-a", [], None), (status["run_id"], status["held_keys"], status["script"]))
-        prefix = ["--root", str(self.root), "--backend", "headless", "--instance", "alpha", "--json"]
+        prefix = ["--workbench", str(self.root), "--instance", "alpha", "--json"]
         commands = []
         for call in self.calls():
             arguments = call["arguments"]

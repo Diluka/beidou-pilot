@@ -1,0 +1,407 @@
+#!/bin/bash
+# 宿主只管理 Docker/Git；客户端业务命令在所属容器中执行。
+set -euo pipefail
+umask 077
+
+usage() {
+    cat <<'EOF'
+用法：beidou-pilot --workbench DIR [--instance NAME] [--backend headless|beidou] [--ref REF] [--json] COMMAND
+
+  build     从 main（或显式 --ref）的已提交代码构建/复用镜像
+  plan      只读核对目标，不构建或启动
+  open      创建实例并用容器内 CLI 确认入图；已有实例沿用原版本
+  status    查询所选实例
+  close     正常关闭并核对所属容器退出
+  其他命令  交给所属容器内的 beidou-pilot（snapshot、script、hunt 等）
+
+build/plan/open 参数：
+  --target PATH          已核验的 target，默认 DIR/target.json
+  --profile PATH         账号 profile，默认 DIR/account.private.json
+  --resources PATH       外部资源配置，默认 DIR/resources.json
+  --bridge-artifact DIR  GUI 桥 DLL 与 manifest 所在目录，默认由 gui_dll 推导
+  --workspace-server     显式授权常驻 beidou-ms 目标；没有 target 时为本实例准备连接
+  --timeout SECONDS      入图等待，默认 90 秒
+EOF
+}
+
+if [ "$#" -eq 0 ] || [ "$1" = --help ] || [ "$1" = -h ]; then usage; exit 0; fi
+workbench=
+instance=default
+backend=headless
+backend_explicit=false
+source_ref=main
+command=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --workbench) workbench=$2; shift 2 ;;
+        --instance) instance=$2; shift 2 ;;
+        --backend) backend=$2; backend_explicit=true; shift 2 ;;
+        --ref) source_ref=$2; shift 2 ;;
+        --json) shift ;;
+        --help|-h) usage; exit 0 ;;
+        *) command=$1; shift; break ;;
+    esac
+done
+
+fail() {
+    jq -nc --arg code "$1" --arg message "$2" '{ok:false,error:{code:$code,message:$message}}'
+    exit 2
+}
+
+[ -n "$workbench" ] && [ -d "$workbench" ] || fail invalid_workbench '须指定已有工作台目录。'
+workbench=$(realpath "$workbench")
+[[ "$instance" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$ ]] || fail invalid_instance '实例名格式无效。'
+case "$backend" in headless|beidou) ;; *) fail invalid_backend '后端须为 headless 或 beidou。' ;; esac
+[ -n "$command" ] || fail usage '缺少命令。'
+name="beidou-pilot-$(printf '%s' "$workbench" | sha256sum | cut -c1-10)-$instance"
+state="$workbench/runtime/$instance"
+record="$state/host.json"
+id=
+inspect=
+running=false
+
+locate() {
+    running=false
+    inspect=
+    id=$(docker ps -aq --filter "name=^/$name$")
+    [ -n "$id" ] || return 0
+    inspect=$(docker inspect "$id" | jq -e --arg wb "$workbench" --arg instance "$instance" '
+        .[0] | select(.Config.Labels["beidou.workbench"] == $wb
+        and .Config.Labels["beidou.client.instance"] == $instance
+        and (.Config.Labels["beidou.task"] == "client-v17-maintained"
+             or .Config.Labels["beidou.task"] == "maple-headless-maintained")
+        and (.HostConfig.Privileged|not) and .HostConfig.NetworkMode != "host"
+        and ((.HostConfig.PortBindings // {})|length) == 0)') ||
+        fail container_identity_changed '同名容器的工作台或运行边界不符，保留现场。'
+    id=$(jq -r .Id <<<"$inspect")
+    running=$(jq -r .State.Running <<<"$inspect")
+    if [ -f "$record" ]; then
+        [ "$(jq -r .container_id "$record")" = "$id" ] &&
+            [ "$(jq -r .image "$record")" = "$(jq -r .Image <<<"$inspect")" ] ||
+            fail container_identity_changed '容器与本次运行登记不符，保留现场。'
+    fi
+}
+
+cleanup_network() {
+    local cleanup_record="$record" network server
+    if [ -f "$state/pending.json" ]; then cleanup_record="$state/pending.json"; fi
+    if [ -f "$cleanup_record" ]; then
+        network=$(jq -r '.owned_network // empty' "$cleanup_record")
+        server=$(jq -r '.target_container_id // empty' "$cleanup_record")
+        if [ -n "$network" ] && docker network inspect "$network" >/dev/null 2>&1; then
+            [ "$(docker network inspect "$network" --format '{{index .Labels "beidou.workbench"}}')" = "$workbench" ] ||
+                fail network_identity_changed '网络归属变化，未清理。'
+            if docker inspect "$server" --format '{{json .NetworkSettings.Networks}}' 2>/dev/null | jq -e --arg n "$network" 'has($n)' >/dev/null; then
+                docker network disconnect "$network" "$server"
+            fi
+            docker network rm "$network" >/dev/null
+        fi
+    fi
+    rm -f "$state/pending.json"
+}
+
+exec_cli() {
+    local token child result=0 interrupted=false cli_user
+    token=$(tr -d '-' </proc/sys/kernel/random/uuid)
+    cli_user=$(jq -r .Config.User <<<"$inspect")
+    if [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = beidou ]; then cli_user=1000:1000; fi
+    forward_cancel() {
+        interrupted=true
+        docker exec --user "$cli_user" "$id" beidou-pilot --cancel-exec "$token" >/dev/null ||
+            printf '%s\n' '取消请求尚未确认；保留所属实例，等待原命令结果。' >&2
+    }
+    trap forward_cancel INT TERM
+    docker exec -i --user "$cli_user" --env "BEIDOU_EXEC_TOKEN=$token" "$id" beidou-pilot --json "$@" <&0 &
+    child=$!
+    wait "$child" || result=$?
+    if "$interrupted"; then
+        result=0
+        wait "$child" || result=$?
+    fi
+    trap - INT TERM
+    return "$result"
+}
+
+locate
+case "$command" in
+    close)
+        mkdir -p "$state"
+        exec 8>"$state/lifecycle.lock"
+        flock -n 8 || fail lifecycle_busy '该实例正在启停。'
+        locate
+        if [ -n "$id" ]; then
+            docker stop --time 10 "$id" >/dev/null
+            docker inspect "$id" | jq -e '.[0].State | (.Running|not) and .Pid == 0' >/dev/null ||
+                fail close_not_confirmed '所属容器尚未确认退出。'
+            docker logs "$id" >"$state/container.log" 2>&1
+            docker inspect "$id" | jq '.[0].State | {ExitCode,FinishedAt,Error}' >"$state/exit.json"
+            docker rm "$id" >/dev/null
+        fi
+        cleanup_network
+        jq -nc --arg instance "$instance" '{ok:true,command:"close",data:{status:"closed",instance:$instance,cleanup_pending:false}}'
+        exit 0
+        ;;
+    status)
+        if ! "$running"; then
+            jq -nc --arg instance "$instance" --argjson old "$(cat "$record" 2>/dev/null || printf '{}')" '
+                {ok:true,command:"status",data:{stage:"STOPPED",running:false,instance:$instance,
+                image:$old.image,source_revision:$old.source_revision,run_id:$old.run_id}}'
+            exit 0
+        fi
+        exec_cli status "$@"
+        exit $?
+        ;;
+    build|plan|open) ;;
+    *)
+        "$running" || fail client_not_running '该工作台实例没有运行中的客户端。'
+        exec_cli "$command" "$@"
+        exit $?
+        ;;
+esac
+
+target="$workbench/target.json"
+profile="$workbench/account.private.json"
+resources="$workbench/resources.json"
+bridge=
+workspace_server=false
+profile_explicit=false
+target_explicit=false
+timeout=90
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --target) target=$2; target_explicit=true; shift 2 ;;
+        --profile) profile=$2; profile_explicit=true; shift 2 ;;
+        --resources) resources=$2; shift 2 ;;
+        --bridge-artifact) bridge=$2; shift 2 ;;
+        --workspace-server) workspace_server=true; shift ;;
+        --timeout) timeout=$2; shift 2 ;;
+        --json) shift ;;
+        *) fail usage "未知启动参数：$1" ;;
+    esac
+done
+
+jq -en --arg timeout "$timeout" '$timeout | tonumber | select(. >= 5 and . <= 180)' >/dev/null 2>&1 ||
+    fail invalid_timeout '入图等待须为 5 至 180 秒。'
+
+resource_path() {
+    local path
+    path=$(jq -er --arg field "$1" '.[$field] | select(type == "string" and length > 0)' "$resources")
+    case "$path" in /*) ;; *) path="$(dirname "$resources")/$path" ;; esac
+    realpath "$path"
+}
+
+if [ "$command" = open ] && "$running"; then
+    if "$backend_explicit"; then
+        [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = "$backend" ] ||
+            fail backend_mismatch '已有实例使用其他后端，未切换。'
+    fi
+    if "$target_explicit"; then
+        jq -e --slurpfile wanted "$target" '.target == $wanted[0]' "$record" >/dev/null ||
+            fail target_mismatch '已有实例目标与请求不同。'
+    fi
+    if "$profile_explicit"; then
+        jq -e --slurpfile wanted "$profile" '.character_id == $wanted[0].character_id
+            and .world == ($wanted[0].world // 0) and .channel == ($wanted[0].channel // 0)' "$record" >/dev/null ||
+            fail character_mismatch '已有实例角色、世界或频道与请求不同。'
+    fi
+    exec_cli open --profile /config/account.private.json --timeout "$timeout"
+    exit $?
+fi
+
+if [ "$backend" = beidou ] && [ "$instance" != default ]; then
+    fail unsupported_instance 'GUI 在一个工作台中只使用 default 实例；多个工作台分别建容器。'
+fi
+resolved=
+owned_network=
+resolve_target() {
+    if [ -f "$target" ]; then
+        jq -e 'keys == ["expected_image","network","project","service"] and all(.[]; type == "string" and length > 0)' "$target" >/dev/null ||
+            fail target_invalid '目标配置字段无效。'
+        project=$(jq -r .project "$target")
+        service=$(jq -r .service "$target")
+    elif "$workspace_server"; then
+        project=beidou-ms
+        service=beidou-server-all
+    else
+        fail target_required '须给出已确认的 target，或显式授权工作区目标。'
+    fi
+    if [ "$project" = beidou-ms ]; then
+        "$workspace_server" && [ "$service" = beidou-server-all ] ||
+            fail workspace_authorization_required '常驻目标须显式传 --workspace-server。'
+    elif "$workspace_server"; then
+        fail target_mismatch '--workspace-server 仅用于已授权的工作区目标。'
+    fi
+    servers=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service")
+    [ "$(wc -w <<<"$servers")" -eq 1 ] || fail target_not_unique '目标必须唯一匹配一个游戏服务容器。'
+    server_info=$(docker inspect "$servers" | jq -e '.[0] | select(.State.Running and .HostConfig.NetworkMode != "host")') ||
+        fail target_stopped '目标未运行或网络不符合要求。'
+    if ! "$workspace_server"; then
+        jq -e '((.HostConfig.PortBindings // {})|length) == 0' <<<"$server_info" >/dev/null ||
+            fail target_invalid '隔离目标不能发布宿主端口。'
+    fi
+    server_id=$(jq -r .Id <<<"$server_info")
+    server_image=$(jq -r .Image <<<"$server_info")
+    if [ -f "$target" ]; then
+        [ "$(jq -r .expected_image "$target")" = "$server_image" ] || fail target_image_changed '目标镜像与已确认配置不符。'
+        network=$(jq -r .network "$target")
+        docker network inspect "$network" | jq -e --arg project "$project" '.[0] |
+            .Internal and .Labels["com.docker.compose.project"] == $project' >/dev/null ||
+            fail target_invalid '目标网络必须是同项目的 internal 网络。'
+        target_ip=$(jq -er --arg network "$network" '.NetworkSettings.Networks[$network].IPAddress | select(length > 0)' <<<"$server_info") ||
+            fail target_invalid '目标尚未加入指定网络。'
+    else
+        network=
+        target_ip=
+    fi
+    resolved=$(jq -nc --arg project "$project" --arg service "$service" --arg id "$server_id" --arg image "$server_image" \
+        --arg network "$network" --arg ip "$target_ip" '{project:$project,service:$service,container_id:$id,image:$image,network:$network,ip:$ip}')
+}
+
+if [ "$command" != build ]; then
+    resolve_target
+    if [ "$command" = plan ]; then
+        jq -nc --argjson data "$resolved" '{ok:true,command:"plan",data:$data}'
+        exit 0
+    fi
+fi
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+repository=$(git -C "$here" rev-parse --show-toplevel)
+main_root=$(git -C "$repository" worktree list --porcelain | sed -n 's/^worktree //p' | head -n1)
+revision=$(git -C "$repository" rev-parse --verify "$source_ref^{commit}")
+image_tag="local/beidou-pilot-$backend:$revision"
+context="$main_root/tmp/client-images/$revision"
+build_image() {
+    mkdir -p "$main_root/tmp/client-images"
+    exec 9>"$main_root/tmp/client-images/$revision.lock"
+    flock 9
+    if [ ! -f "$context/.complete" ]; then
+        mkdir -p "$context"
+        git -C "$repository" archive "$revision" | tar -x -C "$context"
+        while read -r hash path; do
+            mkdir -p "$context/$path"
+            git -C "$main_root/$path" archive "$hash" | tar -x -C "$context/$path"
+        done < <(git -C "$repository" ls-tree -r "$revision" | awk '$2 == "commit" {print $3, $4}')
+        touch "$context/.complete"
+    fi
+    if docker image inspect "$image_tag" >/dev/null 2>&1; then
+        docker image inspect "$image_tag" | jq -e --arg rev "$revision" --arg backend "$backend" '
+            .[0].Config.Labels | .["org.opencontainers.image.revision"] == $rev and .["beidou.backend"] == $backend' >/dev/null ||
+            fail image_identity_changed '版本标签的实际镜像身份不符。'
+        flock -u 9
+        return
+    fi
+    dockerfile=docker/headless/Dockerfile
+    if [ "$backend" = beidou ]; then
+        dockerfile=docker/gui/Dockerfile
+        if [ -z "$bridge" ]; then bridge=$(dirname "$(resource_path gui_dll)"); fi
+        bridge=$(realpath "$bridge")
+        source_commit=$(jq -er .source.commit_sha "$bridge/manifest.json")
+        git -C "$repository" diff --quiet "$source_commit" "$revision" -- beidou-ijl15 shared/lua-runtime third_party/lua third_party/detours .github/workflows/agent-bridge.yml ||
+            fail bridge_build_required '该提交的 GUI 原生输入已变化，须准备匹配的 Windows 桥工件。'
+        mkdir -p "$context/build-input"
+        cp "$bridge/ijl15.dll" "$bridge/manifest.json" "$context/build-input/"
+    fi
+    docker build --file "$context/$dockerfile" --build-arg "SOURCE_REVISION=$revision" --tag "$image_tag" "$context" >&2
+    flock -u 9
+}
+build_image
+image=$(docker image inspect "$image_tag" --format '{{.Id}}')
+if [ "$command" = build ]; then
+    jq -nc --arg image "$image" --arg revision "$revision" --arg backend "$backend" \
+        '{ok:true,command:"build",data:{image:$image,source_revision:$revision,backend:$backend}}'
+    exit 0
+fi
+
+[ -f "$profile" ] && [ "$(stat -c %a "$profile")" = 600 ] || fail private_file_permissions '账号 profile 须存在且权限为 0600。'
+[ -f "$resources" ] || fail resources_required '须提供工作台的外部资源配置。'
+profile=$(realpath "$profile")
+resources=$(realpath "$resources")
+nx=$(resource_path headless_resources)
+[ -d "$nx" ] || fail resources_missing 'NX 资源目录不可用。'
+metadata=$(jq -r '.metadata_root // empty' "$resources")
+if [ -n "$metadata" ]; then
+    case "$metadata" in /*) ;; *) metadata="$(dirname "$resources")/$metadata" ;; esac
+    if [ -d "$metadata" ]; then metadata=$(realpath "$metadata"); else metadata=; fi
+fi
+if [ "$backend" = beidou ]; then
+    gui=$(resource_path gui_client)
+    [ -d "$gui" ] && [ -c /dev/dri/renderD128 ] || fail gui_unavailable '原客户端资源或 GUI 渲染设备不可用。'
+fi
+mkdir -p "$state"
+exec 8>"$state/lifecycle.lock"
+flock -n 8 || fail lifecycle_busy '该实例正在启停。'
+locate
+if "$running"; then
+    flock -u 8
+    exec_cli open --profile /config/account.private.json --timeout "$timeout"
+    exit $?
+fi
+if [ -n "$id" ]; then
+    docker logs "$id" >"$state/previous-container.log" 2>&1
+    docker rm "$id" >/dev/null
+fi
+cleanup_network
+rm -f "$record"
+run_id=$(date -u +%Y%m%dT%H%M%S.%NZ)
+run_root="$state/$run_id"
+mkdir -p "$run_root"
+identity=$(docker run --rm --network none --user "$(id -u):$(id -g)" \
+    --mount "type=bind,src=$profile,dst=/input/profile.json,readonly" \
+    --mount "type=bind,src=$run_root,dst=/output" --entrypoint python3 "$image" \
+    -m beidou_pilot.profile /input/profile.json --output /output/profile.private.json)
+character_id=$(jq -er .character_id <<<"$identity")
+world=$(jq -er .world <<<"$identity")
+channel=$(jq -er .channel <<<"$identity")
+mkdir -p "$main_root/private/workbenches"
+exec 7>"$main_root/private/workbenches/.start.lock"
+flock 7
+occupied=$(docker ps -q --filter "label=beidou.target.id=$server_id" --filter "label=beidou.character.id=$character_id" --filter "label=beidou.world=$world")
+[ -z "$occupied" ] || fail character_already_controlled '该目标的角色已由另一个客户端实例控制。'
+if [ -z "$network" ]; then
+    network="$name-$run_id"
+    docker network create --internal --label "com.docker.compose.project=$project" --label "beidou.workbench=$workbench" "$network" >/dev/null
+    jq -nc --arg network "$network" --arg server "$server_id" '{owned_network:$network,target_container_id:$server}' >"$state/pending.json"
+    docker network connect "$network" "$server_id"
+    target_ip=$(docker inspect "$server_id" | jq -er --arg network "$network" '.[0].NetworkSettings.Networks[$network].IPAddress')
+    owned_network=$network
+    target="$run_root/target.json"
+    jq -nc --arg project "$project" --arg service "$service" --arg network "$network" --arg image "$server_image" \
+        '{project:$project,service:$service,network:$network,expected_image:$image}' >"$target"
+fi
+target=$(realpath "$target")
+if [ "$backend" = headless ]; then
+    set -- docker run -d --init --name "$name" --network "$network" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+        --cpus 2 --memory 1g --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges \
+        --user "$(id -u):$(id -g)" --label beidou.task=maple-headless-maintained \
+        --label "beidou.workbench=$workbench" --label "beidou.client.root=$run_root" --label "beidou.client.instance=$instance" \
+        --label "beidou.target.id=$server_id" --label "beidou.character.id=$character_id" --label "beidou.world=$world" \
+        --env "CLIENT_IMAGE_ID=$image" --env "RUN_ID=$run_id" --env "MAPLE_INSTANCE=$instance" \
+        --env "TARGET_IP=$target_ip" --env "TARGET_CONTAINER_ID=$server_id" \
+        --mount "type=bind,src=$run_root,dst=/work" --mount "type=bind,src=$nx,dst=/data,readonly" \
+        --mount "type=bind,src=$run_root/profile.private.json,dst=/config/account.private.json,readonly" \
+        --mount "type=bind,src=$target,dst=/config/target.json,readonly"
+    if [ -n "$metadata" ]; then set -- "$@" --mount "type=bind,src=$metadata,dst=/metadata,readonly"; fi
+    if [ -d "$workbench/scripts" ]; then set -- "$@" --mount "type=bind,src=$workbench/scripts,dst=/scripts,readonly"; fi
+    "$@" "$image" >/dev/null
+else
+    export CLIENT_IMAGE="$image" CLIENT_IMAGE_ID="$image" CLIENT_CONTAINER_NAME="$name" WORKBENCH_ROOT="$workbench"
+    export CLIENT_ROOT="$run_root" PROFILE_PATH="$run_root/profile.private.json" TARGET_PATH="$target"
+    export BEIDOU_CLIENT_DIR="$gui" HEADLESS_RESOURCES_DIR="$nx" TARGET_IP="$target_ip" TARGET_NETWORK="$network"
+    export TARGET_CONTAINER_ID="$server_id" RUN_ID="$run_id" MAPLE_INSTANCE="$instance" CHARACTER_ID="$character_id" WORLD_ID="$world"
+    export RENDER_GID="$(stat -c %g /dev/dri/renderD128)"
+    set -- docker compose --project-name "$name" -f "$context/docker/compose.yaml"
+    if [ -n "$metadata" ]; then export METADATA_ROOT="$metadata"; set -- "$@" -f "$context/docker/compose.metadata.yaml"; fi
+    if [ -d "$workbench/scripts" ]; then export USER_SCRIPTS_DIR="$workbench/scripts"; set -- "$@" -f "$context/docker/compose.scripts.yaml"; fi
+    "$@" up -d --no-build --pull never client >&2
+fi
+id=$(docker inspect "$name" --format '{{.Id}}')
+jq -nc --arg id "$id" --arg image "$image" --arg revision "$revision" --arg backend "$backend" --arg run "$run_id" \
+    --arg network "$owned_network" --arg server "$server_id" --slurpfile target "$target" --argjson identity "$identity" \
+    '$identity + {container_id:$id,image:$image,source_revision:$revision,backend:$backend,run_id:$run,
+    owned_network:$network,target_container_id:$server,target:$target[0]}' >"$record"
+rm -f "$state/pending.json"
+flock -u 7
+flock -u 8
+locate
+exec_cli open --profile /config/account.private.json --timeout "$timeout"

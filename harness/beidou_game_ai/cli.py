@@ -107,11 +107,10 @@ async def run(args: argparse.Namespace) -> None:
         extra += ["--env", variable]
     command[-1:-1] = extra
     server = await AppServer.start(command, stderr=state / "codex.stderr.log")
-    game = GameClient(args.cli, args.root, args.backend, args.instance)
+    game = GameClient(args.cli, args.workbench, args.instance)
     binding: JsonObject = {
         "cli": str(args.cli.resolve()),
-        "root": str(args.root.resolve()),
-        "backend": args.backend,
+        "workbench": str(args.workbench.resolve()),
         "instance": args.instance,
         "read_only": args.read_only,
     }
@@ -177,9 +176,8 @@ async def run(args: argparse.Namespace) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="独立 Codex 游戏 AI；stdin/stdout 为专用 JSONL 协作通道。")
-    parser.add_argument("--cli", type=Path, default=Path(__file__).resolve().parents[2] / "cli/beidou-pilot")
-    parser.add_argument("--root", type=Path, required=True, help="已由操作者准备的客户端运行根目录")
-    parser.add_argument("--backend", choices=["beidou", "headless"], required=True)
+    parser.add_argument("--cli", type=Path, default=Path(__file__).resolve().parents[2] / "beidou-pilot")
+    parser.add_argument("--workbench", type=Path, required=True, help="已由操作者启动客户端容器的工作台目录")
     parser.add_argument("--instance", default="default")
     parser.add_argument("--state", type=Path, required=True, help="专用私密状态目录；不要使用开发Codex目录")
     parser.add_argument("--role", type=Path, required=True, help="只包含角色及养成约束的UTF-8文本")

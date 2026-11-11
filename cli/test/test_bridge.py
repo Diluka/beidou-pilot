@@ -4,10 +4,12 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from beidou_pilot.bridge import BridgeClient, BridgeSnapshot
 from beidou_pilot.cli import main
@@ -16,12 +18,10 @@ from beidou_pilot.instances import InstancePaths
 
 
 class BridgeFiles:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, backend: str = "beidou", instance: str = "default") -> None:
         self.root = root
-        self.directory = root / "runtime/bridge"
-        self.directory.mkdir(parents=True)
-        (root / "state").mkdir()
-        (root / "state/maple-session.json").write_text('{"run_id":"bridge-contract"}')
+        self.environment = {"RUN_ID": "bridge-contract", "HOSTNAME": "bridge-container"}
+        self.register(backend, instance)
         self.state: BridgeSnapshot = {
             "protocol": 1, "instance_id": "client-1", "pid": 123, "run_id": "bridge-contract",
             "seq": 0, "observed_at_ms": 0, "scene_generation": 1, "ready": True, "map_id": 100,
@@ -34,6 +34,25 @@ class BridgeFiles:
             "rejected_command": None, "input_events": 0,
         }
         self.publish()
+
+    def register(self, backend: str = "beidou", instance: str = "default") -> None:
+        self.environment.update(MAPLE_BACKEND=backend, MAPLE_INSTANCE=instance)
+        paths = InstancePaths(self.root, backend, instance)
+        self.directory = paths.bridge
+        self.directory.mkdir(parents=True, exist_ok=True)
+        (self.root / "state").mkdir(exist_ok=True)
+        paths.state_directory.mkdir(parents=True, exist_ok=True)
+        run_dir = paths.runs / self.environment["RUN_ID"]
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self.runtime = {
+            "backend": backend, "instance": instance, "run_id": self.environment["RUN_ID"],
+            "container_id": self.environment["HOSTNAME"], "image": "sha256:image",
+            "source_revision": "fixture-revision", "pid": os.getpid(), "run_dir": str(run_dir),
+            "character_id": 4, "world": 0, "channel": 0,
+            "target": {"project": "isolated", "service": "app", "network": "isolated", "expected_image": "sha256:server"},
+            "target_ip": "10.0.0.2", "target_container_id": "server", "started_at": "2026-11-11T00:00:00Z",
+        }
+        (self.root / "state/container.json").write_text(json.dumps(self.runtime))
 
     def publish(self, age: float = 0) -> None:
         self.state["seq"] += 1
@@ -70,12 +89,12 @@ class BridgeContract(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.files = BridgeFiles(Path(temporary.name))
+        self.enterContext(patch.dict(os.environ, self.files.environment))
         self.files.state["script"] = None
         self.files.publish()
         self.client = BridgeClient(self.files.root)
         self.path = self.files.root / "control.lua"
         self.path.write_text("game.sleep(0.1)\n", encoding="utf-8")
-        (self.files.root / "clientctl.py").touch()
 
     def publish_running(self, command: list[str]) -> None:
         self.files.state["command"] = {"id": command[3], "status": "running", "reason": None}
@@ -100,10 +119,7 @@ class BridgeContract(unittest.TestCase):
                 if script_file is not None:
                     self.path.write_bytes(expected_source)
                 paths = InstancePaths(self.files.root, backend, instance)
-                self.files.directory = paths.bridge
-                paths.bridge.mkdir(parents=True, exist_ok=True)
-                paths.registration.parent.mkdir(parents=True, exist_ok=True)
-                paths.registration.write_text('{"run_id":"bridge-contract"}')
+                self.files.register(backend, instance)
                 self.files.state["instance_id"] = backend + "-" + instance
                 self.files.publish()
                 (paths.bridge / "command.txt").unlink(missing_ok=True)
@@ -206,11 +222,12 @@ class BridgeContract(unittest.TestCase):
         self.assertEqual(self.client.snapshot()["held_keys"], [37])
 
     def test_foreign_or_expired_state_refuses_script_before_publication(self) -> None:
-        (self.files.root / "state/maple-session.json").write_text('{"run_id":"another-run"}')
+        self.files.state["run_id"] = "another-run"
+        self.files.publish()
         with self.assertRaises(ClientError) as foreign:
             self.client.run_script(self.path)
         self.assertEqual(foreign.exception.code, "bridge_session_mismatch")
-        (self.files.root / "state/maple-session.json").write_text('{"run_id":"bridge-contract"}')
+        self.files.state["run_id"] = self.files.environment["RUN_ID"]
         self.files.publish(age=5)
         with self.assertRaises(ClientError) as expired:
             self.client.run_script(self.path)

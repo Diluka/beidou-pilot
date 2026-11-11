@@ -4,7 +4,8 @@
 
 | 位置 | 职责 |
 | --- | --- |
-| `cli/beidou-pilot`、`cli/beidou_pilot/` | CLI、实例生命周期、原生观察投影、参数和结果边界 |
+| 根 `beidou-pilot` | 宿主 Bash 薄入口；从提交构建、核验目标、管理 Docker 生命周期与 exec 路由 |
+| `cli/beidou-pilot`、`cli/beidou_pilot/` | 两个镜像共用的容器内 CLI、原生观察投影、参数和结果边界 |
 | `shared/scripts/` | 按travel/combat/recovery分类的复合能力，examples保存少量公共API示例 |
 | `shared/lua-runtime/` | 两端共用的Lua调度、预算、状态模型与game API，独立于具体客户端 |
 | `headless/src/` | 无渲染登录、网络与游戏更新宿主、共享桥适配 |
@@ -18,15 +19,23 @@ Python 负责参数、静态资料规划、脚本装载/取消和最终结果。
 
 客户端运行体只拥有执行和观察能力，主要由 Lua 脚本驱动。同仓 `harness/` 是独立的决策消费者，持有模型会话、角色设定、目标与游戏经历，通过既有 CLI 获取观察并调度脚本；`cli/beidou_pilot/`、原生适配器及共享 Lua Runtime 不依赖模型或角色记忆。服务端和数据库不纳入本仓库。
 
-Codex app-server 在独立 harness 容器中运行，宿主薄控制器分派少量动态游戏工具并调用固定 root/backend/instance 的 CLI。模型容器不挂开发仓库、宿主 Codex 配置或 Docker socket。客户端和 harness 各有生命周期；暂停或停止玩法需取消原 Lua CLI 并确认所属实例放键，停止 harness 不关闭客户端。具体配置与协作入口见 [HARNESS](HARNESS.md)。
+Codex app-server 在独立 harness 容器中运行，宿主薄控制器分派少量动态游戏工具，固定工作台与实例，通过宿主薄入口调用所属客户端容器内的 CLI。模型容器不挂开发仓库、宿主 Codex 配置或 Docker socket。客户端和 harness 各有生命周期；暂停或停止玩法需取消原 Lua CLI 并确认所属实例放键，停止 harness 不关闭客户端。具体配置与协作入口见 [HARNESS](HARNESS.md)。
 
-## 容器与控制生命周期
+## 容器、版本与控制生命周期
 
-每个命名无头实例是一个后台 Docker 容器，拥有独立登记、运行日志、桥目录和控制锁。`open` 创建或复用实例并等待实际入图；Lua 返回或取消后容器继续运行。`close` 经 Docker 正常停止、核验退出并回收容器，允许关闭正在运行 Lua 的实例。
+客户端交付为两个镜像：无头端包含原生无渲染客户端，GUI 端包含 Wine/VirtualGL 和桥 DLL；两者安装同一份 Python CLI、辅助引擎、共享 Runtime 和内置 Lua。运行中不挂载宿主开发源码，客户端内也不需要 Docker socket。
 
-容器启停与动作输入使用独立的锁。一个实例的 Lua、取消或关闭不向另一实例派发控制；同一目标的同一角色禁止被多个实例同时接管。真实断线或原生错误保留退出事实，不自动重连、重放或把旧动作转交新进程。
+宿主根入口以工作台与实例名选择容器。新实例一次解析 `main` 的已提交 SHA，导出该树和固定子模块构建或复用镜像；开发验收可显式指定 `--ref`。构建输入不混入后续 `main` 更新或未提交内容。运行登记保留源码版本、实际镜像、后端、目标、角色和 `run_id`。已有实例的观察、脚本和取消都经 `docker exec` 使用原镜像代码；更新主检出不会改变其内置策略。
 
-[无头 Dockerfile](../docker/headless/Dockerfile) 是无头镜像唯一构建入口，builder 内完成编译，运行层执行原生客户端主进程并接收 SIGTERM。[GUI Dockerfile](../docker/gui/Dockerfile) 构建独立 Wine/VirtualGL 环境，[Compose](../docker/compose.yaml) 定义 GUI 的资源挂载、设备和网络。两端构建定义与 GUI 启动脚本统一放在 `docker/`；根 `.dockerignore` 对应无头镜像使用的项目根构建上下文。CLI 负责目标与实例核验、Docker 调用和桥控制，不启动宿主游戏进程。
+每个工作台实例拥有独立容器、运行目录、桥和控制锁。GUI 在一个工作台中只使用 `default`；无头可按名字建实例。同一目标同一角色仍禁止并发接管。原生 `instance_id/run_id` 继续保证请求、取消与结果属于本次运行，真实断线或错误会退出并保留事实，不自动重连或重放。
+
+容器入口读取本次私密 profile 和 target，生成内部资源映射与 `/work/state/container.json`，随后保持 PID 交给对应原生进程。容器内 CLI 通过登记、进程和原生桥直接观察、执行桌面原语与登录。`open` 完成或确认本容器入图，不再调用 Docker 创建进程。
+
+宿主启动器负责 Docker 构建、创建和正常关闭。`close` 经 Docker SIGTERM 让镜像内原生客户端或 GUI bootstrap 取消、放键并退出，核对 `Running=false/Pid=0` 后保留日志并回收所属容器；容器内 `close` 明确返回 `host_lifecycle_required`。生命周期锁独立于 Lua 输入锁，活动脚本不阻挡关闭。取消原宿主命令时，启动器按本次执行 token 向对应容器内 CLI 转发信号，并等待其原生放键确认。
+
+[无头 Dockerfile](../docker/headless/Dockerfile) 是无头镜像唯一构建入口，builder 编译，运行层使用标准发行版运行依赖。[GUI Dockerfile](../docker/gui/Dockerfile) 以根上下文构建完整 GUI 客户端，[Compose](../docker/compose.yaml) 装配设备、只读资源和独立状态；可选 XML 与用户脚本通过对应覆盖文件装配。所有定义放在 `docker/`，根 `.dockerignore` 只保留两端构建必需的源码与明确桥工件输入。
+
+GUI DLL 仍需 Windows/MSVC、SDK 和匹配 Detours 库。构建完整 GUI 镜像前准备含 DLL 与来源清单的工件；启动器核对其原生构建输入与选定提交相符，无法匹配时明确拒绝，不以旧 DLL 标成新版本。
 
 ## 外部资源与配置
 
@@ -43,24 +52,26 @@ python3 headless/tools/prepare_resources.py \
 
 转换工具需要本机 C++17 编译器；已有 NX 时无需转换。资源检查使用无网络的短时 Docker 容器，不登录游戏。
 
-资源配置入口是 `cli/config/resources.json`，可用 `MAPLE_RESOURCES_CONFIG` 指向另一份文件；相对路径按配置文件目录解析。字段含义如下：
+宿主从工作台 `resources.json` 读取外部路径，也可由宿主 `--resources PATH` 指定；相对路径按该配置文件目录解析。它不含账号，不提交。字段如下：
 
 | 字段 | 用途 |
 | --- | --- |
-| `headless_resources` | 同源外部 NX 目录；只读挂载到无头容器 `/data`，也供两端 CLI 静态查询与策略装载使用 |
-| `metadata_root` | 可选 WZ XML；对应 XML 存在时优先使用，否则查询同源 NX，缺失或未支持资料保留未知 |
-| `gui_client` | 匹配 V17 的外部原客户端目录，只读挂载到 GUI 容器 `/client` |
-| `gui_dll` | 已构建的桥接 `ijl15.dll`，只读挂载到 GUI 容器 `/overrides/ijl15.dll` |
+| `headless_resources` | 同源外部 NX 目录，两端只读挂到 `/data`，用于原生无头运行、静态查询和策略装载 |
+| `metadata_root` | 可选 WZ XML，只读挂到 `/metadata`；对应资料不存在时使用同源 NX 或保留未知 |
+| `gui_client` | 匹配 V17 的外部原客户端目录，只读挂到 GUI 容器 `/client` |
+| `gui_dll` | 已构建桥 DLL 的外部路径，仅用于推导默认构建工件目录；实际运行桥随镜像固定 |
 
-未配置时只使用本项目默认目录，不自动搜索其他工作区。资源路径配置不含账号且不入库。每实例的私密 profile 单独只读挂载，桥目录独立可写；target 和 profile 的字段及入口见 [CLI](CLI.md)。
+容器入口生成 `/work/config/resources.json`，只使用内部固定路径，`MAPLE_RESOURCES_CONFIG` 指向该文件。GUI 桥位于 `/opt/beidou-pilot/native/ijl15.dll`，构建清单位于同目录并登记到 `/work/state/agent-bridge-build.json`。每次私密 profile 快照只读挂到 `/config/account.private.json`，target 挂到 `/config/target.json`，均不进入镜像。字段与入口见 [CLI](CLI.md)。
+
+工作台可选的 `scripts/` 作为用户明确输入，只读挂到 `/scripts`。内置 `shared/scripts/` 随镜像固定，用户 Lua 文件与 `--code` 可在运行中提交，不要求重建镜像；它们不改变模型、养成或生命周期职责。
 
 名称、物品恢复属性、NPC范围和地图门户/绳梯/地形由同一个 `Catalog` 投影，现有 `inspect`、旅行、恢复与 `hunt` 共用。NX只读取属性与几何元数据，像素和音频不进入CLI或镜像。结果列出实际资料文件、SHA256及可用转换清单；`resource_version=null` 表示没有可证明的游戏版本，指纹相同不代表已经核实与运行客户端同版。地图来源遵循原生的 `Map002.nx` 优先选择，链接图没有自身地形时明确拒绝，不静默套用别图。
 
-原版 GUI 在容器私有目录 `/work/client` 组装运行副本：复制原客户端的运行文件，`Data/` 链接到只读 `/client/Data`，再用选定的 `gui_dll` 替换运行副本中的 `ijl15.dll`。原客户端目录保持只读，不能用硬链接或可写链接替代独立运行文件。图片库 `2ijl15.dll` 仍是桥接 DLL 的运行依赖，必须保留。
+原版 GUI 在容器私有目录 `/work/client` 组装运行副本：复制原客户端的运行文件，`Data/` 链接到只读 `/client/Data`，再用镜像内已核验的桥替换运行副本中的 `ijl15.dll`。原客户端目录保持只读，不能用硬链接或可写链接替代独立运行文件。图片库 `2ijl15.dll` 仍是桥接 DLL 的运行依赖，必须保留。
 
-Wine prefix、日志与桥目录分别外置到 `cli/runtime/prefix`、`cli/runtime/runs`、`cli/runtime/bridge`，这些目录需要允许容器内 `1000:1000` 读写。GUI 使用 `DISPLAY=:97` 的 Xvfb/窗口管理器、VirtualGL EGL 和 `/dev/dri/renderD128`；硬件与真实游戏效果分别验收。CLI 从同一份资源配置取得挂载路径并核验 EXE、图片库和所选 DLL，桥构建清单登记在 `cli/state/agent-bridge-build.json`。
+宿主的 `WORKBENCH/runtime/INSTANCE/RUN_ID/` 挂为本次容器 `/work`。GUI 的 Wine prefix、日志与桥位于 `/work/runtime/prefix`、`/work/runtime/runs` 和 `/work/runtime/bridge`；无头路径沿用 `InstancePaths` 的后端/实例布局。GUI 生成文件允许容器内 `1000:1000` 读写。GUI 使用 `DISPLAY=:97`、Xvfb/窗口管理器、VirtualGL EGL 和 `/dev/dri/renderD128`；原资源只读、硬件初始化及真实游戏效果分别验收。
 
-DLL 构建仍需 Windows/MSVC、SDK 及匹配 Detours 库；这些材料不由客户端运行镜像提供。GUI 准备和统一 CLI 操作见 [CLI](CLI.md#原版-gui)。
+GUI 准备和统一入口见 [CLI](CLI.md#原版-gui)。
 
 ## 两端能力
 
@@ -94,4 +105,4 @@ Lua 通过按需 `game.observe(domain)` 复用上表已有原生观察，覆盖 
 
 离线合同、镜像构建和实际游戏结果分别判断。IPC 对端测试只能证明请求/取消契约，不能证明命中、掉落、存档或长期稳定性。实际玩法使用授权专用角色和隔离目标，退出后核对所属资源及必要存档。
 
-源码导出使用 `python3 cli/tools/export_prototype.py --output 新目录`，目标目录须不存在。工具按白名单生成源码及校验清单，展开构建所需依赖，不携带 Git 元数据、账号、运行状态、游戏资源或安装器。依赖来源和更新规则见 [DEPENDENCIES](DEPENDENCIES.md)。
+源码导出使用 `python3 cli/tools/export_prototype.py --output 新目录`，目标目录须不存在。工具按白名单生成源码及校验清单，展开构建所需依赖，不携带 Git 元数据、账号、运行状态、游戏资源或安装器。默认从 main 构建的工作台启动器仍需 Git 检出，以便确定提交与子模块；源码导出本身不保存运行版本登记。依赖来源和更新规则见 [DEPENDENCIES](DEPENDENCIES.md)。

@@ -1,7 +1,9 @@
 """读取两个客户端共用的已有角色登录配置。"""
 
 from dataclasses import dataclass, field
+import argparse
 import json
+import os
 from pathlib import Path
 
 from .errors import ClientError
@@ -42,3 +44,25 @@ def load_profile(path: Path) -> LoginProfile:
     return LoginProfile(
         value["username"], value["password"], value["character_id"], value.get("world", 0), value.get("channel", 0)
     )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="在镜像内核对并准备本次私密 profile。")
+    parser.add_argument("profile", type=Path)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    profile = load_profile(args.profile)
+    if args.output is not None:
+        descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w") as stream:
+            json.dump(
+                {
+                    "username": profile.username,
+                    "password": profile.password,
+                    "character_id": profile.character_id,
+                    "world": profile.world,
+                    "channel": profile.channel,
+                },
+                stream,
+            )
+    print(json.dumps({"character_id": profile.character_id, "world": profile.world, "channel": profile.channel}))

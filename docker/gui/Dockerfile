@@ -20,10 +20,28 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && install -d -o 1000 -g 1000 /work \
     && install -d -m 1777 /tmp/.X11-unix
 
-COPY --chmod=755 entrypoint.sh bootstrap.sh prepare-client.sh /opt/beidou/
-COPY chinese-fontlink.reg /opt/beidou/
-COPY LICENSE /usr/share/licenses/beidou-pilot/LICENSE
+COPY --chmod=755 docker/gui/entrypoint.sh docker/gui/bootstrap.sh docker/gui/prepare-client.sh /opt/beidou/
+COPY docker/gui/chinese-fontlink.reg /opt/beidou/
+COPY LICENSE NOTICE /usr/share/licenses/beidou-pilot/
+COPY third_party/detours/LICENSE.md /usr/share/licenses/beidou-pilot/detours.LICENSE.md
+COPY third_party/lua/lua.h /usr/share/licenses/beidou-pilot/lua.LICENSE.h
+COPY cli/beidou-pilot cli/runtime-ui.py /opt/beidou-pilot/cli/
+COPY cli/beidou_pilot/ /opt/beidou-pilot/cli/beidou_pilot/
+COPY shared/scripts/ /opt/beidou-pilot/shared/scripts/
+COPY docker/runtime/entrypoint.py /opt/beidou-pilot/entrypoint.py
+COPY build-input/ijl15.dll build-input/manifest.json /opt/beidou-pilot/native/
+ARG SOURCE_REVISION=unversioned
+RUN printf '%s\n' "$SOURCE_REVISION" > /opt/beidou-pilot/REVISION \
+    && ln -s /opt/beidou-pilot/cli/beidou-pilot /usr/local/bin/beidou-pilot
 
-ENV LANG=zh_CN.UTF-8 DISPLAY=:97 WINEPREFIX=/work/prefix WINEARCH=win32
+LABEL org.opencontainers.image.title="beidou-pilot-gui" \
+      org.opencontainers.image.description="Persistent GUI game client and its control CLI" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.revision=$SOURCE_REVISION \
+      beidou.backend=beidou
+ENV LANG=zh_CN.UTF-8 DISPLAY=:97 WINEPREFIX=/work/runtime/prefix WINEARCH=win32 \
+    CLIENT_ROOT=/work MAPLE_BACKEND=beidou MAPLE_RESOURCES_CONFIG=/work/config/resources.json \
+    PYTHONPATH=/opt/beidou-pilot/cli PYTHONDONTWRITEBYTECODE=1
 WORKDIR /work
-ENTRYPOINT ["/opt/beidou/entrypoint.sh"]
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["python3", "/opt/beidou-pilot/entrypoint.py"]

@@ -12,6 +12,7 @@ import uuid
 from .engines.desktop import DesktopActions
 from .errors import ClientError, JsonObject, JsonValue
 from .instances import InstancePaths
+from .runtime import load_runtime
 
 
 class Backend:
@@ -20,17 +21,16 @@ class Backend:
         self.name = name
         self.paths = InstancePaths(self.root, name, instance)
         self.instance = instance
-        if not self.root.joinpath("clientctl.py").is_file():
-            raise ClientError("invalid_client_root", "CLIENT_ROOT 须指向客户端目录。")
+        self.runtime = load_runtime(self.root, name, instance)
 
     def _run(self, name: str, arguments: list[str], *, payload: str | None = None,
              stream: bool = False, stream_stdout: bool = False) -> str:
         if self.name != "beidou" and name not in {"observe", "scene", "inventory", "character", "quests", "stage", "interaction"}:
             raise ClientError("unsupported_capability", "该客户端不提供此北斗窗口或原始输入能力。", {"engine": name})
         engines = {"observe", "scene", "dialog", "interaction", "inventory", "quests", "desktop",
-                   "session", "ui", "stage", "character", "hotkeys", "shop", "record"}
-        if name in {"clientctl", "runtime-ui"}:
-            command = [sys.executable, str(self.root / (name + ".py")), *arguments]
+                   "ui", "stage", "character", "hotkeys", "shop", "record"}
+        if name == "runtime-ui":
+            command = [sys.executable, str(Path(__file__).resolve().parents[1] / "runtime-ui.py"), *arguments]
         elif name in engines:
             command = [sys.executable, "-P", "-m", "beidou_pilot.engines." + name.replace("-", "_"), *arguments]
         else:
@@ -39,8 +39,7 @@ class Backend:
         environment["CLIENT_ROOT"] = str(self.root)
         environment["MAPLE_BACKEND"] = self.name
         environment["MAPLE_INSTANCE"] = self.instance
-        environment["PYTHONPATH"] = os.pathsep.join((str(Path(__file__).resolve().parents[1]), str(self.root),
-                                                    environment.get("PYTHONPATH", "")))
+        environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
         cancel_path: Path | None = None
         if (name == "record" or (name == "desktop" and arguments and arguments[0] == "execute")) and "--cancel-file" not in arguments:
             stage = self.read("stage")
@@ -51,14 +50,6 @@ class Backend:
             cancel_path = self.root / "runtime/runs" / cast(str, client["run_id"]) / cancel_name
             command += ["--cancel-file", cancel_name]
         try:
-            if (name == "clientctl" and arguments[0] in {"check", "start"}
-                    and not environment.get("CLIENT_IMAGE")):
-                image = subprocess.run(["docker", "image", "inspect", "local/beidou-v17-client:intel",
-                                        "--format", "{{.Id}}"], text=True, capture_output=True)
-                if image.returncode:
-                    raise ClientError("client_image_unavailable", "本地客户端镜像不可用；未自动拉取或构建。",
-                                      {"image": "local/beidou-v17-client:intel", "stderr": image.stderr.strip()})
-                environment["CLIENT_IMAGE"] = image.stdout.strip()
             if stream:
                 process = subprocess.Popen(command, cwd=self.root, env=environment, text=True,
                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

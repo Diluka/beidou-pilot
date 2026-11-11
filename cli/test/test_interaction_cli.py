@@ -3,6 +3,7 @@
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ from unittest.mock import patch
 from beidou_pilot.backend import Backend
 from beidou_pilot.cli import main
 from beidou_pilot.errors import ClientError
+from .test_bridge import BridgeFiles
 
 
 class InteractionCliContract(unittest.TestCase):
@@ -18,7 +20,8 @@ class InteractionCliContract(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        (self.root / "clientctl.py").touch()
+        self.files = BridgeFiles(self.root, "headless")
+        self.enterContext(patch.dict(os.environ, self.files.environment))
 
     def test_headless_click_activates_once_without_python_target_resolution(self) -> None:
         result = {"dispatched": True, "control_released": True, "effect": "unknown", "reason": "control_activated"}

@@ -1,6 +1,6 @@
 # Codex 游戏 AI
 
-`harness/` 是客户端能力的独立消费者。Codex app-server 在专用容器中保留一个角色的模型会话；宿主薄控制器只调用固定 root/backend/instance 的已有 CLI，并负责开发 AI 的短协作消息。模型不进入逐帧控制，持续移动、战斗与等待仍由 Lua 执行。
+`harness/` 是客户端能力的独立消费者。Codex app-server 在专用容器中保留一个角色的模型会话；宿主薄控制器通过固定工作台和实例的 Docker 入口，调用客户端容器内的 CLI，并负责开发 AI 的短协作消息。模型不进入逐帧控制，持续移动、战斗与等待仍由 Lua 执行。
 
 准备客户端、选择授权目标与角色、核对占用及交接前，先按[游戏 AI 操作指引](PLAY_GUIDE.md)完成检查；harness 的运行配置不代替游戏操作授权。
 
@@ -15,13 +15,15 @@ docker build -t local/beidou-game-ai:0.167.0 docker/harness
 准备一份只包含角色设定、当前养成方案及操作边界的 UTF-8 文本。认证只使用本机 Codex 授权的专用副本，或运行时显式提供的 API-key 变量；不挂载整份开发 HOME、Codex 配置、技能或 MCP。认证、provider 配置及状态均保存在私密目录，不进入 Git、镜像、日志或提示词。构建过程不登录、不调用模型。发行物与许可见 [容器说明](../docker/harness/README.md)。
 
 ```bash
-./harness/game-ai --root /external/client-cli --backend beidou \
+./harness/game-ai --workbench /private/workbench --instance default \
   --state /private/game-ai/state --role /private/game-ai/role.md \
   --auth-file /private/game-ai/auth.json \
   --task '在已确认安全的区域观察，执行约定的有界移动并核对停止结果'
 ```
 
-命名无头实例另加 `--backend headless --instance NAME`。`--cli` 可指定所用版本的统一入口；默认加载同一源码树的 `cli/beidou-pilot`。`--read-only` 只装载观察与脚本状态能力，拒绝 Lua 和狩猎执行，也不取消其他操作者的输入；适合先核对真实模型、状态、延迟和 token。`--paused` 在初始化后等待 `resume`，不会立即开始模型 turn。`--state` 的 Codex 子目录须允许容器 UID1000 读写，不能指向开发 Codex 目录。stdin 保持打开用于协作；EOF、SIGINT 或 SIGTERM 会停止本次玩法控制并等待释放。
+`--workbench` 选择已由操作者启动的工作台，`--instance` 选择其中的实例。客户端后端与版本由该实例的登记决定；后续命令通过 `docker exec` 使用容器内的同一份 CLI 和内置 Lua，main 更新不改变已有实例。`--cli` 可指定宿主 Docker 薄入口，默认使用同仓根目录的 `beidou-pilot`；不再通过 `--root`、`--backend` 或宿主 Python 源码选择客户端。客户端源码和 Docker socket 都不挂进模型容器。
+
+`--read-only` 只装载观察与脚本状态能力，拒绝 Lua 和狩猎执行，也不取消其他操作者的输入；适合先核对真实模型、状态、延迟和 token。`--paused` 在初始化后等待 `resume`，不会立即开始模型 turn。`--state` 的 Codex 子目录须允许容器 UID1000 读写，不能指向开发 Codex 目录。stdin 保持打开用于协作；EOF、SIGINT 或 SIGTERM 会停止本次玩法控制并等待释放。
 
 默认模型为 `gpt-6-luna`，只允许显式改选 `gpt-6.1-terra`。启动先从当前运行身份的 `model/list` 读取模型和支持的 effort，优先 `none`，否则选广告清单中的最低已知档位；模型不可用就报错，不切换成其他模型。启动记录给出实际选择。首轮不强制固定上下文窗口，记录有效配置与实际 token，后续依据结果调整；客户端配置不能被宣称为模型服务原生容量变化。
 
@@ -62,13 +64,13 @@ stdin 为 JSONL，stdout 返回带事件名和时间的 JSONL；每个命令可�
 {"id":"a1","command":"answer","request_id":10,"answers":{"route":{"answers":["按已确认的安全路线继续"]}}}
 ```
 
-`task` 同步更新当前目标与检查点；`message` 仅补充事实或询问。已启动的有界 Lua 不因改目标自动重放或替换，需立即停止时先 `pause`。运行中的消息经 `turn/steer` 进入当前 turn；空闲时在同一 thread 开启下一轮。暂停时消息保留到恢复。有控制权的会话暂停或停止先禁止新动作，等待已受理的模型输入取得 turn 身份后中断生成，并向本 harness 持有的原脚本 CLI 发信号，等待同 instance_id/run_id 的新鲜状态确认 Lua/命令已停止及 `held_keys=[]`，之后才报告成功。中断模型 turn 不等于取消 Lua，第二个 `stop` 命令不能替代原 CLI 的取消。
+`task` 同步更新当前目标与检查点；`message` 仅补充事实或询问。已启动的有界 Lua 不因改目标自动重放或替换，需立即停止时先 `pause`。运行中的消息经 `turn/steer` 进入当前 turn；空闲时在同一 thread 开启下一轮。暂停时消息保留到恢复。有控制权的会话暂停或停止先禁止新动作，等待已受理的模型输入取得 turn 身份后中断生成，再取消本 harness 持有的原脚本 CLI。宿主薄入口将取消信号转发到该次容器内执行，等待原 CLI 收尾及同 instance_id/run_id 的新鲜状态确认 Lua/命令已停止、`held_keys=[]`，之后才报告成功。仅终止宿主 `docker exec` 进程不能证明容器内 CLI 已取消；中断模型 turn 也不等于取消 Lua，第二个 `stop` 命令不能替代原 CLI 的取消。
 
 恢复会重新观察并规划，不恢复已取消的 Lua 协程。需要开发 AI 直接接管时，先收到确认暂停及放键，再交接控制权；同角色仅有一个操作者。停止 harness 后客户端容器保留，按其独立生命周期显式关闭。
 
 ## 记录与验证
 
-`--state` 保留独立 Codex 状态、`checkpoint.json` 和私密 `events.jsonl`，记录任务、回复、询问、工具结果、版本、用量及执行耗时。重启同一状态目录可续接该游戏 thread，并先取最新游戏状态；不会读取旧位置或旧引用作为当前事实。客户端选择改变时拒绝续接。
+`--state` 保留独立 Codex 状态、`checkpoint.json` 和私密 `events.jsonl`，记录任务、回复、询问、工具结果、版本、用量及执行耗时。重启同一状态目录可续接该游戏 thread，并先取最新游戏状态；不会读取旧位置或旧引用作为当前事实。客户端绑定由宿主入口 `cli`、`workbench`、`instance` 和 `read_only` 组成，选择改变时拒绝续接。旧版本保存的 `cli/root/backend` 绑定不自动迁移或原地恢复；保留原状态目录，按新工作台选择创建独立 `--state`。
 
 [OpenAI App Server 文档](https://developers.openai.com/codex/app-server) 说明动态工具随 thread 持久保存。本项目固定的 Codex `0.167.0` 只在 `thread/start` 提供 `dynamicTools`，该版本的 `thread/resume` schema 没有更新工具参数；真实无认证协议检查也确认，续接时传入此字段会被忽略。新 checkpoint 保存 `tool_surface="hunt-v1"`，续接原 thread 时恢复其已注册的四项工具。旧 checkpoint 沿用 `lua-v1` 三项工具和对应指引，并产生可观察的 `legacy_tool_surface` 事件；原 thread 与历史保持原样。需要 `game_hunt` 时，使用新的独立 `--state` 目录明确启动新游戏会话，保留原状态目录。源码更新不会自动替换已有会话的工具或修改私密常驻部署。
 

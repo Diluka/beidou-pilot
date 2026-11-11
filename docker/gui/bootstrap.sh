@@ -2,12 +2,12 @@
 set -euo pipefail
 umask 077
 
-export DISPLAY=:97 WINEPREFIX=/work/prefix WINEARCH=win32 WINEDEBUG="${WINEDEBUG:--all}"
+export DISPLAY=:97 WINEPREFIX=/work/runtime/prefix WINEARCH=win32 WINEDEBUG="${WINEDEBUG:--all}"
 export WINEDLLOVERRIDES='ijl15=n,b;mscoree,mshtml='
-run_dir="/work/runs/$RUN_ID"
-mkdir -p -- "$run_dir" /work/prefix /work/bridge
+run_dir="/work/runtime/runs/$RUN_ID"
+mkdir -p -- "$run_dir" /work/runtime/prefix /work/runtime/bridge
 rm -rf -- /work/client
-/opt/beidou/prepare-client.sh /client /work/client /overrides/ijl15.dll
+/opt/beidou/prepare-client.sh /client /work/client /opt/beidou-pilot/native/ijl15.dll
 
 desktop_pids=()
 cleanup() {

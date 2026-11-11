@@ -11,6 +11,7 @@ from typing import Iterator, Literal, NotRequired, TypedDict, cast
 import uuid
 
 from .errors import ClientError, JsonObject
+from .runtime import load_runtime
 
 
 # 脚本可持续执行，原更新停止采样仍须有界发现并进入停止收尾。
@@ -138,24 +139,22 @@ class BridgeClient:
         self.instance = instance
         paths = InstancePaths(self.root, backend, instance)
         self.directory = paths.bridge
-        self.registration_path = paths.registration
 
     def snapshot(self, max_age: float = 1.0) -> BridgeSnapshot:
         """只读当前登记会话的新鲜采样；文件存在不能证明桥已就绪。"""
         if not math.isfinite(max_age) or not max_age > 0:
             raise ClientError("invalid_bridge_options", "桥接快照有效期须大于0秒。")
+        runtime = load_runtime(self.root, self.backend, self.instance)
+        if not runtime.running:
+            raise ClientError("bridge_session_unavailable", "本容器的客户端进程已退出。")
         try:
             raw = json.loads((self.directory / "state.json").read_text())
-            registration = json.loads(self.registration_path.read_text())
         except OSError as error:
-            raise ClientError("bridge_unavailable", "无法读取原生桥或当前会话登记。",
+            raise ClientError("bridge_unavailable", "无法读取本容器的原生桥。",
                               {"reason": str(error)}) from error
         except json.JSONDecodeError as error:
-            raise ClientError("invalid_bridge_state", "原生桥或当前会话登记不是有效JSON。",
+            raise ClientError("invalid_bridge_state", "原生桥不是有效JSON。",
                               {"reason": error.msg}) from error
-        if (not isinstance(registration, dict)
-                or not isinstance(registration.get("run_id"), str) or not registration["run_id"]):
-            raise ClientError("bridge_session_unavailable", "当前客户端会话尚未登记run_id。")
         if (not isinstance(raw, dict) or type(raw.get("protocol")) is not int or raw["protocol"] != 1
                 or not isinstance(raw.get("instance_id"), str)
                 or not re.fullmatch(r"[A-Za-z0-9_-]+", raw["instance_id"])
@@ -254,7 +253,7 @@ class BridgeClient:
                     or source is not None and not isinstance(source, str)):
                 raise ClientError("invalid_bridge_state", "原生桥的目标HP观察字段无效。")
         state = cast(BridgeSnapshot, raw)
-        if state["run_id"] != registration["run_id"]:
+        if state["run_id"] != runtime.run_id:
             raise ClientError("bridge_session_mismatch", "原生桥快照不属于当前登记的客户端会话。")
         age = time.time() - state["observed_at_ms"] / 1000
         if not 0 <= age <= max_age:

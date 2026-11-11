@@ -12,6 +12,7 @@ import sys
 import tempfile
 from typing import Literal
 import unittest
+from unittest.mock import patch
 
 from beidou_pilot.bridge import BridgeClient, BridgeScript
 from beidou_pilot.cli import main
@@ -30,7 +31,7 @@ class NativeScriptContract(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.files = BridgeFiles(Path(temporary.name))
-        (self.files.root / "clientctl.py").touch()
+        self.enterContext(patch.dict(os.environ, self.files.environment))
         self.files.state.update(script=None, last_skill=None, monsters=[], facing="Right")
         self.files.publish()
         self.client = BridgeClient(self.files.root)
