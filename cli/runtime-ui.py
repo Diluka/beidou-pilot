@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 ROOT = Path(os.environ.get("CLIENT_ROOT", Path(__file__).resolve().parent)).resolve()
 p = argparse.ArgumentParser(description=__doc__)
@@ -13,7 +14,7 @@ sub.add_parser("windows")
 s = sub.add_parser("screenshot"); s.add_argument("name")
 s = sub.add_parser("click"); s.add_argument("x", type=int); s.add_argument("y", type=int)
 s = sub.add_parser("key"); s.add_argument("keys", nargs="+")
-s = sub.add_parser("type-private"); s.add_argument("field", choices=["name", "password"])
+sub.add_parser("type-private")
 a = p.parse_args()
 ids = subprocess.check_output(["docker", "ps", "-q", "--filter", "label=beidou.task=client-v17-maintained", "--filter", "label=beidou.client.root=" + str(ROOT)], text=True).split()
 if len(ids) != 1:
@@ -45,11 +46,4 @@ elif a.action == "click":
 elif a.action == "key":
     invoke(["xdotool", "key", "--clearmodifiers", *a.keys])
 else:
-    path = ROOT / "account.private.json"
-    if path.stat().st_mode & 0o777 != 0o600:
-        raise SystemExit("私密账号文件必须为0600。")
-    value = json.loads(path.read_text())[a.field]
-    if not isinstance(value, str) or not value or any(ord(c) < 32 for c in value):
-        raise SystemExit("私密字段格式无效。")
-    invoke(["xdotool", "type", "--clearmodifiers", "--delay", "60", "--file", "-"], value.encode())
-    print(json.dumps({"typed_field": a.field, "value_logged": False}))
+    invoke(["xdotool", "type", "--clearmodifiers", "--delay", "60", "--file", "-"], sys.stdin.buffer.read())

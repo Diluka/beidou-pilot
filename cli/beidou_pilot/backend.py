@@ -121,8 +121,8 @@ class Backend:
     def read(self, name: str, *arguments: str) -> JsonObject:
         return self._json(name, list(arguments))
 
-    def text(self, name: str, *arguments: str) -> str:
-        return self._run(name, list(arguments))
+    def text(self, name: str, *arguments: str, payload: str | None = None) -> str:
+        return self._run(name, list(arguments), payload=payload)
 
     def desktop(self, actions: DesktopActions) -> JsonObject:
         """GUI的短线性桌面原语，不承接角色控制循环。"""

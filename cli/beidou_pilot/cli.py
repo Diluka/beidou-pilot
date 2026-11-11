@@ -75,12 +75,8 @@ def parser() -> Parser:
     q = command("skill", "通过Lua调用本后端支持的原生技能，分别报告派发与原始返回值")
     q.add_argument("id", type=int)
     q = command("open", "启动并正常登录入图；已就绪时自动复用")
-    q.add_argument("--channel", type=int, help="新会话默认CH1；复用游戏中会话时默认保留当前频道")
-    character = q.add_mutually_exclusive_group()
-    character.add_argument("--character")
-    character.add_argument("--character-index", type=int)
     q.add_argument("--target", type=Path)
-    q.add_argument("--profile", type=Path, help="无头端已有账号/角色的0600私密运行配置")
+    q.add_argument("--profile", type=Path, required=True, help="已有账号和角色的 0600 私密配置")
     q.add_argument("--workspace-server", action="store_true", help="显式使用已授权的工作区服务")
     q.add_argument("--project", default="beidou-ms")
     q.add_argument("--service", default="beidou-server-all")
@@ -442,16 +438,17 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         )
     if cmd == "open":
         from .headless import any_running as headless_running
+        from .profile import load_profile
+
+        profile = load_profile(args.profile)
 
         if backend.name == "headless":
-            if args.character is not None or args.character_index is not None or args.channel is not None:
-                raise ClientError("unsupported_capability", "无头端选角和频道由私密profile声明；不使用GUI选角参数。")
             from .headless import open_game as open_native
 
             return open_native(
                 backend.root,
                 target=args.target,
-                profile=args.profile,
+                profile=profile,
                 timeout=args.timeout,
                 workspace_server=args.workspace_server,
                 instance=backend.instance,
@@ -460,20 +457,13 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             raise ClientError("client_already_running", "无头客户端仍在运行；先正常关闭再切换客户端。")
         from .session import open_game
 
-        channel = args.channel
-        if channel is None:
-            current = backend.read("stage")
-            channel = current.get("channel") if current["stage"] == "IN_GAME" else 1
-            if channel is None:
-                raise ClientError("channel_unavailable", "现有游戏频道尚未确认，请重新 status。")
         opened = open_game(
             backend,
-            channel=channel,
-            character=args.character,
-            character_index=args.character_index,
+            profile=profile,
             target=args.target,
             project=args.project,
             service=args.service,
+            workspace_server=args.workspace_server,
             timeout=args.timeout,
         )
         character = cast(JsonObject, opened["character"])

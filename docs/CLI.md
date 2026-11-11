@@ -19,13 +19,13 @@
 ./cli/beidou-pilot --backend headless --instance worker-a --json close
 ```
 
-无头新实例必须显式给出 target 与权限0600的 profile；已有匹配实例可 `open` 复用。target 格式见 [target.example.json](../cli/config/target.example.json)，当前按 Docker Compose 项目/服务、精确应用镜像和 internal 网络核验，不自动启动游戏服务端。
+GUI 与无头端的 `open` 都必须显式传 `--profile PATH`，匹配的实例可复用。无头新实例还须显式传 `--target PATH`。target 格式见 [target.example.json](../cli/config/target.example.json)，按 Docker Compose 项目/服务、精确应用镜像和 internal 网络核验。使用常驻工作区目标须已获授权并显式传 `--workspace-server`；客户端不会自动启动游戏服务端。
 
 已核验目标公告的频道 IPv4 位于 `127.0.0.0/8` 时，无头客户端使用该目标的内部 IP 连接频道，并保留服务器公告的端口。其他频道地址沿用公告值。该映射只发生在无头频道连接阶段，不需要修改服务端、原客户端资源或容器网络权限；目标核验失败时仍拒绝启动。
 
-profile 需 `username/password/character_id`，可选 `world/channel` 为0基索引。角色必须已经存在，不自动创建。账号文件外置，密码不写到参数中。无头选角与频道来自 profile，不接受 GUI 的 `--character/--character-index/--channel` 选项；旧 `max_seconds` 进程期限字段明确拒绝。`--timeout`只限制启动等待。
+两端共用权限为 `0600` 的 JSON profile：`username`、`password` 和已有角色的 `character_id`（正 32 位有符号整数）必填；`world` 与 `channel` 是从 0 开始的索引，省略时各为 0，格式允许 0 至 255，实际可选范围由服务器与后端决定。游戏中的第 1 频道对应 `channel=0`。账号文件外置，密码不写到参数中。角色必须已经存在，`open` 不自动建角。`--timeout` 只限制启动等待，进程期限不通过 profile 配置。
 
-GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--character` 或 `--character-index` 选择已有角色。它需要已准备的 GUI 运行环境，默认目标配置不代表已获准操作任意服务。
+GUI 通过正常登录界面选择 profile 的频道和角色 ID，目前只支持 `world=0`。复用 GUI 会话时，显式目标必须能与当前实例的会话登记核对。旧 GUI 的 `--character`、`--character-index`、`--channel` 和运行根中的固定账号、角色名称文件已退役。迁移旧 GUI 文件时将 `name` 改为 `username`，补上核实过的 `character_id`；将原来从 1 开始的频道换成 profile 的 0 基索引。
 
 | 命令 | 行为 |
 | --- | --- |
@@ -151,11 +151,12 @@ Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/r
 
 需要 Wine 启动诊断时，可在启动命令前设置 `WINEDEBUG='+loaddll,+seh,+d3d8,+d3d'`；该值传入容器并在降权后保留，未指定时默认为 `-all`。日志写入所属运行目录的 `wine.log`，原始诊断保留在本地环境。
 
-准备权限为 `0600` 的 `cli/account.private.json`（含 `name`、`password`），以及已授权的隔离 target 和专用角色，然后使用统一入口：
+准备已授权的隔离 target 和专用角色的[统一 profile](#启动观察与关闭)，然后使用统一入口：
 
 ```bash
 ./cli/beidou-pilot --backend beidou --json doctor
-./cli/beidou-pilot --backend beidou --json open --target /external/target.json
+./cli/beidou-pilot --backend beidou --json open \
+  --target /external/target.json --profile /private/account.private.json
 ./cli/beidou-pilot --backend beidou --json snapshot
 ./cli/beidou-pilot --backend beidou --json close
 ```
