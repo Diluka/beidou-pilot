@@ -125,7 +125,7 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
             "import json,pathlib,sys\n"
             "path=pathlib.Path(sys.argv[0])\n"
             "path.with_suffix('.argv').write_text(json.dumps(sys.argv[1:]))\n"
-            "assert sys.argv[1:11] == ['--root', str(path.parent), '--backend', 'beidou', '--instance', 'default', '--json', 'events', 'watch', '--interval']\n"
+            "assert sys.argv[1:9] == ['--workbench', str(path.parent), '--instance', 'default', '--json', 'events', 'watch', '--interval']\n"
             "cursor={'instance_id':'client','run_id':'run','seq':0}\n"
             + (
                 "print(json.dumps({'event':'events_ready','backend':'beidou','instance':'default','instance_id':'client','run_id':'run','cursor':cursor}),flush=True)\n"
@@ -138,8 +138,7 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
         cli.chmod(0o700)
         return argparse.Namespace(
             cli=cli,
-            root=self.root,
-            backend="beidou",
+            workbench=self.root,
             instance="default",
             thread="receiver",
             socket=self.socket,
@@ -184,6 +183,16 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
         )
         saved = json.loads((args.state / "cursor.json").read_text())
         self.assertEqual({"instance_id": "client", "run_id": "run", "seq": 3}, saved["cursor"])
+        self.assertEqual(
+            {
+                "cli": str(args.cli),
+                "workbench": str(self.root),
+                "instance": "default",
+                "thread_id": "receiver",
+                "socket": str(self.socket),
+            },
+            saved["binding"],
+        )
 
     async def test_interrupt_delivery_waits_for_old_turn_completion_then_starts_event_turn(self) -> None:
         peer = CodexPeer(active=True)

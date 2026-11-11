@@ -4,6 +4,7 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -22,11 +23,16 @@ class HuntingEntryContract(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.files = BridgeFiles(self.root)
-        (self.root / "clientctl.py").touch()
+        self.enterContext(patch.dict(os.environ, self.files.environment))
         self.files.state["monsters"] = [
             {"object_id": 50, "template_id": 100100, "name": "蜗牛", "x": 100, "y": 20, "active": True}
         ]
         self.files.state["capabilities"] = {"skill": True, "attack_move": True}
+        self.native = BridgeFiles(self.root / "headless", "headless")
+        self.native.environment["HOSTNAME"] = "headless-container"
+        self.native.register("headless")
+        self.native.state = deepcopy(self.files.state)
+        self.native.publish()
         self.terrain = {
             "map_id": 100,
             "source": "local-client-map-data",
@@ -34,10 +40,15 @@ class HuntingEntryContract(unittest.TestCase):
             "footholds": [{"id": 1, "x1": -100, "x2": 300, "y1": 20, "y2": 20, "prev": 0, "next": 0}],
         }
 
+    def cli(self, *arguments: str, backend: str = "beidou") -> int:
+        files = self.files if backend == "beidou" else self.native
+        with patch.dict(os.environ, files.environment):
+            return main(["--root", str(files.root), "--backend", backend, "--json", *arguments])
+
     def test_cli_selects_all_continuously_or_one_named_target_in_one_scene(self) -> None:
-        for arguments, expected_mob, duration, level_changed in (
-            (["--backend", "headless", "hunt", "--continuous"], None, None, False),
-            (["hunt", "蜗牛", "--seconds", "12", "--until-level", "99"], 100100, 12, True),
+        for backend, arguments, expected_mob, duration, level_changed in (
+            ("headless", ["hunt", "--continuous"], None, None, False),
+            ("beidou", ["hunt", "蜗牛", "--seconds", "12", "--until-level", "99"], 100100, 12, True),
         ):
             with self.subTest(arguments=arguments):
                 final = deepcopy(self.files.state)
@@ -52,7 +63,7 @@ class HuntingEntryContract(unittest.TestCase):
                     patch("beidou_pilot.hunting.run_strategy", return_value=report) as run,
                     redirect_stdout(output),
                 ):
-                    self.assertEqual(0, main(["--root", str(self.root), "--json", *arguments]))
+                    self.assertEqual(0, self.cli(*arguments, backend=backend))
                 self.assertEqual(1, run.call_count)
                 _, strategy, options, actual_duration = run.call_args.args
                 self.assertEqual(("combat/hunt", duration), (strategy, actual_duration))
@@ -100,19 +111,7 @@ class HuntingEntryContract(unittest.TestCase):
                     native.return_value.observe.return_value = character | override
                     self.assertEqual(
                         0 if code is None else 2,
-                        main(
-                            [
-                                "--root",
-                                str(self.root),
-                                "--backend",
-                                backend,
-                                "--json",
-                                "hunt",
-                                "100100",
-                                "--skill",
-                                "1001004",
-                            ]
-                        ),
+                        self.cli("hunt", "100100", "--skill", "1001004", backend=backend),
                     )
                 if code is None:
                     self.assertEqual(1001004, run.call_args.args[2]["skill_id"])
@@ -122,14 +121,15 @@ class HuntingEntryContract(unittest.TestCase):
                     run.assert_not_called()
 
     def test_unsupported_skill_and_due_advancement_never_start_hunting(self) -> None:
-        for arguments, capability, code in (
+        for backend, arguments, capability, code in (
             (
-                ["--backend", "headless", "hunt", "--skill", "1001004"],
+                "headless",
+                ["hunt", "--skill", "1001004"],
                 {"skill": False, "attack_move": True},
                 "unsupported_capability",
             ),
-            (["hunt"], {"skill": False, "attack_move": True}, "advancement_due"),
-            (["hunt"], {"skill": True}, "unsupported_capability"),
+            ("beidou", ["hunt"], {"skill": False, "attack_move": True}, "advancement_due"),
+            ("beidou", ["hunt"], {"skill": True}, "unsupported_capability"),
         ):
             with self.subTest(arguments=arguments):
                 self.files.state["capabilities"] = capability
@@ -140,7 +140,7 @@ class HuntingEntryContract(unittest.TestCase):
                     patch("beidou_pilot.hunting.run_strategy") as run,
                     redirect_stdout(output),
                 ):
-                    self.assertEqual(2, main(["--root", str(self.root), "--json", *arguments]))
+                    self.assertEqual(2, self.cli(*arguments, backend=backend))
                 self.assertEqual(code, json.loads(output.getvalue())["error"]["code"])
                 run.assert_not_called()
 
@@ -169,9 +169,7 @@ class HuntingEntryContract(unittest.TestCase):
                     ) as run,
                     redirect_stdout(output),
                 ):
-                    self.assertEqual(
-                        0, main(["--root", str(self.root), "--backend", backend, "--json", "skill", "1001004"])
-                    )
+                    self.assertEqual(0, self.cli("skill", "1001004", backend=backend))
                 result = json.loads(output.getvalue())["data"]
                 self.assertEqual(
                     (native_result, dispatched, reason, "unknown"),
@@ -201,18 +199,7 @@ class HuntingEntryContract(unittest.TestCase):
                     catalog.return_value.item.return_value = {"spec": specification}
                     self.assertEqual(
                         0 if error is None else 2,
-                        main(
-                            [
-                                "--root",
-                                str(self.root),
-                                "--backend",
-                                "headless",
-                                "--json",
-                                "hunt",
-                                "--hp-item",
-                                str(item_id),
-                            ]
-                        ),
+                        self.cli("hunt", "--hp-item", str(item_id), backend="headless"),
                     )
                 catalog.return_value.item.assert_called_once_with(item_id)
                 if error is None:
@@ -222,7 +209,9 @@ class HuntingEntryContract(unittest.TestCase):
                     run.assert_not_called()
 
     def test_continuous_strategy_source_uses_existing_bridge_lifetime(self) -> None:
-        backend = Backend(self.root, "headless", "alpha")
+        files = BridgeFiles(self.root / "continuous", "headless", "alpha")
+        with patch.dict(os.environ, files.environment):
+            backend = Backend(files.root, "headless", "alpha")
         source = "while true do game.sleep(0.1) end\n"
 
         def submitted(path: Path, *, seconds: float | None) -> dict[str, str]:
@@ -230,6 +219,9 @@ class HuntingEntryContract(unittest.TestCase):
             self.assertIsNone(seconds)
             return {"status": "cancelled"}
 
-        with patch.object(BridgeClient, "run_script", side_effect=submitted) as bridge:
+        with (
+            patch.dict(os.environ, files.environment),
+            patch.object(BridgeClient, "run_script", side_effect=submitted) as bridge,
+        ):
             self.assertEqual({"status": "cancelled"}, run_source(backend, source, None))
         self.assertEqual(1, bridge.call_count)

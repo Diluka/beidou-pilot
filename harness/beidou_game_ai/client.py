@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import signal
-from typing import Literal, TypeAlias, TypedDict, cast
+from typing import TypeAlias, TypedDict, cast
 
 
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -27,13 +27,11 @@ class HuntRequest(TypedDict):
 
 
 class GameClient:
-    def __init__(self, cli: Path, root: Path, backend: Literal["beidou", "headless"], instance: str) -> None:
+    def __init__(self, cli: Path, workbench: Path, instance: str) -> None:
         self._arguments = [
             str(cli.resolve()),
-            "--root",
-            str(root.resolve()),
-            "--backend",
-            backend,
+            "--workbench",
+            str(workbench.resolve()),
             "--instance",
             instance,
             "--json",

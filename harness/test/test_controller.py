@@ -172,8 +172,8 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         self.server = SessionServer(["medium", "low"])
         self.game = ControlledGame()
         self.binding: JsonObject = {
-            "root": "/dedicated/client",
-            "backend": "headless",
+            "cli": "/fixture/beidou-pilot",
+            "workbench": "/dedicated/workbench",
             "instance": "worker",
             "read_only": False,
         }

@@ -29,10 +29,6 @@ class InstancePaths:
         return self.root / "state" if self.name == "default" else self.root / "state/instances" / self.name
 
     @property
-    def registration(self) -> Path:
-        return self.state_directory / ("maple-session-headless.json" if self.backend == "headless" else "maple-session.json")
-
-    @property
     def runtime_directory(self) -> Path:
         if self.backend != "headless":
             return self.root / "runtime"

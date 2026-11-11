@@ -3,6 +3,7 @@
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from unittest.mock import call, patch
 
 from beidou_pilot.backend import Backend
 from beidou_pilot.cli import main
+from .test_bridge import BridgeFiles
 
 
 class LoginProfileContract(unittest.TestCase):
@@ -17,9 +19,12 @@ class LoginProfileContract(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        (self.root / "clientctl.py").touch()
+        self.files = BridgeFiles(self.root)
+        self.files.runtime.update(character_id=7, channel=1)
+        (self.root / "state/container.json").write_text(json.dumps(self.files.runtime))
+        self.enterContext(patch.dict(os.environ, self.files.environment))
         self.target = self.root / "target.json"
-        self.target.write_text('{"project":"isolated","service":"app","network":"isolated","expected_image":"fixture"}')
+        self.target.write_text(json.dumps(self.files.runtime["target"]))
         self.profile = self.root / "profile.json"
         self.profile.write_text(
             '{"username":"fixture-user","password":"fixture-password","character_id":7,"channel":1}'
@@ -42,10 +47,15 @@ class LoginProfileContract(unittest.TestCase):
 
     def test_rejects_a_cid_that_would_be_truncated_by_the_native_client(self) -> None:
         self.profile.write_text('{"username":"fixture","password":"fixture","character_id":4294967298}')
+        native = BridgeFiles(self.root / "headless", "headless")
         output = io.StringIO()
-        with patch("beidou_pilot.headless.open_game") as open_client, redirect_stdout(output):
+        with (
+            patch.dict(os.environ, native.environment),
+            patch("beidou_pilot.headless.open_game") as open_client,
+            redirect_stdout(output),
+        ):
             code = main(
-                ["--root", str(self.root), "--json", "--backend", "headless", "open", "--profile", str(self.profile)]
+                ["--root", str(native.root), "--json", "--backend", "headless", "open", "--profile", str(self.profile)]
             )
         self.assertEqual(2, code)
         self.assertEqual("profile_invalid", json.loads(output.getvalue())["error"]["code"])
@@ -57,7 +67,7 @@ class LoginProfileContract(unittest.TestCase):
         running = {
             "running": True,
             "renderer": "intel",
-            "client": {"container_id": "fixture", "run_id": "fixture"},
+            "client": {"container_id": self.files.environment["HOSTNAME"], "run_id": self.files.environment["RUN_ID"]},
             "game_geometry": {"x": 0, "y": 0, "width": 1280, "height": 720},
         }
         roster = {"characters_available": True, "characters": [first, desired]}
@@ -65,7 +75,6 @@ class LoginProfileContract(unittest.TestCase):
             with self.subTest(observed=observed["id"]):
                 stages = iter(
                     (
-                        {"stage": "STOPPED", "running": False},
                         {**running, "stage": "LOGIN"},
                         {
                             **running,
@@ -95,9 +104,7 @@ class LoginProfileContract(unittest.TestCase):
                                 "character": {**observed, "hp": 20},
                             }
                         )
-                    if name == "clientctl" and arguments == ["check"]:
-                        return '{"image_available":true}'
-                    if name in {"clientctl", "runtime-ui"}:
+                    if name == "runtime-ui":
                         return ""
                     self.fail(f"未预期的引擎调用：{name}")
 
@@ -105,8 +112,6 @@ class LoginProfileContract(unittest.TestCase):
                 with (
                     patch.object(Backend, "_run", side_effect=engine) as invoke,
                     patch.object(Backend, "desktop") as desktop,
-                    patch("beidou_pilot.headless.any_running", return_value=False),
-                    patch("beidou_pilot.session.adopt_session", return_value={"target_file": str(self.target)}),
                     patch("beidou_pilot.session.time.sleep"),
                     redirect_stdout(output),
                 ):

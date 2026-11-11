@@ -3,6 +3,7 @@
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -24,7 +25,17 @@ class UnifiedControlContract(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.files = BridgeFiles(self.root)
-        (self.root / "clientctl.py").touch()
+        self.native = BridgeFiles(self.root / "headless", "headless")
+        self.native.environment["HOSTNAME"] = "headless-container"
+        self.native.register("headless")
+        self.native.state["instance_id"] = "headless-1"
+        self.native.publish()
+        self.enterContext(patch.dict(os.environ, self.files.environment))
+
+    def cli(self, backend: str, *arguments: str) -> int:
+        files = self.files if backend == "beidou" else self.native
+        with patch.dict(os.environ, files.environment):
+            return main(["--root", str(files.root), "--backend", backend, "--json", *arguments])
 
     def test_explicit_backend_before_or_after_command_selects_same_bridge(self) -> None:
         for arguments in (("--backend", "headless", "bridge", "status"), ("bridge", "status", "--backend", "headless")):
@@ -33,8 +44,8 @@ class UnifiedControlContract(unittest.TestCase):
                 patch.object(BridgeClient, "snapshot", return_value=self.files.state),
             ):
                 with patch("beidou_pilot.cli.Backend", wraps=Backend) as selected:
-                    with redirect_stdout(io.StringIO()):
-                        self.assertEqual(0, main(["--root", str(self.root), "--json", *arguments]))
+                    with redirect_stdout(io.StringIO()), patch.dict(os.environ, self.native.environment):
+                        self.assertEqual(0, main(["--root", str(self.native.root), "--json", *arguments]))
                     self.assertEqual("headless", selected.call_args.args[1])
 
     def test_headless_unknown_window_or_raw_input_never_calls_beidou_engine(self) -> None:
@@ -42,7 +53,7 @@ class UnifiedControlContract(unittest.TestCase):
             with self.subTest(command=command), patch.object(Backend, "_run") as legacy:
                 output = io.StringIO()
                 with redirect_stdout(output):
-                    self.assertEqual(2, main(["--root", str(self.root), "--backend", "headless", "--json", *command]))
+                    self.assertEqual(2, self.cli("headless", *command))
                 self.assertEqual("unsupported_capability", json.loads(output.getvalue())["error"]["code"])
                 legacy.assert_not_called()
 
@@ -57,7 +68,7 @@ class UnifiedControlContract(unittest.TestCase):
                     "beidou_pilot.control_scripts." + operation, return_value={"status": "completed"}
                 ) as control:
                     with redirect_stdout(io.StringIO()):
-                        self.assertEqual(0, main(["--root", str(self.root), "--json", *command]))
+                        self.assertEqual(0, self.cli("beidou", *command))
                     backend, actual = control.call_args.args
                     self.assertEqual("beidou", backend.name)
                     self.assertEqual("default", backend.instance)
@@ -70,9 +81,7 @@ class UnifiedControlContract(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(
                     0,
-                    main(
-                        ["--root", str(self.root), "--backend", "headless", "--json", "use", "2000003", "--count", "2"]
-                    ),
+                    self.cli("headless", "use", "2000003", "--count", "2"),
                 )
             backend, item_id = use.call_args.args
             self.assertEqual("headless", backend.name)
@@ -101,9 +110,7 @@ class UnifiedControlContract(unittest.TestCase):
                     with patch.object(Backend, "_run") as desktop:
                         output = io.StringIO()
                         with redirect_stdout(output):
-                            self.assertEqual(
-                                code, main(["--root", str(self.root), "--backend", "headless", "--json", "revive"])
-                            )
+                            self.assertEqual(code, self.cli("headless", "revive"))
                 self.assertEqual(1, run.call_count)
                 self.assertEqual(("game.revive()\n", 8), run.call_args.args[1:])
                 desktop.assert_not_called()
@@ -137,9 +144,7 @@ class UnifiedControlContract(unittest.TestCase):
                     with patch.object(Backend, "_run") as desktop:
                         output = io.StringIO()
                         with redirect_stdout(output):
-                            self.assertEqual(
-                                code, main(["--root", str(self.root), "--backend", "headless", "--json", *command])
-                            )
+                            self.assertEqual(code, self.cli("headless", *command))
                         run.assert_called_once()
                         backend, source, _ = run.call_args.args
                         self.assertEqual("headless", backend.name)
@@ -167,24 +172,19 @@ class UnifiedControlContract(unittest.TestCase):
             with self.subTest(command=command), patch("beidou_pilot.control_scripts.run_source") as run:
                 output = io.StringIO()
                 with redirect_stdout(output):
-                    self.assertEqual(2, main(["--root", str(self.root), "--backend", "beidou", "--json", *command]))
+                    self.assertEqual(2, self.cli("beidou", *command))
                 self.assertEqual("unsupported_capability", json.loads(output.getvalue())["error"]["code"])
                 run.assert_not_called()
 
     def test_backend_snapshots_remain_separate_and_native_coordinates_can_be_floats(self) -> None:
-        directory = self.root / "runtime/headless/bridge"
-        directory.mkdir(parents=True)
-        native = {
-            **self.files.state,
-            "instance_id": "headless-1",
-            "run_id": "headless-run",
-            "position": {"x": 10.5, "y": 20.0},
-            "monsters": [{"object_id": 300, "template_id": None, "name": None, "x": 12.5, "y": 20.0, "active": True}],
-        }
-        (directory / "state.json").write_text(json.dumps(native))
-        (self.root / "state/maple-session-headless.json").write_text('{"run_id":"headless-run"}')
+        self.native.state.update(
+            position={"x": 10.5, "y": 20.0},
+            monsters=[{"object_id": 300, "template_id": None, "name": None, "x": 12.5, "y": 20.0, "active": True}],
+        )
+        self.native.publish()
         self.assertEqual("client-1", BridgeClient(self.root).snapshot()["instance_id"])
-        observed = BridgeClient(self.root, "headless").snapshot()
+        with patch.dict(os.environ, self.native.environment):
+            observed = BridgeClient(self.native.root, "headless").snapshot()
         self.assertEqual("headless-1", observed["instance_id"])
         self.assertEqual(10.5, observed["position"]["x"])
         self.assertEqual(12.5, observed["monsters"][0]["x"])
@@ -201,30 +201,34 @@ class UnifiedControlContract(unittest.TestCase):
 
         def run(backend, source, seconds):
             sources.append(source)
+            state = self.files.state if backend.name == "beidou" else self.native.state
             return {
                 "status": "completed",
-                "last_state": {**self.files.state, "position": {"x": 40, "y": 20}, "action_result": native_result},
+                "last_state": {**state, "position": {"x": 40, "y": 20}, "action_result": native_result},
             }
 
-        with patch.object(BridgeClient, "snapshot", return_value=self.files.state):
-            with patch("beidou_pilot.control_scripts.run_source", side_effect=run):
-                for name in ("beidou", "headless"):
-                    report = move_to_x(Backend(self.root, name), 40, seconds=3)
-                    self.assertEqual("arrived", report["status"])
-                    self.assertEqual("travel/move_to", report["strategy"])
-                    self.assertTrue(Path(report["script_file"]).is_file())
-                    self.assertEqual(40, report["after"]["position"]["x"])
-                attack = action(Backend(self.root, "headless"), "attack")
-                self.assertEqual(native_result, attack["action_result"])
-                self.assertNotIn("strategy", attack)
-        self.assertEqual(sources[0], sources[1])
+        with patch("beidou_pilot.control_scripts.run_source", side_effect=run):
+            for name, files in (("beidou", self.files), ("headless", self.native)):
+                with patch.dict(os.environ, files.environment):
+                    report = move_to_x(Backend(files.root, name), 40, seconds=3)
+                self.assertEqual("arrived", report["status"])
+                self.assertEqual("travel/move_to", report["strategy"])
+                self.assertTrue(Path(report["script_file"]).is_file())
+                self.assertEqual(40, report["after"]["position"]["x"])
+            with patch.dict(os.environ, self.native.environment):
+                attack = action(Backend(self.native.root, "headless"), "attack")
+            self.assertEqual(native_result, attack["action_result"])
+            self.assertNotIn("strategy", attack)
+        self.assertEqual(
+            sources[0].replace("client-1", "selected-instance"), sources[1].replace("headless-1", "selected-instance")
+        )
         self.assertEqual("game.attack()\n", sources[2])
-        with patch.object(BridgeClient, "snapshot", return_value=self.files.state):
-            with patch(
-                "beidou_pilot.control_scripts.run_source",
-                return_value={"status": "cancelled", "reason": "time_limit", "last_state": self.files.state},
-            ):
-                report = move_to_x(Backend(self.root, "headless"), 40, seconds=3)
+        with patch(
+            "beidou_pilot.control_scripts.run_source",
+            return_value={"status": "cancelled", "reason": "time_limit", "last_state": self.native.state},
+        ):
+            with patch.dict(os.environ, self.native.environment):
+                report = move_to_x(Backend(self.native.root, "headless"), 40, seconds=3)
         self.assertEqual("cancelled", report["status"])
         self.assertEqual("time_limit", report["reason"])
 
@@ -233,33 +237,29 @@ class UnifiedControlContract(unittest.TestCase):
             "backend": "headless",
             "stage": "IN_GAME",
             "running": True,
-            "character": self.files.state["character"],
-            "state": self.files.state,
+            "character": self.native.state["character"],
+            "state": self.native.state,
         }
         with patch("beidou_pilot.headless.status", return_value=report):
             output = io.StringIO()
             with redirect_stdout(output):
-                self.assertEqual(0, main(["--root", str(self.root), "--backend", "headless", "status", "--json"]))
+                self.assertEqual(0, self.cli("headless", "status"))
             result = json.loads(output.getvalue())
         self.assertTrue(result["ok"])
-        self.assertEqual(self.files.state["observed_at_ms"], result["data"]["state"]["observed_at_ms"])
+        self.assertEqual(self.native.state["observed_at_ms"], result["data"]["state"]["observed_at_ms"])
 
     def test_headless_reuse_rejects_a_different_explicit_target_or_actor(self) -> None:
-        target = self.root / "target.json"
-        target.write_text('{"project":"different-validation"}')
-        profile = LoginProfile("fixture", "fixture", 7)
-        saved = {"target_config": {"project": "original-validation"}, "character_id": 6, "channel": 1, "world": 0}
-        existing = {"State": {"Running": True}}
-        with patch("beidou_pilot.headless.current_container", return_value=existing):
-            with patch("beidou_pilot.headless.registration", return_value=saved):
-                with patch("beidou_pilot.headless.status") as observation:
-                    with self.assertRaises(ClientError) as target_error:
-                        open_game(self.root, target=target, profile=profile)
-                    self.assertEqual("headless_target_mismatch", target_error.exception.code)
-                    with self.assertRaises(ClientError) as actor_error:
-                        open_game(self.root, target=None, profile=profile)
-                    self.assertEqual("headless_character_mismatch", actor_error.exception.code)
-                    observation.assert_not_called()
+        target = self.native.root / "target.json"
+        target.write_text(json.dumps({**self.native.runtime["target"], "project": "different-validation"}))
+        profile = LoginProfile("fixture", "fixture", 4)
+        with patch.dict(os.environ, self.native.environment), patch("beidou_pilot.headless.status") as observation:
+            with self.assertRaises(ClientError) as target_error:
+                open_game(self.native.root, target=target, profile=profile)
+            self.assertEqual("target_mismatch", target_error.exception.code)
+            with self.assertRaises(ClientError) as actor_error:
+                open_game(self.native.root, profile=LoginProfile("fixture", "fixture", 7))
+            self.assertEqual("character_mismatch", actor_error.exception.code)
+            observation.assert_not_called()
 
 
 if __name__ == "__main__":

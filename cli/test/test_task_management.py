@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, redirect_stdout
+from copy import deepcopy
 import fcntl
 import io
 import json
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from beidou_pilot.cli import main
 from beidou_pilot.errors import JsonObject
@@ -25,7 +27,7 @@ class TaskManagementContract(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.files = BridgeFiles(Path(temporary.name))
-        (self.files.root / "clientctl.py").touch()
+        self.enterContext(patch.dict(os.environ, self.files.environment))
         self.session = "a" * 32
         self.files.state["script"] = {
             "id": self.session,
@@ -50,17 +52,21 @@ class TaskManagementContract(unittest.TestCase):
         }
         self.files.state["command"] = {"id": "c" * 32, "status": "running", "reason": None}
         self.files.state["held_keys"] = [39]
-        self.original_command = f"1 client-1 1 {'c' * 32} script 0 {self.session}\n".encode("ascii")
+        native = BridgeFiles(self.files.root / "headless", "headless", "alpha")
+        native.environment["HOSTNAME"] = "headless-container"
+        native.state = deepcopy(self.files.state)
+        self.instances = {("beidou", "default"): self.files, ("headless", "alpha"): native}
         self.prepare_instance()
 
     def prepare_instance(self, backend="beidou", instance="default"):
+        self.files = self.instances[(backend, instance)]
+        self.files.register(backend, instance)
         paths = InstancePaths(self.files.root, backend, instance)
-        self.files.directory = paths.bridge
-        paths.bridge.mkdir(parents=True, exist_ok=True)
-        paths.registration.parent.mkdir(parents=True, exist_ok=True)
-        paths.registration.write_text('{"run_id":"bridge-contract"}')
         self.files.state["instance_id"] = backend + "-" + instance
         self.files.publish()
+        self.original_command = f"1 {self.files.state['instance_id']} 1 {'c' * 32} script 0 {self.session}\n".encode(
+            "ascii"
+        )
         (paths.bridge / "command.txt").write_bytes(self.original_command)
         return paths
 
@@ -73,7 +79,7 @@ class TaskManagementContract(unittest.TestCase):
 
     def cli(self, *arguments, backend="beidou", instance="default"):
         output = io.StringIO()
-        with redirect_stdout(output):
+        with patch.dict(os.environ, self.files.environment), redirect_stdout(output):
             exit_code = main(
                 [
                     "--root",
@@ -146,6 +152,7 @@ class TaskManagementContract(unittest.TestCase):
         ]
         for backend, instance, operation, options, revision, priority, expected_source in cases:
             with self.subTest(operation=operation):
+                paths = self.prepare_instance(backend, instance)
                 self.files.state["script"]["tasks"] = self.files.state["script"]["tasks"][:1]
                 if revision:
                     self.files.state["script"]["tasks"].append(
@@ -159,7 +166,7 @@ class TaskManagementContract(unittest.TestCase):
                             "error": None,
                         }
                     )
-                paths = self.prepare_instance(backend, instance)
+                self.files.publish()
                 with self.hold_session(paths), ThreadPoolExecutor(max_workers=1) as pool:
                     peer = pool.submit(self.reply)
                     code, report = self.cli(

@@ -190,8 +190,8 @@ async def run(args: argparse.Namespace) -> None:
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     checkpoint = state / "cursor.json"
     binding: JsonObject = {
-        "root": str(args.root.resolve()),
-        "backend": args.backend,
+        "cli": str(args.cli.resolve()),
+        "workbench": str(args.workbench.resolve()),
         "instance": args.instance,
         "thread_id": args.thread,
         "socket": str(args.socket.absolute()),
@@ -207,6 +207,7 @@ async def run(args: argparse.Namespace) -> None:
     notifications = None
     process = None
     incoming = None
+    backend: str | None = None
     try:
         status = await dispatcher.initialize(check_only=args.check)
         emit("codex_connected", {"thread_id": args.thread, "status": status, "check_only": args.check})
@@ -215,10 +216,8 @@ async def run(args: argparse.Namespace) -> None:
         notifications = asyncio.create_task(dispatcher.notifications())
         command = [
             str(args.cli.resolve()),
-            "--root",
-            str(args.root.resolve()),
-            "--backend",
-            args.backend,
+            "--workbench",
+            str(args.workbench.resolve()),
             "--instance",
             args.instance,
             "--json",
@@ -258,7 +257,8 @@ async def run(args: argparse.Namespace) -> None:
             if report.get("event") not in {"events_ready", "client_event", "events_unavailable"}:
                 raise ValueError("客户端事件监听返回未知消息。")
             if (
-                report.get("backend") != args.backend
+                report.get("backend") not in {"beidou", "headless"}
+                or (backend is not None and report["backend"] != backend)
                 or report.get("instance") != args.instance
                 or not isinstance(report.get("instance_id"), str)
                 or not isinstance(report.get("run_id"), str)
@@ -268,6 +268,7 @@ async def run(args: argparse.Namespace) -> None:
                 )
             ):
                 raise ValueError("客户端事件身份已变化，未投递到 Codex。")
+            backend = cast(str, report["backend"])
             if report["event"] == "events_unavailable":
                 diagnostic_cursor = EventCursor.parse(report["cursor"]) if report.get("cursor") is not None else None
                 error = report.get("error")
@@ -323,9 +324,13 @@ async def run(args: argparse.Namespace) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="把客户端事件送入已有 SSH Codex 会话，不启动新模型或游戏客户端。")
-    parser.add_argument("--cli", type=Path, default=Path(__file__).resolve().parents[2] / "cli/beidou-pilot")
-    parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--backend", choices=("beidou", "headless"), default="beidou")
+    parser.add_argument(
+        "--cli",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / "beidou-pilot",
+        help="宿主 Docker 薄入口，默认同仓根目录的 beidou-pilot",
+    )
+    parser.add_argument("--workbench", type=Path, required=True, help="已由操作者启动客户端容器的工作台目录")
     parser.add_argument("--instance", default="default")
     parser.add_argument("--thread", required=True)
     parser.add_argument("--socket", type=Path, required=True)

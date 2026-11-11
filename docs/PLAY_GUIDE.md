@@ -1,89 +1,87 @@
 # 游戏 AI 操作指引
 
-本篇供新会话从已有授权开始操作客户端。命令从仓库根执行；`/external/target.json`、`/private/account.private.json` 和 `worker-a` 均须替换为本次已确认的配置与实例名。精确参数查当前 `--help`，完整命令、Lua 与支持范围分别以 [CLI](CLI.md)、[Lua API](LUA_API.md) 和[架构说明](ARCHITECTURE.md)为准。
+本篇供新会话从已有授权继续工作台。宿主使用仓库根的 `./beidou-pilot`，客户端命令由它转发给所属容器。以下 `/external/workbench` 和 `worker-a` 须替换为本次已确认的工作台与实例名；参数以 `--help` 为准，完整命令、Lua 与支持范围见 [CLI](CLI.md)、[Lua API](LUA_API.md) 和[架构说明](ARCHITECTURE.md)。
 
 ## 先确认目标、角色和操作者
 
-从用户指令及已有授权记录确认服务器用途、专用账号和角色、允许执行的玩法，以及本次操作者。可在本机 `LOCAL.md` 等环境索引中查找已登记的配置路径；配置文件存在、服务器正在运行或账号能够登录，都不能替代授权。凭据只从已授权的私密文件读取，不放进命令参数、公开日志或 Issue。
+从用户指令及已有记录确认服务器用途、专用账号与角色、允许的玩法和本次操作者。工作台中的养成方案和交接记录负责跨会话连续性，源码版本不会替代这些资料。可从本机 `LOCAL.md` 等索引找到配置；文件存在、服务运行或账号可登录均不能替代授权。凭据只从授权私密文件读取，不进入参数值、日志或 Issue。
 
-常驻工作区服务和开发隔离服务是不同目标。先核对 target 的 `project/service/network/expected_image`，再只读解析其实际容器身份：
+工作台提供 `account.private.json`、`resources.json` 和需要时的 `target.json`。先核对 target 的 `project/service/network/expected_image`，再执行只读检查：
 
 ```bash
-python3 cli/clientctl.py plan --target /external/target.json
-./cli/beidou-pilot --backend headless --json instances
-./cli/beidou-pilot --backend beidou --json status
+./beidou-pilot --workbench /external/workbench --instance worker-a --json plan
+./beidou-pilot --workbench /external/workbench --instance worker-a --json status
 ```
 
-`plan` 不启动服务或客户端；确认返回的项目、服务、容器、镜像、网络和运行状态属于本次授权目标。目标须使用同项目 internal 网络；隔离目标不得发布宿主端口。常驻 `beidou-ms/beidou-server-all` 仅在已获对应授权时给 `plan` 和 `open` 都加 `--workspace-server`，仍须满足网络与镜像核验。核验失败时先查具体原因与当前配置，不能把另一服务器当作替代目标。
+`plan` 不构建、不启动客户端或服务。确认返回的项目、服务、容器和镜像属于本次目标。显式 target 必须使用同项目 internal 网络，隔离目标不得发布宿主端口。常驻 `beidou-ms/beidou-server-all` 仅在已有授权时给 `plan/open` 加 `--workspace-server`；没有 target 文件时，启动器为新实例准备所属 internal 连接。核验失败先查当前配置与实际原因，不切换到另一服务器代替。
 
-`instances` 只覆盖当前运行根已登记的无头实例。结合该根的 GUI `status`、本机操作者登记和必要的 Docker 容器身份核对账号占用；其他运行根及外部操作者的占用需要另外确认。实例登记中的 CID、频道和 `run_id` 有助于定位，停止的历史登记不代表正在占用。同一目标同一角色只交给一名控制者，GUI 只保留一名明确操作者；发现占用时先完成控制权交接。
+结合本地认领、其他工作台与外部操作者、服务器在线账号/角色列表判断占用。`status` 只说明当前工作台实例，停止的历史登记不能证明账号空闲。同一目标同一角色只交给一名控制者，GUI 只保留一名明确操作者；发现占用先完成交接。
 
 ## 用已有角色完成最小上手
 
-准备方式见 [README](../README.md#准备)和[外部资源配置](ARCHITECTURE.md#外部资源与配置)。先检查所用后端，再打开已授权角色：
+准备方式见 [README](../README.md#准备)和[外部资源配置](ARCHITECTURE.md#外部资源与配置)。新实例默认使用 `main` 当时的已提交版本构建或复用镜像；开发验证明确加 `--ref COMMIT`。已有容器后续命令继续使用启动时的 CLI 与内置 Lua，不重新装载当前主检出。
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json doctor
-./cli/beidou-pilot --backend headless --instance worker-a --json open \
-  --target /external/target.json --profile /private/account.private.json
-./cli/beidou-pilot --backend headless --instance worker-a --json status
-./cli/beidou-pilot --backend headless --instance worker-a --json bridge status
-./cli/beidou-pilot --backend headless --instance worker-a --json capabilities
-./cli/beidou-pilot --backend headless --instance worker-a --json snapshot
+./beidou-pilot --workbench /external/workbench --instance worker-a --backend headless --json open
+./beidou-pilot --workbench /external/workbench --instance worker-a --json doctor
+./beidou-pilot --workbench /external/workbench --instance worker-a --json status
+./beidou-pilot --workbench /external/workbench --instance worker-a --json bridge status
+./beidou-pilot --workbench /external/workbench --instance worker-a --json capabilities
+./beidou-pilot --workbench /external/workbench --instance worker-a --json snapshot
 ```
 
-两端 `open` 都必须显式传同一格式的 `--profile PATH`。文件权限为 `0600`，包含 `username`、`password` 和已有角色的 `character_id`；`world` 与 `channel` 从 0 开始，省略时各为 0，CLI 返回的频道从 1 开始。`open` 可以复用身份相符的现有实例；`--timeout` 只限制启动等待，容器在命令返回后仍运行。默认运行根是本源码树的 `cli/`；若使用 `--root`，后续所有命令沿用同一绝对路径，它选择运行状态目录，不切换加载的代码版本。
+两端使用同一格式的 `0600` profile：`username/password/character_id`，以及默认各为 0 的 `world/channel`。`character_id` 指已有角色；频道索引从 0 开始，返回的实际游戏频道从 1 开始。启动器可显式接收 `--profile/--target/--resources` 覆盖工作台默认路径，将本次配置挂到容器固定路径。`--timeout` 只限制入图等待。
 
-入图需同时确认新鲜状态中的 `ready`、角色 ID/名称、地图及位置；桥的 `instance_id/run_id` 应保持属于本次运行，CLI 会核对登记与原生身份。报告实际核对的服务器、频道、角色、地图和所用后端；缺字段时保留未知。仅有容器运行、登录认证或角色选择成功，不足以判断已入图。启动失败后先读 `status` 和错误中的运行目录；重开前确认原实例情况。
+入图需同时确认新鲜状态中的 `ready`、角色 ID/名称、频道、地图和位置，原生 `instance_id/run_id` 仍须属于本次运行。`status` 还提供 `source_revision/image/run_id`，用它说明正在验证哪个版本。容器运行、认证成功或角色选择成功都不足以证明已入图。启动失败先读 `status` 和工作台 `runtime/INSTANCE/` 中的运行日志，保留未确认事实，再决定是否重开。
 
 ## 观察、选择能力并核对结果
 
-先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`，参数及输出见 [CLI](CLI.md#启动观察与关闭)。`capabilities` 的 `native_actions` 来自有效在线桥，离线为 `null`；具体领域还需检查响应的支持状态、来源和时效。未知值保持未知；无头任务已合并正常增量，但原始进度串和关联语义不推断，具体范围查当前领域响应。
+先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`。`capabilities.native_actions` 来自有效在线桥；领域响应中的支持状态、来源与时效分别判断，未知保持未知。无头任务支持正常增量，但原始进度串及关联语义不推断。
 
-在已确认安全区域，先选择一项有界动作并比较前后观察。下面只适用于已核实右侧可安全短移的场景：
+在已确认安全区域选择一项有界动作并比较前后事实。下面仅适用于已核实右侧可安全短移的场景：
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json walk right --seconds 0.2
-./cli/beidou-pilot --backend headless --instance worker-a --json snapshot
-./cli/beidou-pilot --backend headless --instance worker-a --json script status
+./beidou-pilot --workbench /external/workbench --instance worker-a --json walk right --seconds 0.2
+./beidou-pilot --workbench /external/workbench --instance worker-a --json snapshot
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script status
 ```
 
-根据实际坐标与场景判断移动；按经验/等级判断战斗成长，按库存及 HP/MP 判断消耗恢复，按槽位变化判断换装。请求受理、输入派发、脚本完成和放键分别是不同事实，均不能独立证明命中、拾取或任务完成。消费、交易、奖励、加点等结果不明时先重新观察，避免重放不可逆操作；成长决策依据已核实的职业路线和本地养成计划。
+按真实位置判断移动，按经验/等级判断成长，按库存和 HP/MP 判断恢复，按槽位变化判断换装。请求受理、输入派发、脚本完成与放键是分别可观察的事实，不能单独证明命中、拾取或任务完成。消费、交易、奖励、加点等结果不明时先观察，不重放不可逆操作；成长决策延续已核实的养成计划。
 
-持续策略写 Lua，入口为 `script run FILE --seconds N` 或 `script run --code CODE --seconds N`；文件与源码二选一，持续模式需明确 `--continuous`。运行中可继续只读观察。写脚本先查 [Lua API](LUA_API.md)，维护公共策略另读 [shared/scripts/AGENTS.md](../shared/scripts/AGENTS.md)。同层移动、单根绳梯和门户能力均有场景前提；缺少能力或静态资料时按当前错误与[缺口索引](CLIENT_LIMITATIONS.md)处理。
+持续策略写 Lua。宿主入口转发 `script run --code CODE --seconds N`，或读取容器路径中的 UTF-8 文件；工作台可选的 `scripts/` 只读挂到 `/scripts`，例如 `script run /scripts/control.lua --seconds 20`。文件与源码二选一，持续模式须明确 `--continuous`。内置 Lua 随镜像固定，用户提交的 Lua 是本次明确输入，可在已有实例中更新。维护公共策略前阅读 [shared/scripts/AGENTS.md](../shared/scripts/AGENTS.md)，写脚本查 [Lua API](LUA_API.md)。
+
+同层移动、单根绳梯和门户都有场景前提。缺能力或静态资料时按实际错误与[缺口索引](CLIENT_LIMITATIONS.md)处理，不用另一端或服务端补造未知事实。
 
 ## GUI 与首次登录的边界
 
-需要当前仅 GUI 支持的操作时，先按授权完成实例与角色交接，再按 [GUI 准备与登录](CLI.md#原版-gui)运行。GUI 使用默认单实例，仅支持 `world=0`，从同一份 profile 读取频道并按 `character_id` 选择已有角色：
+需要 GUI 特有操作时，先完成账号和控制权交接，再按 [GUI 准备](CLI.md#原版-gui)从对应工作台启动：
 
 ```bash
-./cli/beidou-pilot --backend beidou --json open \
-  --target /external/target.json --profile /private/account.private.json
+./beidou-pilot --workbench /external/gui-workbench --backend beidou --json open
+./beidou-pilot --workbench /external/gui-workbench --json snapshot
 ```
 
-GUI 不再使用运行根的固定账号或角色名称文件，也不再接受 `--character`、`--character-index`、`--channel`。通过 `snapshot`、`inspect stage` 和 `screenshot` 核对当前界面，优先使用当前对话正文与新鲜引用操作；GUI 桌面 `click X Y` 使用根桌面坐标，需根据当次截图定位。
+GUI 在一个工作台中只使用 `default`，profile 只支持 `world=0`，并按角色 ID 和频道正常登录。两端共享 CLI，但各自保留能力范围。GUI 的 `--character/--character-index/--channel` 和固定账号/名称文件已退役。
 
-统一登录只支持已有角色。首次登录可能停在声明或性别选择；声明须在原界面滚到底部才可确认。若角色列表为空或没有唯一匹配的 CID，不能当作已选中或已入图。无头首次声明、性别和建角能力由 [#72](https://github.com/Diluka/beidou-pilot/issues/72) 跟踪；需要在 GUI 中完成首次流程时，先确认账号和选择意图，再按实际界面操作。无法确认的选择留待决定，不反复重试登录。
-
-GUI 遇到上述界面时先截图；现有根桌面点击及 `python3 cli/beidou_pilot/engines/desktop.py scroll --help` 可帮助定位所需原语。桌面入口通过 `CLIENT_ROOT` 选择运行根，默认本源码树的 `cli/`，不接受统一 CLI 的 `--root`。使用自定义运行根时须显式指向同一目录，例如：
+通过当前 `snapshot`、`inspect stage` 和 `screenshot` 定位界面，优先使用新鲜对话正文与引用。根桌面 `click X Y` 必须依据当次截图。需要滚轮原语时，在所属 GUI 容器内执行，例如：
 
 ```bash
-CLIENT_ROOT=/external/client-cli python3 cli/beidou_pilot/engines/desktop.py scroll down --ticks 1
+docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop scroll down --ticks 1
 ```
 
-滚轮作用于当前鼠标所在控件，须先按当次画面定位，再有界滚动并重新截图确认。该路径不代表 CLI 已自动识别首次流程，也不补齐无头能力。无头新增交互按[当前页面与控件引用](CLI.md#无头控件交互)操作；普通本地任务页面及完整接交仍见 [#48](https://github.com/Diluka/beidou-pilot/issues/48) 与[两端能力表](ARCHITECTURE.md#两端能力)。
+原语直接操作该容器的显示环境。首次声明、性别选择或空角色列表仍不等于自动建角；需要正常 GUI 首次流程时先确认账号和选择意图。无头首次登录与建角由 [#72](https://github.com/Diluka/beidou-pilot/issues/72) 跟踪，未知选择不反复重试。
 
 ## 停止、下线与交接
 
-活动 Lua 通过原执行 CLI 的 Ctrl+C/SIGTERM 取消并等待收尾；使用 harness 时先由其 `pause` 或 `stop` 确认取消与放键，再交接。不要用第二个动作命令接管仍活动的脚本。详情见[控制协议](CONTROL.md#控制权期限与取消)与 [harness 协作通道](HARNESS.md#开发-ai-的协作通道)。
+活动 Lua 从原宿主命令发送 Ctrl+C/SIGTERM，薄入口会向该次容器内 CLI 转发取消，并等待原生收尾。不要只杀 Docker exec 进程后假定已放键，也不要用第二个动作命令抢占。使用 harness 时由其 `pause/stop` 确认取消与放键，再交接；详情见 [控制协议](CONTROL.md#控制权期限与取消)和 [harness 协作](HARNESS.md#开发-ai-的协作通道)。
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json script status
-./cli/beidou-pilot --backend headless --instance worker-a --json bridge status
-./cli/beidou-pilot --backend headless --instance worker-a --json close
-./cli/beidou-pilot --backend headless --instance worker-a --json status
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script status
+./beidou-pilot --workbench /external/workbench --instance worker-a --json bridge status
+./beidou-pilot --workbench /external/workbench --instance worker-a --json close
+./beidou-pilot --workbench /external/workbench --instance worker-a --json status
 ```
 
-取消后核对同一原生身份下的脚本/命令终态和 `held_keys=[]`；有惯性或动画时继续观察实际停止。空闲遗留控制可用 `stop`，它不抢占其他活动控制者。短脚本结束与取消保留客户端；`close` 才正常关闭所属容器，最后确认 `running=false`。危险区域结束执行后，先到已知安全位置或关闭所属实例，再做长时间分析。
+取消后核对同一原生身份下的终态和 `held_keys=[]`；有惯性或动画时继续观察。空闲遗留控制可用 `stop`，不抢占活动控制者。短脚本结束保留客户端；宿主 `close` 才经 Docker 正常关闭、核实退出并回收。容器内 `close` 会提示使用宿主生命周期入口。危险区域结束有界执行后，先进入已验证安全位置或关闭所属实例，再长时间分析。
 
-在本地保留所用源码/镜像或桥版本、目标与实例身份、场景、动作前后事实和未确认项；公开记录只给无私密结论。离线检查、构建、入图、移动、战斗和恢复分别报告；指南、请求成功或另一端结果均不能替代本端实际证据。
+交接保留账号角色的计划、实际进度、下一步、所用源码/镜像/桥版本与必要证据引用。公开记录只给无私密结论。离线检查、构建、入图、移动、战斗和恢复分别报告，另一端或仅构建成功不能替代本端真实结果。

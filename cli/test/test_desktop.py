@@ -49,7 +49,7 @@ class DesktopHarness:
     def execute(self) -> JsonObject:
         actions = parse_actions([{"action": "hold", "keys": ["Return"], "seconds": .4},
                                  {"action": "click", "x": 50, "y": 60}], argparse.ArgumentParser())
-        payload = {"actions": actions, "screenshot": None, "game_crop": None,
+        payload = {"actions": actions, "screenshot": None, "game_crop": None, "run_dir": "/virtual",
                    "cancel_file": "/virtual/desktop-cancel" if self.cancel_at is not None else None}
         output = io.StringIO()
         with (patch("sys.stdin", io.StringIO(json.dumps(payload))), redirect_stdout(output),

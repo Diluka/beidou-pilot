@@ -1,52 +1,68 @@
 # 命令使用
 
-根入口为 `./cli/beidou-pilot`，支持任意当前目录；精确参数以当前 `--help` 和子命令 `--help` 为准。默认后端是 `beidou`，自动化调用应显式选端和使用 `--json`。
+宿主入口为仓库根的 `./beidou-pilot`，精确参数查 `--help`。它只管理工作台、Git 构建输入和 Docker；两个镜像内安装相同的 `beidou-pilot` Python CLI，游戏操作与内置 Lua 不从宿主源码加载。
 
-## 实例与输出
+## 工作台、版本与输出
 
-公共选项可以放在命令前后：`--backend beidou|headless`、`--instance NAME`、`--root PATH`、`--json`、`--debug`。`--root` 指定运行目录，不改变当前加载的代码与内置 Lua 来源。
+宿主公共选项放在命令前：`--workbench DIR`、`--instance NAME`、`--backend headless|beidou`、`--ref REF`、`--json`。工作台目录必须已存在；默认实例为 `default`，默认新建后端为 `headless`。GUI 在一个工作台中只使用 `default`，多个工作台分别拥有容器。同一目标同一角色只能有一个控制者。
 
-命名实例只支持无头端，省略为 `default`；名字为1至48位小写字母、数字、下划线或连字符，首位为字母或数字。GUI只使用默认单实例。每个无头实例独立持有容器、登记、日志和桥目录，同一目标同一角色只能由一个实例接管。
+工作台最少提供 `account.private.json`、`resources.json`，以及需要时的 `target.json`。新建实例默认一次解析 `main` 的已提交 SHA，以该树及固定子模块构建或复用对应后端镜像。显式 `--ref COMMIT` 供开发验收；构建期间代码更新不改变这次输入。已有实例后续命令只路由到所属容器；不会因宿主切换分支或 `main` 更新而换版本。
 
-普通成功结果为单个 JSON，包含 `ok/command/backend/instance/data`。失败对象包含 `error.code/message/details`；显式 `--json` 时错误也写 stdout，否则写 stderr。已识别的失败退出码为2，中断为130，正常返回为0。独立 `watch` 和 `events watch` 输出 JSONL；原版 `snapshot` 无 `--json` 时为简洁文本，无头 `snapshot` 仍为 JSON。
+`build` 只准备镜像，`resources-check` 用无头镜像离线检查 NX，`plan` 只读核对目标，`open` 创建实例并调用容器内 CLI 等待或完成登录。`build/resources-check/plan/open` 可显式传 `--target PATH`、`--profile PATH`、`--resources PATH`、`--bridge-artifact DIR`、`--workspace-server`、`--timeout SECONDS`；前三个路径默认取工作台中的同名文件，GUI 默认经 `gh` 获取所选提交成功 CI 的桥工件；`--bridge-artifact DIR` 只用于开发时显式复用原生输入匹配的现成工件。已有实例的 `open` 核对显式请求后继续原会话，不重新构建。
+
+宿主保存 `runtime/INSTANCE/host.json`，每次运行的数据位于其下的独立目录，并挂到容器 `/work`。容器的 `status/instances` 提供源码提交、实际镜像和 `run_id`；原生桥继续核对 `instance_id/run_id`。容器内公共参数 `--root/--backend/--instance` 只用于核对本容器，不能切到其他实例。直接调用可用 `docker exec CONTAINER beidou-pilot --json status`；GUI CLI 入口按客户端用户降权。动作与取消优先使用宿主薄入口以获得定向信号转发。
+
+`resources-check` 输出原生资源检查 JSON；其他普通结果为 JSON 信封，含 `ok/command/data`，容器命令另带 `backend/instance`；失败含 `error.code/message/details`。已识别的失败退出码为 2，中断为 130。宿主入口转发命令时使用 JSON；独立 `watch` 和 `events watch` 输出 JSONL。直接调用容器 CLI 的 `snapshot` 未加 `--json` 时，GUI 使用简洁文本，无头仍为 JSON。
 
 ## 启动、观察与关闭
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json open \
-  --target /external/target.json --profile /private/account.private.json
-./cli/beidou-pilot --backend headless --instance worker-a --json snapshot
-./cli/beidou-pilot --backend headless --instance worker-a --json close
+./beidou-pilot --workbench /external/workbench --backend headless --instance worker-a --json plan
+./beidou-pilot --workbench /external/workbench --backend headless --instance worker-a --json open
+./beidou-pilot --workbench /external/workbench --instance worker-a --json snapshot
+./beidou-pilot --workbench /external/workbench --instance worker-a --json close
 ```
 
-GUI 与无头端的 `open` 都必须显式传 `--profile PATH`，匹配的实例可复用。无头新实例还须显式传 `--target PATH`。target 格式见 [target.example.json](../cli/config/target.example.json)，按 Docker Compose 项目/服务、精确应用镜像和 internal 网络核验。使用常驻工作区目标须已获授权并显式传 `--workspace-server`；客户端不会自动启动游戏服务端。
+目标格式见 [target.example.json](../cli/config/target.example.json)。启动器按 Docker Compose 项目/服务、精确应用镜像和 internal 网络核验，不自动启动游戏服务端。常驻工作区目标必须已有授权并显式传 `--workspace-server`；没有 target 文件时，为该实例创建所属 internal 连接，关闭时只回收其所属网络。隔离目标必须显式提供 target，且不能发布宿主端口。
 
-已核验目标公告的频道 IPv4 位于 `127.0.0.0/8` 时，无头客户端使用该目标的内部 IP 连接频道，并保留服务器公告的端口。其他频道地址沿用公告值。该映射只发生在无头频道连接阶段，不需要修改服务端、原客户端资源或容器网络权限；目标核验失败时仍拒绝启动。
+两端共用权限为 `0600` 的 JSON profile：`username`、`password` 和已有角色的 `character_id`（正 32 位有符号整数）必填；`world` 与 `channel` 为 0 基索引，省略时各为 0，格式范围 0 至 255，实际可选范围由服务器和后端决定。游戏中第 1 频道对应 `channel=0`。GUI 当前仅支持 `world=0` 和第 1 至 20 频道，按 CID 选择已有角色。密码不写到参数或日志中，`open` 不自动建角。
 
-两端共用权限为 `0600` 的 JSON profile：`username`、`password` 和已有角色的 `character_id`（正 32 位有符号整数）必填；`world` 与 `channel` 是从 0 开始的索引，省略时各为 0，格式允许 0 至 255，实际可选范围由服务器与后端决定。游戏中的第 1 频道对应 `channel=0`。账号文件外置，密码不写到参数中。角色必须已经存在，`open` 不自动建角。`--timeout` 只限制启动等待，进程期限不通过 profile 配置。
+启动器在镜像内验证 profile 并准备本次私密快照，将其只读挂到 `/config/account.private.json`；target 只读挂到 `/config/target.json`。容器启动入口生成内部资源映射和 `state/container.json` 后运行原生进程；容器内 `open --profile /config/account.private.json` 完成或确认登录，`--timeout` 只限制入图等待。
 
-GUI 通过正常登录界面选择 profile 的频道和角色 ID，目前只支持 `world=0`。复用 GUI 会话时，显式目标必须能与当前实例的会话登记核对。旧 GUI 的 `--character`、`--character-index`、`--channel` 和运行根中的固定账号、角色名称文件已退役。迁移旧 GUI 文件时将 `name` 改为 `username`，补上核实过的 `character_id`；将原来从 1 开始的频道换成 profile 的 0 基索引。
+已核验目标公告的频道 IPv4 位于 `127.0.0.0/8` 时，无头端以该目标内部 IP 连接频道并保留公告端口；其他地址沿用公告值。该映射不修改服务端或原始资源。
 
 | 命令 | 行为 |
 | --- | --- |
-| `status`、`doctor` | 读取阶段或检查环境，不启动客户端 |
-| `instances` | 列出当前根目录已登记的无头实例 |
-| `capabilities` | 在线读取实际原生动作能力；离线 `native_actions=null`，仍列静态观察域 |
-| `open`、`close` | 创建/复用实例；正常停止、核验退出并回收实例 |
-| `snapshot [-i] [--all]` | 当前角色、场景、领域摘要及引用；`-i`省略怪物行，`--all`包含画外实体 |
-| `inspect KIND [ID]` | 领域读数或静态资源，KIND见帮助 |
-| `watch --seconds N --interval N` | 持续只读状态，独立调用为JSONL |
+| 宿主 `build`、`plan` | 构建/复用版本镜像；只读核对授权目标 |
+| 宿主 `resources-check` | 用所选提交的 headless 镜像离线检查外部 NX，不需要 target 或 profile |
+| `status` | 宿主可报告已停止实例；运行时由容器 CLI 提供实时阶段和版本 |
+| `doctor` | 在已有容器内检查资源与读取能力，不创建新客户端 |
+| `instances` | 返回当前容器的实例身份与版本 |
+| `capabilities` | 读取当前原生动作能力和静态观察支持范围 |
+| 宿主 `open`、`close` | 创建或继续所属实例；正常停止、核验退出并回收容器 |
+| `snapshot [-i] [--all]` | 当前角色、场景、领域摘要及引用 |
+| `inspect KIND [ID]` | 按需领域读数或静态资源 |
+| `watch --seconds N --interval N` | 持续只读状态，输出 JSONL |
 | `events read [--cursor JSON]`、`events watch [--cursor JSON]` | 读取或监听本实例原生事件；由 GUI 同类通知气泡提供，无头明确不支持 |
-| `bridge status`、`script status` | 原生桥、动作或脚本状态，只读 |
+| `bridge status`、`script status` | 只读原生桥、动作或脚本状态 |
 
-容器在命令结束后常驻。短脚本返回或取消不会关闭客户端；无头 `close` 可关闭正在执行 Lua 的实例。关闭使用独立生命周期锁；同一实例正在启停时为 `lifecycle_busy`，活动脚本期间其他动作是 `input_busy`。退出状态保留 `run_dir/exit_code/stop_reason`。失败后先读取原因和实际状态，再决定重开。
+容器在短脚本返回或取消后常驻。宿主 `close` 使用独立生命周期锁，通过 Docker SIGTERM 让镜像内原生进程收尾，再确认 `Running=false/Pid=0`、保存退出日志并回收；活动 Lua 的输入锁不阻挡关闭。直接在容器内执行 `close` 返回 `host_lifecycle_required`，须改用宿主入口。同一实例正在启停时为 `lifecycle_busy`，活动脚本期间其他动作是 `input_busy`。失败先读实例状态和所属运行日志，再决定是否重开。
+
+## 离线检查资源
+
+```bash
+./beidou-pilot --workbench /external/workbench --backend headless --ref COMMIT --json resources-check \
+  --resources /external/resources.json
+```
+
+默认使用 `main` 的已提交版本，也可显式指定开发提交。命令构建或复用对应无头镜像，仅以只读方式挂载 NX 并离线检查；不读取 target/profile，不连接游戏服务器。旧 `headless/agent` 已由此入口取代。
 
 ## 客户端事件
 
 ```bash
-./cli/beidou-pilot --backend beidou --json events read
-./cli/beidou-pilot --backend beidou --json events watch
-./cli/beidou-pilot --backend beidou --json events watch \
+./beidou-pilot --workbench /external/gui-workbench --json events read
+./beidou-pilot --workbench /external/gui-workbench --json events watch
+./beidou-pilot --workbench /external/gui-workbench --json events watch \
   --cursor '{"instance_id":"本次原生实例","run_id":"本次运行","seq":12}' --seconds 30
 ```
 
@@ -61,9 +77,9 @@ GUI 通过正常登录界面选择 profile 的频道和角色 ID，目前只支�
 ## 原生通知气泡
 
 ```bash
-./cli/beidou-pilot --backend beidou --json notifications
-./cli/beidou-pilot --backend beidou --json notifications respond @notificationCURRENT --button 2000
-./cli/beidou-pilot --backend beidou --json notifications respond @notificationCURRENT --button 2001
+./beidou-pilot --workbench /external/gui-workbench --json notifications
+./beidou-pilot --workbench /external/gui-workbench --json notifications respond @notificationCURRENT --button 2000
+./beidou-pilot --workbench /external/gui-workbench --json notifications respond @notificationCURRENT --button 2001
 ```
 
 `notifications` 统一列出同一原生气泡类的所有种类，包含好友、组队、交易、任务、快递等；未识别种类保留整数 `native_kind`，`kind=null`，不会静默忽略。来源槽的原始文字为 `source_text`；已证实的玩家、队伍、交互或任务标识分别保留，未知为 `null`。交易 `interaction_id` 不是发送者 ID。完整气泡正文尚未提取，`text=null`、`not_covered` 包含 `rendered_body_text`，需要时用当前截图辅助，不能拼模板冒充屏幕原文。
@@ -79,12 +95,12 @@ GUI 通过正常登录界面选择 profile 的频道和角色 ID，目前只支�
 ## 动作与 Lua
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json walk right --seconds 0.2
-./cli/beidou-pilot --backend headless --instance worker-a --json script run --code 'game.log("你好，Lua"); game.sleep(0.1)' --seconds 20
-./cli/beidou-pilot --backend headless --instance worker-a --json script run /path/control.lua --seconds 20
-./cli/beidou-pilot --backend headless --instance worker-a --json script run /path/control.lua --continuous
-./cli/beidou-pilot --backend headless --instance worker-a --json script start --code 'while true do game.sleep(1) end' --continuous
-./cli/beidou-pilot --backend headless --instance worker-a --json script cancel --session SCRIPT_ID
+./beidou-pilot --workbench /external/workbench --instance worker-a --json walk right --seconds 0.2
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script run --code 'game.log("你好，Lua"); game.sleep(0.1)' --seconds 20
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script run /scripts/control.lua --seconds 20
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script run /scripts/control.lua --continuous
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script start --code 'while true do game.sleep(1) end' --continuous
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script cancel --session SCRIPT_ID
 ```
 
 | 命令 | 支持与结果边界 |
@@ -108,20 +124,20 @@ GUI 通过正常登录界面选择 profile 的频道和角色 ID，目前只支�
 | `key KEYS --seconds N` | 原版按键扩展；无头明确拒绝 |
 | `skill ID` | 原生技能请求；无头首批1001004/1001005，其他类型明确不支持 |
 
-`--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。CLI 不拼接、展开或改写源码。文件方式每次读取当前 UTF-8 内容。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
+`--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。CLI 不拼接、展开或改写源码。文件路径按容器内部解析；工作台可选的 `scripts/` 只读挂到 `/scripts`，文件方式每次读取当前 UTF-8 内容。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
 
 `script run` 等待整个会话结束，原调用方的 Ctrl+C/SIGTERM 会取消该脚本。`script start` 只等待原生受理，成功返回后关闭调用终端、停止模型回合或结束事件监听均不取消 Lua；原生期限、角色变化、断线等停止规则保留。使用 `script status` 重新观察进度，明确取消使用 `script cancel --session`。活动 Lua 仍占有本实例控制权，其他脚本和普通窗口输入返回 `input_busy`；操作气泡前由操作者明确取消需要停下的脚本。`--continuous` 必须显式给出，不增加后台 Python 控制进程。
 
 在已有脚本会话中调整一项任务，先用 `script status` 取得 `script.id` 和该任务的 `revision`，再明确传给任务管理入口：
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json task add observer \
+./beidou-pilot --workbench /external/workbench --instance worker-a --json task add observer \
   --session SCRIPT_ID --priority 0 --code 'while true do game.log("观察中"); game.sleep(1) end'
-./cli/beidou-pilot --backend headless --instance worker-a --json task replace chase /path/chase.lua \
+./beidou-pilot --workbench /external/workbench --instance worker-a --json task replace chase /scripts/chase.lua \
   --session SCRIPT_ID --revision 2 --priority 10
-./cli/beidou-pilot --backend headless --instance worker-a --json task stop chase \
+./beidou-pilot --workbench /external/workbench --instance worker-a --json task stop chase \
   --session SCRIPT_ID --revision 3
-./cli/beidou-pilot --backend headless --instance worker-a --json task result REQUEST_ID
+./beidou-pilot --workbench /external/workbench --instance worker-a --json task result REQUEST_ID
 ```
 
 新增和替换必须提供 `--priority` 与文件或 `--code`，停止只提供任务名、`--session` 和预期 `--revision`。任务名是1至64字节的非NUL文本，可包含中文和空格；`main` 由整会话入口管理。新增不能复用会话历史中的名称；替换为同名的新版本，分配新的 `revision`，旧版本历史仍可查看。停止已结束的当前版本返回 `changed=false`；旧版本请求被拒绝，不会停止新版本。
@@ -135,9 +151,9 @@ GUI 通过正常登录界面选择 profile 的频道和角色 ID，目前只支�
 移动和战斗参数只对当前场景有效。地形与恢复属性优先使用已配置 XML，缺少对应 XML 时使用同源 NX；资料缺失或未支持时明确拒绝。基础 `fight` 保留同层预算与撤退行为；`hunt` 根据当前位置在本场景连续寻找可达目标，允许正常换平台和空中攻击，地图或场景代次变化则停止。两者均保留成长节点限制。
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json hunt all --seconds 60
-./cli/beidou-pilot --backend headless --instance worker-a --json hunt 100100 --continuous --hp-item 2000000
-./cli/beidou-pilot --backend headless --instance worker-a --json hunt all --skill 1001004 --range 60 --seconds 30
+./beidou-pilot --workbench /external/workbench --instance worker-a --json hunt all --seconds 60
+./beidou-pilot --workbench /external/workbench --instance worker-a --json hunt 100100 --continuous --hp-item 2000000
+./beidou-pilot --workbench /external/workbench --instance worker-a --json hunt all --skill 1001004 --range 60 --seconds 30
 ```
 
 `hunt` 默认普攻、全部怪物、60秒，`--bounds MIN MAX` 可限定横向区域，`--until-level` 指定停级，`--min-hp-ratio` 默认0.35。`--hp-item` 仅使用明确指定、库存已知的恢复品，不购买或替换药品。技能必须已学且当前后端支持；无头首批仅支持战士 `1001004/1001005`，其他类型明确拒绝。攻击距离是策略接近参数，不保证命中。无可确认的进展、无法通过的地形、生命下限或取消都有明确停止；原始日志保留所属实例，最终经验跨级时不直接相减。
@@ -165,8 +181,8 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 先用 `snapshot` 观察 `interaction.page` 的正文和控件，再对选定控件执行一次 `click REF`；场景NPC的原生 `ref` 也使用同一激活入口。`REF` 必须替换为当前观察到的引用：
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json snapshot
-./cli/beidou-pilot --backend headless --instance worker-a --json click CONTROL_REF
+./beidou-pilot --workbench /external/workbench --instance worker-a --json snapshot
+./beidou-pilot --workbench /external/workbench --instance worker-a --json click CONTROL_REF
 ```
 
 页面只有 `source/title/text/controls`，控件只有 `role/text/enabled/ref`。正文或控件未知时为 `null`，`enabled=null` 不改成 `false`。引用由原生单点生产和验证；CLI不解析引用、不按控件角色拼协议参数，也不自动重新选择或重放失效引用。`--double` 与坐标点击仍仅GUI可用。
@@ -177,33 +193,21 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 
 ## 原版 GUI
 
-从项目根构建独立 GUI 镜像：
+GUI 是独立的完整客户端镜像，包含与无头端相同的 CLI 和 Lua，以及 Wine/VirtualGL 和已核验的桥 DLL。使用工作台的 `resources.json` 配置 `gui_client` 与同源 `headless_resources`。新镜像默认通过 `gh` 下载所选提交成功的 `agent-bridge` CI 工件并缓存。开发时可用 `--bridge-artifact DIR` 显式复用已有 `ijl15.dll` 和 `manifest.json`，启动器仍核对原生构建输入；此时不需要 `gh`。工件未就绪或无法匹配时明确拒绝，不要求在工作台资源配置中手写 DLL 路径。
 
 ```bash
-docker build -t local/beidou-v17-client:intel docker/gui
+./beidou-pilot --workbench /external/gui-workbench --backend beidou --json build
+./beidou-pilot --workbench /external/gui-workbench --backend beidou --json open
+./beidou-pilot --workbench /external/gui-workbench --json doctor
+./beidou-pilot --workbench /external/gui-workbench --json snapshot
+./beidou-pilot --workbench /external/gui-workbench --json close
 ```
 
-在 `cli/config/resources.json` 配置 `gui_client` 为匹配 V17 的原客户端目录、`gui_dll` 为已构建的桥接 DLL；配置文件和原资源均不入库。默认镜像名为 `local/beidou-v17-client:intel`，可用 `CLIENT_IMAGE` 选择已准备的 GUI 镜像。把对应工件的 `manifest.json` 复制到 `cli/state/agent-bridge-build.json`，供 EXE、`2ijl15.dll` 与桥接 DLL 的版本核验；桥 DLL 继续从 `gui_dll` 指定的外部位置读取。
+[Compose](../docker/compose.yaml) 装配所选版本的 GUI 实例。原客户端只读挂到 `/client`，镜像内的桥位于 `/opt/beidou-pilot/native/ijl15.dll`。容器在 `/work/client` 生成可写运行副本，`Data/` 读取原只读目录，`2ijl15.dll` 图片库仍保留；外部原始文件不被修改。CLI、桌面输入和录制直接使用本容器的桥和显示环境，无 Docker socket。
 
-CLI 使用 [Compose](../docker/compose.yaml) 的 `client` 服务，并从资源配置和已核验 target 注入客户端路径、目标网络及本次 `RUN_ID`。原客户端只读挂到 `/client`，选定 DLL 只读挂到 `/overrides/ijl15.dll`；容器内 `/work/client` 是可写运行副本，其中 `Data/` 继续读取只读源，外部 `ijl15.dll` 不被覆盖。`2ijl15.dll` 仍需保留。
+GUI 容器在自身网络命名空间启用回环游戏端口 NAT，连接已核验目标，不修改服务端公告地址。Wine prefix、运行日志和桥数据位于容器 `/work/runtime/`，由本次工作台运行目录持久化，需允许 `1000:1000` 读写。硬件路径使用 `/dev/dri/renderD128`、`DISPLAY=:97` 的 `1920x1080x24` Xvfb 和窗口管理器、VirtualGL EGL；Wine 虚拟桌面提供原客户端所需显示模式。`WINEDEBUG` 可在启动时设置，日志写入本次运行目录。
 
-GUI 容器在自己的网络命名空间启用 `net.ipv4.conf.all.route_localnet=1`，让原客户端访问 `127.0.0.1` 的游戏端口时，经既有 DNAT/MASQUERADE 连接已核验目标；目标地址与端口过滤仍由容器入口配置。
-
-Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/runtime/runs`、`cli/runtime/bridge`。容器内 GUI 进程使用 `1000:1000`，这些目录须允许该身份读写。当前硬件路径需要 `/dev/dri/renderD128`，画面由容器内 `DISPLAY=:97` 的 `1920x1080x24` Xvfb 和窗口管理器提供，VirtualGL 使用 EGL 渲染。游戏通过 `wine explorer /desktop=beidou,1920x1080 BeiDou.exe` 在标准 Wine 虚拟桌面中启动，由虚拟桌面提供客户端初始化所需的 `1280×720@60Hz` 等兼容显示模式。
-
-需要 Wine 启动诊断时，可在启动命令前设置 `WINEDEBUG='+loaddll,+seh,+d3d8,+d3d'`；该值传入容器并在降权后保留，未指定时默认为 `-all`。日志写入所属运行目录的 `wine.log`，原始诊断保留在本地环境。
-
-准备已授权的隔离 target 和专用角色的[统一 profile](#启动观察与关闭)，然后使用统一入口：
-
-```bash
-./cli/beidou-pilot --backend beidou --json doctor
-./cli/beidou-pilot --backend beidou --json open \
-  --target /external/target.json --profile /private/account.private.json
-./cli/beidou-pilot --backend beidou --json snapshot
-./cli/beidou-pilot --backend beidou --json close
-```
-
-构建成功、环境检查通过和实际登录入图分别记录；涉及观察或动作时，还需核对对应的游戏结果。GUI 输入只允许一名明确操作者。
+构建成功、环境检查和实际入图分别记录；涉及动作时另核对实际游戏结果。GUI 输入仍只允许一名明确操作者。
 
 以下操作不由无头端提供，CLI会明确报不支持：
 

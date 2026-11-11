@@ -1,26 +1,30 @@
 # BeiDou-ijl15
 
-将主分支的两次Release视为v1和v2。
+本目录集成 [BeiDouMS/BeiDou-ijl15](https://github.com/BeiDouMS/BeiDou-ijl15) 的桥接 DLL 工程，并由 beidou-pilot 维护原版客户端适配与共享 Lua Runtime。上游来源与许可继续随源码和构建清单保留。
 
-由于v2版本在部分机器上会导致游戏进入到登录界面的时候崩溃，而v1没有这个问题，因此本分支继承主分支的v1版本，并不再和主分支同步，单独开发。
+## 本项目构建与使用
 
-本分支主要服务于BeiDou的客户端。
+客户端统一从仓库根的 Docker 入口构建并启动：
 
-## 使用方法
+```bash
+./beidou-pilot --workbench /external/gui-workbench --backend beidou --json build
+./beidou-pilot --workbench /external/gui-workbench --backend beidou --json open
+./beidou-pilot --workbench /external/gui-workbench --json close
+```
 
-已测试的开发工具 VS 2019，SDK 10，工具集 VS2019（v142）
+GUI 默认通过 GitHub CLI `gh` 获取所选提交成功的 `agent-bridge` CI 工件，核对原生输入后将 DLL 与清单装入 GUI 镜像。开发时可用 `--bridge-artifact DIR` 显式复用匹配的现成工件，此时无需 `gh`。工作台资源配置只提供原客户端、同源 NX 和可选 XML 路径，具体字段和授权要求见 [CLI](../docs/CLI.md#原版-gui)。
 
-使用vs打开的时候注意，要使用 Release x86 的模式生成解决方案
+原始客户端目录只读挂载；容器在自己的运行副本中装配镜像内的桥，并保留原图片库 `2ijl15.dll`。原资源文件保持原样，账号、Wine prefix、桥目录和日志外置到所属工作台。
 
-生成后可在 out/Release 目录下找到 ijl15.dll
+[Windows 构建工作流](../.github/workflows/agent-bridge.yml) 使用 MSVC、Windows SDK 和固定 Detours 源码生成桥工件。解决方案与 [build-agent-bridge.ps1](tools/build-agent-bridge.ps1) 是这条交付链的内部构建步骤；编译器、编码约束、输出与来源清单见[桥构建文档](docs/agent-bridge-build.md)。
 
-先把客户端原本的ijl15.dll重命名成2ijl15.dll，然后把生成的ijl15.dll拷贝到客户端目录下，然后把项目根目录下的config.ini同样复制到客户端目录下，具体配置都在config.ini中
+## 上游分支背景
 
-## 推荐服务端
+上游将主分支的两次 Release 称为 v1 和 v2。其原说明记录：v2 在部分机器进入登录界面时会崩溃，v1 没有这个问题，因此此分支继承 v1 并单独开发，主要服务于北斗客户端。
 
-北斗 https://github.com/SleepNap/BeiDou
+上游原说明列出的服务器项目为 [SleepNap/BeiDou](https://github.com/SleepNap/BeiDou)。本仓库不提供服务端，实际操作目标仍按工作台授权和 target 核验。
 
-## 更新记录
+## 上游更新记录
 
 相比主分支 v1
 

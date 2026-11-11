@@ -9,10 +9,12 @@
 从项目根运行受信的 UTF-8 源码或文本脚本文件：
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json script run --code 'game.log("你好，Lua")' --seconds 20
-./cli/beidou-pilot --backend headless --instance worker-a --json script run /path/control.lua --seconds 20
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script run --code 'game.log("你好，Lua")' --seconds 20
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script run /scripts/control.lua --seconds 20
 # 需要持续执行时显式使用 --continuous
 ```
+
+文件路径按容器内部解析；工作台的 `scripts/` 可只读挂到 `/scripts`，内置 Lua 随镜像版本固定。
 
 - 脚本源必须是 UTF-8 纯文本，原生装载上限为1 MiB，不接受预编译字节码。自定义 `script run` 默认30秒，`--seconds` 可设为 `0.001..4294967.295` 秒；`--continuous` 表示无总期限。项目复合策略包装的单独预算范围不应当作所有用户脚本的运行时上限。
 - 文件与 `--code` 必须二选一。直接源码须按调用方 shell 的引号规则传为一个参数，CLI 保留传入的引号、中文和换行；文件每次读取当前内容。两者使用相同 `game` API 与执行链，可在现有实例中提交，无需重启或重新构建。直接源码结果的 `script_file` 为 `null`。

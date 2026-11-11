@@ -3,7 +3,7 @@
 - 本项目维护客户端工具，并在 `harness/` 提供独立的游戏 AI 消费者，容器定义放 `docker/harness/`。模型会话、角色设定、目标与游戏经历归 harness；CLI、原生适配器与 Lua Runtime 不引入模型或角色记忆依赖。服务端和数据库不纳入本仓库。
 - 两端共享 `shared/lua-runtime/` 和单份Lua源码；各适配器调用各自原生逻辑，Python不做逐帧控制。
 - 北斗原客户端是外部只读资源提供者；不提交7z、EXE/DLL、IMG/WZ、NX、账号、运行状态或安装器，不修改外部资源原件。资源转换必须显式给出 `--client-root`，输出位于原资源目录之外。
-- `cli/config/resources.json` 是本机外部路径配置，不提交。未知数据保留未知，缺失能力明确不支持，不用服务端或另一后端补齐。
+- 外部资源路径维护在工作台 `resources.json`（或宿主 `--resources` 指定的文件），不提交；容器内资源配置由启动入口生成。未知数据保留未知，缺失能力明确不支持，不用服务端或另一后端补齐。
 - 实例按名字选择，原生 `instance_id/run_id` 继续核对身份；取消和关闭只作用于所属实例。同一游戏目标同一角色不并发接管，GUI仅一名明确操作者。
 - 不操作未授权的游戏目标或账号。实际玩法使用专用角色与隔离目标；不修改正式数据库。构建/离线合同与实际游戏结果分别报告。
 - 首选 `beidou-pilot` 统一入口；保留真实消费者所需代码，删除已被API/Lua替代的无消费者实现，避免重建平行控制链。
@@ -12,7 +12,9 @@
 
 - 角色控制策略写在 `shared/scripts/` 或用户Lua中；Python仅做参数、装载/取消和结果投影。不增加宏DSL、JSON动作预设、Python逐帧反馈/多轨控制或已退役的直接按键/技能桥入口。桌面模块只承担原版GUI必需原语。
 
-- 客户端运行实例统一为Docker容器，后台常驻到显式关闭；Docker相关定义统一放在`docker/`：`docker/headless/Dockerfile`是无头镜像唯一构建定义，`docker/gui/Dockerfile`构建原版GUI环境，`docker/compose.yaml`负责GUI容器装配。根`.dockerignore`按无头构建上下文保留。宿主不直接运行游戏客户端，不维护宿主PID查杀或进程期限兼容。Docker负责进程/资源生命周期，桥仍负责单次Lua取消、放键和游戏效果确认。游戏资源、私密profile与桥目录外置挂载，不进入镜像或构建上下文。
+- 客户端运行代码统一在两个 Docker 镜像中：headless 与 GUI 安装同一份 CLI、辅助引擎和 Lua，分别提供对应原生运行环境。新实例默认从 main 的已提交版本构建或复用镜像，已有实例通过 docker exec 使用启动时的代码，不挂载宿主开发源码。根 `beidou-pilot` 只做工作台选择、Git 构建输入和 Docker 生命周期；日常客户端运行不在宿主加载 Python 客户端、策略或游戏进程；开发离线测试仍按下文入口执行。
+- Docker 定义统一放在 `docker/`：`docker/headless/Dockerfile` 是无头镜像唯一构建定义，`docker/gui/Dockerfile` 与 `docker/compose.yaml` 交付并装配 GUI；两端使用根构建上下文。GUI 桥默认取得所选提交成功 CI 的 Windows 工件并随镜像固定；显式复用工件也须匹配原生输入。游戏资源、私密 profile、角色计划、桥目录和运行数据外置，不进入镜像或构建上下文；用户 Lua 是明确的运行输入。
+- Docker 负责进程和资源生命周期，宿主 close 正常发信号并核对所属容器退出；容器内 CLI 直接使用本容器进程、桥和显示环境，不挂 Docker socket。桥仍负责单次 Lua 取消、放键与游戏效果确认；不维护宿主游戏 PID 查杀或进程期限兼容。
 
 ## 开发工作目录
 

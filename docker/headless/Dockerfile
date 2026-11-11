@@ -24,17 +24,29 @@ RUN make -C headless -j"${BUILD_JOBS}" \
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libstdc++6 liblz4-1 \
+    && apt-get install -y --no-install-recommends libstdc++6 liblz4-1 python3 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data /bridge
 COPY --from=build /source/headless/build/beidou-headless /bin/beidou-headless
 COPY --from=build /licenses/ /usr/share/licenses/beidou-pilot/
+COPY cli/beidou-pilot cli/runtime-ui.py /opt/beidou-pilot/cli/
+COPY cli/beidou_pilot/ /opt/beidou-pilot/cli/beidou_pilot/
+COPY shared/scripts/ /opt/beidou-pilot/shared/scripts/
+COPY docker/runtime/entrypoint.py /opt/beidou-pilot/entrypoint.py
+COPY third_party/lua/lua.h /usr/share/licenses/beidou-pilot/lua.LICENSE.h
+ARG SOURCE_REVISION=unversioned
+RUN printf '%s\n' "$SOURCE_REVISION" > /opt/beidou-pilot/REVISION \
+    && ln -s /opt/beidou-pilot/cli/beidou-pilot /usr/local/bin/beidou-pilot \
+    && chmod -R a+rX /opt/beidou-pilot /usr/share/licenses/beidou-pilot
 LABEL org.opencontainers.image.title="beidou-pilot" \
       org.opencontainers.image.description="Persistent native headless game client instance" \
-      org.opencontainers.image.licenses="AGPL-3.0-only"
-ENV LANG=C.UTF-8
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.revision=$SOURCE_REVISION \
+      beidou.backend=headless
+ENV LANG=C.UTF-8 CLIENT_ROOT=/work MAPLE_BACKEND=headless \
+    MAPLE_RESOURCES_CONFIG=/work/config/resources.json \
+    PYTHONPATH=/opt/beidou-pilot/cli PYTHONDONTWRITEBYTECODE=1
 USER 65532:65532
-WORKDIR /data
+WORKDIR /work
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/bin/beidou-headless"]
-CMD ["--config", "/run/headless-config.json"]
+ENTRYPOINT ["python3", "/opt/beidou-pilot/entrypoint.py"]

@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from beidou_pilot.cli import main
 from beidou_pilot.errors import ClientError
@@ -85,7 +86,7 @@ int main(int argc, char** argv) {
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.files = BridgeFiles(Path(temporary.name))
-        (self.files.root / "clientctl.py").touch()
+        self.enterContext(patch.dict(os.environ, self.files.environment))
         self.files.state.update(capabilities={"events": True}, event_stream_status="ok")
         self.files.publish()
         self.source = subprocess.Popen(
@@ -214,7 +215,6 @@ int main(int argc, char** argv) {
         event = next(stream)
         self.assertEqual((event["event"], event["cursor"]["seq"]), ("client_event", 1))
         self.files.state["run_id"] = "successor-run"
-        (self.files.root / "state/maple-session.json").write_text('{"run_id":"successor-run"}')
         self.files.publish()
         with self.assertRaises(ClientError) as failure:
             next(stream)
@@ -242,7 +242,6 @@ int main(int argc, char** argv) {
                 self.reader.read(cursor)
             self.assertEqual(failure.exception.code, "events_identity_changed")
         self.files.state["run_id"] = "next-run"
-        (self.files.root / "state/maple-session.json").write_text('{"run_id":"next-run"}')
         self.files.publish()
         with self.assertRaises(ClientError) as failure:
             self.reader.read()

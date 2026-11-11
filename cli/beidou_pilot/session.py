@@ -1,9 +1,7 @@
 """幂等打开客户端并用普通 GUI 完成已有角色登录。"""
 
-from datetime import datetime, timezone
 import json
 from pathlib import Path
-import subprocess
 import time
 from typing import cast
 import uuid
@@ -13,189 +11,26 @@ from .errors import ClientError
 from .profile import LoginProfile
 
 
-def adopt_session(backend: Backend, stage: JsonObject | None = None) -> JsonObject:
-    """按容器实际网络采用已登记会话；不启动、停止或更改 Docker 资源。"""
-    clients = json.loads(backend.text("clientctl", "status"))
-    ids = [entry["id"] for entry in clients]
-    containers = []
-    if ids:
-        try:
-            inspected = subprocess.run(["docker", "inspect", *ids], text=True, capture_output=True, check=True)
-        except OSError as error:
-            raise ClientError("session_inspection_unavailable", "无法核验客户端网络归属。", {"reason": str(error)}) from error
-        except subprocess.CalledProcessError as error:
-            raise ClientError("session_inspection_failed", "客户端网络归属核验失败。", {"stderr": error.stderr.strip()}) from error
-        containers = json.loads(inspected.stdout)
-    directory = backend.root / "state"
-    saved_path = directory / "maple-session.json"
-    registration_problems: list[str] = []
-    try:
-        saved = json.loads(saved_path.read_text()) if saved_path.is_file() else {}
-    except (OSError, json.JSONDecodeError) as error:
-        saved = {}
-        registration_problems.append(str(saved_path) + ": " + str(error))
-    current = stage.get("client") if stage is not None else None
-    current_id = current.get("container_id") if isinstance(current, dict) else None
-    if current_id is None:
-        running = [entry for entry in containers if entry["State"]["Running"]]
-        if running:
-            containers = running
-        elif isinstance(saved, dict) and saved.get("client_id"):
-            recorded = [entry for entry in containers if entry["Id"] == saved["client_id"]]
-            if recorded:
-                containers = recorded
-    else:
-        containers = [entry for entry in containers if entry["Id"].startswith(cast(str, current_id))]
-    targets: list[JsonObject] = []
-    for path in directory.rglob("target.json"):
-        session_path = path.parent / "session.json"
-        if not session_path.is_file():
-            continue
-        try:
-            target = json.loads(path.read_text())
-            registration = json.loads(session_path.read_text())
-        except (OSError, json.JSONDecodeError) as error:
-            registration_problems.append(str(path) + ": " + str(error))
-            continue
-        if not isinstance(target, dict) or not isinstance(registration, dict):
-            registration_problems.append(str(path) + ": 登记不是 JSON 对象。")
-            continue
-        if (set(target) != {"project", "service", "network", "expected_image"}
-                or any(not isinstance(value, str) or not value for value in target.values())
-                or any(not isinstance(registration.get(key), str) or not registration[key]
-                       for key in ("client_root", "network", "session_tag", "container_id", "image", "project", "service"))):
-            registration_problems.append(str(path) + ": 会话登记字段不完整。")
-            continue
-        if registration.get("client_root") != str(backend.root):
-            continue
-        network = target.get("network")
-        if (not isinstance(network, str) or registration.get("network") != network
-                or any(target.get(key) != registration.get(key)
-                       for key in ("project", "service"))
-                or target.get("expected_image") != registration.get("image")):
-            registration_problems.append(str(path) + ": target 与 session 登记不一致。")
-            continue
-        for container in containers:
-            labels = container["Config"]["Labels"]
-            if (labels.get("beidou.client.root") != str(backend.root)
-                    or labels.get("beidou.task") != "client-v17-maintained"
-                    or network not in container["NetworkSettings"]["Networks"]):
-                continue
-            environment = dict(value.split("=", 1) for value in container["Config"]["Env"])
-            targets.append({"target_file": str(path.resolve()), "client_id": container["Id"],
-                            "run_id": environment["RUN_ID"], "network": network,
-                            "continuous": environment.get("CLIENT_SECONDS") == "0"})
-    if len(targets) == 1:
-        selected = targets[0]
-        directory.mkdir(mode=0o700, exist_ok=True)
-        record = dict(saved) if isinstance(saved, dict) and saved.get("target_file") == selected["target_file"] else {}
-        record.update(selected)
-        record["adopted_at"] = datetime.now(timezone.utc).isoformat()
-        saved_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
-        return {**selected, "cleanup_pending": False, "ownership": "container-network-and-registration"}
-    try:
-        networks = subprocess.run(["docker", "network", "ls", "--filter",
-                                  "label=beidou.client.root=" + str(backend.root),
-                                  "--format", "{{.Name}}"], text=True, capture_output=True, check=True)
-    except OSError as error:
-        raise ClientError("session_inspection_unavailable", "无法核验客户端登记网络。", {"reason": str(error)}) from error
-    except subprocess.CalledProcessError as error:
-        raise ClientError("session_inspection_failed", "客户端登记网络核验失败。", {"stderr": error.stderr.strip()}) from error
-    owned_networks = networks.stdout.splitlines()
-    return {"target_file": None, "cleanup_pending": bool(owned_networks),
-            "reason": "registration_not_unique" if len(targets) > 1 else "no_proven_registered_target",
-            "candidates": targets, "registered_networks": owned_networks,
-            "registration_problems": registration_problems}
-
-
-def close_game(backend: Backend) -> JsonObject:
-    """正常停止本目录客户端，再回收唯一已证明归属的会话网络。"""
-    adopted = adopt_session(backend)
-    backend.text("clientctl", "stop")
-    clients = json.loads(backend.text("clientctl", "status"))
-    if any(entry["running"] or entry["pid"] != 0 for entry in clients):
-        raise ClientError("close_not_confirmed", "客户端尚未完全退出。", {"clients": clients})
-    target = adopted["target_file"]
-    if target is None:
-        return {"status": "closed", "clients": clients, "cleanup_pending": adopted["cleanup_pending"],
-                "network_cleanup": adopted}
-    try:
-        released = backend.text("session", "finish", cast(str, target))
-    except ClientError as error:
-        return {"status": "closed", "clients": clients, "cleanup_pending": True,
-                "target_file": target, "network_cleanup": {"code": error.code, "message": error.message,
-                                                           "details": error.details}}
-    saved_path = backend.root / "state/maple-session.json"
-    record = json.loads(saved_path.read_text())
-    record["closed_at"] = datetime.now(timezone.utc).isoformat()
-    record["network_cleanup"] = "released"
-    saved_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
-    return {"status": "closed", "clients": clients, "cleanup_pending": False,
-            "target_file": target, "network_cleanup": released.strip()}
-
-
 def open_game(backend: Backend, *, profile: LoginProfile,
-              target: Path | None = None, project: str = "beidou-ms",
-              service: str = "beidou-server-all", workspace_server: bool = False,
+              target: Path | None = None,
               timeout: float = 90) -> JsonObject:
-    """复用现有会话；只有 STOPPED 才准备隔离目标并持续启动。"""
+    """使用本镜像的正常 GUI 流程登录并核对本容器角色。"""
     channel = profile.channel + 1
     if not 1 <= channel <= 20 or not 5 <= timeout <= 180:
         raise ClientError("invalid_open_options", "频道须为 1 至 20，等待时间须为 5 至 180 秒。")
     if profile.world != 0:
         raise ClientError("unsupported_world", "原版 GUI 自动登录仅支持世界 0。", {"requested": profile.world})
+    runtime = backend.runtime
+    runtime.verify_request(profile, target)
+    if not runtime.running:
+        raise ClientError("client_not_running", "本容器客户端已退出，请使用工作台入口重新启动。")
     stage = backend.read("stage")
-    resumed = stage["running"] is True
-    started = False
-    target_path = target.resolve() if target is not None else None
+    resumed = stage["stage"] == "IN_GAME"
     completed: list[str] = []
-    adoption = adopt_session(backend, stage) if resumed else None
-    if adoption is not None and adoption["target_file"] is not None:
-        adopted_target = Path(cast(str, adoption["target_file"]))
-        try:
-            current_target = json.loads(adopted_target.read_text())
-            requested = json.loads(target_path.read_text()) if target_path is not None else current_target
-        except (OSError, json.JSONDecodeError) as error:
-            raise ClientError("target_unreadable", "无法核对目标文件，保留现有客户端。", {"path": str(target_path or adopted_target)}) from error
-        if requested != current_target or (current_target["project"] == "beidou-ms") != workspace_server:
-            raise ClientError("target_mismatch", "当前客户端目标与本次请求或工作区授权不同，保留现有客户端。",
-                              {"requested": str(target_path) if target_path else None, "actual": str(adopted_target)})
-        target_path = adopted_target
-    elif resumed and (target_path is not None or workspace_server):
-        raise ClientError("current_target_unverified", "无法证明现有客户端与请求目标一致，保留现场。")
-    if stage["stage"] == "STOPPED":
-        check = json.loads(backend.text("clientctl", "check"))
-        if check["image_available"] is not True:
-            raise ClientError("client_image_unavailable", "客户端镜像不可用；未准备网络或启动客户端。")
-        if target_path is None:
-            arguments = ["prepare", "--project", project, "--service", service]
-            if workspace_server:
-                arguments.append("--workspace-server")
-            # prepare 在创建网络前输出恢复路径；引擎失败时 Backend 保留 stdout。
-            output = backend.text("session", *arguments)
-            target_path = Path(output.splitlines()[0]).resolve()
-        arguments = ["start", "--target", str(target_path)]
-        if workspace_server:
-            arguments.append("--workspace-server")
-        backend.text("clientctl", *arguments)
-        started = True
-        completed.append("start")
-        stage = backend.read("stage")
-        directory = backend.root / "state"
-        directory.mkdir(mode=0o700, exist_ok=True)
-        directory.joinpath("maple-session.json").write_text(json.dumps({
-            "target_file": str(target_path), "started_at": datetime.now(timezone.utc).isoformat(),
-            "channel": channel, "character_id": profile.character_id, "continuous": True,
-            "run_id": cast(JsonObject, stage["client"])["run_id"],
-        }, ensure_ascii=False) + "\n")
     deadline = time.monotonic() + timeout
     while True:
         current = stage["stage"]
         if current == "IN_GAME":
-            if adoption is None:
-                adoption = adopt_session(backend, stage)
-                if adoption["target_file"] is not None:
-                    target_path = Path(cast(str, adoption["target_file"]))
             if (backend.root / "state/agent-bridge-build.json").is_file():
                 from .bridge import BridgeClient
 
@@ -225,11 +60,11 @@ def open_game(backend: Backend, *, profile: LoginProfile,
             if stage["world_id"] != profile.world:
                 raise ClientError("world_mismatch", "当前世界与请求世界不同，保留现有客户端。",
                                   {"expected": profile.world, "actual": stage["world_id"], "stage": stage})
-            return {"ready": True, "started": started, "resumed": resumed,
+            return {"ready": True, "started": False, "resumed": resumed,
                     "skipped_login": "login" not in completed, "actions": completed,
                     "character": current_character, "channel": channel,
-                    "target_file": str(target_path) if target_path else None,
-                    "session": adoption,
+                    "target_file": "/config/target.json",
+                    "source_revision": runtime.source_revision, "image": runtime.image,
                     "stage": stage, "state": observed}
         if current in {"STOPPED", "UNKNOWN"} or time.monotonic() >= deadline:
             diagnostic = backend.root / "runtime/runs" / ("open-diagnostic-" + uuid.uuid4().hex + ".json")
@@ -237,12 +72,12 @@ def open_game(backend: Backend, *, profile: LoginProfile,
             with diagnostic.open("x") as stream:
                 json.dump({"stage": stage, "completed_actions": completed,
                            "requested_channel": channel, "requested_character_id": profile.character_id,
-                           "target_file": str(target_path) if target_path else None},
+                           "target_file": "/config/target.json"},
                           stream, ensure_ascii=False, indent=2)
             raise ClientError("open_stage_unknown" if current in {"STOPPED", "UNKNOWN"} else "open_timeout",
                               "客户端未达到可确认的入图状态，已保存诊断并保留现场。",
                               {"stage": stage, "completed_actions": completed,
-                               "diagnostic": str(diagnostic), "target_file": str(target_path) if target_path else None})
+                               "diagnostic": str(diagnostic), "target_file": "/config/target.json"})
         if stage.get("renderer") == "software":
             raise ClientError("software_renderer", "当前客户端使用软件渲染，停止自动登录并保留诊断现场。", stage)
         login = stage.get("login")

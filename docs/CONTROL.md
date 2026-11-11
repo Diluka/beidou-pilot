@@ -5,10 +5,12 @@
 用户策略使用 `script run FILE --seconds N` 或 `script run --code CODE --seconds N`，文件和源码二选一，需要持续运行时明确 `--continuous`。两种输入复用同一装载、身份核对、错误、取消与放键链，可在现有实例中执行，无需重启客户端。基础动作直接调用统一 `game` API；复合能力装载 `shared/scripts/` 的 Lua 文件，调用方传入业务参数，Python只处理参数、生命周期与结果。
 
 ```bash
-./cli/beidou-pilot --backend headless --instance worker-a --json script run --code 'game.log("你好，Lua")' --seconds 20
-./cli/beidou-pilot --backend headless --instance worker-a --json script run /path/control.lua --seconds 20
-./cli/beidou-pilot --backend headless --instance worker-a --json script status
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script run --code 'game.log("你好，Lua")' --seconds 20
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script run /scripts/control.lua --seconds 20
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script status
 ```
+
+文件路径按容器内部解析；工作台的 `scripts/` 可只读挂到 `/scripts`，内置 Lua 随镜像版本固定。
 
 原始按键与直接技能也是 Lua 的原版扩展。持续动作、分支和循环直接写 Lua；没有宏表达式、JSON 动作预设或 Python 反馈控制层。
 
@@ -62,7 +64,7 @@ GUI按键由适配器保留单份最新期望集合，Lua调用提交后，实�
 
 同步运行中的脚本通过原 CLI 的 Ctrl+C/SIGTERM 或调用方取消标记停止全部任务。异步 `script start` 成功返回后，模型或监听器停止不再拥有这项取消语义；`script cancel --session` 在当前原生身份内核对脚本 ID，并等待停止与实际放键。期限到达、角色身份变化、离开游戏及任一脚本错误仍停止整个会话。只读状态、领域查询和事件监听可并行；普通 GUI 操作不能接管仍活动的 Lua。
 
-空闲时 `stop`/`bridge stop` 清理遗留控制，不抢占另一个活动动作控制者。无头容器 `open/close` 使用独立生命周期锁，`close` 可以结束活动 Lua 及整个实例；同实例正在启停时返回 `lifecycle_busy`。
+空闲时 `stop`/`bridge stop` 清理遗留控制，不抢占另一个活动动作控制者。宿主工作台 `open/close` 使用独立生命周期锁，宿主 `close` 可通过 Docker 结束活动 Lua 及整个所属实例；同实例正在启停时返回 `lifecycle_busy`。容器内 `close` 会提示使用宿主生命周期入口。
 
 Lua 期限控制整个脚本会话，容器没有进程自退期限。脚本结束、超时或取消不关闭容器；`close`/Docker stop 才关闭实例。真实断线和错误会退出并保留原因，调用方决定是否重开，不自动重放旧动作。
 

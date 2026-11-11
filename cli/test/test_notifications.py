@@ -4,6 +4,7 @@ from contextlib import redirect_stdout
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -14,6 +15,7 @@ from beidou_pilot.backend import Backend
 from beidou_pilot.cli import main
 from beidou_pilot.engines.desktop import DesktopActions
 from beidou_pilot.errors import ClientError, JsonObject
+from .test_bridge import BridgeFiles
 
 
 class NotificationContract(unittest.TestCase):
@@ -21,9 +23,10 @@ class NotificationContract(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        (self.root / "clientctl.py").touch()
+        self.files = BridgeFiles(self.root)
+        self.enterContext(patch.dict(os.environ, self.files.environment))
         self.present = True
-        self.run_id = "run-1"
+        self.run_id = self.files.environment["RUN_ID"]
         self.button = {
             "control_id": 2001,
             "action": "dismiss",
