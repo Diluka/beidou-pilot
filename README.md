@@ -76,6 +76,7 @@ private/workbenches/workbench /external/workbench close
 
 ## 文档与开发
 
+- [彩虹岛新手任务攻略](docs/NEWBIE_GUIDE.md)：原版任务、头顶灯泡的青苹果乐园支线，以及继续教学或离岛的条件。
 - [业务地图](docs/business-map/README.md)：按领域查看用户结果、责任边界、主要流程与源码入口。
 - [游戏 AI 操作指引](docs/PLAY_GUIDE.md)：确认授权目标与角色占用，完成上手观察、动作核对和停止交接。
 - [客户端操作技能](.agents/skills/beidou-pilot-client/SKILL.md)：供新会话接续工作台、登录已有角色，并区分账号注册与首次建角；可显式调用 `$beidou-pilot-client`。
