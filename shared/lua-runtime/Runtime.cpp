@@ -72,9 +72,15 @@ const char* ActionName(ActionKind kind) {
         return "revive";
     case ActionKind::Activate:
         return "activate";
+    case ActionKind::AllocateAp:
+        return "allocate_ap";
+    case ActionKind::AllocateSp:
+        return "allocate_sp";
     }
     return "unsupported";
 }
+
+void PushValue(lua_State* lua, const Value& value);
 
 void PushResult(lua_State* lua, const ActionResult& result) {
     lua_createtable(lua, 0, 5);
@@ -83,6 +89,10 @@ void PushResult(lua_State* lua, const ActionResult& result) {
     ObservedFact(lua, "settled", result.settled);
     String(lua, "effect", result.effect);
     if (!result.reason.empty()) String(lua, "reason", result.reason);
+    if (result.allocation.Type() != Value::Kind::Null) {
+        PushValue(lua, result.allocation);
+        lua_setfield(lua, -2, "allocation");
+    }
     if (result.skillRequested) {
         Boolean(lua, "skill_dispatched", result.skill.dispatched);
         if (result.skill.nativeResultKnown) Integer(lua, "skill_native_result", result.skill.nativeResult);
@@ -488,7 +498,8 @@ struct Runtime::Impl {
         String(lua, "backend", adapter.Backend());
         for (ActionKind kind : {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack,
                                 ActionKind::Pickup, ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip,
-                                ActionKind::Unequip, ActionKind::Revive, ActionKind::Activate})
+                                ActionKind::Unequip, ActionKind::Revive, ActionKind::Activate,
+                                ActionKind::AllocateAp, ActionKind::AllocateSp})
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
@@ -635,6 +646,41 @@ struct Runtime::Impl {
     static int Equip(lua_State* lua) { return ChangeEquipment(lua, ActionKind::Equip); }
 
     static int Unequip(lua_State* lua) { return ChangeEquipment(lua, ActionKind::Unequip); }
+
+    static int Allocate(lua_State* lua, bool skill) {
+        if (lua_gettop(lua) < 2 || lua_gettop(lua) > 3)
+            return luaL_error(lua, "allocation requires a target, count and optional per-point timeout");
+        const auto count = luaL_checkinteger(lua, 2);
+        if (count < 1 || count > 100) return luaL_error(lua, "allocation count must be 1..100");
+        const char* stat = "";
+        lua_Integer skillId = 0;
+        if (skill) {
+            skillId = luaL_checkinteger(lua, 1);
+            if (skillId < 1 || skillId > 2147483647) return luaL_error(lua, "skill id must be a positive int32");
+        } else {
+            stat = luaL_checkstring(lua, 1);
+            if (std::strcmp(stat, "strength") != 0 && std::strcmp(stat, "dexterity") != 0
+                && std::strcmp(stat, "intelligence") != 0 && std::strcmp(stat, "luck") != 0)
+                return luaL_error(lua, "allocation requires a basic attribute");
+        }
+        const auto timeout = Duration(lua, 3, 1.2, false);
+        RequireAction(lua, skill ? ActionKind::AllocateSp : ActionKind::AllocateAp);
+        bool accepted;
+        {
+            Action action;
+            action.kind = skill ? ActionKind::AllocateSp : ActionKind::AllocateAp;
+            action.allocation.skill = skill;
+            action.allocation.stat = stat;
+            action.allocation.skillId = static_cast<std::uint32_t>(skillId);
+            action.allocation.count = static_cast<unsigned>(count);
+            action.allocation.timeoutMs = timeout;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
+    }
+
+    static int AllocateAp(lua_State* lua) { return Allocate(lua, false); }
+    static int AllocateSp(lua_State* lua) { return Allocate(lua, true); }
 
     static int Sleep(lua_State* lua) {
         RequireRunning(lua);
@@ -948,6 +994,8 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source, std:
                                       {"use_item", Impl::UseItem},
                                       {"equip", Impl::Equip},
                                       {"unequip", Impl::Unequip},
+                                      {"allocate_ap", Impl::AllocateAp},
+                                      {"allocate_sp", Impl::AllocateSp},
                                       {"revive", Impl::Revive},
                                       {"activate", Impl::Activate},
                                       {"stop", Impl::Stop},

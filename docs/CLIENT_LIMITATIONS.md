@@ -24,7 +24,7 @@
 | 知道战斗有何原生可核实进展 | 无头提供已收到的服务端目标HP百分比；GUI未知，动作归因仍未知 | [#47](https://github.com/Diluka/beidou-pilot/issues/47) |
 | 无头正常对话与接交任务 | 原生通用页面/控件激活；本地任务页来源明确，接交结果仍以当前原生任务和收益验证 | [#48](https://github.com/Diluka/beidou-pilot/issues/48) |
 | 无头普通商店买卖补给 | 不能在同一无头实例内完成商店流程 | [#49](https://github.com/Diluka/beidou-pilot/issues/49) |
-| 无头按明确计划分配AP/SP | 可读取点数，分配操作仍需GUI | [#50](https://github.com/Diluka/beidou-pilot/issues/50) |
+| 无头按明确计划分配AP/SP | Lua/CLI 原生逐点双确认；SP 仅冒险家普通职业点数池，真实效果按对应提交验收 | [#50](https://github.com/Diluka/beidou-pilot/issues/50) |
 | 无头正常更换装备 | `game.equip/unequip` 与 CLI 明确槽位操作，按正常库存更新确认；不自动重试未知结果 | [#51](https://github.com/Diluka/beidou-pilot/issues/51) |
 | 无头实时观察任务变化 | 完整角色包与正常任务增量共同维护；原始进度与关联语义不猜测 | [#52](https://github.com/Diluka/beidou-pilot/issues/52) |
 | 无头施放已学职业技能 | 首批1001004/1001005走原生技能链；其他类型明确不支持 | [#53](https://github.com/Diluka/beidou-pilot/issues/53) |

@@ -105,7 +105,8 @@ public:
 
     bool Supports(MapleControl::ActionKind kind) const override {
         return kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip
-               && kind != MapleControl::ActionKind::Revive && kind != MapleControl::ActionKind::Activate;
+               && kind != MapleControl::ActionKind::Revive && kind != MapleControl::ActionKind::Activate
+               && kind != MapleControl::ActionKind::AllocateAp && kind != MapleControl::ActionKind::AllocateSp;
     }
 
     bool Begin(const MapleControl::Action& action, std::string& error) override {
@@ -582,7 +583,7 @@ bool Publish(const MapleControl::State& state) {
         out << ']';
     } else
         out << "null";
-    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"attack_move\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"revive\":false,\"activate\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"monster_hp_percent\":false,\"events\":true},\"event_stream_status\":"
+    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"attack_move\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"allocate_ap\":false,\"allocate_sp\":false,\"revive\":false,\"activate\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"monster_hp_percent\":false,\"events\":true},\"event_stream_status\":"
         << Quote(eventsPublished ? "ok" : "publish_failed") << ",\"inventory\":";
     if (state.inventoryKnown) {
         out << '[';
@@ -1023,6 +1024,10 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         return false;
     case MapleControl::ActionKind::Activate:
         error = "unsupported: activate";
+        return false;
+    case MapleControl::ActionKind::AllocateAp:
+    case MapleControl::ActionKind::AllocateSp:
+        error = "unsupported: allocation";
         return false;
     case MapleControl::ActionKind::Revive:
         error = "unsupported: revive";

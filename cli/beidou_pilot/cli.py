@@ -161,10 +161,10 @@ def parser() -> Parser:
     q.add_argument("--until-hp", type=int)
     q.add_argument("--until-mp", type=int)
     q.add_argument("--seconds", type=float)
-    q = command("stats", "正常UI分配AP")
+    q = command("stats", "向明确基础属性分配AP，逐点核对目标与剩余点数")
     q.add_argument("stat", choices=["str", "dex", "int", "luk"])
     q.add_argument("count", type=int)
-    q = command("skills", "正常UI给指定技能加点")
+    q = command("skills", "向明确技能分配SP，逐点核对技能等级与剩余点数")
     q.add_argument("skill", type=int)
     q.add_argument("count", type=int, nargs="?", default=1)
     command("hotkeys", "读取客户端当前键位及快捷栏映射")
@@ -330,6 +330,8 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "use",
         "equip",
         "unequip",
+        "stats",
+        "skills",
     }:
         raise ClientError("unsupported_capability", "该客户端尚未提供这个窗口、原始按键或玩法接口。", {"command": cmd})
     if (
@@ -747,6 +749,10 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         if args.count < 1:
             raise ClientError("usage", "点数必须为正整数。")
         attributes = {"str": "strength", "dex": "dexterity", "int": "intelligence", "luk": "luck"}
+        if backend.name == "headless":
+            from .control_scripts import allocate
+
+            return allocate(backend, attributes[args.stat] if cmd == "stats" else args.skill, args.count)
         return (
             stats.allocate_ap(backend, attributes[args.stat], args.count)
             if cmd == "stats"

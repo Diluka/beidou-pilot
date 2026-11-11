@@ -284,7 +284,7 @@ GUI 容器在自身网络命名空间启用回环游戏端口 NAT，连接已核
 | `talk TARGET`、`dialog` | 原版已有NPC桌面消费者；无头使用通用控件交互 |
 | `ui read/open/close/focus` | 已识别窗口和输入焦点；`ui close all`同时处理普通商店 |
 | `equip ITEM` | 正常 GUI 穿戴并核对结果，不接受无头槽位参数 |
-| `stats`、`skills` | 正常GUI AP/SP操作，并核对结果 |
+| `stats`、`skills` | 明确属性/技能及数量；无头走 Lua 原生逐点双确认，GUI 保留正常窗口流程 |
 | `hotkeys`、`bind`、`press` | 读取、拖放绑定和按已有物品/技能快捷键 |
 | `shop read/buy/sell/close` | 普通商店读取与指定买卖；数量框和关店按实际UI收尾 |
 | `screenshot [NAME]`、`record NAME` | 当前窗口截图或有界逐帧记录，不发游戏输入 |

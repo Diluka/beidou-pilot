@@ -164,6 +164,30 @@ class UnifiedControlContract(unittest.TestCase):
                             self.assertEqual(native_result, actual["data"]["action_result"])
                         desktop.assert_not_called()
 
+    def test_headless_allocation_uses_one_lua_request_and_preserves_partial_results(self) -> None:
+        for command, target in ((["stats", "str", "2"], "strength"), (["skills", "1000000", "2"], 1000000)):
+            for status, allocated, code in (("completed", 2, 0), ("completed", 1, 2), ("cancelled", 1, 0)):
+                with self.subTest(command=command, status=status, allocated=allocated):
+                    skill = isinstance(target, int)
+                    allocation = {"kind": "sp" if skill else "ap", "requested": 2, "allocated": allocated,
+                                  "skill_id" if skill else "stat": target, "point_pending": allocated != 2}
+                    result = {"allocation": allocation, "effect": "confirmed" if allocated == 2 else "unknown"}
+                    report = {"status": status, "last_state": {"action_result": result}}
+                    with patch("beidou_pilot.control_scripts.run_source", return_value=report) as run:
+                        with patch.object(Backend, "_run") as desktop:
+                            output = io.StringIO()
+                            with redirect_stdout(output):
+                                self.assertEqual(code, self.cli("headless", *command))
+                    run.assert_called_once()
+                    self.assertEqual("headless", run.call_args.args[0].name)
+                    expected = "game.allocate_sp(1000000, 2)\n" if skill else 'game.allocate_ap("strength", 2)\n'
+                    self.assertEqual(expected, run.call_args.args[1])
+                    payload = json.loads(output.getvalue())
+                    data = payload["error"]["details"] if code else payload["data"]
+                    self.assertEqual(allocation, data["allocation"])
+                    self.assertEqual(status == "completed" and allocated == 2, data["confirmed"])
+                    desktop.assert_not_called()
+
     def test_gui_equipment_rejects_headless_slot_arguments_without_dispatch(self) -> None:
         for command in (
             ["equip", "1002001", "--slot", "2", "--to-slot", "-5"],

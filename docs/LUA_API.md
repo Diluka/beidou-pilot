@@ -47,6 +47,8 @@ private/workbenches/workbench /external/workbench script run /work/scripts/contr
 | `game.use_item(item_id)` | 整数 `1..2147483647`；两端接受普通 `200` 类药品，无头另接受 `201` 类食品 | 是 | 动作结果 |
 | `game.equip(backpack_slot, equipped_slot, seconds)` | 无头普通装备；背包正槽、身上负槽；默认确认期限 `3` 秒，`0 < seconds <= 30` | 是，等待槽位变化或本次执行结束 | 动作结果 |
 | `game.unequip(equipped_slot, backpack_slot, seconds)` | 无头普通装备；身上负槽、空背包正槽；确认期限同 `equip` | 是，等待槽位变化或本次执行结束 | 动作结果 |
+| `game.allocate_ap(stat, count, seconds)` | 无头；明确基础属性与 `1..100` 点；每点确认期限默认 `1.2` 秒，`0 < seconds <= 30` | 是，逐点双确认或有界停止 | 动作结果及 `allocation` |
+| `game.allocate_sp(skill_id, count, seconds)` | 无头；明确冒险家职业技能与 `1..100` 点；每点确认期限同 AP | 是，逐点双确认或有界停止 | 动作结果及 `allocation` |
 | `game.revive(seconds)` | 无头普通复活；默认确认期限 `6` 秒，`0 < seconds <= 30` | 是，等待同角色恢复或期限结束 | 动作结果 |
 | `game.activate(ref)` | 当前原生控件或场景目标的不透明引用，仅接受这一个参数 | 是，等待单次控件处理和控制释放 | 动作结果 |
 | `game.stop()` | 无 | 是，等待释放确认 | 动作结果 |
@@ -134,6 +136,7 @@ end
 | `backend` | string | 当前为 `headless` 或 `beidou` |
 | `move`、`face`、`jump`、`attack`、`pickup`、`use_item`、`stop` | boolean | 后端是否实现该语义动作；当前两端均实现 |
 | `equip`、`unequip` | boolean | 是否实现普通装备穿戴/卸下；当前 headless 为 `true`，原版 Lua 为 `false` |
+| `allocate_ap`、`allocate_sp` | boolean | 是否实现明确逐点分配及双确认；当前 headless 为 `true`，原版 Lua 为 `false`；SP 点数池范围见正文 |
 | `revive` | boolean | 是否实现正常复活请求与确认；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `activate` | boolean | 是否实现原生控件引用激活；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `raw_keys` | boolean | 是否实现 `keys/press`；当前 headless 为 `false`，原版为 `true` |
@@ -325,6 +328,25 @@ end
 普通服务端脚本页和客户端本地任务页共用上述模型。后者的 `source="client_local_quest"`，条目、正文与资格来自真实 `Quest.nx`、当前NPC及本端状态；先打开详情，再明确激活确认控件，不把可发送协议的任务ID目录当成菜单。未接任务只在本地资格已知满足时列出；已接任务可读当前详情，交付资格未知或不满足时不允许确认。已完成历史不会遮蔽普通交谈；混合来源界面通过同一模型的“交谈”导航切换。
 
 缺少 `Quest.nx`、未支持条件、重复或脚本特殊流程、复杂奖励选择均不自动补全或猜测；只有已实现的真实控件可激活。本地UI仅对已核实的普通单目标进度格式判定条件，`quests` 领域仍保留原始文本；成功正文要等真实任务状态到达，奖励另读原生事实。待响应或未解析页面保持未知，不生成假控件。GUI的 `activate` 能力为false，其已有CLI桌面消费者继续使用原流程。
+
+### 明确 AP/SP 分配
+
+`game.allocate_ap(stat, count[, seconds])` 只接受 `strength/dexterity/intelligence/luck`。`game.allocate_sp(skill_id, count[, seconds])` 接受正 int32 技能 ID。两者绑定本次脚本角色、本实例、当前场景代次与职业；读取、登录和升级不会调用这些入口。调用方先核实计划，再明确给出目标与数量。
+
+当前原生分配仅支持无头；GUI 的 Lua 能力为 `false`，GUI CLI 仍使用已支持的窗口流程。SP 首批覆盖冒险家普通职业点数池，依据本端职业链、技能资源及已学记录核对职业、前置和技能等级上限；新手派生点数池、其他职业的特殊点数池、未解锁或资料不明的技能明确拒绝，不借其他后端或数据库补齐。AP 不支持 HP/MP，未知服务器上限不作本地猜测。
+
+初始点数必须足够本批请求。每点只提交一次，只有目标基础属性/技能等级恰增一、剩余 AP/SP 恰减一才计入 `allocated`；AP 还要求其他三项基础属性不变。点数与技能包可以分批到达，等待期间不重复请求。下一点在之后的原生更新重新核对条件。`seconds` 是每点确认期限，整批仍受脚本总时限、控制权和显式取消约束。
+
+结果沿用 `dispatched/control_released/effect/reason`，增加 `allocation`：`kind` 为 `ap/sp`，`stat/skill_id` 表示明确目标，`requested/allocated` 为请求/已双确认数量，`point_pending=true` 表示曾发出一点而尚未双确认。`points_before/value_before` 是批次开始事实，`points_after/value_after` 是最近一次事实；不可读为 `nil`。`character_id/scene_generation` 是原请求身份，`current_character_id/current_scene_generation` 标识当前读数，身份改变的值不得归因于原请求。
+
+全部确认时 `effect="confirmed"`、`reason="allocation_confirmed"`；其他情况保留 `effect="unknown"`、已确认数量及事实，有界停止。点数不足、上限/前置/职业不符可能在派发前拒绝；单侧变化、冲突、身份/场景变化、取消或未知不表示可重试。先观察实际结果，不重放不确定的一点或整批。取消不回滚已经发生的加点；真实释放与客户端关闭仍是独立事实。
+
+```lua
+-- 仅在已核实计划明确要求本次角色加一点力量时执行。
+local result = game.allocate_ap("strength", 1)
+assert(result.effect == "confirmed" and result.allocation.allocated == 1)
+game.face("right")
+```
 
 ### 无头普通换装
 
