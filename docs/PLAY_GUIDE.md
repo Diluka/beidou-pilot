@@ -77,10 +77,13 @@ docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop s
 
 ## 停止、下线与交接
 
-活动 Lua 从原宿主命令发送 Ctrl+C/SIGTERM，薄入口会向该次容器内 CLI 转发取消，并等待原生收尾。不要只杀 Docker exec 进程后假定已放键，也不要用第二个动作命令抢占。使用 harness 时由其 `pause/stop` 确认取消与放键，再交接；详情见 [控制协议](CONTROL.md#控制权期限与取消)和 [harness 协作](HARNESS.md#开发-ai-的协作通道)。
+`script run` 的同步等待或 `script start` 的受理等待收到 Ctrl+C、SIGINT 或 SIGTERM 时，宿主薄入口向该次容器内 CLI 转发信号，只结束等待，已受理脚本继续运行。等待超时或观察失败也不能当作原生停止。中断或失败后先用 `script status` 观察当前任务及 `script.id`，核对受理和执行事实，不重放启动；Lua 执行期限及原生停止规则仍由 Runtime 处理。
+
+需要停止脚本时按当前 `script.id` 显式 `script cancel --session SCRIPT_ID`，核对终态和放键后再交接；客户端关闭另用 `close`。harness 的 `pause/stop` 只管理 LLM 会话，客户端和脚本继续运行；重新接入先观察已有任务。详情见 [控制协议](CONTROL.md#控制权期限与取消)和 [harness 协作](HARNESS.md#开发-ai-的协作通道)。
 
 ```bash
 private/workbenches/workbench /external/workbench script status
+private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
 private/workbenches/workbench /external/workbench bridge status
 private/workbenches/workbench /external/workbench close
 private/workbenches/workbench /external/workbench status

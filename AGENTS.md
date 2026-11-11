@@ -1,22 +1,25 @@
 # beidou-pilot 开发约定
 
-- 本项目维护客户端工具，并在 `harness/` 提供独立的游戏 AI 消费者，容器定义放 `docker/harness/`。模型会话、角色设定、目标与游戏经历归 harness；CLI、原生适配器与 Lua Runtime 不引入模型或角色记忆依赖。服务端和数据库不纳入本仓库。
+- 本项目维护客户端工具，并在 `harness/` 提供独立的游戏 AI 消费者。`docker/harness/` 从所选 headless/GUI 客户端 base 派生镜像，打包 Node/Codex、Python harness 与专用 CLI 技能；app-server 和模型控制器在所属客户端容器内运行，客户端 PID1 不变。模型会话、角色设定、目标与游戏经历归 harness；CLI、原生适配器与 Lua Runtime 不引入模型或角色记忆依赖。服务端和数据库不纳入本仓库。
 - 两端共享 `shared/lua-runtime/` 和单份Lua源码；各适配器调用各自原生逻辑，Python不做逐帧控制。
 - 北斗原客户端是外部只读资源提供者；不提交7z、EXE/DLL、IMG/WZ、NX、账号、运行状态或安装器，不修改外部资源原件。资源转换必须显式给出 `--client-root`，输出位于原资源目录之外。
-- 每个工作目录保存 `account.json`（权限 `0600`）、角色计划、用户 Lua 和运行数据；可选 `workbench.json` 只配置后端等必要新建设置。公共资源路径只维护在主检出目录的 `private/workbenches/resources.json`，常驻服务器的项目、服务和公开镜像引用固定在统一入口中。开发隔离目标使用工作目录内显式的非 `beidou-ms` server 对象，不能把测试默认连到常驻服。工作目录整体读写挂载到 `/work`，容器内资源映射和服务器快照由启动入口生成。未知数据保留未知，缺失能力明确不支持，不用服务端或另一后端补齐。
+- 每个工作目录保存 `account.json`（权限 `0600`）、角色计划、用户 Lua 和运行数据；可选 `workbench.json` 配置必要新建设置。`harness` 默认 `false`；开启时先构建客户端 base 再派生 harness，可选 `model_proxy=http://IPv4:端口` 提供模型 HTTP 代理，未配置不影响客户端和脚本。公共资源路径只维护在主检出目录的 `private/workbenches/resources.json`，常驻服务器的项目、服务和公开镜像引用固定在统一入口中。开发隔离目标使用工作目录内显式的非 `beidou-ms` server 对象，不能把测试默认连到常驻服。工作目录整体读写挂载到 `/work`，容器内资源映射和服务器快照由启动入口生成。未知数据保留未知，缺失能力明确不支持，不用服务端或另一后端补齐。
 - 每个工作目录对应一个账号角色和自己的 `default` 容器，原生 `instance_id/run_id` 继续核对身份；取消和关闭只作用于所属实例。同一游戏目标同一角色不并发接管，GUI仅一名明确操作者。
 - 不操作未授权的游戏目标或账号。实际玩法使用专用角色与隔离目标；不修改正式数据库。构建/离线合同与实际游戏结果分别报告。
 - 宿主只使用 `private/workbenches/workbench DIR COMMAND` 统一入口，Docker逻辑直接在该脚本中；容器内CLI仍名为 `beidou-pilot`。保留真实消费者所需代码，删除已被API/Lua替代的无消费者实现，避免重建平行控制链。
+- LLM 为可选旁路控制端，与客户端和 Lua 独立启停；镜像继承只用于打包复用。宿主 `workbench DIR ai` 通过 `docker exec` 启动容器内 `beidou-game-ai`，普通模式通过 shell 直接使用本容器 CLI；只读模式无 shell，仅保留两个观察工具。LLM 暂停或退出不联动清 shell、取消 Lua 或关闭客户端；重新接入先观察已有脚本与任务，不重复启动或抢占。脚本取消和客户端关闭分别发出明确命令，模型进程锁不代表角色或脚本控制权。harness 状态使用 `/work` 下的常驻目录，按稳定工作目录、角色与目标绑定续接；旧 `lua-v1/hunt-v1` 工具面须新建状态，不能静默恢复旧工具。
 - `private/workbenches/workbench` 是 `private/` 下唯一纳入 Git 的公共脚本；共享资源配置、所有账号工作目录、认领锁和运行数据仍被忽略。不要为集中入口而把整个 private 目录加入版本控制，也不恢复根宿主入口或每目录转发脚本。
 - 新会话实际使用客户端、接续实例或处理登录与账号准备时，优先使用仓库技能 [beidou-pilot-client](.agents/skills/beidou-pilot-client/SKILL.md)，先找回已有工作台与角色，按当前能力区分已有角色登录和首次建角。
 
 - 直接管理的第三方依赖统一放根 `third_party/`，来源版本与许可随源码保留。上游内部嵌套依赖保持其原结构；集成适配器放 `beidou-ijl15/`，不复制第二份共享Runtime。未修改的基础库可固定commit引为submodule，不能在没有gitlink的状态下声称已配置子模块；本地改造的上游保留补丁与来源。
 
 - 角色控制策略写在 `shared/scripts/` 或用户Lua中；Python仅做参数、装载/取消和结果投影。不增加宏DSL、JSON动作预设、Python逐帧反馈/多轨控制或已退役的直接按键/技能桥入口。桌面模块只承担原版GUI必需原语。
+- 原生脚本生命周期由客户端 Runtime 持有。`script run` 同步等结果，`script start` 等受理；中断或观察等待失败只结束等待，不自动取消已发布任务。先观察当前脚本与任务，不重放启动；脚本取消须明确 `script cancel --session` 并核对终态/放键，客户端关闭另行 `close`。
 
-- 客户端运行代码统一在两个 Docker 镜像中：headless 与 GUI 安装同一份 CLI、辅助引擎和 Lua，分别提供对应原生运行环境。新实例默认从 main 的已提交版本构建或复用镜像，已有实例通过 docker exec 使用启动时的代码，不挂载宿主开发源码。`private/workbenches/workbench` 只做工作目录选择、Git构建输入和Docker生命周期；日常客户端运行不在宿主加载 Python 客户端、策略或游戏进程；开发离线测试仍按下文入口执行。
+- headless 与 GUI 客户端 base 安装同一份 CLI、辅助引擎和 Lua，分别提供对应原生运行环境；可选 harness 镜像继承所选 base，不复制第二套客户端。新实例默认从 main 的已提交版本构建或复用镜像，已有实例通过 docker exec 使用启动时的代码，不挂载宿主开发源码。`private/workbenches/workbench` 只做工作目录选择、Git构建输入和Docker生命周期；日常客户端运行不在宿主加载 Python 客户端、harness、策略或游戏进程；开发离线测试仍按下文入口执行。
 - Docker 定义统一放在 `docker/`：`docker/headless/Dockerfile` 是无头镜像唯一构建定义，`docker/gui/Dockerfile` 与唯一的 `docker/compose.yaml` 交付并装配 GUI；两端使用根构建上下文，不为资源或工作台子目录增加 Compose 覆盖文件。GUI 桥默认取得所选提交成功 CI 的 Windows 工件并随镜像固定；显式复用工件也须匹配原生输入。原版 `/client` 与 NX `/data` 继续按各自现有格式和来源只读挂载；资源读取格式和来源的改动需单独核实与验收，不能随装配调整合并、复制或迁移资源。游戏资源、账号、可变配置、角色计划、桥目录和运行数据外置，不进入镜像或构建上下文；用户 Lua 是明确的运行输入。
 - Docker 负责进程和资源生命周期，宿主 close 正常发信号并核对所属容器退出；容器内 CLI 直接使用本容器进程、桥和显示环境，不挂 Docker socket。桥仍负责单次 Lua 取消、放键与游戏效果确认；不维护宿主游戏 PID 查杀或进程期限兼容。
+- 仅在 harness 客户端配置了非空 `model_proxy` 时，另接 Docker 默认 `bridge` 到达模型代理，GUI 防火墙也只额外放行该代理 IP/端口；游戏服务器仍只在 internal 目标网络。镜像只打包 `/game/.agents/skills` 中的专用客户端技能及其公共文档，不复制仓库 AGENTS、宿主技能或开发配置。技能正文直接讲 CLI，Docker 用法下沉参考。
 
 ## 开发工作目录
 
@@ -66,7 +69,7 @@
 
 - 简易流程的纯文档修改只需核对内容、涉及的链接与差异格式，不要求运行 Python 测试、镜像构建或真实游戏试用，也不等待 CI 作为交付门槛。其他改动按以下验收流程执行。
 - 探索调试与正式验收分开。调试可先使用容器内构建或已取得的开发工件，在授权隔离环境中做最小有界试验，无需先等待远端 CI，结果标明版本。正式交付核对对应提交的 CI 和适用的真实客户端证据，两项分别记录、均满足后合并；调试成功不自动等于最终验收通过。
-- [CI 工作流](.github/workflows/ci.yml)执行现有 Python 离线测试和 `docker/headless/Dockerfile` 的无头镜像构建，建设需求见 [#1](https://github.com/Diluka/beidou-pilot/issues/1)，复现与查看结果见 [CI 文档](docs/CI.md)；完整流程按 PR 当前提交的 `Python offline tests` 与 `Headless image build` 两项检查结果验收。本地测试或构建成功不能记为 CI 通过；检查失败、缺失或跳过时如实记录并处理。
+- [CI 工作流](.github/workflows/ci.yml)执行现有 Python 离线测试、`docker/headless/Dockerfile` 的无头镜像构建及 harness 合同，建设需求见 [#1](https://github.com/Diluka/beidou-pilot/issues/1)，复现与查看结果见 [CI 文档](docs/CI.md)；完整流程按 PR 当前提交的 `Python offline tests` 与 `Headless image build` 验收，涉及 harness 时同时核对 `Game AI harness contract`。本地测试或构建成功不能记为 CI 通过；检查失败、缺失或跳过时如实记录并处理。
 - 真实试用使用包含本次 PR 改动的客户端构建及脚本，在已授权的专用角色和隔离目标中执行最小验收场景，核对本次行为及实际受影响的既有行为。登录成功只证明能入图；移动、战斗、取消等结果分别判断。仅当需求或改动涉及升级时验证升级，不要求每个 PR 或每次修复都让每名角色重新升一级；练级按养成计划自然推进。
 - 已通过且运行组件、构建输入及适用场景未变的证据可引用复用，包括最终组件一致的调试证据，不因执行先于 CI 就强制重跑；说明版本、组件和适用场景即可。新增代码、失败或已知影响需要补验时，只补相关项。纯文档或源码树未变的历史整合不触发整套游戏流程重跑；源码树变化时按实际构建输入及运行行为判断，不能仅凭提交号变化扩大回归。
 - 按改动涉及的客户端验收：无头功能由无头客户端真实入图执行，GUI 功能使用原版 GUI 试用；影响两端的共享行为覆盖两端，不能用另一端的结果代替。GUI 保持一名明确操作者，沿用容器与实例身份隔离约定。

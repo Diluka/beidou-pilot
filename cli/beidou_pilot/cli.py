@@ -9,10 +9,9 @@ import os
 from pathlib import Path
 import signal
 import sys
-import time
 from typing import Iterator, cast
 
-from .backend import Backend, ClientError, JsonObject, JsonValue
+from .backend import Backend, ClientError, JsonObject
 from .catalog import Catalog
 from . import dialogs
 from .rules import advancement
@@ -61,7 +60,7 @@ def parser() -> Parser:
     duration = q.add_mutually_exclusive_group()
     duration.add_argument("--seconds", type=float, default=30, help="客户端内脚本时限，默认30秒")
     duration.add_argument(
-        "--continuous", action="store_true", help="明确持续执行；run由Ctrl+C取消，start须script cancel"
+        "--continuous", action="store_true", help="明确持续执行；结束等待保留任务，取消须script cancel"
     )
     q = command("task", "向活动Lua会话新增、替换或停止独立任务，或查询管理结果")
     q.add_argument("action", choices=["add", "replace", "stop", "result"])
@@ -90,7 +89,7 @@ def parser() -> Parser:
     command("pickup", "尝试近距离拾取，库存与金币结果另行确认")
     q = command("use_item", "按物品ID尝试原生使用；按客户端能力准入")
     q.add_argument("id", type=int)
-    command("stop", "释放当前客户端遗留控制；活动命令用Ctrl+C取消")
+    command("stop", "显式释放当前客户端遗留控制")
     command("revive", "请求一次本端正常复活并核对恢复；存活时跳过")
     q = command("snapshot", "场景、角色、对话与可操作引用")
     q.add_argument("--all", action="store_true", help="含画外实体")
@@ -195,7 +194,7 @@ def parser() -> Parser:
     q.add_argument("--range", type=float, default=60, dest="attack_range", help="接近目标的攻击距离，默认60")
     duration = q.add_mutually_exclusive_group()
     duration.add_argument("--seconds", type=float, default=60, help="狩猎期限，默认60秒")
-    duration.add_argument("--continuous", action="store_true", help="持续到取消或安全停止，Ctrl+C取消并等待放键")
+    duration.add_argument("--continuous", action="store_true", help="持续到明确取消或安全停止；Ctrl+C只结束等待")
     q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"), help="限定本场景横向狩猎范围")
     q.add_argument("--until-level", type=int, help="到达指定等级停止；仍受当前转职节点限制")
     q.add_argument("--min-hp-ratio", type=float, default=0.35, help="HP安全下限比例，默认0.35")

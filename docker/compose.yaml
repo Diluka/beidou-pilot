@@ -33,6 +33,12 @@ services:
       MAPLE_RESOURCES_CONFIG: ${CLIENT_RUNTIME_ROOT:?需要容器内实例目录}/config/resources.json
       WINEPREFIX: ${CLIENT_RUNTIME_ROOT:?需要容器内实例目录}/runtime/prefix
       WINEDEBUG: ${WINEDEBUG:--all}
+      BEIDOU_WORKBENCH_ID: ${BEIDOU_WORKBENCH_ID:?需要工作目录身份}
+      MODEL_PROXY_IP: ${MODEL_PROXY_IP:-}
+      MODEL_PROXY_PORT: ${MODEL_PROXY_PORT:-}
+      HTTP_PROXY: ${MODEL_PROXY:-}
+      HTTPS_PROXY: ${MODEL_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1,${TARGET_IP}
     labels:
       beidou.task: client-v17-maintained
       beidou.client.root: ${CLIENT_ROOT:?需要 CLI 运行根目录}

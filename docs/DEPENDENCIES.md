@@ -28,7 +28,7 @@ git submodule update --init --recursive
 
 客户端镜像统一由[工作台入口](../private/workbenches/workbench) 的 `build` 或新实例 `open` 准备，按选定提交调用两份 Dockerfile。无头原生编译由 [Dockerfile](../docker/headless/Dockerfile) 内部调用 [Makefile](../headless/Makefile)；GUI 完整镜像使用 [GUI Dockerfile](../docker/gui/Dockerfile)，桥工件由 Windows/MSVC 工作流构建，统一入口默认经 `gh` 下载所选提交成功的 CI 工件；开发时可在工作目录配置中指定原生输入匹配的工件目录。Makefile 与 MSVC 保留为镜像交付链内部的编译工具，客户端构建与启动使用统一入口。基础环境和 VirtualGL 版本由 Docker 定义固定，运行资源与镜像职责见 [ARCHITECTURE](ARCHITECTURE.md)。
 
-游戏 AI 镜像使用官方 Node Bookworm slim 与标准 npm 安装固定 Codex，完整保留 npm 平台包；缺失的 Codex 根许可从同版发行 tag 补齐，安装说明见[容器说明](https://github.com/Diluka/beidou-pilot/blob/main/docker/harness/README.md)。GUI 继续安装上游发布的 VirtualGL deb，使用可读的 Wine 镜像日期 tag。三类镜像保留清楚的版本/tag 与许可，采用包管理器默认校验，不再另写镜像 digest、下载或许可 hash 检查。
+游戏 AI 镜像继承明确指定的 headless 或 GUI 客户端 base，从固定官方 Node Bookworm slim 构建阶段取得 Node 和标准 npm 安装的 Codex，完整保留 npm 平台包；缺失的 Codex 根许可从同版发行 tag 补齐。Python harness、专用客户端技能和必要公共文档随派生镜像打包，保留父镜像客户端入口；安装与许可说明见[容器说明](../docker/harness/README.md)。GUI 继续安装上游发布的 VirtualGL deb，使用可读的 Wine 镜像日期 tag。客户端 base 与 harness 衍生镜像保留清楚的版本/tag 与许可，采用包管理器默认校验，不再另写镜像 digest、下载或许可 hash 检查。
 
 连接已有 SSH Codex 会话的独立 `harness/game-events` 另用 `websockets==15.0.1`，由 [requirements-events.txt](../harness/requirements-events.txt) 固定并通过 pip 安装，保留发行包中的 BSD-3-Clause 许可与包元数据；上游为 [python-websockets/websockets](https://github.com/python-websockets/websockets)。它不编入游戏镜像或 CLI，也不改变既有 `game-ai` 的标准库依赖边界。安装和使用见 [HARNESS.md](HARNESS.md#向已有-ssh-codex-会话投递客户端事件)。
 

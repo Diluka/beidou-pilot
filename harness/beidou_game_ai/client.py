@@ -1,10 +1,9 @@
-"""通过固定实例的现有 CLI 观察、执行和取消，不拥有客户端生命周期。"""
+"""通过同一容器内的 CLI 只读观察，游戏任务与客户端独立运行。"""
 
 import asyncio
 import json
 from pathlib import Path
-import signal
-from typing import TypeAlias, TypedDict, cast
+from typing import TypeAlias, cast
 
 
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -19,37 +18,12 @@ class GameClientError(Exception):
         self.details = details if details is not None else {}
 
 
-class HuntRequest(TypedDict):
-    target: str
-    skill_id: int | None
-    attack_range: float
-    seconds: float | None
-
-
 class GameClient:
-    def __init__(self, cli: Path, workbench: Path) -> None:
-        self._arguments = [str(cli.resolve()), str(workbench.resolve())]
+    def __init__(self, cli: Path) -> None:
+        self._arguments = [str(cli.resolve()), "--json"]
         self._identity: tuple[str, str] | None = None
-        self._script_process: asyncio.subprocess.Process | None = None
-        self._running = False
-        self._cancel_requested = False
-        self._script_error: GameClientError | None = None
-        self._finished = asyncio.Event()
-        self._finished.set()
 
-    @property
-    def running(self) -> bool:
-        return self._running
-
-    async def _interrupt(self, process: asyncio.subprocess.Process) -> None:
-        if process.returncode is None:
-            try:
-                process.send_signal(signal.SIGINT)
-            except ProcessLookupError:
-                # 自然完成可与取消相遇；等待已退出的所属进程，仍由桥核对释放。
-                await process.wait()
-
-    async def _call(self, *arguments: str, controlled: bool = False) -> JsonObject:
+    async def _call(self, *arguments: str) -> JsonObject:
         try:
             process = await asyncio.create_subprocess_exec(
                 *self._arguments,
@@ -59,14 +33,8 @@ class GameClient:
                 stderr=asyncio.subprocess.PIPE,
             )
         except OSError as error:
-            raise GameClientError("cli_unavailable", "无法启动固定的客户端 CLI。", {"reason": str(error)}) from error
-        if controlled:
-            self._script_process = process
-            if self._cancel_requested:
-                await self._interrupt(process)
+            raise GameClientError("cli_unavailable", "无法启动容器内的客户端 CLI。", {"reason": str(error)}) from error
         output, errors = await process.communicate()
-        if controlled and self._cancel_requested and not output and process.returncode == -signal.SIGINT:
-            return {"status": "cancelled", "cancelled": True, "reason": "cancel_requested"}
         try:
             raw = json.loads(output)
         except (UnicodeError, json.JSONDecodeError) as error:
@@ -82,12 +50,14 @@ class GameClient:
             if not isinstance(report.get("data"), dict):
                 raise GameClientError("invalid_cli_response", "客户端 CLI 缺少结果对象。")
             return cast(JsonObject, report["data"])
-        failure = cast(JsonObject, report["error"])
-        if controlled and self._cancel_requested and failure["code"] == "interrupted" and process.returncode == 130:
-            return {"status": "cancelled", "cancelled": True, "reason": "cancel_requested"}
-        raise GameClientError(
-            cast(str, failure["code"]), cast(str, failure["message"]), cast(JsonObject, failure.get("details", {}))
-        )
+        failure = report.get("error")
+        if (
+            not isinstance(failure, dict)
+            or not isinstance(failure.get("code"), str)
+            or not isinstance(failure.get("message"), str)
+        ):
+            raise GameClientError("invalid_cli_response", "客户端 CLI 缺少错误对象。")
+        raise GameClientError(failure["code"], failure["message"], cast(JsonObject, failure.get("details", {})))
 
     async def _bridge(self) -> JsonObject:
         state = await self._call("bridge", "status")
@@ -97,7 +67,7 @@ class GameClient:
         elif identity != self._identity:
             raise GameClientError(
                 "client_identity_changed",
-                "客户端身份已变化，未向后继实例派发控制。",
+                "客户端身份已变化，不能延续原实例的观察。",
                 {"instance_id": identity[0], "run_id": identity[1]},
             )
         return state
@@ -115,6 +85,10 @@ class GameClient:
             "seq": state["seq"],
             "observed_at_ms": state["observed_at_ms"],
             "snapshot": snapshot,
+            "script": state.get("script"),
+            "command": state["command"],
+            "held_keys": state["held_keys"],
+            "held_actions": state.get("held_actions"),
         }
 
     async def script_status(self) -> JsonObject:
@@ -132,54 +106,3 @@ class GameClient:
                 "held_actions",
             )
         }
-
-    async def _run_control(self, *arguments: str) -> JsonObject:
-        if self._running:
-            raise GameClientError("input_busy", "本 harness 已有活动 Lua 执行。")
-        self._running = True
-        self._cancel_requested = False
-        self._script_error = None
-        self._finished.clear()
-        try:
-            await self._bridge()
-            if self._cancel_requested:
-                return {"status": "cancelled", "cancelled": True, "reason": "cancel_requested"}
-            return await self._call(*arguments, controlled=True)
-        except GameClientError as error:
-            self._script_error = error
-            raise
-        finally:
-            self._script_process = None
-            self._running = False
-            self._finished.set()
-
-    async def run_lua(self, code: str, seconds: float) -> JsonObject:
-        return await self._run_control("script", "run", "--code=" + code, "--seconds", str(seconds))
-
-    async def hunt(self, request: HuntRequest) -> JsonObject:
-        arguments = ["hunt", "--range", str(request["attack_range"])]
-        if request["skill_id"] is not None:
-            arguments += ["--skill", str(request["skill_id"])]
-        arguments += ["--continuous"] if request["seconds"] is None else ["--seconds", str(request["seconds"])]
-        arguments += ["--", request["target"]]
-        return await self._run_control(*arguments)
-
-    async def cancel(self) -> JsonObject:
-        if self._running:
-            requested = self._cancel_requested
-            self._cancel_requested = True
-            if not requested and self._script_process is not None:
-                await self._interrupt(self._script_process)
-            await self._finished.wait()
-            if self._script_error is not None:
-                raise self._script_error
-        state = await self._bridge()
-        script = cast(JsonObject | None, state.get("script"))
-        command = cast(JsonObject, state["command"])
-        if (
-            state["held_keys"]
-            or command["status"] == "running"
-            or (script is not None and script["status"] == "running")
-        ):
-            raise GameClientError("bridge_release_unconfirmed", "所属实例尚未确认停止 Lua 并释放输入。", state)
-        return state

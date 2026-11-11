@@ -9,29 +9,41 @@
 | `shared/scripts/` | 按travel/combat/recovery分类的复合能力，examples保存少量公共API示例 |
 | `shared/lua-runtime/` | 两端共用的Lua调度、预算、状态模型与game API，独立于具体客户端 |
 | `headless/src/` | 无渲染登录、网络与游戏更新宿主、共享桥适配 |
-| `docker/` | 无头与 GUI 镜像构建定义、GUI Compose、资源装配和容器启动脚本；`docker/harness/` 构建独立 Codex 环境 |
-| `harness/` | 宿主薄控制器、模型会话、角色设定与经历、开发 AI 专用协作；通过既有 CLI 消费客户端 |
+| `docker/` | 无头与 GUI 镜像构建定义、唯一 Compose、资源装配和容器启动脚本；`docker/harness/` 从客户端镜像派生 AI 运行环境 |
+| `harness/` | 容器内模型会话控制器、角色设定与经历、开发 AI 专用协作；通过同容器 CLI 消费客户端 |
 | `beidou-ijl15/` | 北斗客户端 `ijl15.dll` 工程，新增桥直接实现共同契约，保留必要原生逻辑 |
 | `third_party/` | 固定上游依赖与包含本地适配的派生引擎/资源转换器 |
 | `cli/test/` | 客户端离线合同测试 |
 
 Python 负责参数、静态资料规划、脚本装载/取消和最终结果。持续角色判断在客户端更新线程的 Lua 中执行，各适配器调用自己的原生游戏逻辑。普通命令与观察不会逐帧经过模型或截图。
 
-客户端运行体只拥有执行和观察能力，主要由 Lua 脚本驱动。同仓 `harness/` 是独立的决策消费者，持有模型会话、角色设定、目标与游戏经历，通过既有 CLI 获取观察并调度脚本；`cli/beidou_pilot/`、原生适配器及共享 Lua Runtime 不依赖模型或角色记忆。服务端和数据库不纳入本仓库。
+客户端运行体只拥有执行和观察能力，主要由 Lua 脚本驱动。同仓 `harness/` 是可选的旁路决策消费者，与客户端运行时并行、独立启停，持有模型会话、角色设定、目标与游戏经历，通过既有 CLI 获取观察并调度脚本。客户端与 Lua 在没有 LLM 时仍可持续运行；`cli/beidou_pilot/`、原生适配器及共享 Lua Runtime 不依赖模型或角色记忆。服务端和数据库不纳入本仓库。
 
-Codex app-server 在独立 harness 容器中运行，宿主薄控制器分派少量动态游戏工具，固定工作目录，通过统一宿主入口调用其客户端容器内的 CLI。模型容器不挂开发仓库、宿主 Codex 配置或 Docker socket。客户端和 harness 各有生命周期；暂停或停止玩法需取消原 Lua CLI 并确认所属实例放键，停止 harness 不关闭客户端。具体配置与协作入口见 [HARNESS](HARNESS.md)。
+启用 harness 的镜像继承所选无头或 GUI 客户端镜像，增加固定版本的 Node/Codex、Python harness 和专用客户端技能，保留原客户端入口与 PID 1。唯一宿主入口 `private/workbenches/workbench DIR ai [harness参数]` 通过 `docker exec` 启动所属客户端容器内的 `beidou-game-ai`；harness 在本容器启动 Codex app-server，模型通过 shell 直接执行 `beidou-pilot`。`read_only` 模式关闭 shell，仅提供 `game_observe` 和 `game_script_status` 两个观察工具。
+
+模型固定工作目录为 `/game`，专用技能放在 `/game/.agents/skills/beidou-pilot-client`，所需公共文档按相对链接布局打包；不复制仓库 `AGENTS.md`、宿主技能或开发 Codex 配置，也不挂开发仓库或 Docker socket。
+
+harness 可在已有活动脚本时接入。`pause/stop` 仅中断并确认当前 LLM turn 终态，不清理后台 shell、不取消 Lua，也不关闭客户端；模型退出后，客户端 PID1、登录会话、容器及已启动的脚本和游戏任务继续运行。`resume` 复用仍存活的 app-server 和 thread，先核对当前实例、`script.id` 及任务状态，避免重复启动或抢占已有执行。重新接入同样先观察；脚本取消与客户端关闭分别由明确命令发起。具体配置与协作入口见 [HARNESS](HARNESS.md)。
+
+`--state`、角色文件和模型配置等路径参数均为容器路径，需长期保留的状态放在 `/work`。模型线程与角色记忆仍由 harness 管理；稳定工作目录、角色与目标绑定一致时，可以在新客户端 run 中续接，原生 `instance_id/run_id` 按本次运行重新核验。旧 `lua-v1`、`hunt-v1` 工具会话明确拒绝恢复。
 
 ## 容器、版本与控制生命周期
 
-客户端交付为两个镜像：无头端包含原生无渲染客户端，GUI 端包含 Wine/VirtualGL 和桥 DLL；两者安装同一份 Python CLI、辅助引擎、共享 Runtime 和内置 Lua。运行中不挂载宿主开发源码，客户端内也不需要 Docker socket。
+客户端基础交付为两个镜像：无头端包含原生无渲染客户端，GUI 端包含 Wine/VirtualGL 和桥 DLL；两者安装同一份 Python CLI、辅助引擎、共享 Runtime 和内置 Lua。启用 harness 时分别从对应客户端基础镜像构建衍生镜像，沿用客户端进程及资源装配；镜像继承只用于打包复用，不绑定模型与客户端的生命周期。运行中不挂载宿主开发源码，客户端内也不需要 Docker socket。
 
-唯一宿主入口以工作目录选择容器。每个目录保存一个账号角色，使用固定的 `default` 实例；后端、开发提交和必要新建设置从目录的 `workbench.json` 读取。新实例一次解析默认main或配置ref的已提交SHA，导出该树和固定子模块构建或复用镜像。构建期间的代码变化不混入本次输入。运行登记保留实际源码、镜像、后端、目标、角色和run_id；已有实例的观察、脚本和取消均经docker exec使用原镜像，不重新读取新建设置。
+唯一宿主入口以工作目录选择容器。每个目录保存一个账号角色，使用固定的 `default` 实例；后端、开发提交和必要新建设置从目录的 `workbench.json` 读取。`harness` 默认 `false`，设为 `true` 时选用对应衍生镜像；`model_proxy` 为可选的 `http://IPv4:port`，未配置不影响客户端及脚本运行。新实例一次解析默认main或配置ref的已提交SHA，导出该树和固定子模块构建或复用镜像。构建期间的代码变化不混入本次输入。运行登记保留实际源码、镜像、后端、目标、角色和run_id；已有实例的观察、脚本和取消均经docker exec使用原镜像，不重新读取新建设置。
+
+只有启用 harness 且 `model_proxy` 非空时，客户端才额外连接 Docker 默认 `bridge` 网络以访问模型代理，GUI 防火墙也仅在此时为指定代理 IPv4 和端口增加放行规则。游戏服务器仍处于原有 internal 网络，游戏连接继续使用已核验目标；模型出口不改变游戏服务器网络和只读资源挂载。
 
 每个工作目录拥有自己的 `default` 容器、运行目录、桥和控制锁。同一目标同一角色仍禁止并发接管。原生 `instance_id/run_id` 继续保证请求、取消与结果属于本次运行，真实断线或错误会退出并保留事实，不自动重连或重放。
 
+普通与只读 harness 的状态目录进程锁仅保护模型会话状态，同一状态目录被占用时返回 `harness_state_busy`。模型进程锁不代表持有角色、Lua 脚本或游戏任务的控制权。
+
 容器入口从本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID` 读取 `account.json`、`server.json`，生成内部资源映射与 `state/container.json`，随后保持 PID 交给对应原生进程。容器内 CLI 通过登记、进程和原生桥直接观察、执行桌面原语与登录。`open` 完成或确认本容器入图，不再调用 Docker 创建进程。
 
-宿主启动器负责 Docker 构建、创建和正常关闭。`close` 经 Docker SIGTERM 让镜像内原生客户端或 GUI bootstrap 取消、放键并退出，核对 `Running=false/Pid=0` 后保留日志并回收所属容器；容器内 `close` 明确返回 `host_lifecycle_required`。生命周期锁独立于 Lua 输入锁，活动脚本不阻挡关闭。取消原宿主命令时，启动器按本次执行 token 向对应容器内 CLI 转发信号，并等待其原生放键确认。
+宿主启动器负责 Docker 构建、创建和正常关闭。`close` 经 Docker SIGTERM 让镜像内原生客户端或 GUI bootstrap 取消、放键并退出，核对 `Running=false/Pid=0` 后保留日志并回收所属容器；容器内 `close` 明确返回 `host_lifecycle_required`。生命周期锁独立于 Lua 输入锁，活动脚本不阻挡关闭。
+
+中断宿主命令时，启动器按本次执行 token 向对应容器内 CLI 转发信号。`script run` 的结果等待和 `script start` 的受理等待被中断时，仅结束本次等待；等待超时或观察失败也不自动停止已发布的原生任务。脚本会话继续由客户端 Runtime 持有，其执行期限与原生停止规则独立于 CLI 等待。结果未知时先用 `script status` 核对当前任务及 `script.id`，不重放启动；需要取消时显式 `script cancel --session SCRIPT_ID`，并核对同一原生身份下的终态与放键。客户端关闭另用 `close`。
 
 [无头 Dockerfile](../docker/headless/Dockerfile) 是无头镜像唯一构建入口，builder 编译，运行层使用标准发行版运行依赖。[GUI Dockerfile](../docker/gui/Dockerfile) 以根上下文构建完整 GUI 客户端，唯一的 [Compose](../docker/compose.yaml) 装配设备、只读资源与整个工作台；用户脚本和配置直接使用工作台中的路径。所有定义放在 `docker/`，根 `.dockerignore` 只保留两端构建必需的源码与明确桥工件输入。
 

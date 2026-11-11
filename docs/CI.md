@@ -6,7 +6,7 @@
 | --- | --- |
 | `Python offline tests` | Ubuntu 24.04、Python 3.14，运行现有 CLI 离线合同测试 |
 | `Headless image build` | Ubuntu 24.04，使用 `docker/headless/Dockerfile` 构建包含共享 CLI、Lua 与原生客户端的无头镜像 |
-| `Game AI harness contract` | 构建标准 npm 安装的固定 Codex 镜像，运行无认证的 harness 合同，含真实 app-server、Code Mode 游戏工具分派与开发询问往返 |
+| `Game AI harness contract` | 先构建无头客户端 base，再派生包含固定 Codex、harness 和专用技能的镜像；验证无认证的真实 app-server、直接 CLI shell、只读工具、询问与续接合同 |
 
 客户端测试与无头构建从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库，无需安装 pip 依赖；其中 Lua 任务合同使用 runner 自带的 `gcc/g++` 编译真实共享 Runtime 和固定 Lua 源码，适配器只模拟原生输入与释放边界。无头镜像的编译器只放在 builder，运行层由 Bookworm 包管理器安装 Python 和原生运行依赖。两个客户端镜像安装同一份 CLI 与内置 Lua，离线测试与 CI 内部镜像构建使用当前检出的提交，不经默认 main 启动路径替换代码。harness 合同不访问真实模型或游戏，不需要认证。
 
@@ -42,15 +42,33 @@ docker run --rm --entrypoint beidou-pilot "$image" --help
 
 GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，开发版本放在 `ref`，然后执行 `private/workbenches/workbench /external/gui-workbench build`。默认由 `gh` 获取所选提交成功的Windows桥CI工件；开发时可在 `bridge_artifact` 配置原生输入匹配的现成工件目录，省去该路径的 `gh` 依赖。镜像安装该工件，原始游戏客户端、NX 与工作台仍只在运行时挂载。GUI 装配仅使用 `docker/compose.yaml`；账号、自动生成的服务器快照和用户Lua随整个工作目录进入 `/work`，不再分别挂载。GUI 与无头的打包检查都应确认容器内 CLI 可执行，不能用宿主 Python 的帮助输出代替。
 
+日常 harness 构建在新建设置中启用 `harness=true` 后继续使用同一 `build` 入口。复现 CI 时，在对应提交的干净检出中以根构建上下文派生镜像；以下 `image` 为前面已构建的无头客户端镜像：
+
+```bash
+docker build --file docker/harness/Dockerfile \
+  --build-arg CLIENT_IMAGE="$image" --build-arg CLIENT_USER=65532:65532 \
+  --tag local/beidou-game-ai:ci .
+docker run --rm --entrypoint beidou-game-ai local/beidou-game-ai:ci --help
+mkdir -p tmp/harness-tests
+TMPDIR="$PWD/tmp/harness-tests" python3 -m venv tmp/harness-tests/venv
+TMPDIR="$PWD/tmp/harness-tests" tmp/harness-tests/venv/bin/python \
+  -m pip install --requirement harness/requirements-events.txt
+TMPDIR="$PWD/tmp/harness-tests" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=harness:cli \
+  BEIDOU_GAME_AI_IMAGE=local/beidou-game-ai:ci \
+  tmp/harness-tests/venv/bin/python -m unittest discover -s harness/test -v
+```
+
+事件消费者测试使用 [requirements-events.txt](../harness/requirements-events.txt) 中的固定依赖，CI 也在运行前安装。GUI 衍生镜像改用已构建的 GUI `CLIENT_IMAGE` 并传 `CLIENT_USER=root`。派生构建保留父镜像客户端入口及 PID1；帮助命令显式覆盖入口，仅验证安装，不启动游戏或模型。harness 状态、认证、角色、模型代理和游戏资源均为运行输入，不进入构建上下文。镜像内技能及相对公共文档的打包说明见 [Docker 文档](../docker/harness/README.md)。
+
 ## 查看结果与合并
 
-在 PR 的 Checks 页面查看对应提交的两项检查，也可从仓库 [Actions](https://github.com/Diluka/beidou-pilot/actions/workflows/ci.yml) 页面查看日志。命令行入口为：
+在 PR 的 Checks 页面查看对应提交的检查，也可从仓库 [Actions](https://github.com/Diluka/beidou-pilot/actions/workflows/ci.yml) 页面查看日志。命令行入口为：
 
 ```bash
 gh pr checks PR编号 --repo Diluka/beidou-pilot
 ```
 
-代码或构建改动按惯例在 PR 当前提交的 `Python offline tests` 和 `Headless image build` 均通过后合并。失败、缺失、未运行或跳过的检查如实记录并处理；本地成功不能代替远端 CI 结果。探索调试可先做本地检查和有界客户端试验，不以远端 CI 完成为前提；正式验收使用对应提交的检查结果。
+代码或构建改动按惯例在 PR 当前提交的 `Python offline tests` 和 `Headless image build` 均通过后合并；harness 改动同时核对 `Game AI harness contract`。失败、缺失、未运行或跳过的检查如实记录并处理；本地成功不能代替远端 CI 结果。探索调试可先做本地检查和有界客户端试验，不以远端 CI 完成为前提；正式验收使用对应提交的检查结果。
 
 纯文档修改按 [AGENTS.md](../AGENTS.md#开发与交付流程) 的简易流程直接提交并推送 `main`，不要求创建 PR 或等待 CI。推送触发的自动检查仍保留，结果按实际状态记录。
 

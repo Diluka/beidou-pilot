@@ -21,6 +21,8 @@
 | `timeout` | `90`；5至180的数值，仅限制入图等待 |
 | `bridge_artifact` | 可选的匹配 GUI 桥工件目录；相对路径按工作目录解析，省略时经 `gh` 获取相应提交成功 CI 的工件 |
 | `server` | 开发隔离目标的显式对象；普通使用省略，不能借此覆盖固定常驻服务器 |
+| `harness` | 默认 `false`；`true` 时从所选客户端 base 派生包含 Codex、harness 和专用技能的镜像 |
+| `model_proxy` | 可选的 `http://IPv4:端口` 模型 HTTP 代理；省略不影响客户端和脚本，模型 API 地址仍在 provider 配置中 |
 
 开发验收的 `server` 要求 `project/service/expected_image`，`network` 可选。项目必须不是 `beidou-ms`，隔离服务器不能发布宿主端口或使用host网络；指定网络时必须是同项目 internal 网络并且服务器已连接。省略网络时，启动器为新实例建立所属 internal 连接并在关闭时回收。例如：
 
@@ -45,7 +47,7 @@
 
 整个工作目录以一个读写挂载进入容器 `/work`。宿主保存 `runtime/default/host.json`，本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID`；桥、锁、日志和自动生成的账号/服务器快照按此隔离。资源 `/client` 和 `/data` 保持各自现有只读格式和来源。用户脚本直接使用 `/work/scripts`。
 
-普通结果为 JSON 信封，含 `ok/command/data`；客户端结果还含 `backend/instance`。失败含 `error.code/message/details`，已识别失败退出码2、中断130。`--list` 和 `notes` 输出文本，`watch/events watch` 输出 JSONL，`resources-check` 输出原生资源检查 JSON。
+普通结果为 JSON 信封，含 `ok/command/data`；客户端结果还含 `backend/instance`。失败含 `error.code/message/details`，已识别失败退出码2、中断130。`--list` 和 `notes` 输出文本，`watch/events watch` 输出 JSONL，`resources-check` 输出原生资源检查 JSON；`ai` 的 stdin/stdout 为 harness 专用 JSONL 协作通道。
 
 ## 启动、观察与关闭
 
@@ -77,15 +79,28 @@ private/workbenches/workbench /external/workbench close
 | `instances` | 返回当前容器实例身份与版本 |
 | `capabilities` | 读取原生能力和静态观察支持范围 |
 | `open/close` | 新建或接续所属实例；正常停止、确认退出并回收 |
+| `ai [harness参数]` | 通过 `docker exec` 运行所属容器内的 `beidou-game-ai`；要求已有 harness 镜像实例 |
 | `snapshot [-i] [--all]` | 当前角色、场景、领域摘要与引用 |
 | `inspect KIND [ID]` | 按需领域读数或静态资料 |
 | `watch --seconds N --interval N` | 持续只读状态，JSONL输出 |
 | `events read/watch` | 当前实例原生事件；GUI同类通知气泡提供，无头明确不支持 |
 | `bridge status/script status` | 只读桥、动作和脚本状态 |
 
-动作、脚本等客户端参数直接跟在命令后，不是宿主启动配置。比如 `script run FILE --seconds 20` 的文件路径按容器内部解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查；动作优先使用宿主统一入口获得定向取消转发。
+动作、脚本等客户端参数直接跟在命令后，不是宿主启动配置。比如 `script run FILE --seconds 20` 的文件路径按容器内部解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查。中断脚本 CLI 只结束等待，脚本取消另行显式 `script cancel --session`。
 
 短脚本返回或取消后容器继续运行。`close` 独立于输入锁，经Docker正常发SIGTERM，确认 `Running=false/Pid=0` 后保存退出日志并回收；活动Lua不阻挡关闭。容器内 `close` 返回 `host_lifecycle_required`。同一目录正在启停为 `lifecycle_busy`，活动脚本期间其他动作是 `input_busy`；失败先读状态和所属日志再决定重开。
+
+## 游戏 AI
+
+新建设置 `harness=true` 后，`build/open` 先准备对应 headless 或 GUI base，再构建或复用同提交的 harness 衍生镜像；客户端保持原 PID1。只有配置了非空 `model_proxy` 的 harness 客户端额外连接默认 `bridge`，GUI 才增加该代理 IP/端口白名单，游戏服务器的 internal 网络不变。
+
+```bash
+private/workbenches/workbench /external/workbench ai \
+  --state /work/ai/state --role /work/ai/role.md \
+  --auth-file /work/ai/auth.json --task '先观察当前角色和场景' --paused
+```
+
+`--state/--role/--provider-config/--auth-file` 均为容器内路径，常驻状态放在 `/work` 下；`--cli` 仅指定容器内客户端路径。已有普通镜像返回 `harness_image_required`，修改新建配置不会给运行中的镜像安装 harness。普通 agent 通过 shell 直接使用 CLI，只读模式关闭 shell。LLM 独立启停不联动取消脚本或关闭客户端，重新接入先观察现有任务；具体协作、状态续接与参数见 [HARNESS](HARNESS.md)。
 
 ## 离线检查资源
 
@@ -153,7 +168,7 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点及近距拾取尝试 |
 | `hunt [MOB\|all]` | 单场景自主找怪、可达跨平台和连续战斗；支持 `--skill ID`、`--range N`、限时或 `--continuous` |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
-| `script run FILE`、`script run --code CODE` | 文件或直接源码二选一，使用同一 Lua 执行链；默认限时，持续模式须明确声明 |
+| `script run FILE`、`script run --code CODE` | 文件或直接源码二选一，同步等待原生会话结果；中断等待不取消脚本，持续模式须明确声明 |
 | `script start FILE`、`script start --code CODE` | 原生受理后返回，脚本由客户端独立执行；返回实例、运行、请求与脚本身份 |
 | `script cancel --session SCRIPT_ID` | 只取消当前匹配脚本，并等待原生停止和放键；旧脚本 ID 不发送取消 |
 | `task add/replace/stop` | 向指定活动Lua会话管理独立任务，不取得整会话动作锁 |
@@ -164,7 +179,7 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 
 `--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。CLI 不拼接、展开或改写源码。文件路径按容器内部解析；工作台整体已挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，文件方式每次读取当前 UTF-8 内容。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
 
-`script run` 等待整个会话结束，原调用方的 Ctrl+C/SIGTERM 会取消该脚本。`script start` 只等待原生受理，成功返回后关闭调用终端、停止模型回合或结束事件监听均不取消 Lua；原生期限、角色变化、断线等停止规则保留。使用 `script status` 重新观察进度，明确取消使用 `script cancel --session`。活动 Lua 仍占有本实例控制权，其他脚本和普通窗口输入返回 `input_busy`；操作气泡前由操作者明确取消需要停下的脚本。`--continuous` 必须显式给出，不增加后台 Python 控制进程。
+`script run` 同步等待会话结果，`script start` 等待原生受理。两者在等待期间收到 Ctrl+C/SIGINT/SIGTERM 都只结束本次等待，不取消已发布的原生任务；等待超时或观察失败同样不能证明任务停止。先用 `script status` 核对当前原生身份、`script.id` 与任务，不因结果未知而重放启动。取消须明确 `script cancel --session SCRIPT_ID`，并核对终态与放键；客户端关闭另用 `close`。原生执行期限、角色变化、断线和脚本自身错误等停止规则保留。活动 Lua 仍占有本实例控制权，其他脚本和普通窗口输入返回 `input_busy`；`--continuous` 须显式给出，不增加后台 Python 控制进程。
 
 在已有脚本会话中调整一项任务，先用 `script status` 取得 `script.id` 和该任务的 `revision`，再明确传给任务管理入口：
 
@@ -210,7 +225,7 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 
 原版 `equip ITEM` 保留原有 GUI 工作流，新增原生槽位参数供无头使用；原版不支持 `unequip`。换装只覆盖普通装备，不扩展强化、现金外观或其他装备操作。
 
-`skill` 保留 `native_result`、`dispatched/skill_reason` 和未知效果，顶层 `reason` 继续表达脚本终态。原生数值含义随后端不同：无头枚举0表示准入，GUI保留原返回值，不能仅凭零或非零判断命中。对活动脚本发送原CLI的Ctrl+C/SIGTERM取消并等待放键；不要用第二个动作命令抢占。脚本能力及效果判断见 [CONTROL](CONTROL.md)。
+`skill` 保留 `native_result`、`dispatched/skill_reason` 和未知效果，顶层 `reason` 继续表达脚本终态。原生数值含义随后端不同：无头枚举0表示准入，GUI保留原返回值，不能仅凭零或非零判断命中。需要停止活动脚本时，先读取当前 `script.id`，显式 `script cancel --session` 并等待终态和放键；不要用第二个动作命令抢占。脚本能力及效果判断见 [CONTROL](CONTROL.md)。
 
 无头 `snapshot` 与 `bridge status` 提供 `dead/revive_requestable`：死亡来自已就绪角色的原生 HP=0；读数不可用时保持未知。`revive_requestable` 只表示客户端请求前置已满足，不能预判事件脚本许可。无头 `revive` 通过共享 Lua 默认等待至多6秒，只有同角色 HP>0 且地图、位置有效才返回 `revived`；存活返回 `already_alive`，均无重复请求。未确认返回 `revive_not_confirmed`，取消/断线保留实际结果；检测到死亡本身不触发复活或重连。参数化等待及脚本用法见 [Lua API](LUA_API.md#无头正常复活)。
 

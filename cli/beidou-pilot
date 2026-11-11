@@ -1,51 +1,8 @@
 #!/usr/bin/env python3
-"""镜像内 CLI 入口；宿主启动器按执行 token 转发取消。"""
-
-import json
-import os
-from pathlib import Path
-import re
-import signal
-import sys
+"""镜像内 CLI 入口；宿主启动器按执行 token 转发调用中断。"""
 
 from beidou_pilot.cli import main
+from beidou_pilot.exec_control import run
 
 
-def entry() -> int:
-    if os.geteuid() == 0 and os.environ.get("MAPLE_BACKEND") == "beidou":
-        os.setgroups([])
-        os.setgid(1000)
-        os.setuid(1000)
-    root = Path(os.environ.get("CLIENT_ROOT", "/work"))
-    cancelling = len(sys.argv) == 3 and sys.argv[1] == "--cancel-exec"
-    token = sys.argv[2] if cancelling else os.environ.get("BEIDOU_EXEC_TOKEN")
-    if token is None:
-        return main()
-    if not re.fullmatch(r"[a-f0-9]{32}", token):
-        raise SystemExit("执行 token 无效。")
-    directory = root / "state"
-    directory.mkdir(parents=True, exist_ok=True)
-    pid_file = directory / ("exec-" + token + ".pid")
-    cancelled = directory / ("exec-" + token + ".cancel")
-    if cancelling:
-        cancelled.touch(mode=0o600)
-        try:
-            pid = int(pid_file.read_text())
-            os.kill(pid, signal.SIGINT)
-        except (FileNotFoundError, ProcessLookupError):
-            pass  # CLI 尚未登记或已自然结束；启动入口也会检查取消标记。
-        return 0
-    pid_file.write_text(str(os.getpid()))
-    try:
-        if cancelled.exists():
-            raise KeyboardInterrupt
-        return main()
-    except KeyboardInterrupt:
-        print(json.dumps({"ok": False, "error": {"code": "interrupted", "message": "执行已取消。"}}))
-        return 130
-    finally:
-        pid_file.unlink(missing_ok=True)
-        cancelled.unlink(missing_ok=True)
-
-
-raise SystemExit(entry())
+raise SystemExit(run(main))

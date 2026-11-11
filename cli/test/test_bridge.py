@@ -184,7 +184,7 @@ class BridgeContract(unittest.TestCase):
         self.assertEqual(report["last_state"]["scene_generation"], 2)
         self.assertEqual(report["last_state"]["held_keys"], [])
 
-    def test_timeout_preserves_error_after_confirmed_script_stop(self) -> None:
+    def test_wait_timeout_preserves_native_task_until_explicit_cancel(self) -> None:
         def peer() -> None:
             command = self.files.command()
             self.publish_running(command)
@@ -197,9 +197,14 @@ class BridgeContract(unittest.TestCase):
             native = pool.submit(peer)
             with self.assertRaises(ClientError) as failure:
                 self.client.run_script(code="game.move('right', 1)", seconds=1, timeout=.04)
+            command = self.files.command()
+            self.assertEqual("bridge_timeout", failure.exception.code)
+            self.assertEqual("script", command[4])
+            state = self.client.snapshot()
+            self.assertEqual((command[6], "running", [39]),
+                             (state["script"]["id"], state["script"]["status"], state["held_keys"]))
+            self.client.cancel_script(command[6])
             native.result(2)
-        self.assertEqual(failure.exception.code, "bridge_timeout")
-        self.assertEqual(failure.exception.details["cleanup"]["held_keys"], [])
         self.assertEqual(self.client.snapshot()["script"]["status"], "cancelled")
 
     def test_async_start_returns_while_native_script_runs_until_targeted_cancel(self) -> None:

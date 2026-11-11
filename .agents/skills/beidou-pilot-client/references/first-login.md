@@ -1,15 +1,17 @@
 # 账号输入与首次登录边界
 
-本参考只描述仓库当前的客户端能力。命令针对已经启动且归属确认的客户端容器；`CONTAINER` 和 `ACCOUNT_PATH` 分别替换为容器及容器内已有的账号文件。精确参数见[CLI](../../../../docs/CLI.md)，观察与输入约定见[操作指引](../../../../docs/PLAY_GUIDE.md)。
+本参考只描述仓库当前的客户端能力。命令针对已经启动且归属确认的客户端实例；`ACCOUNT_PATH` 替换为当前运行环境已提供的账号文件路径。精确参数见[CLI](../../../../docs/CLI.md)，观察与输入约定见[操作指引](../../../../docs/PLAY_GUIDE.md)。
 
 ## 已有角色登录
 
-容器内的 `open` 完成或确认当前客户端的登录，不创建容器，也不切换到另一角色或服务器。
+重新接入时先执行 `status`、`script status` 和 `snapshot`。正确角色已经入图或已有任务时，沿用现有状态与脚本身份，不重复登录或启动任务；LLM 暂停、退出和再次接入不取消原生脚本或关闭客户端。
+
+确实需要完成登录时，`open` 完成或确认当前客户端的登录，不切换到另一角色或服务器。
 
 ```bash
-docker exec CONTAINER beidou-pilot --json open --account ACCOUNT_PATH
-docker exec CONTAINER beidou-pilot --json status
-docker exec CONTAINER beidou-pilot --json inspect stage
+beidou-pilot --json open --account ACCOUNT_PATH
+beidou-pilot --json status
+beidou-pilot --json inspect stage
 ```
 
 账号文件的合法输入：
@@ -19,7 +21,7 @@ docker exec CONTAINER beidou-pilot --json inspect stage
 - GUI 自动登录目前仅支持世界 0 和第 1 至 20 频道，按 CID 选择已有角色。第 1 频道在文件中写 `channel=0`。
 - 不用 0、占位值、其他账号的 CID 或旧版选角参数绕过校验；密码不放进命令参数、截图说明或日志。
 
-成功需用新鲜观察确认 `ready=true` 且角色 CID 与请求一致，再核对可用的名称、世界、频道、地图与位置，以及同一原生 `instance_id/run_id`；未提供的事实保持未知，不以配置值冒充实时观察。容器运行、账号认证成功或角色列表出现，都不能单独证明已经入图。角色或频道不符时报告实际结果，不把 `open` 当作自动切换操作。
+成功需用新鲜观察确认 `ready=true` 且角色 CID 与请求一致，再核对可用的名称、世界、频道、地图与位置，以及同一原生 `instance_id/run_id`；未提供的事实保持未知，不以配置值冒充实时观察。客户端进程运行、账号认证成功或角色列表出现，都不能单独证明已经入图。角色或频道不符时报告实际结果，不把 `open` 当作自动切换操作。
 
 ## 缺少账号或角色
 
@@ -34,8 +36,8 @@ docker exec CONTAINER beidou-pilot --json inspect stage
 若已有属于授权账号的 GUI 会话，可由一名明确操作者观察并接续正常界面。同一角色不并发控制。
 
 ```bash
-docker exec CONTAINER beidou-pilot --json inspect stage
-docker exec CONTAINER beidou-pilot --json screenshot
+beidou-pilot --json inspect stage
+beidou-pilot --json screenshot
 ```
 
 | 实际界面或结果 | 当前可用处理与确认 |

@@ -9,5 +9,8 @@
 - 写脚本先查 docs/LUA_API.md，常规开发无需逐次读绑定；公共接口变化同步更新该文档，记忆不复制 API 清单。
 - 基础操作属于 game API，shared/scripts 只保存复合能力；示例在其 examples 子目录，不自动加载。策略是初步脚手架，按实际行为迭代，详见 shared/scripts/AGENTS.md，不冻结旧参数或用兼容层掩盖原生错误。
 - 原版 V17 跳跃绑定为 type5/id53，id51 是 sit；公共 jump 必须调用跳跃，不能在公共策略里恢复 GUI 专属补丁绕过原生映射错误。
+- 原生脚本由 Runtime 持有生命周期。script run 同步等结果，script start 等受理；CLI 中断、等待超时或观察失败只结束等待，不自动停止已发布任务。先核对当前 script.id/任务和原生身份，不重放 start；明确取消用 script cancel --session 并核对终态和放键，客户端另行 close。
 - 宿主实例启停锁和容器动作锁独立；取消通过所属 CLI 收尾并确认放键，宿主 close 经 Docker 核对退出。放键、未知释放和游戏效果分别确认，详见 docs/CONTROL.md。
+- harness 普通模式为 cli-v1，shell 直接调用本容器 CLI，无 game_run_lua/game_hunt 动态动作包装；read_only 关闭 shell，仅保留 game_observe/game_script_status，不接管或取消其他操作者。LLM 与客户端和 Lua 独立启停，暂停/退出模型不联动清 shell、取消脚本或关闭客户端；重新接入先观察已有脚本、任务及控制归属，不重复启动或抢占。模型进程与状态目录锁只保护模型会话，不代表角色或脚本控制权。脚本取消需显式 script cancel --session 并核对原生终态和放键，客户端关闭另行 close；完整合同见 docs/HARNESS.md、docs/CONTROL.md。
+- harness 状态按稳定工作目录、角色/世界、目标项目/服务、CLI 路径及 read_only 绑定，不绑定临时容器/run；跨新客户端运行续接时重读原生身份与事实。旧 lua-v1/hunt-v1 或无工具面状态明确拒绝，保留旧目录并新建 state，不静默迁移。模型会话和经历不进入客户端库或项目记忆，完整合同见 docs/HARNESS.md。
 - 通用编码、授权、外部数据和记忆范围以 AGENTS.md 为准。

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
 from beidou_game_ai.cli import main
+from beidou_pilot.exec_control import run
 
-raise SystemExit(main())
+raise SystemExit(run(main))

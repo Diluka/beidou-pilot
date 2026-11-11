@@ -14,11 +14,10 @@ import unittest
 import uuid
 
 from beidou_game_ai.protocol import AppServer, JsonObject, JsonValue
-from beidou_game_ai.controller import GAME_TOOLS
 
 
 class CodexSurfaceContract(unittest.IsolatedAsyncioTestCase):
-    async def test_minimal_request_and_developer_question_round_trip(self) -> None:
+    async def test_optional_model_uses_client_cli_skill_and_developer_question(self) -> None:
         image = os.environ.get("BEIDOU_GAME_AI_IMAGE", "local/beidou-game-ai:0.167.0")
         available = subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0
         if not available:
@@ -32,7 +31,7 @@ class CodexSurfaceContract(unittest.IsolatedAsyncioTestCase):
         evidence.mkdir(parents=True, exist_ok=True)
         identifier = "beidou-harness-contract-" + uuid.uuid4().hex[:12]
         network_id = subprocess.run(
-            ["docker", "network", "create", "--internal", "--label", "beidou.dev.task=38", identifier],
+            ["docker", "network", "create", "--internal", "--label", "beidou.dev.task=113", identifier],
             check=True,
             capture_output=True,
             text=True,
@@ -65,19 +64,19 @@ class CodexSurfaceContract(unittest.IsolatedAsyncioTestCase):
                 self.end_headers()
                 if len(requests) == 1:
                     output: JsonObject = {
-                        "id": "ct_observe",
+                        "id": "ct_cli",
                         "type": "custom_tool_call",
-                        "call_id": "call_observe",
+                        "call_id": "call_cli",
                         "name": "exec",
-                        "input": 'text("AVAILABLE_TOOLS_38=" + JSON.stringify(ALL_TOOLS.map(tool => tool.name))); text(await tools.game__game_observe({}))',
+                        "input": 'text("AVAILABLE_TOOLS_CLI_113=" + JSON.stringify(ALL_TOOLS.map(tool => tool.name))); const shell = ALL_TOOLS.find(tool => tool.name.endsWith("exec_command")); text(await tools[shell.name]({cmd:"beidou-pilot --help",yield_time_ms:1000,max_output_tokens:3000}))',
                     }
                 elif len(requests) == 4:
                     output = {
-                        "id": "ct_hunt",
+                        "id": "ct_revision",
                         "type": "custom_tool_call",
-                        "call_id": "call_hunt",
+                        "call_id": "call_revision",
                         "name": "exec",
-                        "input": 'text("RESUMED_TOOLS_86=" + JSON.stringify(ALL_TOOLS.map(tool => tool.name))); text(await tools.game__game_hunt({target:"100100",skill_id:1001004,range:75,seconds:60}))',
+                        "input": 'text("RESUMED_TOOLS_CLI_113=" + JSON.stringify(ALL_TOOLS.map(tool => tool.name))); const shell = ALL_TOOLS.find(tool => tool.name.endsWith("exec_command")); text(await tools[shell.name]({cmd:"cat /opt/beidou-pilot/REVISION",yield_time_ms:1000,max_output_tokens:1000}))',
                     }
                 elif len(requests) == 2:
                     output = {
@@ -162,29 +161,58 @@ supports_websockets = false
 """,
             encoding="utf-8",
         )
-        provider.chmod(0o644)  # 此文件没有认证；镜像 UID1000 只读它。
-        command = [
+        provider.chmod(0o644)  # 此文件没有认证；客户端 UID65532 只读它。
+        image_info = json.loads(
+            subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True, text=True).stdout
+        )[0]
+        revision = image_info["Config"]["Labels"]["org.opencontainers.image.revision"]
+        container_command = [
             "docker",
             "run",
             "--rm",
             "--pull=never",
-            "-i",
+            "-d",
             "--name",
             identifier,
             "--network",
             identifier,
+            "--user",
+            "65532:65532",
             "--read-only",
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,size=64m",
             "--tmpfs",
-            "/home/game/.codex:rw,nosuid,nodev,uid=1000,gid=1000,mode=700,size=64m",
+            "/contract:rw,nosuid,nodev,uid=65532,gid=65532,mode=700,size=64m",
+            "--env",
+            "HOME=/contract",
+            "--env",
+            "CODEX_HOME=/contract/codex",
+            "--env",
+            "BEIDOU_GAME_AI_PROVIDER_CONFIG=/run/game-ai/provider.toml",
             "--mount",
             f"type=bind,src={provider},dst=/run/game-ai/provider.toml,readonly",
+            "--entrypoint",
+            "/bin/sh",
             image,
+            "-c",
+            "sleep 180",
+        ]
+        command = [
+            "docker",
+            "exec",
+            "-i",
+            identifier,
+            "/opt/beidou-game-ai/entrypoint.sh",
+            "app-server",
+            "--stdio",
+            "--strict-config",
         ]
         server: AppServer | None = None
+        container_started = False
         try:
-            server = await AppServer.start(command, root / "app-server.stderr.log")
+            subprocess.run(container_command, check=True, capture_output=True)
+            container_started = True
+            server = await AppServer.start(command, evidence / "app-server.stderr.log")
             await asyncio.wait_for(
                 server.call(
                     "initialize",
@@ -201,6 +229,9 @@ supports_websockets = false
             (evidence / "metadata.json").write_text(
                 json.dumps(
                     {
+                        "image": image,
+                        "image_id": image_info["Id"],
+                        "client_revision": revision,
                         "project_doc_max_bytes": effective.get("project_doc_max_bytes"),
                         "features": {
                             key: cast(JsonObject, effective.get("features", {})).get(key)
@@ -231,12 +262,18 @@ supports_websockets = false
                 + "\n"
             )
             skills = cast(JsonObject, await server.call("skills/list", {"cwds": ["/game"], "forceReload": True}))
-            self.assertFalse(any(cast(JsonObject, item)["skills"] for item in cast(list[JsonValue], skills["data"])))
+            found_skills = [
+                cast(JsonObject, skill)
+                for item in cast(list[JsonValue], skills["data"])
+                for skill in cast(list[JsonValue], cast(JsonObject, item)["skills"])
+            ]
+            self.assertEqual(["beidou-pilot-client"], [skill["name"] for skill in found_skills])
+            skill_path = cast(str, found_skills[0]["path"])
+            self.assertEqual("/game/.agents/skills/beidou-pilot-client/SKILL.md", skill_path)
             mcps = cast(JsonObject, await server.call("mcpServerStatus/list", {"limit": 100}))
             self.assertEqual([], mcps["data"])
-            base_instructions = "GAME_BASE_38：只按游戏事实作决策。"
-            developer_instructions = "GAME_ROLE_38：保留养成约束，必要时向开发 AI 询问。"
-            tools = GAME_TOOLS
+            base_instructions = "GAME_BASE_113：只按游戏事实作决策。"
+            developer_instructions = "GAME_ROLE_113：保留养成约束，必要时向开发 AI 询问。"
             thread = cast(
                 JsonObject,
                 await server.call(
@@ -244,13 +281,10 @@ supports_websockets = false
                     {
                         "model": "gpt-6-luna",
                         "cwd": "/game",
-                        "sandbox": "read-only",
+                        "sandbox": "danger-full-access",
                         "approvalPolicy": "never",
                         "baseInstructions": base_instructions,
                         "developerInstructions": developer_instructions,
-                        "dynamicTools": [
-                            {"type": "namespace", "name": "game", "description": "专用游戏工具。", "tools": tools}
-                        ],
                         "allowProviderModelFallback": False,
                     },
                 ),
@@ -261,11 +295,13 @@ supports_websockets = false
                 "turn/start",
                 {
                     "threadId": thread_id,
-                    "input": [{"type": "text", "text": "请按给出的受控回复进行协作合同验证，不操作游戏。"}],
+                    "input": [
+                        {"type": "skill", "name": "beidou-pilot-client", "path": skill_path},
+                        {"type": "text", "text": "用本容器 CLI 验证帮助和协作问答，不登录或操作游戏。"},
+                    ],
                 },
             )
             answered = False
-            observed = False
             methods: list[str] = []
             tool_events: list[JsonObject] = []
             async with asyncio.timeout(25):
@@ -278,14 +314,7 @@ supports_websockets = false
                         (evidence / "tool-events.json").write_text(
                             json.dumps(tool_events, ensure_ascii=False, indent=2) + "\n"
                         )
-                    if method == "item/tool/call":
-                        params = cast(JsonObject, event["params"])
-                        self.assertEqual(("game", "game_observe"), (params.get("namespace"), params["tool"]))
-                        await server.respond(
-                            cast(int | str, event["id"]),
-                            {"success": True, "contentItems": [{"type": "inputText", "text": "OBSERVE_CONTRACT_38"}]},
-                        )
-                        observed = True
+                    self.assertNotEqual("item/tool/call", method, "普通模式不应派发重复的游戏动态工具。")
                     if method == "item/tool/requestUserInput":
                         params = cast(JsonObject, event["params"])
                         self.assertEqual(
@@ -293,19 +322,19 @@ supports_websockets = false
                         )
                         await server.respond(
                             cast(int | str, event["id"]),
-                            {"answers": {"evidence": {"answers": ["DEV_ANSWER_38：仅复验安全移动。"]}}},
+                            {"answers": {"evidence": {"answers": ["DEV_ANSWER_113：仅复验安全移动。"]}}},
                         )
                         answered = True
                     if method == "turn/completed":
                         turn = cast(JsonObject, cast(JsonObject, event["params"])["turn"])
                         self.assertEqual("completed", turn["status"], turn.get("error"))
                         if answered and any(
-                            "DEV_ANSWER_38" in json.dumps(request, ensure_ascii=False) for request in requests
+                            "DEV_ANSWER_113" in json.dumps(request, ensure_ascii=False) for request in requests
                         ):
                             break
                     self.assertNotEqual("transport/closed", method, methods)
-            self.assertTrue(observed, methods)
             self.assertTrue(answered, methods)
+
             resumed = cast(
                 JsonObject,
                 await server.call(
@@ -325,38 +354,26 @@ supports_websockets = false
                 "turn/start",
                 {
                     "threadId": thread_id,
-                    "input": [{"type": "text", "text": "验证续接后的既有狩猎工具，仅使用本地假结果，不操作游戏。"}],
+                    "input": [{"type": "text", "text": "验证续接后仍可读取本容器客户端版本，不登录游戏。"}],
                 },
             )
-            hunted = False
             async with asyncio.timeout(25):
                 while True:
                     event = await server.events.get()
                     method = cast(str, event["method"])
-                    if method == "item/tool/call":
-                        params = cast(JsonObject, event["params"])
-                        self.assertEqual(("game", "game_hunt"), (params.get("namespace"), params["tool"]))
-                        self.assertEqual(
-                            {"target": "100100", "skill_id": 1001004, "range": 75, "seconds": 60}, params["arguments"]
+                    if method in {"item/started", "item/completed", "warning", "configWarning"}:
+                        tool_events.append(event)
+                        (evidence / "tool-events.json").write_text(
+                            json.dumps(tool_events, ensure_ascii=False, indent=2) + "\n"
                         )
-                        await server.respond(
-                            cast(int | str, event["id"]),
-                            {
-                                "success": True,
-                                "contentItems": [{"type": "inputText", "text": "HUNT_CONTRACT_86:starting"}],
-                            },
-                        )
-                        hunted = True
+                    self.assertNotEqual("item/tool/call", method, "普通模式不应恢复旧的游戏动态工具。")
                     if method == "turn/completed":
                         turn = cast(JsonObject, cast(JsonObject, event["params"])["turn"])
                         self.assertEqual("completed", turn["status"], turn.get("error"))
                         break
                     self.assertNotEqual("transport/closed", method)
-            self.assertTrue(hunted)
-            self.assertGreaterEqual(len(requests), 3)
-            self.assertTrue(
-                any("OBSERVE_CONTRACT_38" in json.dumps(request, ensure_ascii=False) for request in requests[1:])
-            )
+
+            self.assertEqual(5, len(requests), request_paths)
             tool_outputs: list[str] = []
             for request in requests[1:]:
                 for item in cast(list[JsonValue], request.get("input", [])):
@@ -371,22 +388,22 @@ supports_websockets = false
                             )
             registry = next(
                 (
-                    re.search(r"AVAILABLE_TOOLS_38=(\[[^\n]*\])", output)
+                    re.search(r"AVAILABLE_TOOLS_CLI_113=(\[[^\n]*\])", output)
                     for output in tool_outputs
-                    if "AVAILABLE_TOOLS_38=" in output
+                    if "AVAILABLE_TOOLS_CLI_113=" in output
                 ),
                 None,
             )
             self.assertIsNotNone(registry, "exec 未返回实际可调用工具清单。")
             available_tools = cast(list[str], json.loads(cast(re.Match[str], registry).group(1)))
-            self.assertEqual(
-                {"game__game_observe", "game__game_run_lua", "game__game_script_status", "game__game_hunt"},
-                set(available_tools),
-            )
+            self.assertTrue(any(name.endswith("exec_command") for name in available_tools), available_tools)
+            self.assertFalse(any(name.startswith(("game__", "mcp__", "clock__")) for name in available_tools))
+            self.assertTrue(any("usage: beidou-pilot" in output and "snapshot" in output for output in tool_outputs))
+            self.assertTrue(any(revision in output for output in tool_outputs), "CLI 所属客户端版本未从镜像读出。")
             resumed_registry = next(
-                re.search(r"RESUMED_TOOLS_86=(\[[^\n]*\])", output)
+                re.search(r"RESUMED_TOOLS_CLI_113=(\[[^\n]*\])", output)
                 for output in tool_outputs
-                if "RESUMED_TOOLS_86=" in output
+                if "RESUMED_TOOLS_CLI_113=" in output
             )
             self.assertIsNotNone(resumed_registry)
             self.assertEqual(set(available_tools), set(json.loads(cast(re.Match[str], resumed_registry).group(1))))
@@ -397,10 +414,15 @@ supports_websockets = false
             for inherited in (
                 "You are Codex",
                 "# General Principles",
-                "### Available skills",
+                "skill-creator",
+                "skill-installer",
+                "docker exec",
+                "private/workbenches",
                 "AGENTS.md instructions for",
             ):
                 self.assertFalse(inherited in prompt, "请求含未授权的开发指令标记：" + inherited)
+            self.assertIn("# 北斗客户端 CLI", prompt, "专用技能正文没有进入实际请求。")
+            self.assertIn("beidou-pilot --json status", prompt)
             offered = cast(list[JsonValue], first.get("tools", []))
             for item in cast(list[JsonValue], first.get("input", [])):
                 block = cast(JsonObject, item)
@@ -455,37 +477,21 @@ supports_websockets = false
                         ],
                         "question_answer_round_trip": answered,
                         "runtime_available_tools": available_tools,
-                        "game_observe_dispatch": observed,
-                        "resumed_game_hunt_dispatch": hunted,
+                        "client_revision": revision,
+                        "skills": [skill["name"] for skill in found_skills],
+                        "cli_help_executed": True,
+                        "resumed_client_revision_read": True,
                     },
                     ensure_ascii=False,
                     indent=2,
                 )
                 + "\n"
             )
-            actual_functions = {name.removeprefix("game__") for name in callable_names}
+            self.assertIn("request_user_input", callable_names)
+            self.assertFalse(any(name.startswith(("game_", "mcp__")) for name in callable_names), callable_names)
             self.assertTrue(
-                {"request_user_input", "game_observe", "game_run_lua", "game_script_status", "game_hunt"}.issubset(
-                    actual_functions
-                ),
-                actual_functions,
+                any("DEV_ANSWER_113" in json.dumps(request, ensure_ascii=False) for request in requests[1:])
             )
-            self.assertTrue(
-                actual_functions.issubset(
-                    {
-                        "exec",
-                        "wait",
-                        "request_user_input",
-                        "request_user_input_async",
-                        "game_observe",
-                        "game_run_lua",
-                        "game_script_status",
-                        "game_hunt",
-                    }
-                ),
-                actual_functions,
-            )
-            self.assertTrue(any("DEV_ANSWER_38" in json.dumps(request, ensure_ascii=False) for request in requests[1:]))
         finally:
             if server is not None:
                 closing = asyncio.create_task(server.close())
@@ -493,7 +499,10 @@ supports_websockets = false
                     await asyncio.wait_for(asyncio.shield(closing), 10)
                 except TimeoutError:
                     subprocess.run(["docker", "stop", "--time", "5", identifier], check=True, capture_output=True)
+                    container_started = False
                     await closing
+            if container_started:
+                subprocess.run(["docker", "stop", "--time", "5", identifier], check=True, capture_output=True)
             endpoint.shutdown()
             endpoint.server_close()
             worker.join()
