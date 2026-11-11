@@ -30,7 +30,7 @@ private/workbenches/workbench --help
 
 将公共资源路径配置保存在主检出目录的 `private/workbenches/resources.json`，字段示例见 [resources.example.json](cli/config/resources.example.json)。各工作目录及开发 worktree 共用这一份配置；原版 `/client` 与 NX `/data` 的格式、来源和只读挂载保持不变，当前未实现原始 IMG 直读。
 
-常驻服务器的项目、服务和公开镜像引用由统一脚本固定，普通工作目录不维护 `server.json`。启动器继续核对实际服务器镜像。开发隔离验证使用 `workbench.json` 中显式的非 `beidou-ms` 服务器选择，格式和边界见 [CLI](docs/CLI.md#工作目录配置)。
+常驻服务器的项目、服务和公开镜像引用由统一脚本固定，普通工作目录不维护 `server.json`。启动器继续核对实际服务器镜像。调试和实际游戏验收默认使用常驻服，优先复用已授权的已有账号、角色及就绪实例，减少主机内存占用；仅在验证场景必须时新建账号或角色。隔离服仅用于常驻服无法安全完成验证等特殊情况，需说明原因，并在 `workbench.json` 中显式选择非 `beidou-ms` 服务器；格式和边界见 [CLI](docs/CLI.md#工作目录配置)。
 
 每个工作目录长期保存一个账号角色的资料：
 
@@ -76,7 +76,7 @@ private/workbenches/workbench /external/workbench close
 
 ## 文档与开发
 
-- [北斗游戏攻略技能](.agents/skills/beidou-game-guide/SKILL.md)：当前收录彩虹岛原版任务、头顶灯泡的青苹果乐园支线，以及继续教学或离岛的条件。
+- [北斗游戏攻略技能](.agents/skills/beidou-game-guide/SKILL.md)：收录彩虹岛与骑士团新手任务、青苹果乐园支线、冒险家三转任务、冒险家二转三转及骑士团一至三转终态加点；各篇注明来源与实测范围。
 - [业务地图](docs/business-map/README.md)：按领域查看用户结果、责任边界、主要流程与源码入口。
 - [游戏 AI 操作指引](docs/PLAY_GUIDE.md)：确认授权目标与角色占用，完成上手观察、动作核对和停止交接。
 - [客户端操作技能](.agents/skills/beidou-pilot-client/SKILL.md)：供新会话接续工作台、登录已有角色，并区分账号注册与首次建角；可显式调用 `$beidou-pilot-client`。

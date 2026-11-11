@@ -54,6 +54,7 @@ def parser() -> Parser:
     q = command("script", "在客户端内运行Lua控制脚本，或只读当前脚本状态")
     q.add_argument("action", choices=["run", "start", "status", "cancel"])
     q.add_argument("--session", help="cancel必须指定当前script.id，只取消匹配脚本")
+    q.add_argument("--library", choices=["travel", "island-supply"], help="为run/start显式装载公共Lua函数")
     source = q.add_mutually_exclusive_group()
     source.add_argument("file", type=Path, nargs="?", help="受信UTF-8 Lua文件")
     source.add_argument("--code", help="直接执行受信Lua源码，与文件输入互斥")
@@ -440,6 +441,8 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .bridge import BridgeClient
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
+        if args.library is not None and args.action not in {"run", "start"}:
+            raise ClientError("usage", "--library仅用于script run/start。")
         if args.action == "cancel":
             if args.session is None or args.file is not None or args.code is not None:
                 raise ClientError("usage", "script cancel需要--session，不接收Lua文件或源码。")
@@ -461,11 +464,21 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             }
         if args.file is None and args.code is None:
             raise ClientError("usage", "script run/start需要UTF-8本地Lua文件或--code源码。")
+        consumer_file = args.file
+        if args.library is not None:
+            from .script_libraries import with_library
+
+            args.code = with_library(args.library, args.file, args.code)
+            args.file = None
         if args.action == "start":
-            return bridge.run_script(
+            report = bridge.run_script(
                 args.file, seconds=None if args.continuous else args.seconds, code=args.code, wait_for_start=True
             )
-        return bridge.run_script(args.file, seconds=None if args.continuous else args.seconds, code=args.code)
+        else:
+            report = bridge.run_script(args.file, seconds=None if args.continuous else args.seconds, code=args.code)
+        if args.library is not None:
+            return {**report, "library": args.library, "consumer_file": str(consumer_file) if consumer_file else None}
+        return report
     if cmd == "notifications":
         from .notifications import read_notifications, respond
 

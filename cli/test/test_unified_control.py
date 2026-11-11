@@ -48,6 +48,42 @@ class UnifiedControlContract(unittest.TestCase):
                         self.assertEqual(0, main(["--root", str(self.native.root), "--json", *arguments]))
                     self.assertEqual("headless", selected.call_args.args[1])
 
+    def test_script_library_composes_one_native_request_for_both_backends(self) -> None:
+        for backend in ("beidou", "headless"):
+            for operation in ("run", "start"):
+                with (
+                    self.subTest(backend=backend, operation=operation),
+                    patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run,
+                    redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(
+                        0,
+                        self.cli(
+                            backend,
+                            "script",
+                            operation,
+                            "--library",
+                            "island-supply",
+                            "--code",
+                            "island_supply.to_town()",
+                            "--seconds",
+                            "30",
+                        ),
+                    )
+                    self.assertIsNone(run.call_args.args[0])
+                    self.assertIn("function travel.begin", run.call_args.kwargs["code"])
+                    self.assertTrue(run.call_args.kwargs["code"].endswith("island_supply.to_town()"))
+                    self.assertEqual(operation == "start", run.call_args.kwargs.get("wait_for_start", False))
+
+    def test_script_library_cannot_be_applied_to_status_or_cancel(self) -> None:
+        for operation in ("status", "cancel"):
+            with self.subTest(operation=operation), patch.object(BridgeClient, "run_script") as run:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(2, self.cli("headless", "script", operation, "--library", "travel"))
+                self.assertEqual("usage", json.loads(output.getvalue())["error"]["code"])
+                run.assert_not_called()
+
     def test_headless_unknown_window_or_raw_input_never_calls_beidou_engine(self) -> None:
         for command in (("key", "Right"), ("ui", "focus")):
             with self.subTest(command=command), patch.object(Backend, "_run") as legacy:

@@ -14,6 +14,7 @@ SOURCES = {
         "harness/**/*.py",
         "cli/beidou_pilot/cli.py",
         "cli/beidou_pilot/control_scripts.py",
+        "cli/beidou_pilot/script_libraries.py",
         "cli/beidou_pilot/hunting.py",
         "cli/beidou_pilot/hunt_terrain.py",
         "cli/beidou_pilot/nx.py",
@@ -39,6 +40,7 @@ SOURCES = {
         "cli/test/test_hunting.py",
         "cli/test/test_hunt_terrain.py",
         "cli/test/test_hunt_lua.py",
+        "cli/test/test_route_lua.py",
         "cli/test/test_catalog_resources.py",
     ),
     "clang-format": (
@@ -62,7 +64,14 @@ SOURCES = {
         "beidou-ijl15/ezorsia/ObserveNotifications.cpp",
         "cli/test/*_contract.cpp",
     ),
-    "stylua": ("shared/scripts/examples/*.lua", "shared/scripts/combat/hunt.lua", "cli/test/hunt_contract.lua"),
+    "stylua": (
+        "shared/scripts/examples/*.lua",
+        "shared/scripts/combat/hunt.lua",
+        "cli/test/hunt_contract.lua",
+        "shared/scripts/travel/_common.lua",
+        "shared/scripts/travel/_route.lua",
+        "cli/test/route_contract.lua",
+    ),
 }
 
 
