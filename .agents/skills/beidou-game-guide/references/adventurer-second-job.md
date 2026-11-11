@@ -8,7 +8,18 @@
 
 冒险家从战士、魔法师、弓箭手、飞侠、海盗五系出发，30级选择二转分支，70级三转，120级四转；魔法师一转从8级开始，其余四系从10级开始。二转选定分支后，后续沿该职业树成长，不把其他分支的技能当作可自由混点的技能池。
 
-**能力值 AP 支持自动分配**；AP 与技能点 SP 分开，本篇只安排 SP。
+**能力值 AP 支持自动分配**；手动加点按下表区分主、副属性。
+
+| 职业大类 | 主属性 | 副属性 |
+| --- | --- | --- |
+| 战士 | 力量 STR | 敏捷 DEX |
+| 魔法师 | 智力 INT | 幸运 LUK |
+| 弓箭手（弓／弩） | 敏捷 DEX | 力量 STR |
+| 飞侠（标／刀） | 幸运 LUK | 敏捷 DEX |
+| 海盗拳手 | 力量 STR | 敏捷 DEX |
+| 海盗火枪手 | 敏捷 DEX | 力量 STR |
+
+**分配规则：副属性补到目标装备需求（计入装备加成），其余全加主属性，不固定按4∶1分配。**战士还需保证命中；使用力量型短刀时另补装备要求的STR。AP与下文技能点SP分开计算。
 
 以下以30级及时二转、升级每级3 SP为基准：二转奖励1点，31～70级共40次升级获得120点，合计 **121 SP**。70级拿到升级点后、进行三转前核对终态；不把三转奖励点计入本表。一转原有投入另算，表中明确写出的“一转补点”才从这121点中支付。延迟转职、额外赠点或不同服务器配置，应先按角色实际记录核对，不能直接认定点数相同。
 
@@ -260,7 +271,7 @@
 
 - [二转与四转技能资源目录](https://github.com/BeiDouMS/BeiDou-Server/tree/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Skill.wz)：二转文件 `110、120、130、210、220、230、310、320、410、420、510、520.img.xml`；各技能的 `level` 为等级效果，`req` 为前置。四转对二转的三项要求见 [312](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Skill.wz/312.img.xml)、[322](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Skill.wz/322.img.xml)、[512](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Skill.wz/512.img.xml)。
 - [中文技能名称与说明](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz-zh-CN/String.wz/Skill.img.xml)：同名技能按ID区分。
-- [转职等级与分支](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/BeiDouSpecial/快速转职.js)、[正常二转选择确认示例](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc/1022000.js)、[AP自动分配提示](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc/1032001.js)。
+- [转职等级与分支](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/BeiDouSpecial/快速转职.js)、[正常二转选择确认示例](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc/1022000.js)、[AP自动分配提示](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc/1032001.js)、[职业主副属性分配实现](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/client/processor/stat/AssignAPProcessor.java)；表后的手动配点规则为建议，不等同于自动分配的具体算法。
 - [转职SP、升级SP与强体术成长计算](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/client/Character.java)：`changeJob`、`levelUpGainSp`、`levelUp`；[默认升级3 SP配置](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/resources/db/migration/V1.7.0__create_game_config.sql)。
 - [职业树及SP表规则](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/constants/game/GameConstants.java)、[SP分配职业及上限校验](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/client/processor/stat/AssignSPProcessor.java)。
 - [技能书228映射](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Item.wz/Consume/0228.img.xml)、[能手册229映射](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Item.wz/Consume/0229.img.xml)。
