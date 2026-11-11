@@ -10,6 +10,7 @@ import uuid
 
 from .backend import Backend, JsonObject
 from .errors import ClientError
+from .profile import LoginProfile
 
 
 def adopt_session(backend: Backend, stage: JsonObject | None = None) -> JsonObject:
@@ -133,31 +134,16 @@ def close_game(backend: Backend) -> JsonObject:
             "target_file": target, "network_cleanup": released.strip()}
 
 
-def open_game(backend: Backend, *, channel: int = 1, character: str | None = None,
-              character_index: int | None = None,
+def open_game(backend: Backend, *, profile: LoginProfile,
               target: Path | None = None, project: str = "beidou-ms",
-              service: str = "beidou-server-all", workspace_server: bool = True,
+              service: str = "beidou-server-all", workspace_server: bool = False,
               timeout: float = 90) -> JsonObject:
     """复用现有会话；只有 STOPPED 才准备隔离目标并持续启动。"""
+    channel = profile.channel + 1
     if not 1 <= channel <= 20 or not 5 <= timeout <= 180:
         raise ClientError("invalid_open_options", "频道须为 1 至 20，等待时间须为 5 至 180 秒。")
-    if character_index is not None and (character is not None or not 0 <= character_index < 24):
-        raise ClientError("invalid_character_selection", "角色名与索引互斥；角色索引须为 0 至 23。")
-    if character is None and character_index is None:
-        private_name = backend.root / "private/character-name.json"
-        if private_name.is_file():
-            if private_name.stat().st_mode & 0o777 != 0o600:
-                raise ClientError("private_file_permissions", "私密角色文件须为 0600。")
-            try:
-                document = json.loads(private_name.read_text())
-            except (OSError, json.JSONDecodeError) as error:
-                raise ClientError("invalid_character_file", "私密角色文件无法读取或不是有效 JSON。") from error
-            value = document.get("character_name") if isinstance(document, dict) else None
-            if not isinstance(value, str) or not value or any(ord(letter) < 32 for letter in value):
-                raise ClientError("invalid_character_name", "私密角色名称格式无效。")
-            character = value
-    elif character is not None and (not character or any(ord(letter) < 32 for letter in character)):
-        raise ClientError("invalid_character_name", "角色名称格式无效。")
+    if profile.world != 0:
+        raise ClientError("unsupported_world", "原版 GUI 自动登录仅支持世界 0。", {"requested": profile.world})
     stage = backend.read("stage")
     resumed = stage["running"] is True
     started = False
@@ -166,18 +152,17 @@ def open_game(backend: Backend, *, channel: int = 1, character: str | None = Non
     adoption = adopt_session(backend, stage) if resumed else None
     if adoption is not None and adoption["target_file"] is not None:
         adopted_target = Path(cast(str, adoption["target_file"]))
-        if target_path is not None:
-            try:
-                requested = json.loads(target_path.read_text())
-                current_target = json.loads(adopted_target.read_text())
-            except (OSError, json.JSONDecodeError) as error:
-                raise ClientError("target_unreadable", "无法核对显式目标文件，保留现有客户端。", {"path": str(target_path)}) from error
-            if requested != current_target:
-                raise ClientError("target_mismatch", "当前客户端连接的目标与请求不同，未切换或重启。",
-                                  {"requested": str(target_path), "actual": str(adopted_target)})
+        try:
+            current_target = json.loads(adopted_target.read_text())
+            requested = json.loads(target_path.read_text()) if target_path is not None else current_target
+        except (OSError, json.JSONDecodeError) as error:
+            raise ClientError("target_unreadable", "无法核对目标文件，保留现有客户端。", {"path": str(target_path or adopted_target)}) from error
+        if requested != current_target or (current_target["project"] == "beidou-ms") != workspace_server:
+            raise ClientError("target_mismatch", "当前客户端目标与本次请求或工作区授权不同，保留现有客户端。",
+                              {"requested": str(target_path) if target_path else None, "actual": str(adopted_target)})
         target_path = adopted_target
-    elif resumed and target_path is not None:
-        raise ClientError("current_target_unverified", "无法证明现有客户端与显式目标一致，保留现场。")
+    elif resumed and (target_path is not None or workspace_server):
+        raise ClientError("current_target_unverified", "无法证明现有客户端与请求目标一致，保留现场。")
     if stage["stage"] == "STOPPED":
         check = json.loads(backend.text("clientctl", "check"))
         if check["image_available"] is not True:
@@ -189,14 +174,6 @@ def open_game(backend: Backend, *, channel: int = 1, character: str | None = Non
             # prepare 在创建网络前输出恢复路径；引擎失败时 Backend 保留 stdout。
             output = backend.text("session", *arguments)
             target_path = Path(output.splitlines()[0]).resolve()
-        else:
-            try:
-                requested = json.loads(target_path.read_text())
-            except (OSError, json.JSONDecodeError) as error:
-                raise ClientError("target_unreadable", "显式目标文件无法读取或不是有效 JSON。", {"path": str(target_path)}) from error
-            workspace_server = (isinstance(requested, dict)
-                                and (requested.get("project"), requested.get("service"))
-                                == ("beidou-ms", "beidou-server-all"))
         arguments = ["start", "--target", str(target_path)]
         if workspace_server:
             arguments.append("--workspace-server")
@@ -208,7 +185,7 @@ def open_game(backend: Backend, *, channel: int = 1, character: str | None = Non
         directory.mkdir(mode=0o700, exist_ok=True)
         directory.joinpath("maple-session.json").write_text(json.dumps({
             "target_file": str(target_path), "started_at": datetime.now(timezone.utc).isoformat(),
-            "channel": channel, "character": character, "continuous": True,
+            "channel": channel, "character_id": profile.character_id, "continuous": True,
             "run_id": cast(JsonObject, stage["client"])["run_id"],
         }, ensure_ascii=False) + "\n")
     deadline = time.monotonic() + timeout
@@ -239,21 +216,15 @@ def open_game(backend: Backend, *, channel: int = 1, character: str | None = Non
             if (observed.get("native_values_valid") is not True
                     or observed.get("position") is None or not isinstance(current_character, dict)):
                 raise ClientError("in_game_observation_unavailable", "入图状态尚不能可靠确认。", stage)
-            if character_index is not None and character is None:
-                saved_selection = backend.root / "state/maple-selection.json"
-                saved = json.loads(saved_selection.read_text()) if saved_selection.is_file() else None
-                client = cast(JsonObject, stage["client"])
-                if (not isinstance(saved, dict) or saved.get("run_id") != client["run_id"]
-                        or saved.get("index") != character_index or saved.get("id") != current_character["id"]):
-                    raise ClientError("character_index_unavailable", "当前已入图，缺少同一运行记录的角色索引；请按实际角色名继续。",
-                                      {"requested_index": character_index, "actual": current_character})
-                character = cast(str, saved["name"])
-            if character is not None and current_character["name"] != character:
+            if current_character["id"] != profile.character_id:
                 raise ClientError("character_mismatch", "当前角色与请求角色不同，保留现有客户端。",
-                                  {"expected": character, "actual": current_character["name"], "stage": stage})
+                                  {"expected": profile.character_id, "actual": current_character["id"], "stage": stage})
             if stage["channel"] != channel:
                 raise ClientError("channel_mismatch", "当前频道与请求频道不同，保留现有客户端。",
                                   {"expected": channel, "actual": stage["channel"], "stage": stage})
+            if stage["world_id"] != profile.world:
+                raise ClientError("world_mismatch", "当前世界与请求世界不同，保留现有客户端。",
+                                  {"expected": profile.world, "actual": stage["world_id"], "stage": stage})
             return {"ready": True, "started": started, "resumed": resumed,
                     "skipped_login": "login" not in completed, "actions": completed,
                     "character": current_character, "channel": channel,
@@ -265,8 +236,7 @@ def open_game(backend: Backend, *, channel: int = 1, character: str | None = Non
             diagnostic.parent.mkdir(parents=True, exist_ok=True)
             with diagnostic.open("x") as stream:
                 json.dump({"stage": stage, "completed_actions": completed,
-                           "requested_channel": channel, "requested_character": character,
-                           "requested_character_index": character_index,
+                           "requested_channel": channel, "requested_character_id": profile.character_id,
                            "target_file": str(target_path) if target_path else None},
                           stream, ensure_ascii=False, indent=2)
             raise ClientError("open_stage_unknown" if current in {"STOPPED", "UNKNOWN"} else "open_timeout",
@@ -289,10 +259,10 @@ def open_game(backend: Backend, *, channel: int = 1, character: str | None = Non
                     continue
                 backend.desktop([{"action": "click", "x": x + 727, "y": y + 308}])
                 backend.text("runtime-ui", "key", "ctrl+a")
-                backend.text("runtime-ui", "type-private", "name")
+                backend.text("runtime-ui", "type-private", payload=profile.username)
                 backend.desktop([{"action": "click", "x": x + 727, "y": y + 336}])
                 backend.text("runtime-ui", "key", "ctrl+a")
-                backend.text("runtime-ui", "type-private", "password")
+                backend.text("runtime-ui", "type-private", payload=profile.password)
                 backend.desktop([{"action": "click", "x": x + 880, "y": y + 306}])
                 completed.append("login")
             elif current == "WORLD_SELECT" and "world" not in completed:
@@ -317,16 +287,12 @@ def open_game(backend: Backend, *, channel: int = 1, character: str | None = Non
                 if cast(JsonObject, login).get("characters_available") is not True:
                     raise ClientError("character_list_unavailable", "角色页已识别，但角色名单尚不能可靠解析；未发送选角输入。", stage)
                 characters = cast(list[JsonObject], cast(JsonObject, login)["characters"])
-                matches = [entry for entry in characters
-                           if ((character_index is not None and entry["index"] == character_index)
-                               or (character_index is None and (character is None or entry["name"] == character)))]
+                matches = [entry for entry in characters if entry["id"] == profile.character_id]
                 if len(matches) != 1:
                     raise ClientError("character_not_unique", "角色列表未唯一匹配目标角色；不自动创建角色。",
-                                      {"requested": character, "requested_index": character_index, "characters": characters})
+                                      {"requested": profile.character_id, "characters": characters})
                 selected = matches[0]
-                selection = stage
-                selected_login = cast(JsonObject, login)
-                active_index = cast(int, selected_login["selected_index"])
+                active_index = cast(int, cast(JsonObject, login)["selected_index"])
                 desired_index = cast(int, selected["index"])
                 # CUIAvatar 的 Left/Right 会同步 CLogin 索引，并自动切换每页三个角色。
                 while active_index != desired_index:
@@ -340,14 +306,6 @@ def open_game(backend: Backend, *, channel: int = 1, character: str | None = Non
                             or selected_login.get("selected_index") != expected_index):
                         raise ClientError("character_selection_unconfirmed", "角色键盘选择未由客户端索引确认，未继续输入或开始游戏。", selection)
                     active_index = expected_index
-                character = cast(str, selected["name"])
-                directory = backend.root / "state"
-                directory.mkdir(mode=0o700, exist_ok=True)
-                client = cast(JsonObject, selection["client"])
-                directory.joinpath("maple-selection.json").write_text(json.dumps({
-                    "run_id": client["run_id"], "index": desired_index,
-                    "id": selected["id"], "name": character,
-                }, ensure_ascii=False) + "\n")
                 backend.desktop([{"action": "click", "x": x + 866, "y": y + 223}])
                 completed.append("character")
         time.sleep(0.5)

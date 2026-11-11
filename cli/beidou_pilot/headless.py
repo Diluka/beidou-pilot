@@ -1,5 +1,6 @@
 """原生无头客户端的独立容器生命周期；不执行游戏控制循环。"""
 
+from dataclasses import asdict
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -15,6 +16,7 @@ import uuid
 from .bridge import BridgeClient
 from .errors import ClientError, JsonObject
 from .instances import InstancePaths
+from .profile import LoginProfile
 from .resources import load_resources
 
 
@@ -57,23 +59,6 @@ def registration(root: Path, instance: str = "default") -> JsonObject | None:
     if not isinstance(value, dict) or any(not isinstance(value.get(field), str) for field in
                                           ("container_id", "run_id", "image", "run_dir")):
         raise ClientError("headless_registration_invalid", "无头客户端会话登记字段无效。")
-    return cast(JsonObject, value)
-
-
-def load_profile(path: Path) -> JsonObject:
-    try:
-        if path.stat().st_mode & 0o777 != 0o600:
-            raise ClientError("private_file_permissions", "无头运行profile须为0600。")
-        value = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        raise ClientError("headless_profile_invalid", "无头运行profile无法读取或不是有效JSON。") from error
-    if (not isinstance(value, dict)
-            or any(not isinstance(value.get(key), str) or not value[key] for key in ("username", "password"))
-            or type(value.get("character_id")) is not int or value["character_id"] <= 0
-            or any(type(value.get(key, 0)) is not int or value.get(key, 0) < 0 for key in ("world", "channel"))):
-        raise ClientError("headless_profile_invalid", "无头profile需要账号、密码、已有character_id及非负整数world/channel。")
-    if "max_seconds" in value:
-        raise ClientError("headless_profile_invalid", "客户端实例由Docker持续运行至关闭；请删除profile中的max_seconds，动作期限通过Lua设置。")
     return cast(JsonObject, value)
 
 
@@ -153,7 +138,7 @@ def status(root: Path, instance: str = "default") -> JsonObject:
             "state": cast(JsonObject, state)}
 
 
-def open_game(root: Path, *, target: Path | None, profile: Path | None,
+def open_game(root: Path, *, target: Path | None, profile: LoginProfile,
               timeout: float = 90, workspace_server: bool = False, instance: str = "default") -> JsonObject:
     if not 5 <= timeout <= 180:
         raise ClientError("invalid_open_options", "启动等待期限须为5至180秒。")
@@ -166,20 +151,15 @@ def open_game(root: Path, *, target: Path | None, profile: Path | None,
             requested_target = json.loads(target.resolve().read_text())
             if requested_target != saved.get("target_config"):
                 raise ClientError("headless_target_mismatch", "当前无头会话目标与请求不同，保留现有会话。")
-        if profile is not None:
-            profile = profile.resolve()
-            requested_profile = load_profile(profile)
-            if (requested_profile.get("character_id") != saved["character_id"]
-                    or requested_profile.get("world", 0) != saved.get("world", 0)
-                    or requested_profile.get("channel", 0) + 1 != saved["channel"]):
-                raise ClientError("headless_character_mismatch", "当前无头会话角色或频道与请求不同，保留现有会话。")
+        if (profile.character_id != saved["character_id"] or profile.world != saved.get("world", 0)
+                or profile.channel + 1 != saved["channel"]):
+            raise ClientError("headless_character_mismatch", "当前无头会话角色、世界或频道与请求不同，保留现有会话。")
         result = status(root, instance)
         result.update(started=False, resumed=True, ready=result["stage"] == "IN_GAME")
         return result
-    if target is None or profile is None:
-        raise ClientError("headless_profile_required", "无头启动需要显式 --target 和权限0600的 --profile。")
-    target, profile = target.resolve(), profile.resolve()
-    configured = load_profile(profile)
+    if target is None:
+        raise ClientError("headless_target_required", "启动新的无头客户端需要显式 --target。")
+    target = target.resolve()
     graphical = docker("ps", "-q", "--filter", "label=beidou.task=client-v17-maintained",
                        "--filter", "label=beidou.client.root=" + str(root)).split()
     if graphical:
@@ -214,16 +194,16 @@ def open_game(root: Path, *, target: Path | None, profile: Path | None,
             other_target = other_saved.get("target_container_id")
             same_target = (other_target == resolved["container_id"] if other_target is not None
                            else other_saved.get("target_config") == target_config)
-            if (same_target and other_saved.get("character_id") == configured["character_id"]
-                    and other_saved.get("world", 0) == configured.get("world", 0) and is_running(root, other)):
+            if (same_target and other_saved.get("character_id") == profile.character_id
+                    and other_saved.get("world", 0) == profile.world and is_running(root, other)):
                 raise ClientError("character_already_controlled", "同一目标的角色已由另一个实例控制。",
-                                  {"instance": other, "character_id": configured["character_id"]})
+                                  {"instance": other, "character_id": profile.character_id})
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         directory = paths.runs / run_id
         directory.mkdir(parents=True, mode=0o700)
         bridge = paths.bridge
         bridge.mkdir(parents=True, mode=0o700, exist_ok=True)
-        runtime_config = {**configured, "server_host": resolved["ip"], "server_port": 8484,
+        runtime_config = {**asdict(profile), "server_host": resolved["ip"], "server_port": 8484,
                           "resources_dir": "/data", "bridge_dir": "/bridge", "run_id": run_id}
         runtime_profile = directory / "runtime.private.json"
         descriptor = os.open(runtime_profile, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -232,8 +212,8 @@ def open_game(root: Path, *, target: Path | None, profile: Path | None,
         (directory / "target.json").write_text(json.dumps(resolved, indent=2) + "\n")
         name = "maple-headless-" + hashlib.sha256(str(root).encode()).hexdigest()[:8] + "-" + instance + "-" + uuid.uuid4().hex[:8]
         record = {"container_id": "", "run_id": run_id, "image": image, "run_dir": str(directory),
-                  "target_file": str(target), "channel": configured.get("channel", 0) + 1,
-                  "character_id": configured["character_id"], "world": configured.get("world", 0),
+                  "target_file": str(target), "channel": profile.channel + 1,
+                  "character_id": profile.character_id, "world": profile.world,
                   "target_config": target_config, "target_container_id": resolved["container_id"],
                   "backend": "headless", "instance": instance}
         saved_path = paths.registration

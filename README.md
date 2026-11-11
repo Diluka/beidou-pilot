@@ -40,7 +40,7 @@ docker build -t local/beidou-v17-client:intel docker/gui
 
 ## 操作实例
 
-准备已核验的 target 和权限为 `0600` 的已有账号 profile，按实例名操作：
+准备已核验的 target 和权限为 `0600` 的已有账号 profile。GUI 和无头端都通过 `open --profile PATH` 读取同一格式的文件：`username`、`password`、`character_id`，以及可省略的 `world` 和 `channel`（从 0 开始，默认 0）。同一目标和角色一次只使用一个客户端。无头端可按实例名操作：
 
 ```bash
 ./cli/beidou-pilot --backend headless --instance worker-a --json open \
@@ -49,6 +49,16 @@ docker build -t local/beidou-v17-client:intel docker/gui
 ./cli/beidou-pilot --backend headless --instance worker-a --json capabilities
 ./cli/beidou-pilot --backend headless --instance worker-a --json close
 ```
+
+需要原版 GUI 时，先完成上述实例的交接，再用同一 target 和 profile 打开默认单实例：
+
+```bash
+./cli/beidou-pilot --backend beidou --json open \
+  --target /external/target.json --profile /private/account.private.json
+./cli/beidou-pilot --backend beidou --json close
+```
+
+GUI 只支持 `world=0`。常驻工作区目标需要已有授权并显式传 `--workspace-server`。完整登录条件见 [CLI](docs/CLI.md#启动观察与关闭)。
 
 `open` 后容器后台常驻。Lua 返回、期限结束或取消只结束当前动作，`close` 才关闭并回收实例；真实断线或错误会退出并保留原因。
 

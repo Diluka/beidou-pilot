@@ -14,6 +14,7 @@ from beidou_pilot.cli import main
 from beidou_pilot.control_scripts import action, move_to_x
 from beidou_pilot.errors import ClientError
 from beidou_pilot.headless import open_game
+from beidou_pilot.profile import LoginProfile
 from .test_bridge import BridgeFiles
 
 
@@ -246,16 +247,14 @@ class UnifiedControlContract(unittest.TestCase):
     def test_headless_reuse_rejects_a_different_explicit_target_or_actor(self) -> None:
         target = self.root / "target.json"
         target.write_text('{"project":"different-validation"}')
-        profile = self.root / "profile.json"
-        profile.write_text('{"username":"fixture","password":"fixture","character_id":7}')
-        profile.chmod(0o600)
+        profile = LoginProfile("fixture", "fixture", 7)
         saved = {"target_config": {"project": "original-validation"}, "character_id": 6, "channel": 1, "world": 0}
         existing = {"State": {"Running": True}}
         with patch("beidou_pilot.headless.current_container", return_value=existing):
             with patch("beidou_pilot.headless.registration", return_value=saved):
                 with patch("beidou_pilot.headless.status") as observation:
                     with self.assertRaises(ClientError) as target_error:
-                        open_game(self.root, target=target, profile=None)
+                        open_game(self.root, target=target, profile=profile)
                     self.assertEqual("headless_target_mismatch", target_error.exception.code)
                     with self.assertRaises(ClientError) as actor_error:
                         open_game(self.root, target=None, profile=profile)
