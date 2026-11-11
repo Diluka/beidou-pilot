@@ -290,26 +290,75 @@ while game.time() < deadline do
     local here = platform_at(s.position.x, s.position.y, 12)
     if travel then
         local before = game.time()
-        if math.abs(s.position.x - travel.last_x) + math.abs(s.position.y - travel.last_y) > 2 then
-            travel.progress_at, travel.last_x, travel.last_y = game.time(), s.position.x, s.position.y
-        end
-        assert(game.time() - travel.progress_at < 3 and game.time() - travel.started < 12, "hunt_navigation_stalled")
         local destination = platforms[travel.to]
+        if travel.stage ~= travel.last_stage then
+            travel.last_stage, travel.stage_at, travel.progress_at, travel.nearest =
+                travel.stage, game.time(), game.time(), math.huge
+        end
+        local remaining = travel.stage == "align" and math.abs(s.position.x - travel.x)
+            or math.abs(s.position.x - travel.destination_x)
+                + math.abs(s.position.y - height(destination, travel.destination_x))
+        if remaining < travel.nearest - 2 then
+            travel.progress_at, travel.nearest = game.time(), remaining
+        end
+        local grounded = here and math.abs(s.position.y - height(platforms[here], s.position.x)) <= 5
+        local local_target = false
+        if travel.stage == "align" and grounded then
+            for _, mob in ipairs(s.monsters) do
+                if
+                    mob.active
+                    and (not options.mob_id or mob.template_id == options.mob_id)
+                    and mob.x >= options.min_x
+                    and mob.x <= options.max_x
+                    and platform_at(mob.x, mob.y, 45) == here
+                then
+                    local_target = true
+                    break
+                end
+            end
+        end
         if
             here
             and here ~= travel.from
             and here ~= travel.to
             and (travel.kind ~= "rope" or math.abs(s.position.x - travel.x) > 18)
-            and math.abs(s.position.y - height(platforms[here], s.position.x)) <= 5
+            and grounded
         then
             game.stop()
             travel = nil
+        elseif travel.stage == "settle" and here == travel.to and grounded then
+            transitions, travel = transitions + 1, nil
+        elseif local_target then
+            -- 接近路段时先处理当前层的新目标，避免一直追逐过时的跨层目标。
+            game.stop()
+            travel, target_id = nil, nil
+        elseif
+            game.time() - travel.progress_at >= 3
+            or travel.stage ~= "align" and game.time() - travel.stage_at >= 12
+        then
+            game.log(
+                string.format(
+                    "hunt_navigation_blocked kind=%s from=%d to=%d stage=%s x=%.1f y=%.1f goal_x=%.1f goal_y=%.1f target=%s idle_s=%.2f stage_s=%.2f",
+                    travel.kind,
+                    travel.from,
+                    travel.to,
+                    travel.stage,
+                    s.position.x,
+                    s.position.y,
+                    travel.stage == "align" and travel.x or travel.destination_x,
+                    height(destination, travel.destination_x),
+                    tostring(target_id),
+                    game.time() - travel.progress_at,
+                    game.time() - travel.stage_at
+                )
+            )
+            game.stop()
+            assert(grounded, "hunt_navigation_stalled")
+            -- 静态候选边经本端实际尝试失败后，本次会话不再重试该边。
+            travel.edge.blocked = true
+            travel, target_id, approach = nil, nil, nil
         elseif travel.stage == "settle" then
-            if here == travel.to and math.abs(s.position.y - height(destination, s.position.x)) <= 5 then
-                transitions, travel = transitions + 1, nil
-            else
-                if not try_attack(s, nil, 0.12) then game.sleep(0.05) end
-            end
+            if not try_attack(s, nil, 0.12) then game.sleep(0.05) end
         elseif travel.kind == "rope" then
             local upward = height(platforms[travel.from], travel.x) > height(destination, travel.x)
             local beyond = upward and s.position.y < travel.rope.y1 - 6
@@ -325,8 +374,6 @@ while game.time() < deadline do
                     game.move(dx > 0 and "right" or "left", math.min(0.08, math.abs(dx) / 150))
                     local after = current_state()
                     if math.abs(after.position.x - s.position.x) > 1 then
-                        travel.progress_at, travel.last_x, travel.last_y =
-                            game.time(), after.position.x, after.position.y
                         game.stop()
                         travel.stage = "settle"
                     else
@@ -339,8 +386,19 @@ while game.time() < deadline do
                 game.stop()
                 travel.stage = "settle"
                 game.sleep(0.1)
-            elseif travel.stage == "align" and move_x(s, travel.x) then
-                -- 接绳前先对齐，攀爬过程中保持本条路段。
+            elseif travel.stage == "align" then
+                if move_x(s, travel.x) then
+                    -- 接近绳索时卸去横向惯性，避免跳起后滑出抓绳范围。
+                    if math.abs(s.position.x - travel.x) < 40 then
+                        game.stop()
+                        game.sleep(0.15)
+                    end
+                else
+                    game.stop()
+                    game.sleep(0.15)
+                    local aligned = current_state()
+                    if math.abs(aligned.position.x - travel.x) <= 5 then travel.stage = "climb" end
+                end
             else
                 if
                     upward
@@ -377,13 +435,13 @@ while game.time() < deadline do
             local from = queue[cursor]
             cursor = cursor + 1
             for _, edge in ipairs(edges[from]) do
-                if distance[edge.to] == nil then
+                if not edge.blocked and distance[edge.to] == nil then
                     parents[edge.to], distance[edge.to] = edge, distance[from] + 1
                     queue[#queue + 1] = edge.to
                 end
             end
         end
-        local target, target_platform, nearest = nil, nil, math.huge
+        local target, target_platform, nearest, nearest_hops = nil, nil, math.huge, math.huge
         local matching = 0
         for _, mob in ipairs(s.monsters) do
             if
@@ -395,13 +453,10 @@ while game.time() < deadline do
                 matching = matching + 1
                 local floor = platform_at(mob.x, mob.y, 45)
                 if floor and distance[floor] ~= nil then
-                    local cost = distance[floor] * 600 + math.abs(mob.x - s.position.x)
-                    if mob.object_id == target_id then
-                        target, target_platform = mob, floor
-                        break
-                    end
-                    if cost < nearest then
-                        target, target_platform, nearest = mob, floor, cost
+                    local cost = math.abs(mob.x - s.position.x)
+                    if mob.object_id == target_id then cost = cost - options.attack_range end
+                    if distance[floor] < nearest_hops or distance[floor] == nearest_hops and cost < nearest then
+                        target, target_platform, nearest, nearest_hops = mob, floor, cost, distance[floor]
                     end
                 end
             end
@@ -469,6 +524,7 @@ while game.time() < deadline do
                 edge = parents[edge.from]
             end
             travel = {
+                edge = edge,
                 from = edge.from,
                 to = edge.to,
                 kind = edge.kind,
@@ -476,12 +532,21 @@ while game.time() < deadline do
                 destination_x = edge.destination_x,
                 rope = edge.rope,
                 stage = "align",
-                started = game.time(),
-                progress_at = game.time(),
-                last_x = s.position.x,
-                last_y = s.position.y,
             }
-            game.log("hunt_route kind=" .. travel.kind .. " from=" .. travel.from .. " to=" .. travel.to)
+            game.log(
+                string.format(
+                    "hunt_route kind=%s from=%d to=%d start_x=%.1f start_y=%.1f via_x=%.1f destination_x=%.1f destination_y=%.1f target=%s",
+                    travel.kind,
+                    travel.from,
+                    travel.to,
+                    s.position.x,
+                    s.position.y,
+                    travel.x,
+                    travel.destination_x,
+                    height(platforms[travel.to], travel.destination_x),
+                    tostring(target_id)
+                )
+            )
             game.sleep(0)
         end
     end
