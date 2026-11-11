@@ -140,8 +140,10 @@ def change_equipment(
 
 def allocate(backend: Backend, target: str | int, count: int) -> JsonObject:
     skill = isinstance(target, int)
-    if not 1 <= count <= 100 or (skill and not 1 <= target <= 0x7FFFFFFF) or (
-        not skill and target not in {"strength", "dexterity", "intelligence", "luck"}
+    if (
+        not 1 <= count <= 100
+        or (skill and not 1 <= target <= 0x7FFFFFFF)
+        or (not skill and target not in {"strength", "dexterity", "intelligence", "luck"})
     ):
         raise ClientError("invalid_allocation", "指定基础属性或正32位技能ID，以及1至100点。")
     name = "allocate_sp" if skill else "allocate_ap"
@@ -149,14 +151,27 @@ def allocate(backend: Backend, target: str | int, count: int) -> JsonObject:
     state = cast(JsonObject, report["last_state"])
     result = cast(JsonObject | None, state.get("action_result"))
     allocation = cast(JsonObject | None, result.get("allocation")) if result else None
-    matches = (allocation is not None and allocation.get("kind") == ("sp" if skill else "ap")
-               and allocation.get("requested") == count
-               and allocation.get("skill_id" if skill else "stat") == target)
-    confirmed = (report["status"] == "completed" and matches and result is not None
-                 and result.get("effect") == "confirmed" and allocation is not None
-                 and allocation.get("allocated") == count)
-    projected: JsonObject = {**report, "action": name, "allocation": allocation, "confirmed": confirmed,
-                             "action_result": result}
+    matches = (
+        allocation is not None
+        and allocation.get("kind") == ("sp" if skill else "ap")
+        and allocation.get("requested") == count
+        and allocation.get("skill_id" if skill else "stat") == target
+    )
+    confirmed = (
+        report["status"] == "completed"
+        and matches
+        and result is not None
+        and result.get("effect") == "confirmed"
+        and allocation is not None
+        and allocation.get("allocated") == count
+    )
+    projected: JsonObject = {
+        **report,
+        "action": name,
+        "allocation": allocation,
+        "confirmed": confirmed,
+        "action_result": result,
+    }
     if report["status"] == "completed" and not confirmed:
         raise ClientError("allocation_unconfirmed", "分配未全部确认，已停止；先观察实际点数与目标，不重试。", projected)
     return projected

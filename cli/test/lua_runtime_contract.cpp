@@ -748,7 +748,9 @@ assert(ap.allocation.allocated == 2 and ap.allocation.requested == 2)
 local sp = game.allocate_sp(1000000, 3, 0.5)
 assert(sp.effect == "unknown" and sp.allocation.allocated == 1 and sp.allocation.point_pending)
 game.move("right", 0.02)
-)lua", 5000, error), error);
+)lua",
+                        5000, error),
+          error);
     Advance(runtime, native, 3);
     Check(native.requests.size() == 1 && native.pending, "allocation_repeated_before_confirmation");
     const auto& ap = native.requests.front();
@@ -771,16 +773,19 @@ game.move("right", 0.02)
     native.Complete("unknown", "move_dispatched");
     Advance(runtime, native, 3);
     Check(!runtime.Running() && runtime.CurrentStatus()->status == "completed"
-              && runtime.CurrentStatus()->error.empty(), runtime.CurrentStatus()->error);
-    for (const auto* source : {"game.allocate_ap('hp',1)", "game.allocate_ap('strength',0)",
-                              "game.allocate_ap('strength',101)", "game.allocate_sp(0,1)",
-                              "game.allocate_sp(1000000,1,0)", "game.allocate_sp(1000000,1,31)"}) {
+              && runtime.CurrentStatus()->error.empty(),
+          runtime.CurrentStatus()->error);
+    for (const auto* source :
+         {"game.allocate_ap('hp',1)", "game.allocate_ap('strength',0)", "game.allocate_ap('strength',101)",
+          "game.allocate_sp(0,1)", "game.allocate_sp(1000000,1,0)", "game.allocate_sp(1000000,1,31)"}) {
         Check(runtime.Start("invalid-allocation", source, 5000, error), error);
         Advance(runtime, native, 3);
         Check(runtime.CurrentStatus()->reason == "script_error", "invalid_allocation_not_rejected");
     }
     Check(native.requests.size() == 3, "invalid_allocation_dispatched");
-    Check(runtime.Start("cancel-allocation", "game.allocate_ap('strength',2); error('old_request_resumed')", 5000, error), error);
+    Check(
+        runtime.Start("cancel-allocation", "game.allocate_ap('strength',2); error('old_request_resumed')", 5000, error),
+        error);
     Advance(runtime, native, 1);
     runtime.Cancel("explicit_cancel");
     Advance(runtime, native, 3);
@@ -791,11 +796,14 @@ game.move("right", 0.02)
     Check(runtime.Start("unsupported-allocation", R"lua(
 assert(not game.capabilities().allocate_ap and not game.capabilities().allocate_sp)
 game.allocate_ap("strength", 1)
-)lua", 5000, error), error);
+)lua",
+                        5000, error),
+          error);
     Advance(runtime, native, 3);
     Check(runtime.CurrentStatus()->reason == "script_error"
               && runtime.CurrentStatus()->error.find("unsupported: allocate_ap") != std::string::npos
-              && native.requests.size() == 4, "unsupported_allocation_reached_native_dispatch");
+              && native.requests.size() == 4,
+          "unsupported_allocation_reached_native_dispatch");
 }
 
 void EquipmentRequests() {

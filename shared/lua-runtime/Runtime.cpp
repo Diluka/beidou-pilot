@@ -496,10 +496,10 @@ struct Runtime::Impl {
         const auto& adapter = Self(lua).adapter;
         lua_newtable(lua);
         String(lua, "backend", adapter.Backend());
-        for (ActionKind kind : {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack,
-                                ActionKind::Pickup, ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip,
-                                ActionKind::Unequip, ActionKind::Revive, ActionKind::Activate,
-                                ActionKind::AllocateAp, ActionKind::AllocateSp})
+        for (ActionKind kind :
+             {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack, ActionKind::Pickup,
+              ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip, ActionKind::Unequip, ActionKind::Revive,
+              ActionKind::Activate, ActionKind::AllocateAp, ActionKind::AllocateSp})
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
@@ -680,6 +680,7 @@ struct Runtime::Impl {
     }
 
     static int AllocateAp(lua_State* lua) { return Allocate(lua, false); }
+
     static int AllocateSp(lua_State* lua) { return Allocate(lua, true); }
 
     static int Sleep(lua_State* lua) {

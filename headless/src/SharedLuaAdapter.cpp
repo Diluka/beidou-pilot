@@ -896,7 +896,8 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
                 ApplyRelease();
             }
         }
-    } else if (active && !allocationRequest && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs))
+    } else if (active && !allocationRequest
+               && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs))
         ApplyRelease();
     ReadCommand(externalActionBusy);
     runtime.Tick(changed);
@@ -907,9 +908,10 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
             if (request.skill)
                 ms::SpendSpPacket(request.skillId).dispatch();
             else {
-                const auto stat = request.stat == "strength" ? ms::MapleStat::STR
-                                  : request.stat == "dexterity" ? ms::MapleStat::DEX
-                                  : request.stat == "intelligence" ? ms::MapleStat::INT : ms::MapleStat::LUK;
+                const auto stat = request.stat == "strength"       ? ms::MapleStat::STR
+                                  : request.stat == "dexterity"    ? ms::MapleStat::DEX
+                                  : request.stat == "intelligence" ? ms::MapleStat::INT
+                                                                   : ms::MapleStat::LUK;
                 ms::SpendApPacket(stat).dispatch();
             }
             ++inputEvents;

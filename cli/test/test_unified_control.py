@@ -169,8 +169,13 @@ class UnifiedControlContract(unittest.TestCase):
             for status, allocated, code in (("completed", 2, 0), ("completed", 1, 2), ("cancelled", 1, 0)):
                 with self.subTest(command=command, status=status, allocated=allocated):
                     skill = isinstance(target, int)
-                    allocation = {"kind": "sp" if skill else "ap", "requested": 2, "allocated": allocated,
-                                  "skill_id" if skill else "stat": target, "point_pending": allocated != 2}
+                    allocation = {
+                        "kind": "sp" if skill else "ap",
+                        "requested": 2,
+                        "allocated": allocated,
+                        "skill_id" if skill else "stat": target,
+                        "point_pending": allocated != 2,
+                    }
                     result = {"allocation": allocation, "effect": "confirmed" if allocated == 2 else "unknown"}
                     report = {"status": status, "last_state": {"action_result": result}}
                     with patch("beidou_pilot.control_scripts.run_source", return_value=report) as run:

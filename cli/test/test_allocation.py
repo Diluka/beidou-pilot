@@ -11,10 +11,19 @@ class AllocationContract(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / "allocation-contract"
-            subprocess.run([
-                "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
-                "-I" + str(root / "shared/lua-runtime"),
-                str(root / "shared/lua-runtime/Observation.cpp"),
-                str(root / "cli/test/allocation_contract.cpp"), "-o", str(executable),
-            ], check=True)
+            subprocess.run(
+                [
+                    "g++",
+                    "-std=c++17",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-I" + str(root / "shared/lua-runtime"),
+                    str(root / "shared/lua-runtime/Observation.cpp"),
+                    str(root / "cli/test/allocation_contract.cpp"),
+                    "-o",
+                    str(executable),
+                ],
+                check=True,
+            )
             subprocess.run([str(executable)], check=True, timeout=10)
