@@ -18,7 +18,7 @@
 | 同会话连续完成GUI交互与养成 | 已有CLI流程尚无完整Lua语义入口；batch不承担动态判断 | [#41](https://github.com/Diluka/beidou-pilot/issues/41) |
 | 可靠打开可见近距NPC | GUI仍需可核实图形范围与有效目标；无头使用当前原生引用 | [#42](https://github.com/Diluka/beidou-pilot/issues/42) |
 | 知道箱子等对象当前是否存在及已知状态 | 原生内部实现不等于公开结构化观察 | [#43](https://github.com/Diluka/beidou-pilot/issues/43) |
-| 沿已知路线跨层、进入相邻地图并确认到达 | 仍需消费者自行编写逐段组合与确认 | [#44](https://github.com/Diluka/beidou-pilot/issues/44) |
+| 沿已知路线跨层、进入相邻地图并确认到达 | 旅行函数库可组合有界路段；首条示例固定50000东上层到1000000西入口及返回，其他路线仍需明确地形事实与真实验收 | [#44](https://github.com/Diluka/beidou-pilot/issues/44) |
 | 读取真实动作前提、收束和移动能力 | ready不等落地，GUI部分状态未知 | [#45](https://github.com/Diluka/beidou-pilot/issues/45) |
 | 回收指定物品或金币并确认收益 | 普通pickup只尝试；物品看入包、金币看余额 | [#46](https://github.com/Diluka/beidou-pilot/issues/46) |
 | 知道战斗有何原生可核实进展 | 无头提供已收到的服务端目标HP百分比；GUI未知，动作归因仍未知 | [#47](https://github.com/Diluka/beidou-pilot/issues/47) |

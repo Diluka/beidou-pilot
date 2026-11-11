@@ -468,3 +468,37 @@ game.stop()
 这里核对的是一次本地移动尝试与读数，不承诺一定移动。复杂状态判断与操作编排放复合策略；先查本API参考，再按真实场景迭代，不把示例参数或初步脚手架当作成熟打法。
 
 实现核对入口：[Runtime.cpp](../shared/lua-runtime/Runtime.cpp)、[headless适配器](../headless/src/SharedLuaAdapter.cpp)、[原版适配器](../beidou-ijl15/ezorsia/AgentBridge.cpp)。
+
+## 可选旅行函数库
+
+`script run/start --library travel` 将公共旅行函数与消费者源码组成一个原生 Lua chunk，脚本内可使用局部表 `travel`。这不是新的 `game` 原生绑定；未显式装载时该表不存在。`--library island-supply` 还提供示例表 `island_supply`。两者不依赖 `require/loadfile`，不解释动作列表或 JSON 预设；地图资料与已知路段由普通 Lua 消费者明确提供，持续控制仍在客户端。
+
+`travel.begin(spec)` 核对当前角色与合法起点并绑定当前实例、角色及场景，返回路线对象。`spec` 必须包含 `name`、`seconds`（1至600秒）、`start_map`、`start`、`destination_map`、`destination`，可选 `min_hp_ratio`（默认0.25，范围0至1）。地图必须已知，`999999999` 不能作为已知目的地。区域均为 `{min_x,max_x,min_y,max_y}`，缺失或非有限值在输入前拒绝。外层原生会话期限仍有效，不因函数库调用延长。
+
+| 普通 Lua 函数 | 输入与结果 |
+| --- | --- |
+| `route:walk(x, y_tolerance?, label?)` | 在当前楼层对齐X，默认高度容差10；停止后再确认，换层、身份变化或无进展停止 |
+| `route:drop_to(x, y, label?)` | 沿调用者已知的下降路段进入指定落点；在本次起点至目标的有限走廊内核对进度与落点，不规划未知跳跃 |
+| `route:portal(x, y, target_map, label?)` | 对齐同层已知门户，发一次Up，等待同角色进入已知相邻地图；仅此阶段允许预期转场并更新场景绑定 |
+| `route:finish()` | 停止输入，复采目标地图和区域；返回 `{arrived=true,stage="arrived",map_id=...,position=...}` |
+
+`walk/drop_to/portal` 返回同一路线对象，可以在普通 Lua 函数中组合复用。无到达证据不会返回成功；受控失败抛出 `route_failed arrived=false stage=... reason=...`，终止脚本后续动作，并由 Runtime 释放所属输入。每段开始也记录 `route_stage`，原生抛错、整会话取消或期限结束时结合该最近阶段与原始原因判断，不把取消当作到达。控制被接管后不自动 `acquire` 或重放路线；多任务调用者应先按正常规则取得控制并重新观察。
+
+首轮 `island_supply` 明确提供以下路线事实，尚不代表其他地图或起点可通行：
+
+| 调用 | 合法起点 | 目的地 |
+| --- | --- | --- |
+| `island_supply.to_town(options?)` | 地图50000东上层，X1100..1350、Y-95..-75 | 向东落到Y275门户层，进入1000000西入口区域X-90..-40、Y264..284 |
+| `island_supply.to_field(options?)` | 地图1000000西入口区域X-100..20、Y264..284 | 返回50000东下层区域X1400..1440、Y265..285 |
+
+可选 `options` 只设置总预算 `seconds` 与 `min_hp_ratio`；默认出发30秒、返回20秒，HP下限0.5。例子：
+
+```lua
+local outward = island_supply.to_town({seconds=30, min_hp_ratio=0.5})
+assert(outward.arrived and outward.map_id == 1000000)
+-- 真实补给/任务消费者可在此观察，再决定后续；示例不会替你买卖或交任务。
+local back = island_supply.to_field({seconds=20, min_hp_ratio=0.5})
+assert(back.arrived and back.map_id == 50000)
+```
+
+两端位置与运动事实仍分别来自各自客户端；GUI `settled` 保持未知，区域复采不伪装为原生落地字段。固定地形坐标来自已核实同源Map资料与既有私有路线证据，静态已知不代表现场通行成功；更换资源或遇阻时必须重新验证。正式双端试用结果与组件版本集中在 #44 / #122 的交付 PR，待验收的路径不能以离线合同宣称通过。危险地图返回后继续按原有约定安全结束或关闭所属实例。
