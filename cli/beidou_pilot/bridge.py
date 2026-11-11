@@ -353,30 +353,12 @@ class BridgeClient:
                  wait_for_start: bool = False) -> tuple[BridgeSnapshot, str | None, bool]:
         if cancel_file is not None and cancel_file.exists():
             return before, None, True
-        request_id = None
-        try:
-            request_id = self._publish(before, action, argument, values)
-            result = self._wait(before, request_id, timeout, cancel_file, poll_interval, wait_for_start)
-            if result is not None and result["held_keys"] and result["command"]["status"] != "running":
-                raise ClientError("bridge_release_unconfirmed", "动作已结束，但原生桥按键尚未释放。",
-                                  {"request_id": request_id, "held_keys": result["held_keys"]})
-        except (ClientError, KeyboardInterrupt) as error:
-            if isinstance(error, ClientError) and error.code in (
-                    "bridge_command_rejected", "bridge_command_write_failed"):
-                raise
-            try:
-                released = self._stop(before, 2)
-            except ClientError as release_error:
-                raise ClientError("bridge_release_unconfirmed", "动作结果异常，停止后的按键释放仍未确认。",
-                                  {"request_id": request_id,
-                                   "original_error": error.code if isinstance(error, ClientError) else "interrupted",
-                                   "original_details": error.details if isinstance(error, ClientError) else {},
-                                   "release_error": release_error.code,
-                                   "release_details": release_error.details}) from error
-            if isinstance(error, ClientError):
-                error.details["cleanup"] = {"request_id": released["command"]["id"],
-                                            "status": released["command"]["status"], "held_keys": []}
-            raise
+        request_id = self._publish(before, action, argument, values)
+        # 等待进程不拥有原生任务；中断或观察失败不改变已发布任务。
+        result = self._wait(before, request_id, timeout, cancel_file, poll_interval, wait_for_start)
+        if result is not None and result["held_keys"] and result["command"]["status"] != "running":
+            raise ClientError("bridge_release_unconfirmed", "动作已结束，但原生桥按键尚未释放。",
+                              {"request_id": request_id, "held_keys": result["held_keys"]})
         if result is None:
             return self._stop(before, 2), request_id, True
         return result, request_id, False
@@ -384,7 +366,7 @@ class BridgeClient:
     def run_script(self, path: Path | None = None, seconds: float | None = 30, timeout: float | None = None,
                    cancel_file: Path | None = None, *, code: str | None = None,
                    wait_for_start: bool = False) -> JsonObject:
-        """执行受信Lua；wait_for_start只等待原生受理，返回后由Runtime独立运行。"""
+        """执行受信Lua；等待只投影结果，已发布任务由Runtime独立运行。"""
         if (path is None) == (code is None):
             raise ClientError("invalid_bridge_options", "Lua文件与直接源码须且只能提供一项。")
         if (seconds is not None and not 0.001 <= seconds <= 0xFFFFFFFF / 1000

@@ -79,29 +79,49 @@ class NativeScriptContract(unittest.TestCase):
                 process.kill()
             process.communicate()
 
-    def test_continuous_cli_sigterm_waits_for_script_stop_and_key_release(self) -> None:
-        process = self.start_cli("script", "run", "--code", "game.move('right', 1)", "--continuous")
-        try:
-            command = self.files.command()
-            self.assertEqual(command[4:6], ["script", "0"])
-            self.files.state["command"] = {"id": command[3], "status": "running", "reason": None}
-            self.files.state["script"] = script_state(command[6], "running")
-            self.files.state["held_keys"] = [39]
-            self.files.publish()
-            process.send_signal(signal.SIGTERM)
-            stop = self.files.command(command[3])
-            self.assertEqual(stop[4:], ["stop", "0"])
-            self.assertIsNone(process.poll(), "脚本须确认停止和放键后再退出控制器")
-            self.files.state["script"] = script_state(command[6], "cancelled", "stop_requested")
-            self.files.complete_stop(command[3])
-            output, errors = process.communicate(timeout=2)
-            self.assertEqual(process.returncode, 130, errors)
-            self.assertEqual(json.loads(output)["error"]["code"], "interrupted")
-            self.assertEqual(self.files.state["held_keys"], [])
-        finally:
-            if process.poll() is None:
-                process.kill()
-            process.communicate()
+    def test_cli_sigterm_ends_wait_without_canceling_published_script(self) -> None:
+        for action in ("run", "start"):
+            with self.subTest(action=action):
+                (self.files.directory / "command.txt").unlink(missing_ok=True)
+                self.files.state["command"] = {"id": None, "status": "idle", "reason": None}
+                self.files.state["script"] = None
+                self.files.state["held_keys"] = []
+                self.files.publish()
+                process = self.start_cli("script", action, "--code", "game.move('right', 1)", "--continuous")
+                try:
+                    command = self.files.command()
+                    self.assertEqual(command[4:6], ["script", "0"])
+                    self.files.state["command"] = {"id": command[3], "status": "running", "reason": None}
+                    self.files.state["script"] = script_state(command[6], "running")
+                    self.files.state["held_keys"] = [39]
+                    if action == "run":
+                        self.files.publish()
+                    process.send_signal(signal.SIGTERM)
+                    if action == "start":
+                        # start 尚在等待原生受理；退出等待不撤销已经发布的请求。
+                        self.files.publish()
+                    output, errors = process.communicate(timeout=2)
+                    self.assertEqual(process.returncode, 130, errors)
+                    self.assertEqual(json.loads(output)["error"]["code"], "interrupted")
+                    self.assertEqual(command, self.files.command())
+                    state = self.client.snapshot()
+                    self.assertEqual((command[6], "running", [39]),
+                                     (state["script"]["id"], state["script"]["status"], state["held_keys"]))
+
+                    def peer() -> None:
+                        self.files.command(command[3])
+                        self.files.state["script"] = script_state(command[6], "cancelled", "stop_requested")
+                        self.files.complete_stop(command[3])
+
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        native = pool.submit(peer)
+                        report = self.client.cancel_script(command[6])
+                        native.result(2)
+                    self.assertEqual(("cancelled", []), (report["status"], report["held_keys"]))
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate()
 
     def test_native_runtime_error_remains_a_failure_after_release(self) -> None:
         def peer() -> None:
@@ -120,7 +140,7 @@ class NativeScriptContract(unittest.TestCase):
         self.assertEqual(failure.exception.details["last_state"]["held_keys"], [])
         self.assertEqual(self.files.command()[4], "script")
 
-    def test_continuous_cli_ends_with_unknown_release_when_sampling_stops(self) -> None:
+    def test_continuous_cli_reports_stale_observation_without_stopping_task(self) -> None:
         process = self.start_cli("script", "run", str(self.path), "--continuous")
         try:
             command = self.files.command()
@@ -128,14 +148,12 @@ class NativeScriptContract(unittest.TestCase):
             self.files.state["script"] = script_state(command[6], "running")
             self.files.state["held_keys"] = [39]
             self.files.publish()
-            # 对端从此不更新，也不确认stop；控制器必须自行结束持续等待。
+            # 对端从此不更新；结束观察不代表任务结束，也不发送取消请求。
             output, errors = process.communicate(timeout=9)
             self.assertEqual(process.returncode, 2, errors)
             failure = json.loads(output)["error"]
-            self.assertEqual(failure["code"], "bridge_release_unconfirmed")
-            self.assertEqual(failure["details"]["original_error"], "stale_bridge_state")
-            self.assertEqual(failure["details"]["release_error"], "bridge_timeout")
-            self.assertEqual(self.files.command(command[3])[4:], ["stop", "0"])
+            self.assertEqual(failure["code"], "stale_bridge_state")
+            self.assertEqual(command, self.files.command())
         finally:
             if process.poll() is None:
                 process.kill()

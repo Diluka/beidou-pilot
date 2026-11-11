@@ -1,6 +1,7 @@
 """Codex JSON-RPC 分派与独立 app-server 的异步 JSONL 传输。"""
 
 import asyncio
+from collections.abc import Mapping
 import json
 from pathlib import Path
 from typing import TypeAlias, cast
@@ -125,10 +126,10 @@ class AppServer(JsonRpcConnection):
         super().__init__()
 
     @classmethod
-    async def start(cls, command: list[str], stderr: Path) -> "AppServer":
+    async def start(cls, command: list[str], stderr: Path, *, env: Mapping[str, str] | None = None) -> "AppServer":
         with stderr.open("ab") as stream:
             process = await asyncio.create_subprocess_exec(
-                *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=stream
+                *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=stream, env=env
             )
         return cls(process)
 

@@ -10,6 +10,9 @@ iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -p tcp -d "$TARGET_IP" -m multiport --dports 8484,7575,7576,7577 -j ACCEPT
+if [ -n "${MODEL_PROXY_IP:-}" ]; then
+    iptables -A OUTPUT -p tcp -d "$MODEL_PROXY_IP" --dport "$MODEL_PROXY_PORT" -j ACCEPT
+fi
 iptables -t nat -A OUTPUT -d 127.0.0.1 -p tcp -m multiport --dports 8484,7575,7576,7577 -j DNAT --to-destination "$TARGET_IP"
 iptables -t nat -A POSTROUTING -d "$TARGET_IP" -p tcp -m multiport --dports 8484,7575,7576,7577 -j MASQUERADE
 ip6tables -P INPUT DROP

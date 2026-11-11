@@ -125,7 +125,7 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
             "import json,pathlib,sys\n"
             "path=pathlib.Path(sys.argv[0])\n"
             "path.with_suffix('.argv').write_text(json.dumps(sys.argv[1:]))\n"
-            "assert sys.argv[1:9] == ['--workbench', str(path.parent), '--instance', 'default', '--json', 'events', 'watch', '--interval']\n"
+            "assert sys.argv[1:5] == [str(path.parent), 'events', 'watch', '--interval']\n"
             "cursor={'instance_id':'client','run_id':'run','seq':0}\n"
             + (
                 "print(json.dumps({'event':'events_ready','backend':'beidou','instance':'default','instance_id':'client','run_id':'run','cursor':cursor}),flush=True)\n"
@@ -139,7 +139,6 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
         return argparse.Namespace(
             cli=cli,
             workbench=self.root,
-            instance="default",
             thread="receiver",
             socket=self.socket,
             state=self.root / "state",
@@ -187,12 +186,35 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
             {
                 "cli": str(args.cli),
                 "workbench": str(self.root),
-                "instance": "default",
                 "thread_id": "receiver",
                 "socket": str(self.socket),
             },
             saved["binding"],
         )
+
+    async def test_legacy_instance_binding_is_not_silently_resumed(self) -> None:
+        args = self.arguments([])
+        args.state.mkdir()
+        checkpoint = args.state / "cursor.json"
+        checkpoint.write_text(
+            json.dumps(
+                {
+                    "binding": {
+                        "cli": str(args.cli),
+                        "workbench": str(self.root),
+                        "instance": "default",
+                        "thread_id": "receiver",
+                        "socket": str(self.socket),
+                    },
+                    "cursor": {"instance_id": "client", "run_id": "run", "seq": 3},
+                }
+            )
+        )
+        previous = checkpoint.read_bytes()
+        with self.assertRaisesRegex(ValueError, "已绑定其他客户端"):
+            await run(args)
+        self.assertEqual(previous, checkpoint.read_bytes())
+        self.assertFalse(args.cli.with_suffix(".argv").exists())
 
     async def test_interrupt_delivery_waits_for_old_turn_completion_then_starts_event_turn(self) -> None:
         peer = CodexPeer(active=True)

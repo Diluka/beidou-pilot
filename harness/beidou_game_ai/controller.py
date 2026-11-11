@@ -1,33 +1,30 @@
-"""一个游戏会话的 Codex 消费者；动作与释放仍由现有客户端 CLI 拥有。"""
+"""游戏角色的可选 Codex 旁路；只管理 LLM 会话调度。"""
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 import hashlib
 import json
-import math
 from pathlib import Path
 import time
 from typing import cast
 
-from .client import GameClient, GameClientError, HuntRequest
+from .client import GameClient, GameClientError
 from .protocol import AppServer, AppServerError, JsonObject, JsonValue
 
 
-BASE_INSTRUCTIONS = "你是专用游戏角色的决策 AI。只使用本次游戏事实、游戏工具和向开发 AI 询问的协作入口。"
-GAME_INSTRUCTIONS = """持续动作、战斗和等待交给 Lua，不做逐帧模型控制。先观察；动作后核对实际结果，接受请求不等于游戏效果。
-最小 Lua 积木：game.state() 读取新状态；game.move("left"/"right"/"up"/"down", 秒) 有界移动并等待释放；game.sleep(秒) 等待；game.log(字符串) 记录；game.stop() 释放控制。
-源码示例 game.move("right", 0.15) 只表示尝试移动；位置与停止效果通过后续观察确认。按实际能力使用接口，缺失能力明确报告，不猜快捷键或调用未说明的接口。
-未知事实保留未知。普通游戏决策自主完成，需越界或协助才用 request_user_input 向开发 AI 询问。
-game_run_lua 只提交有界执行，返回 starting 不证明原生受理。执行结束会自动收到结果；需要等待时结束本轮回复即可。
-暂停后不再提交动作；恢复时根据最新观察重规划，不重放旧动作。遵守既有养成方案，不试验性分配永久点数或消耗稀缺资源。
+BASE_INSTRUCTIONS = "你是专用游戏角色的决策 AI。依据本实例的游戏事实和已授权能力行动，需要协助时向开发 AI 询问。"
+GAME_INSTRUCTIONS = """使用 beidou-pilot-client 技能，通过 shell 调用本容器的 beidou-pilot CLI。
+LLM 是可选旁路，客户端任务独立运行。持续任务通过原生 script start 启动，不靠常驻 shell 或模型回合维持。
+每次接入和恢复先读取当前 script、command、held_keys 和游戏快照，再根据现有任务决定下一步。
+已有脚本或命令 running 时只观察和汇报，不重复 start、replace、cancel 或抢占；任务接管或取消必须由用户明确要求。
+pause、stop、退出和重连只影响 LLM 调度，不取消脚本、关闭客户端或清理后台 shell。需要取消任务或关闭客户端时使用明确命令。
+持续动作、战斗和等待交给现有 Lua，不做逐帧模型控制。动作后核对实际结果，接受请求不等于游戏效果。
+未知事实保留未知。需越界或协助才用 request_user_input 向开发 AI 询问。遵守既有养成方案，不试验性分配永久点数或消耗稀缺资源。
 """
-HUNT_INSTRUCTIONS = """\ngame_hunt 直接在当前场景内自主找怪、换层和连续攻击，target省略或all表示全部怪物，skill_id省略表示普攻；脚本和地形由客户端装载，无需生成狩猎源码。
-需要连续狩猎时选择continuous=true；限时则指定seconds，二者不同时提供。它返回starting后可结束本轮等待，执行会持续到期限、取消、场景变化或安全停止；用观察工具核对进展，不能同时提交另一动作。暂停/停止沿用所属执行的取消与放键确认。
-"""
-CONTROL_TOOLS = frozenset({"game_run_lua", "game_hunt"})
-TOOL_SURFACE = "hunt-v1"
-GAME_TOOLS: list[JsonObject] = [
+TOOL_SURFACE = "cli-v1"
+SKILL_NAME = "beidou-pilot-client"
+SKILL_PATH = "/game/.agents/skills/beidou-pilot-client/SKILL.md"
+OBSERVATION_TOOLS: list[JsonObject] = [
     {
         "type": "function",
         "name": "game_observe",
@@ -40,49 +37,6 @@ GAME_TOOLS: list[JsonObject] = [
         "description": "读取所属实例的 Lua、任务、控制权、持键及最近执行结果。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
-    {
-        "type": "function",
-        "name": "game_run_lua",
-        "description": "提交一段有界 Lua；结束后自动收到结果。源码使用现有 game API，不能更改所控实例。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "code": {"type": "string"},
-                "seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 30},
-            },
-            "required": ["code", "seconds"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "type": "function",
-        "name": "game_hunt",
-        "description": "在所属实例当前场景内自主找怪、换层并连续狩猎；立即返回starting，结束后自动收到结果。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "target": {"type": "string", "description": "怪物名称、模板ID字符串或all，默认all"},
-                "skill_id": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 2147483647,
-                    "description": "本后端支持且角色已学的技能ID；省略时普攻",
-                },
-                "range": {"type": "number", "minimum": 1, "maximum": 1000, "default": 60},
-                "seconds": {
-                    "type": "number",
-                    "minimum": 0.05,
-                    "maximum": 600,
-                    "description": "限时预算，默认60秒；与continuous=true互斥",
-                },
-                "continuous": {"type": "boolean", "description": "true为持续到取消或安全停止，不同时提供seconds"},
-            },
-            "additionalProperties": False,
-        },
-    },
-]
-TOOLS: list[JsonObject] = [
-    {"type": "namespace", "name": "game", "description": "所属实例的游戏观察、Lua与连续狩猎。", "tools": GAME_TOOLS}
 ]
 
 
@@ -111,13 +65,14 @@ class Controller:
         self.thread_id = ""
         self.turn_id: str | None = None
         self.effort = ""
-        self.execution: asyncio.Task[None] | None = None
-        self.last_script: JsonObject | None = None
         self.questions: dict[int | str, JsonObject] = {}
         self.queued_messages: list[str] = []
         self.done = asyncio.Event()
         self._control = asyncio.Lock()
         self._messages = asyncio.Lock()
+        self._turn_finished = asyncio.Event()
+        self._turn_finished.set()
+        self._turn_failure: AppServerError | None = None
         self._turn_started = 0.0
         self._turns = 0
         self._tools = 0
@@ -140,7 +95,6 @@ class Controller:
             "effort": self.effort,
             "task": self.task,
             "read_only": self.read_only,
-            "lua_running": self.game.running,
             "pending_questions": list(self.questions),
             "turn_requests": self._turns,
             "dynamic_tool_calls": self._tools,
@@ -166,11 +120,27 @@ class Controller:
         config = cast(JsonObject, configuration["config"])
         skills = cast(JsonObject, await self.server.call("skills/list", {"cwds": ["/game"], "forceReload": True}))
         mcps = cast(JsonObject, await self.server.call("mcpServerStatus/list", {"limit": 100}))
-        if any(cast(JsonObject, item)["skills"] for item in cast(list[JsonValue], skills["data"])) or mcps["data"]:
-            raise AppServerError("context_not_isolated", "游戏 AI 启动时发现额外技能或 MCP。")
+        loaded_skills = [
+            cast(JsonObject, skill)
+            for item in cast(list[JsonValue], skills["data"])
+            for skill in cast(list[JsonValue], cast(JsonObject, item)["skills"])
+        ]
+        skill_errors = [
+            error
+            for item in cast(list[JsonValue], skills["data"])
+            for error in cast(list[JsonValue], cast(JsonObject, item).get("errors", []))
+        ]
+        if (
+            len(loaded_skills) != 1
+            or loaded_skills[0]["name"] != SKILL_NAME
+            or loaded_skills[0]["path"] != SKILL_PATH
+            or loaded_skills[0].get("enabled", True) is not True
+            or skill_errors
+            or mcps["data"]
+        ):
+            raise AppServerError("context_not_isolated", "游戏 AI 只允许装载本镜像的 beidou-pilot-client 技能。")
         features = cast(JsonObject, config.get("features", {}))
         unwanted = (
-            "shell_tool",
             "apps",
             "multi_agent",
             "memories",
@@ -181,11 +151,14 @@ class Controller:
             "view_image",
         )
         code_mode = cast(JsonObject, features.get("code_mode", {}))
+        excluded = cast(list[str], code_mode.get("excluded_tool_namespaces", []))
         if (
             any(features.get(name) is not False for name in unwanted)
+            or features.get("shell_tool") is not (not self.read_only)
             or config.get("project_doc_max_bytes") != 0
             or features.get("sleep_tool") is not False
-            or not {"functions", "clock"}.issubset(cast(list[str], code_mode.get("excluded_tool_namespaces", [])))
+            or "clock" not in excluded
+            or ("functions" in excluded) != self.read_only
         ):
             raise AppServerError("context_not_isolated", "游戏 AI 的工具或项目指令裁剪配置不符合启动合同。")
         cursor: JsonValue = None
@@ -228,28 +201,31 @@ class Controller:
             saved = cast(JsonObject, json.loads(checkpoint.read_text(encoding="utf-8")))
             if saved["binding"] != self.binding:
                 raise AppServerError("binding_mismatch", "保存的游戏会话属于另一组客户端选择，未续接。")
-            self.tool_surface = cast(str, saved.get("tool_surface", "lua-v1"))
-        game_tools = [tool for tool in GAME_TOOLS if self.tool_surface == TOOL_SURFACE or tool["name"] != "game_hunt"]
+            if saved.get("tool_surface", "lua-v1") != TOOL_SURFACE:
+                raise AppServerError(
+                    "tool_surface_mismatch",
+                    "旧 lua-v1/hunt-v1 会话使用已退役的动态工具；历史已保留，请另选状态目录启动 CLI 会话。",
+                    {"saved_tool_surface": saved.get("tool_surface", "lua-v1"), "required_tool_surface": TOOL_SURFACE},
+                )
         developer_text = (
-            GAME_INSTRUCTIONS
-            + (HUNT_INSTRUCTIONS if self.tool_surface == TOOL_SURFACE and not self.read_only else "")
-            + ("\n本会话只读观察和交流，不提交Lua或接管角色。" if self.read_only else "")
+            (
+                "本会话只读观察和交流，只使用 game_observe、game_script_status，不接管或取消角色。"
+                if self.read_only
+                else GAME_INSTRUCTIONS
+            )
             + "\n角色与养成约束：\n"
             + self.role
         )
-        tool_specs: list[JsonObject] = [
-            {
-                "type": "namespace",
-                "name": "game",
-                "description": "所属实例的游戏能力。",
-                "tools": [tool for tool in game_tools if not self.read_only or tool["name"] not in CONTROL_TOOLS],
-            }
-        ]
+        tool_specs: list[JsonObject] = (
+            [{"type": "namespace", "name": "game", "description": "所属实例的只读观察。", "tools": OBSERVATION_TOOLS}]
+            if self.read_only
+            else []
+        )
         params: JsonObject = {
             "model": self.model,
             "cwd": "/game",
             "approvalPolicy": "never",
-            "sandbox": "read-only",
+            "sandbox": "read-only" if self.read_only else "danger-full-access",
             "baseInstructions": BASE_INSTRUCTIONS,
             "developerInstructions": developer_text,
         }
@@ -258,7 +234,8 @@ class Controller:
             params["excludeTurns"] = True
             thread = cast(JsonObject, await self.server.call("thread/resume", params))
         else:
-            params["dynamicTools"] = tool_specs
+            if self.read_only:
+                params["dynamicTools"] = tool_specs
             params["allowProviderModelFallback"] = False
             thread = cast(JsonObject, await self.server.call("thread/start", params))
         if thread.get("instructionSources"):
@@ -276,7 +253,8 @@ class Controller:
                 "codex_user_agent": initialized.get("userAgent"),
                 "configured_context_window": config.get("model_context_window"),
                 "configured_compact_limit": config.get("model_auto_compact_token_limit"),
-                "skills": 0,
+                "skills": len(loaded_skills),
+                "shell_tool": not self.read_only,
                 "mcp_servers": 0,
                 "instruction_sources": thread.get("instructionSources", []),
                 "excluded_tool_namespaces": code_mode["excluded_tool_namespaces"],
@@ -285,23 +263,13 @@ class Controller:
                 "controlled_developer_instruction_bytes": len(developer_text.encode()),
                 "declared_dynamic_tool_schema_bytes": len(json.dumps(tool_specs, ensure_ascii=False).encode()),
                 "component_tokens": None,
-                "declared_game_capabilities": [
-                    tool["name"] for tool in game_tools if not self.read_only or tool["name"] not in CONTROL_TOOLS
-                ],
+                "declared_game_capabilities": (
+                    [tool["name"] for tool in OBSERVATION_TOOLS] if self.read_only else ["beidou-pilot CLI"]
+                ),
                 "collaboration": "Codex同步/异步询问，经专用开发AI通道回答",
                 "cost": None,
             },
         )
-        if self.tool_surface != TOOL_SURFACE:
-            self.emit(
-                "legacy_tool_surface",
-                {
-                    "tool_surface": self.tool_surface,
-                    "reason": "固定Codex 0.167.0不支持为已有thread更新动态工具；沿用原工具及历史。",
-                    "game_hunt_available": False,
-                    "new_independent_state_required_for_hunt": True,
-                },
-            )
         self.mode = "ready"
 
     def _checkpoint(self) -> None:
@@ -344,49 +312,38 @@ class Controller:
                 )
                 self.emit("message_delivered", {"turn_id": self.turn_id})
             else:
+                self._turn_finished.clear()
+                self._turn_failure = None
                 self._turn_started = time.monotonic()
                 self._decision_reported = False
-                result = cast(
-                    JsonObject,
-                    await self.server.call(
-                        "turn/start",
-                        {"threadId": self.thread_id, "effort": self.effort, "input": [{"type": "text", "text": text}]},
-                    ),
-                )
+                try:
+                    result = cast(
+                        JsonObject,
+                        await self.server.call(
+                            "turn/start",
+                            {
+                                "threadId": self.thread_id,
+                                "effort": self.effort,
+                                "input": (
+                                    []
+                                    if self.read_only
+                                    else [{"type": "skill", "name": SKILL_NAME, "path": SKILL_PATH}]
+                                )
+                                + [{"type": "text", "text": text}],
+                            },
+                        ),
+                    )
+                except AppServerError:
+                    self.mode = "error"
+                    self._turn_failure = AppServerError(
+                        "model_turn_unconfirmed", "turn/start 未返回身份，无法确认模型回合已停止。"
+                    )
+                    raise
                 self.turn_id = cast(str, cast(JsonObject, result["turn"])["id"])
                 self._turns += 1
                 if self.mode in {"ready", "running"}:
                     self.mode = "running"
                 self.emit("turn_requested", {"turn_id": self.turn_id})
-
-    async def _execute(self, operation: Callable[[], Awaitable[JsonObject]]) -> None:
-        started = time.monotonic()
-        if self.mode not in {"ready", "running"}:
-            self.last_script = {"ok": True, "data": {"status": "cancelled", "reason": "cancel_requested"}}
-            self.emit("lua_finished", {"elapsed_seconds": 0, "result": self.last_script})
-            return
-        try:
-            result = await operation()
-            self.last_script = {"ok": True, "data": result}
-        except GameClientError as error:
-            self.last_script = {
-                "ok": False,
-                "error": {"code": error.code, "message": error.message, "details": error.details},
-            }
-            if error.code in {"bridge_release_unconfirmed", "client_identity_changed"}:
-                self.mode = "error"
-        self.emit("lua_finished", {"elapsed_seconds": round(time.monotonic() - started, 4), "result": self.last_script})
-        if self.mode in {"ready", "running"}:
-            try:
-                await self.message(
-                    "本次 Lua 已结束。请重新观察并核对实际效果，再按当前任务决定下一步。执行结果："
-                    + json.dumps(self.last_script, ensure_ascii=False)
-                )
-            except AppServerError as error:
-                self.mode = "error"
-                self.emit("continuation_failed", {"code": error.code, "message": error.message})
-                self.done.set()
-                raise
 
     async def _tool(self, request: JsonObject) -> None:
         identifier = cast(int | str, request["id"])
@@ -394,79 +351,13 @@ class Controller:
         tool = cast(str, params["tool"])
         started = time.monotonic()
         try:
-            if not isinstance(params["arguments"], dict):
-                raise GameClientError("invalid_tool_arguments", "游戏工具参数必须是 JSON 对象。")
-            args = cast(JsonObject, params["arguments"])
-            if tool not in CONTROL_TOOLS and args:
+            if not self.read_only or tool not in {"game_observe", "game_script_status"}:
+                raise GameClientError("unknown_game_tool", "本会话未注册这个动态工具；普通模式通过 CLI 操作。")
+            if params["arguments"] != {}:
                 raise GameClientError("invalid_tool_arguments", "观察工具不接收参数或实例选择。")
             if self.mode not in {"ready", "running"}:
                 raise GameClientError("game_paused", "当前执行已暂停或停止，未派发游戏工具。")
-            if tool == "game_observe":
-                result = await self.game.observe()
-            elif tool == "game_script_status":
-                result = {**await self.game.script_status(), "last_execution": self.last_script}
-            elif tool == "game_run_lua":
-                if self.read_only:
-                    raise GameClientError("read_only", "本游戏 AI 会话仅观察，未提交 Lua。")
-                if (
-                    set(args) != {"code", "seconds"}
-                    or not isinstance(args["code"], str)
-                    or type(args["seconds"]) not in (float, int)
-                    or not math.isfinite(args["seconds"])
-                    or not 0 < args["seconds"] <= 30
-                ):
-                    raise GameClientError("invalid_tool_arguments", "Lua 工具需要源码与0至30秒的有界时间。")
-                if self.execution is not None and not self.execution.done():
-                    raise GameClientError("input_busy", "本 harness 已有活动 Lua，先观察或等待结束。")
-                self.execution = asyncio.create_task(
-                    self._execute(lambda: self.game.run_lua(cast(str, args["code"]), cast(float, args["seconds"])))
-                )
-                result = {"status": "starting", "seconds": args["seconds"], "effect": "unknown"}
-            elif tool == "game_hunt" and self.tool_surface == TOOL_SURFACE:
-                if self.read_only:
-                    raise GameClientError("read_only", "本游戏 AI 会话仅观察，未提交狩猎。")
-                target, skill_id = args.get("target", "all"), args.get("skill_id")
-                attack_range = args.get("range", 60)
-                seconds, continuous = args.get("seconds", 60), args.get("continuous", False)
-                if (
-                    set(args) - {"target", "skill_id", "range", "seconds", "continuous"}
-                    or not isinstance(target, str)
-                    or not target.strip()
-                    or "\x00" in target
-                    or skill_id is not None
-                    and (type(skill_id) is not int or not 1 <= skill_id <= 2147483647)
-                    or type(attack_range) not in (float, int)
-                    or not math.isfinite(attack_range)
-                    or not 1 <= attack_range <= 1000
-                    or type(continuous) is not bool
-                    or continuous
-                    and "seconds" in args
-                    or type(seconds) not in (float, int)
-                    or not math.isfinite(seconds)
-                    or not 0.05 <= seconds <= 600
-                ):
-                    raise GameClientError(
-                        "invalid_tool_arguments", "狩猎需要目标、合法技能/距离，以及0.05至600秒预算或显式持续模式。"
-                    )
-                if self.execution is not None and not self.execution.done():
-                    raise GameClientError("input_busy", "本 harness 已有活动 Lua，先观察或等待结束。")
-                hunt: HuntRequest = {
-                    "target": target,
-                    "skill_id": skill_id,
-                    "attack_range": attack_range,
-                    "seconds": None if continuous else seconds,
-                }
-                self.execution = asyncio.create_task(self._execute(lambda: self.game.hunt(hunt)))
-                result = {
-                    "status": "starting",
-                    "action": "hunt",
-                    "target": target,
-                    "continuous": continuous,
-                    "seconds": hunt["seconds"],
-                    "effect": "unknown",
-                }
-            else:
-                raise GameClientError("unknown_game_tool", "未注册这个游戏工具。")
+            result = await self.game.observe() if tool == "game_observe" else await self.game.script_status()
             output: JsonObject = {"ok": True, "data": result}
         except GameClientError as error:
             output = {"ok": False, "error": {"code": error.code, "message": error.message, "details": error.details}}
@@ -486,13 +377,13 @@ class Controller:
         async with self._control:
             if command == "resume":
                 if self.mode != "paused":
-                    raise GameClientError("not_paused", "仅已确认暂停的游戏会话可以恢复。")
+                    raise GameClientError("not_paused", "仅已确认暂停的 LLM 会话可以恢复。")
                 observed = await self.game.observe()
                 self.mode = "ready"
                 messages = self.queued_messages
                 self.queued_messages = []
                 await self.message(
-                    "恢复后重新规划，不重放旧动作。当前任务："
+                    "恢复后先核对现有任务，不重复启动或抢占。当前任务："
                     + self.task
                     + "\n"
                     + "\n".join(messages)
@@ -501,18 +392,25 @@ class Controller:
                 )
                 return
             self.mode = "pausing" if command == "pause" else "stopping"
-            cancellation = None if self.read_only else asyncio.create_task(self.game.cancel())
             try:
+                # message 持有此锁直到在途 turn/start 返回，先取得确切 turn ID。
                 async with self._messages:
-                    if self.turn_id is not None:
-                        await self.server.call("turn/interrupt", {"threadId": self.thread_id, "turnId": self.turn_id})
-            finally:
-                try:
-                    released = await cancellation if cancellation is not None else None
-                except GameClientError:
-                    self.mode = "error"
-                    raise
-            self.turn_id = None
+                    turn_id = self.turn_id
+                    if self._turn_failure is not None:
+                        raise self._turn_failure
+                if turn_id is not None:
+                    try:
+                        await self.server.call("turn/interrupt", {"threadId": self.thread_id, "turnId": turn_id})
+                    except AppServerError as error:
+                        # 自然结束可能先于 interrupt；仍须由事件泵确认同一 turn 的终态。
+                        if error.code != -32600 or "no active turn" not in error.message.lower():
+                            raise
+                    await self._turn_finished.wait()
+                    if self._turn_failure is not None:
+                        raise self._turn_failure
+            except AppServerError:
+                self.mode = "error"
+                raise
             self.mode = "paused" if command == "pause" else "stopped"
             self.emit(
                 "control_completed",
@@ -520,62 +418,70 @@ class Controller:
                     "command": command,
                     "mode": self.mode,
                     "read_only": self.read_only,
-                    "released_state": released,
-                    "game_input_cancelled": not self.read_only,
+                    "scope": "llm",
                 },
             )
             if command == "stop":
                 self.done.set()
 
     async def events(self) -> None:
-        async with asyncio.TaskGroup() as pending:
-            while True:
-                event = await self.server.events.get()
-                method = cast(str, event["method"])
-                params = cast(JsonObject, event.get("params", {}))
-                if (
-                    method in {"item/tool/call", "item/tool/requestUserInput", "item/agentMessage/delta"}
-                    and not self._decision_reported
-                ):
-                    self._decision_reported = True
-                    self.emit(
-                        "first_decision",
-                        {
-                            "elapsed_seconds": round(time.monotonic() - self._turn_started, 4),
-                            "includes_transport": True,
-                        },
-                    )
-                if method == "item/tool/call":
-                    pending.create_task(self._tool(event))
-                elif method == "item/tool/requestUserInput":
-                    identifier = cast(int | str, event["id"])
-                    self.questions[identifier] = params
-                    self.emit("question", {"request_id": identifier, "questions": params["questions"]})
-                elif method == "item/agentMessage/delta":
-                    self.emit("reply_delta", {"text": params["delta"]})
-                elif method == "thread/tokenUsage/updated":
-                    self._usage_updates += 1
-                    self.emit("usage", {"token_usage": params["tokenUsage"], "cost": None})
-                elif method == "turn/completed":
-                    completed = cast(JsonObject, params["turn"])
-                    current = completed["id"] == self.turn_id
-                    if current:
-                        self.turn_id = None
-                        if self.mode == "running":
-                            self.mode = "ready"
-                    self.emit(
-                        "turn_completed",
-                        {
-                            "turn_id": completed["id"],
-                            "status": completed["status"],
-                            "elapsed_seconds": round(time.monotonic() - self._turn_started, 4) if current else None,
-                            "error": completed.get("error"),
-                        },
-                    )
-                elif method == "serverRequest/resolved":
-                    self.questions.pop(cast(int | str, params["requestId"]), None)
-                elif method == "transport/closed":
-                    self.mode = "error" if self.mode != "stopped" else self.mode
-                    self.emit("transport_closed", params)
-                    self.done.set()
-                    break
+        try:
+            async with asyncio.TaskGroup() as pending:
+                while True:
+                    event = await self.server.events.get()
+                    method = cast(str, event["method"])
+                    params = cast(JsonObject, event.get("params", {}))
+                    if (
+                        method
+                        in {"item/tool/call", "item/tool/requestUserInput", "item/agentMessage/delta", "item/started"}
+                        and not self._decision_reported
+                    ):
+                        self._decision_reported = True
+                        self.emit(
+                            "first_decision",
+                            {
+                                "elapsed_seconds": round(time.monotonic() - self._turn_started, 4),
+                                "includes_transport": True,
+                            },
+                        )
+                    if method == "item/tool/call":
+                        pending.create_task(self._tool(event))
+                    elif method == "item/tool/requestUserInput":
+                        identifier = cast(int | str, event["id"])
+                        self.questions[identifier] = params
+                        self.emit("question", {"request_id": identifier, "questions": params["questions"]})
+                    elif method == "item/agentMessage/delta":
+                        self.emit("reply_delta", {"text": params["delta"]})
+                    elif method == "thread/tokenUsage/updated":
+                        self._usage_updates += 1
+                        self.emit("usage", {"token_usage": params["tokenUsage"], "cost": None})
+                    elif method == "turn/completed":
+                        completed = cast(JsonObject, params["turn"])
+                        # 在途 start 的响应由独立传输读取器处理；等它登记 ID 再认领终态。
+                        async with self._messages:
+                            current = completed["id"] == self.turn_id
+                            if current:
+                                self.turn_id = None
+                                self._turn_finished.set()
+                                if self.mode == "running":
+                                    self.mode = "ready"
+                        self.emit(
+                            "turn_completed",
+                            {
+                                "turn_id": completed["id"],
+                                "status": completed["status"],
+                                "elapsed_seconds": round(time.monotonic() - self._turn_started, 4) if current else None,
+                                "error": completed.get("error"),
+                            },
+                        )
+                    elif method == "serverRequest/resolved":
+                        self.questions.pop(cast(int | str, params["requestId"]), None)
+                    elif method == "transport/closed":
+                        self.mode = "error" if self.mode != "stopped" else self.mode
+                        self.emit("transport_closed", params)
+                        self.done.set()
+                        return
+        finally:
+            if not self._turn_finished.is_set():
+                self._turn_failure = AppServerError("model_turn_unconfirmed", "模型连接已结束，未确认活动 turn 终止。")
+                self._turn_finished.set()

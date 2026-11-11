@@ -1,16 +1,21 @@
 # 常用入口
 
-从项目根执行；/external/workbench 是示例占位路径：
+从项目根执行；/external/workbench 是占位目录：
 
 ```bash
-./beidou-pilot --help
-./beidou-pilot --workbench /external/workbench --backend headless --json build
-./beidou-pilot --workbench /external/workbench --backend headless --json resources-check
-./beidou-pilot --workbench /external/workbench --json status
+private/workbenches/workbench --help
+private/workbenches/workbench --list
+private/workbenches/workbench /external/workbench notes
+private/workbenches/workbench /external/workbench build
+private/workbenches/workbench /external/workbench resources-check
+private/workbenches/workbench /external/workbench status
+private/workbenches/workbench /external/workbench ai --state /work/ai/state --role /work/ai/role.md --task '先观察当前角色和场景' --paused
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
 serena memories check
 ```
 
-工作台使用成对的 account.json/server.json，启动参数为 --account/--server；数据整体挂到 /work，角色 Lua 用 /work/scripts 路径。构建、工件获取、容器启停、外部资源与 Lua 调用查 README.md 和 docs/CLI.md；resources-check 只离线检查 NX，不需要服务器或账号配置。GUI 默认获取对应提交的成功 CI 工件，开发时可显式指定匹配的桥工件目录。
+工作目录保存 account.json 和可选 workbench.json（普通 GUI 示例仅 backend=beidou），共享资源路径只在主检出目录的 private/workbenches/resources.json。服务器普通固定，开发隔离对象在 workbench.json.server；配置不经宿主命令行覆盖。resources-check 固定使用 headless 镜像离线检查，不需要账号或服务器，也不启动/切换现存实例。
 
-共同 API 和策略维护边界见 docs/CONTROL.md、shared/scripts/AGENTS.md。子模块准备更新见 docs/DEPENDENCIES.md，CI 与实际客户端验收见 docs/CI.md；记忆不复制完整教程或本机私密配置。
+harness 工具打包在新建配置设 harness=true，model_proxy 按需配置，普通实例默认不带 harness；ai 对旧普通镜像报 harness_image_required。ai 的角色、认证、provider、state 均为容器内路径，常驻 state 放 /work 下；完整构建、协作与续接见 docs/HARNESS.md、docs/CI.md，不恢复旧独立 Codex 镜像或宿主参数。
+
+整个目录挂 /work，用户 Lua 位于 /work/scripts。构建、工件、启停和运行版本查 README.md、docs/CLI.md；共同 API 和策略边界查 docs/CONTROL.md、shared/scripts/AGENTS.md。子模块和 CI 查 docs/DEPENDENCIES.md、docs/CI.md；记忆不复制完整教程或任何本机私密配置。

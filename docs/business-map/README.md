@@ -15,7 +15,7 @@
 | 有界角色行动 | 操作者和脚本消费者执行有限旅行、战斗及基础动作 | 当前目标、安全范围、预算、到达判断与停止原因；不承诺通用寻路或成熟自动玩法 | [field-play.yaml](field-play.yaml) |
 | 世界交互与交易 | 操作者处理当前 NPC 正文和普通商店买卖 | 对话选择、当前窗口上下文、报价与交易结果核对；打开、推进、需决策时停下、买卖及关闭 | [world-interaction.yaml](world-interaction.yaml) |
 | 角色养成与恢复 | 操作者按明确选择分配点数、装备、用药及恢复角色 | 每项变更的前提与结果确认、快捷键配置；按点核对、有限消费、存活跳过或单次复活 | [character-care.yaml](character-care.yaml) |
-| 游戏 AI 决策与协作 | 操作者维持独立游戏 AI 会话，并随时调整或暂停玩法 | 模型会话、角色指令、当前目标与私密经历记录；建立/续接、观察决策、询问、暂停/恢复及停止 | [game-ai.yaml](game-ai.yaml) |
+| 游戏 AI 决策与协作 | 操作者维持独立游戏 AI 会话，并随时调整或暂停模型决策 | 模型会话、角色指令、当前目标与私密经历记录；建立/续接、观察决策、询问、暂停/恢复及停止 | [game-ai.yaml](game-ai.yaml) |
 
 GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生命周期，有界行动决定策略；世界交互处理当前正文与交易，角色养成决定特定角色变更的确认方式。独立 harness 消费客户端能力，保留自身模型会话与协作状态。
 
@@ -42,7 +42,7 @@ GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生
 | 独立模型会话、目标调整、询问回答、暂停和停止 | 游戏 AI；[controller.py](../../harness/beidou_game_ai/controller.py)、[client.py](../../harness/beidou_game_ai/client.py) | 三个主要流程；固定客户端绑定，不拥有客户端开关，不虚构长期记忆库 |
 | 有限命令批次、原版按键/技能扩展 | 既有领域入口；[cli.py](../../cli/beidou_pilot/cli.py)、[control_scripts.py](../../cli/beidou_pilot/control_scripts.py) | 批次是同实例的有限编排，遇错不回滚；按键/技能受执行控制权与后端能力限制，不另建控制链 |
 | 截图及有界录制 | 观察支持；[desktop.py](../../cli/beidou_pilot/engines/desktop.py)、[record.py](../../cli/beidou_pilot/engines/record.py) | GUI 画面证据，不提供无头画面，不作为持续控制策略 |
-| 镜像构建、CI 和依赖维护 | 工程交付支持；根 [beidou-pilot](../../beidou-pilot)、[CI.md](../CI.md)、[DEPENDENCIES.md](../DEPENDENCIES.md) | 不拥有游戏结果，本图不为每个工程工具单建领域；客户端交付统一经版本化镜像入口 |
+| 镜像构建、CI 和依赖维护 | 工程交付支持；[workbench](../../private/workbenches/workbench)、[CI.md](../CI.md)、[DEPENDENCIES.md](../DEPENDENCIES.md) | 不拥有游戏结果，本图不为每个工程工具单建领域；客户端交付统一经版本化镜像入口 |
 
 ## 阅读与查询
 

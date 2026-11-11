@@ -2,12 +2,12 @@
 
 ## 执行入口
 
-用户策略使用 `script run FILE --seconds N` 或 `script run --code CODE --seconds N`，文件和源码二选一，需要持续运行时明确 `--continuous`。两种输入复用同一装载、身份核对、错误、取消与放键链，可在现有实例中执行，无需重启客户端。基础动作直接调用统一 `game` API；复合能力装载 `shared/scripts/` 的 Lua 文件，调用方传入业务参数，Python只处理参数、生命周期与结果。
+用户策略使用 `script run FILE --seconds N` 或 `script run --code CODE --seconds N`，文件和源码二选一，需要持续运行时明确 `--continuous`。两种输入复用同一装载、身份核对、错误、取消与放键链，可在现有实例中执行，无需重启客户端。基础动作直接调用统一 `game` API；复合能力装载 `shared/scripts/` 的 Lua 文件，调用方传入业务参数，Python只处理参数、装载、显式取消与结果。
 
 ```bash
-./beidou-pilot --workbench /external/workbench --instance worker-a --json script run --code 'game.log("你好，Lua")' --seconds 20
-./beidou-pilot --workbench /external/workbench --instance worker-a --json script run /work/scripts/control.lua --seconds 20
-./beidou-pilot --workbench /external/workbench --instance worker-a --json script status
+private/workbenches/workbench /external/workbench script run --code 'game.log("你好，Lua")' --seconds 20
+private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
+private/workbenches/workbench /external/workbench script status
 ```
 
 文件路径按容器内部解析；完整工作台读写挂到 `/work`，用户脚本直接读取 `/work/scripts`，内置 Lua 随镜像版本固定。
@@ -40,7 +40,7 @@ shared/scripts/
 
 `hunt` 从当前配置的同源 XML/NX 装载地形，实时选怪、路径和动作全部在 Lua 中执行。移动意图与攻击意图分别判断，`game.attack(seconds, direction, skill_id)` 可在同一输入窗口保持方向与普攻或指定技能；原生动画和物理仍决定实际动作。绳梯、相连平台、有限台阶和落层按当前现场确认，未知或无进展的路段停止。狩猎固定启动时的实例、角色、地图和场景代次，不穿门户、不在新场景续跑。
 
-限时狩猎与 `--continuous` 共用脚本执行链；Ctrl+C/SIGTERM 取消并等待所属输入释放。无头桥 `held_actions` 展示语义输入，GUI `held_keys` 展示实际持键；两者都不能当作命中或服务器确认。经验变化及已知的服务端目标 HP 百分比下降用于判断实际进展，尝试计数不代表命中。`hunt` 的移动和攻击计时可能重叠，不能相加当作总耗时。
+限时狩猎与 `--continuous` 共用原生 Runtime 的脚本执行链；CLI 等待被中断后，已启动的狩猎继续运行。无头桥 `held_actions` 展示语义输入，GUI `held_keys` 展示实际持键；两者都不能当作命中或服务器确认。经验变化及已知的服务端目标 HP 百分比下降用于判断实际进展，尝试计数不代表命中。`hunt` 的移动和攻击计时可能重叠，不能相加当作总耗时。
 
 ## 脚本 API 入口
 
@@ -50,7 +50,7 @@ shared/scripts/
 
 ## 控制权、期限与取消
 
-同一实例只有一份活动动作控制。同步 `script run` 的 CLI 持有等待与取消职责；`script start` 在原生受理后返回，由客户端 Runtime 独立持有脚本会话。一个脚本会话内可通过 `game.spawn/acquire/cancel/tasks` 协作运行多个 Lua 任务；它们共享 Lua 状态，由公共 Runtime 串行派发原生动作。任务等待动作或控制权时，其他任务继续观察和判断。主任务返回后子任务继续，全部任务结束且放键确认后会话结束。公共接口与示例见 [Lua API 的任务与控制权](LUA_API.md#任务与控制权)。
+同一实例只有一份活动动作控制。`script run` 同步等待结果，`script start` 在原生受理后返回；两者的脚本会话均由客户端 Runtime 持有，CLI 等待不拥有脚本生命周期。一个脚本会话内可通过 `game.spawn/acquire/cancel/tasks` 协作运行多个 Lua 任务；它们共享 Lua 状态，由公共 Runtime 串行派发原生动作。任务等待动作或控制权时，其他任务继续观察和判断。主任务返回后子任务继续，全部任务结束且放键确认后会话结束。公共接口与示例见 [Lua API 的任务与控制权](LUA_API.md#任务与控制权)。
 
 动作控制按任务归属。高优先级任务可请求接管，旧任务立即失去派发资格，原生确认释放后新任务取得控制；相同优先级保持当前控制者。被接管动作返回标准结果并标记 `reason=control_preempted`，游戏效果保持未知。旧任务重新取得控制后读取新状态并规划，运行时不保留待重放动作。指定任务取消、正常返回或 `game.stop()` 只释放该任务仍拥有的输入；停止原任务不能释放后续控制者的输入。`keys/press/skill` 同样受任务归属约束。
 
@@ -58,11 +58,15 @@ GUI按键由适配器保留单份最新期望集合，Lua调用提交后，实�
 
 `script status` 通过 `script.tasks` 展示任务名称、revision、状态、优先级与等待原因，通过 `script.control` 展示控制者、待取得控制的任务及最近交接原因。现有任务可按条件创建其他任务；外部程序通过 `task add/replace/stop` 管理指定会话中的独立任务，文件和直接源码两种输入见 [CLI参考](CLI.md)。第二次 `script run` 继续受同实例控制锁与原生 busy 检查约束。
 
-任务管理使用独立短锁与 `task-request.txt`，原会话 CLI 继续拥有动作锁及原始 `command.id`。两端使用同一份 `TaskTransport` 解析请求并调用共享 Runtime；它们不从管理入口直接派发原生输入。请求绑定原生 `instance_id/run_id` 与 `script.id`，替换、停止还核对任务 `revision`；新增、替换核对场景代次。源码文件仍原子放在 `scripts/`，结果按请求 ID 保存在 `task-results/`，不覆盖动作或只读观察响应。
+任务管理使用独立短锁与 `task-request.txt`，原始 `command.id` 仍归属原脚本会话，其生命周期由 Runtime 维护。两端使用同一份 `TaskTransport` 解析请求并调用共享 Runtime；它们不从管理入口直接派发原生输入。请求绑定原生 `instance_id/run_id` 与 `script.id`，替换、停止还核对任务 `revision`；新增、替换核对场景代次。源码文件仍原子放在 `scripts/`，结果按请求 ID 保存在 `task-results/`，不覆盖动作或只读观察响应。
 
 替换先编译独立chunk，成功前不改变旧任务。编译后旧版本停止派发，运行时按旧任务的输入归属等待释放确认，再安装同名新版本。管理等待超时或中断不会停止整会话；原会话的取消、期限和角色身份规则仍优先生效，未完成的替换不会在会话结束后安装。管理结果写入失败时宿主以 `task_result_write_failed` 进入既有整会话停止与放键路径，避免丢失反馈后继续控制。
 
-同步运行中的脚本通过原 CLI 的 Ctrl+C/SIGTERM 或调用方取消标记停止全部任务。异步 `script start` 成功返回后，模型或监听器停止不再拥有这项取消语义；`script cancel --session` 在当前原生身份内核对脚本 ID，并等待停止与实际放键。期限到达、角色身份变化、离开游戏及任一脚本错误仍停止整个会话。只读状态、领域查询和事件监听可并行；普通 GUI 操作不能接管仍活动的 Lua。
+`script run` 的同步等待或 `script start` 的受理等待收到 Ctrl+C、SIGINT 或 SIGTERM 时，只结束 CLI 等待，已受理的原生脚本继续运行。等待超时、陈旧观察等 `ClientError` 也不自动停止已发布的原生任务。等待中断或失败后，先用 `script status` 观察当前任务及 `script.id`，核对受理和执行事实；结果未知不代表原生停止，不重放 `start`。
+
+调用方需要取消脚本时，明确执行 `script cancel --session SCRIPT_ID`，在当前原生身份内核对脚本 ID，并等待终态与实际放键。库调用方提供的 `cancel_file` 仍是显式取消输入，走既有停止与放键路径。CLI 等待超时与 Lua 执行期限分别判断：原生期限到达、角色身份变化、离开游戏及任一脚本错误仍停止整个会话。只读状态、领域查询和事件监听可并行；普通 GUI 操作不能接管仍活动的 Lua。
+
+LLM 是可选旁路控制端，其暂停或退出不触发 shell 清理、Lua 取消或客户端关闭。没有 LLM 时客户端与已受理脚本继续运行；重新接入先观察当前脚本、任务和控制归属，不重复启动或抢占。模型进程锁只保护模型会话，脚本与任务控制权由原生 Runtime 维护，CLI 提交明确操作并核验身份。需要停止脚本时显式 `script cancel --session` 并确认放键；需要关闭客户端时另行 `close`。协作入口见 [HARNESS](HARNESS.md#开发-ai-的协作通道)。
 
 空闲时 `stop`/`bridge stop` 清理遗留控制，不抢占另一个活动动作控制者。宿主工作台 `open/close` 使用独立生命周期锁，宿主 `close` 可通过 Docker 结束活动 Lua 及整个所属实例；同实例正在启停时返回 `lifecycle_busy`。容器内 `close` 会提示使用宿主生命周期入口。
 

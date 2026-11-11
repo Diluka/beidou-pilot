@@ -3,16 +3,25 @@
 set -eu
 umask 077
 
-# This is the image user's own default Codex home, never a host development home.
-mkdir -p /home/game/.codex
-if [ -f /run/game-ai/provider.toml ]; then
-    cp /run/game-ai/provider.toml /home/game/.codex/config.toml
+# The caller supplies this instance's private state, never a development HOME.
+: "${CODEX_HOME:?需要本实例专用的 CODEX_HOME}"
+mkdir -p "$CODEX_HOME"
+if [ -n "${BEIDOU_GAME_AI_PROVIDER_CONFIG:-}" ]; then
+    cp "$BEIDOU_GAME_AI_PROVIDER_CONFIG" "$CODEX_HOME/config.toml"
 else
-    : > /home/game/.codex/config.toml
+    : > "$CODEX_HOME/config.toml"
 fi
-if [ -f /run/game-ai/auth.json ] && [ ! -f /home/game/.codex/auth.json ]; then
-    cp /run/game-ai/auth.json /home/game/.codex/auth.json
+if [ -n "${BEIDOU_GAME_AI_AUTH_FILE:-}" ] && [ ! -f "$CODEX_HOME/auth.json" ]; then
+    cp "$BEIDOU_GAME_AI_AUTH_FILE" "$CODEX_HOME/auth.json"
 fi
+
+case "${BEIDOU_GAME_AI_READ_ONLY:-0}" in
+    0) shell_tool=true; excluded_namespaces='["clock"]' ;;
+    1) shell_tool=false; excluded_namespaces='["functions","clock"]' ;;
+    *) printf '%s\n' 'BEIDOU_GAME_AI_READ_ONLY 只允许 0 或 1。' >&2; exit 2 ;;
+esac
+if [ "$#" -eq 0 ]; then set -- app-server --stdio --strict-config; fi
+cd /game
 
 exec /usr/local/bin/codex "$@" \
     -c 'model="gpt-6-luna"' \
@@ -23,8 +32,8 @@ exec /usr/local/bin/codex "$@" \
     -c 'web_search="disabled"' \
     -c 'agents.enabled=false' \
     -c 'skills.bundled.enabled=false' \
-    -c 'features.shell_tool=false' \
-    -c 'features.code_mode.excluded_tool_namespaces=["functions","clock"]' \
+    -c "features.shell_tool=$shell_tool" \
+    -c "features.code_mode.excluded_tool_namespaces=$excluded_namespaces" \
     -c 'features.sleep_tool=false' \
     -c 'features.apps=false' \
     -c 'features.multi_agent=false' \

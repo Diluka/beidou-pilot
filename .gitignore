@@ -3,7 +3,10 @@ __pycache__/
 .venv/
 .cache/
 build/
-private/
+/private/*
+!/private/workbenches/
+/private/workbenches/*
+!/private/workbenches/workbench
 evidence/
 *.private.*
 account.json

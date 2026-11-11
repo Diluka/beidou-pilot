@@ -12,22 +12,26 @@ import unittest
 from unittest.mock import patch
 
 from beidou_game_ai.cli import commands
-from beidou_game_ai.client import GameClient, HuntRequest
-from beidou_game_ai.controller import Controller
+from beidou_game_ai.client import GameClient
+from beidou_game_ai.controller import Controller, SKILL_NAME, SKILL_PATH
 from beidou_game_ai.protocol import AppServer, AppServerError, JsonObject, JsonValue
 
 
 class SessionServer(AppServer):
     """只控制 app-server 外部协议响应，不替换控制器的会话规则。"""
 
-    def __init__(self, efforts: list[str]) -> None:
+    def __init__(self, efforts: list[str], *, read_only: bool = False) -> None:
         self.events: asyncio.Queue[JsonObject] = asyncio.Queue()
         self.efforts = efforts
+        self.read_only = read_only
         self.calls: list[tuple[str, JsonObject]] = []
         self.responses: dict[int | str, JsonValue] = {}
         self.fail_response = False
         self.fail_steer = False
-        self.pause_before_reply: Controller | None = None
+        self.finish_before_interrupt = False
+        self.fail_start = False
+        self.complete_on_interrupt = True
+        self.skill_names = [SKILL_NAME]
         self.turns = 0
         self.turn_start_entered = asyncio.Event()
         self.turn_start_release = asyncio.Event()
@@ -45,7 +49,6 @@ class SessionServer(AppServer):
                         **{
                             name: False
                             for name in (
-                                "shell_tool",
                                 "apps",
                                 "multi_agent",
                                 "memories",
@@ -57,12 +60,22 @@ class SessionServer(AppServer):
                                 "sleep_tool",
                             )
                         },
-                        "code_mode": {"excluded_tool_namespaces": ["functions", "clock"]},
+                        "shell_tool": not self.read_only,
+                        "code_mode": {
+                            "excluded_tool_namespaces": ["functions", "clock"] if self.read_only else ["clock"]
+                        },
                     },
                 }
             }
         if method == "skills/list":
-            return {"data": [{"cwd": "/game", "skills": []}]}
+            return {
+                "data": [
+                    {
+                        "cwd": "/game",
+                        "skills": [{"name": name, "path": SKILL_PATH, "enabled": True} for name in self.skill_names],
+                    }
+                ]
+            }
         if method == "mcpServerStatus/list":
             return {"data": []}
         if method == "model/list":
@@ -82,14 +95,32 @@ class SessionServer(AppServer):
             return {"thread": {"id": "game-thread"}, "instructionSources": []}
         if method == "turn/start":
             self.turns += 1
+            identifier = f"turn-{self.turns}"
             self.turn_start_entered.set()
             await self.turn_start_release.wait()
-            return {"turn": {"id": f"turn-{self.turns}"}}
-        if method == "turn/steer" and self.fail_steer:
-            raise AppServerError(-32600, "No active turn")
-        if method in {"turn/steer", "turn/interrupt"}:
+            if self.fail_start:
+                raise AppServerError("transport_closed", "start response lost")
+            return {"turn": {"id": identifier}}
+        if method == "turn/steer":
+            if self.fail_steer:
+                raise AppServerError(-32600, "No active turn")
+            return {}
+        if method == "turn/interrupt":
+            if self.finish_before_interrupt:
+                await self.complete(str(params["turnId"]))
+                raise AppServerError(-32600, "No active turn to interrupt")
+            if self.complete_on_interrupt:
+                await self.complete(str(params["turnId"]), "interrupted")
             return {}
         raise AssertionError("unexpected method: " + method)
+
+    async def complete(self, identifier: str, status: str = "completed") -> None:
+        await self.events.put(
+            {
+                "method": "turn/completed",
+                "params": {"threadId": "game-thread", "turn": {"id": identifier, "status": status}},
+            }
+        )
 
     async def notify(self, method: str, params: JsonObject) -> None:
         self.calls.append((method, params))
@@ -97,71 +128,35 @@ class SessionServer(AppServer):
     async def respond(self, request_id: int | str, result: JsonValue) -> None:
         if self.fail_response:
             raise AppServerError("transport_closed", "controlled disconnect")
-        if self.pause_before_reply is not None and request_id == 1:
-            controller, self.pause_before_reply = self.pause_before_reply, None
-            await controller.control("pause")
         self.responses[request_id] = result
         if request_id == 77:
             await self.events.put({"method": "serverRequest/resolved", "params": {"requestId": request_id}})
-            await asyncio.sleep(0)
 
 
 class ControlledGame(GameClient):
-    """用可等待的游戏/取消边界验证上层，原进程与桥合同另在 test_client 覆盖。"""
+    """只提供观察协议，不能替控制器启动、取消或关闭游戏任务。"""
 
     def __init__(self) -> None:
-        self.active = False
-        self.codes: list[str] = []
-        self.hunts: list[HuntRequest] = []
+        self.calls: list[str] = []
         self.observations = 0
-        self.release = asyncio.Event()
-        self.release.set()
-        self.cancel_requested = asyncio.Event()
-        self.cancellations = 0
-
-    @property
-    def running(self) -> bool:
-        return self.active
+        self.script: JsonObject = {"id": "native-task", "status": "running"}
 
     async def observe(self) -> JsonObject:
+        self.calls.append("observe")
         self.observations += 1
         return {
             "instance_id": "actor",
             "run_id": "run",
             "seq": self.observations,
+            "script": self.script,
+            "command": {"status": "running"},
+            "held_keys": [39],
             "snapshot": {"position": {"x": self.observations}},
         }
 
     async def script_status(self) -> JsonObject:
-        return {"instance_id": "actor", "run_id": "run", "held_keys": [39] if self.active else []}
-
-    async def run_lua(self, code: str, seconds: float) -> JsonObject:
-        self.codes.append(code)
-        self.active = True
-        await self.release.wait()
-        self.active = False
-        return {"status": "completed", "cancelled": False}
-
-    async def hunt(self, request: HuntRequest) -> JsonObject:
-        self.hunts.append(request)
-        self.active = True
-        await self.release.wait()
-        self.active = False
-        return {"status": "completed", "cancelled": False}
-
-    async def cancel(self) -> JsonObject:
-        self.cancellations += 1
-        if self.active:
-            self.cancel_requested.set()
-            await self.release.wait()
-            self.active = False
-        return {
-            "instance_id": "actor",
-            "run_id": "run",
-            "held_keys": [],
-            "script": {"status": "cancelled"},
-            "command": {"status": "completed"},
-        }
+        self.calls.append("script_status")
+        return {"instance_id": "actor", "run_id": "run", "script": self.script, "held_keys": [39]}
 
 
 class ControllerContract(unittest.IsolatedAsyncioTestCase):
@@ -172,9 +167,9 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         self.server = SessionServer(["medium", "low"])
         self.game = ControlledGame()
         self.binding: JsonObject = {
-            "cli": "/fixture/beidou-pilot",
-            "workbench": "/dedicated/workbench",
-            "instance": "worker",
+            "cli": "/usr/local/bin/beidou-pilot",
+            "workbench_id": "dedicated",
+            "character_id": 23,
             "read_only": False,
         }
         self.controller = Controller(
@@ -189,28 +184,37 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         output = redirect_stdout(io.StringIO())
         output.__enter__()
         self.addCleanup(output.__exit__, None, None, None)
-        self.pumps: list[asyncio.Task[None]] = []
+        self.pumps: list[tuple[Controller, asyncio.Task[None]]] = []
         self.addAsyncCleanup(self.finish_pumps)
 
     async def finish_pumps(self) -> None:
-        for pump in self.pumps:
+        for controller, pump in self.pumps:
             if not pump.done():
-                await self.server.events.put({"method": "transport/closed", "params": {}})
-                await pump
+                await controller.server.events.put({"method": "transport/closed", "params": {}})
+                await asyncio.wait_for(pump, 2)
 
     async def wait_until(self, predicate: Callable[[], bool]) -> None:
         async with asyncio.timeout(2):
             while not predicate():
                 await asyncio.sleep(0)
 
-    async def test_initialization_selects_advertised_minimum_and_resumes_own_thread(self) -> None:
+    def pump(self, controller: Controller | None = None) -> None:
+        selected = controller or self.controller
+        self.pumps.append((selected, asyncio.create_task(selected.events())))
+
+    async def test_cli_surface_selects_minimum_effort_and_resumes_own_thread(self) -> None:
         await self.controller.initialize()
         self.assertEqual(("gpt-6-luna", "low"), (self.controller.model, self.controller.effort))
         start = next(params for method, params in self.server.calls if method == "thread/start")
         self.assertIn("保留角色养成路线", start["developerInstructions"])
         self.assertFalse(start["allowProviderModelFallback"])
+        self.assertNotIn("dynamicTools", start)
+        self.assertEqual("danger-full-access", start["sandbox"])
         self.assertNotIn("model_context_window", start)
-        self.assertNotIn("model_auto_compact_token_limit", start)
+        self.assertEqual([], self.game.calls)
+        await self.controller.message("开始")
+        turn = next(params for method, params in self.server.calls if method == "turn/start")
+        self.assertEqual({"type": "skill", "name": SKILL_NAME, "path": SKILL_PATH}, turn["input"][0])
         second_server = SessionServer(["low", "none"])
         second = Controller(second_server, self.game, self.state, "gpt-6-luna", "相同角色", "续接任务", self.binding)
         await second.initialize()
@@ -218,95 +222,45 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         resume = next(params for method, params in second_server.calls if method == "thread/resume")
         self.assertEqual("game-thread", resume["threadId"])
         self.assertNotIn("dynamicTools", resume)
-        self.assertEqual("hunt-v1", json.loads((self.state / "checkpoint.json").read_text())["tool_surface"])
+        self.assertEqual("cli-v1", json.loads((self.state / "checkpoint.json").read_text())["tool_surface"])
         self.assertFalse(any(method == "thread/start" for method, _ in second_server.calls))
-        read_only = Controller(
-            self.server,
-            self.game,
-            self.state,
-            "gpt-6-luna",
-            "只读角色",
-            "观察",
-            {**self.binding, "read_only": True},
-            read_only=True,
-        )
-        with self.assertRaises(AppServerError) as mismatch:
-            await read_only.initialize()
-        self.assertEqual("binding_mismatch", mismatch.exception.code)
 
-    async def test_legacy_checkpoint_keeps_its_original_tools_and_history(self) -> None:
-        (self.state / "checkpoint.json").write_text(
-            json.dumps({"thread_id": "game-thread", "binding": self.binding, "model": "gpt-6-luna", "task": "原任务"})
-        )
-        await self.controller.initialize()
-        resumed = next(params for method, params in self.server.calls if method == "thread/resume")
-        self.assertEqual("game-thread", resumed["threadId"])
-        self.assertNotIn("dynamicTools", resumed)
-        self.assertNotIn("game_hunt", resumed["developerInstructions"])
-        self.assertFalse(any(method == "thread/start" for method, _ in self.server.calls))
-        events = [json.loads(line) for line in (self.state / "events.jsonl").read_text().splitlines()]
-        startup = next(event for event in events if event["event"] == "startup")
-        self.assertEqual(
-            {"game_observe", "game_run_lua", "game_script_status"}, set(startup["declared_game_capabilities"])
-        )
-        legacy = next(event for event in events if event["event"] == "legacy_tool_surface")
-        self.assertFalse(legacy["game_hunt_available"])
-        self.assertEqual("lua-v1", json.loads((self.state / "checkpoint.json").read_text())["tool_surface"])
+    async def test_legacy_surface_and_binding_mismatch_preserve_checkpoint(self) -> None:
+        for surface in (None, "lua-v1", "hunt-v1"):
+            with self.subTest(surface=surface):
+                saved = {"thread_id": "game-thread", "binding": self.binding, "model": "gpt-6-luna", "task": "旧任务"}
+                if surface is not None:
+                    saved["tool_surface"] = surface
+                original = json.dumps(saved)
+                (self.state / "checkpoint.json").write_text(original)
+                with self.assertRaises(AppServerError) as failure:
+                    await self.controller.initialize()
+                self.assertEqual("tool_surface_mismatch", failure.exception.code)
+                self.assertEqual(original, (self.state / "checkpoint.json").read_text())
+        saved["binding"] = {**self.binding, "instance": "default"}
+        (self.state / "checkpoint.json").write_text(json.dumps(saved))
+        with self.assertRaises(AppServerError) as failure:
+            await self.controller.initialize()
+        self.assertEqual("binding_mismatch", failure.exception.code)
+        self.assertFalse(any(method in {"thread/start", "thread/resume"} for method, _ in self.server.calls))
 
-    async def test_continuous_hunt_uses_shared_execution_and_pause_release(self) -> None:
+    async def test_only_extra_context_blocks_attachment_not_existing_game_tasks(self) -> None:
+        self.server.skill_names.append("unrelated")
+        with self.assertRaises(AppServerError) as failure:
+            await self.controller.initialize()
+        self.assertEqual("context_not_isolated", failure.exception.code)
+        self.server.skill_names = [SKILL_NAME]
         await self.controller.initialize()
-        self.game.release.clear()
-        self.pumps.append(asyncio.create_task(self.controller.events()))
-        await self.server.events.put(
-            {"id": 119, "method": "item/tool/call", "params": {"tool": "game_hunt", "arguments": {"target": "all\x00"}}}
-        )
-        await self.wait_until(lambda: 119 in self.server.responses)
-        self.assertEqual(
-            "invalid_tool_arguments", json.loads(self.server.responses[119]["contentItems"][0]["text"])["error"]["code"]
-        )
-        self.assertEqual([], self.game.hunts)
-        await self.server.events.put(
-            {
-                "id": 120,
-                "method": "item/tool/call",
-                "params": {
-                    "tool": "game_hunt",
-                    "arguments": {"target": "100100", "skill_id": 1001004, "range": 75, "continuous": True},
-                },
-            }
-        )
-        await self.wait_until(lambda: 120 in self.server.responses and bool(self.game.hunts))
-        reply = json.loads(self.server.responses[120]["contentItems"][0]["text"])
-        self.assertEqual(
-            ("starting", True, None), tuple(reply["data"][key] for key in ("status", "continuous", "seconds"))
-        )
-        self.assertEqual(
-            [{"target": "100100", "skill_id": 1001004, "attack_range": 75, "seconds": None}], self.game.hunts
-        )
-        await self.server.events.put(
-            {
-                "id": 121,
-                "method": "item/tool/call",
-                "params": {"tool": "game_run_lua", "arguments": {"code": "must_not_interleave", "seconds": 1}},
-            }
-        )
-        await self.wait_until(lambda: 121 in self.server.responses)
-        self.assertEqual(
-            "input_busy", json.loads(self.server.responses[121]["contentItems"][0]["text"])["error"]["code"]
-        )
-        pause = asyncio.create_task(self.controller.control("pause"))
-        await self.game.cancel_requested.wait()
-        self.assertFalse(pause.done())
-        self.game.release.set()
-        await pause
-        await self.controller.execution
-        self.assertEqual("paused", self.controller.mode)
-        self.assertEqual([], self.game.codes)
-        self.assertFalse(any(method in {"turn/start", "turn/steer"} for method, _ in self.server.calls))
+        self.assertEqual("ready", self.controller.mode)
+        self.assertEqual({"id": "native-task", "status": "running"}, self.game.script)
+        self.assertEqual([], self.game.calls)
+        start = next(params for method, params in self.server.calls if method == "thread/start")
+        self.assertIn("已有脚本或命令 running 时只观察", start["developerInstructions"])
+        self.assertIn("原生 script start", start["developerInstructions"])
 
-    async def test_question_answer_and_finished_lua_continue_the_same_session(self) -> None:
+    async def test_question_answer_messages_and_usage_keep_the_same_session(self) -> None:
         await self.controller.initialize()
-        self.pumps.append(asyncio.create_task(self.controller.events()))
+        self.pump()
         await self.controller.message("执行当前任务")
         await self.server.events.put(
             {
@@ -314,6 +268,9 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
                 "method": "item/tool/requestUserInput",
                 "params": {"questions": [{"id": "proceed", "question": "是否继续补充观察？"}]},
             }
+        )
+        await self.server.events.put(
+            {"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {"total": {"totalTokens": 12}}}}
         )
         await self.wait_until(lambda: 77 in self.controller.questions)
         read_fd, write_fd = os.pipe()
@@ -337,205 +294,204 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
                 )
                 await self.wait_until(lambda: 77 in self.server.responses)
                 self.assertEqual({"answers": {"proceed": {"answers": ["继续"]}}}, self.server.responses[77])
-                await self.server.events.put(
-                    {
-                        "id": 88,
-                        "method": "item/tool/call",
-                        "params": {"tool": "game_run_lua", "arguments": {"code": "safe_move", "seconds": 1}},
-                    }
-                )
-                await self.wait_until(lambda: self.controller.last_script is not None)
-                await self.wait_until(lambda: any(method == "turn/steer" for method, _ in self.server.calls))
+                await self.controller.message("补充当前任务")
                 steer = next(params for method, params in self.server.calls if method == "turn/steer")
-                self.assertEqual("game-thread", steer["threadId"])
-                self.assertIn("重新观察", steer["input"][0]["text"])
-                self.assertEqual(["safe_move"], self.game.codes)
-                self.assertEqual(1, sum(method == "thread/start" for method, _ in self.server.calls))
+                self.assertEqual("turn-1", steer["expectedTurnId"])
                 os.write(write_fd, b'{"id":"stop","command":"stop"}\n')
-                await incoming
+                await asyncio.wait_for(incoming, 2)
                 self.assertEqual("stopped", self.controller.mode)
+                self.assertEqual(1, self.controller.status()["token_usage_updates"])
         finally:
             os.close(write_fd)
             reader.close()
 
-    async def test_pause_covers_accepted_work_and_waits_for_release_before_resume(self) -> None:
+    async def test_pause_only_stops_llm_and_resume_observes_the_existing_task(self) -> None:
         await self.controller.initialize()
-        self.pumps.append(asyncio.create_task(self.controller.events()))
+        self.pump()
         await self.controller.message("开始")
-        # 开发AI在工具请求已受理、回复尚未完成时暂停，Lua任务尚未获得执行机会。
-        self.server.pause_before_reply = self.controller
-        await self.server.events.put(
-            {
-                "id": 1,
-                "method": "item/tool/call",
-                "params": {"tool": "game_run_lua", "arguments": {"code": "must_not_start_after_pause", "seconds": 1}},
-            }
-        )
-        await self.wait_until(lambda: 1 in self.server.responses)
-        await self.wait_until(lambda: self.controller.execution is not None and self.controller.execution.done())
-        self.assertEqual([], self.game.codes)
-        self.assertEqual("paused", self.controller.mode)
-        revised_task = "在安全区等待并核对停止"
-        await self.controller.update_task(revised_task)
-        self.assertEqual(revised_task, self.controller.status()["task"])
-        self.assertEqual(revised_task, json.loads((self.state / "checkpoint.json").read_text())["task"])
-        await self.controller.control("resume")
-        resume_message = [params for method, params in self.server.calls if method == "turn/start"][-1]
-        self.assertIn(revised_task, resume_message["input"][0]["text"])
-        self.assertEqual(1, self.game.observations)
-        self.game.release.clear()
-        await self.server.events.put(
-            {
-                "id": 2,
-                "method": "item/tool/call",
-                "params": {"tool": "game_run_lua", "arguments": {"code": "hold", "seconds": 1}},
-            }
-        )
-        await self.wait_until(lambda: self.game.running)
+        self.server.complete_on_interrupt = False
         pause = asyncio.create_task(self.controller.control("pause"))
-        await self.game.cancel_requested.wait()
-        self.assertFalse(pause.done())
+        await self.wait_until(lambda: any(method == "turn/interrupt" for method, _ in self.server.calls))
         self.assertEqual("pausing", self.controller.mode)
-        self.game.release.set()
-        await pause
+        self.assertEqual([], self.game.calls)
+        self.assertFalse(pause.done())
+        await self.controller.message("暂停期间的补充")
+        await self.server.complete("unrelated-turn", "interrupted")
+        await self.wait_until(self.server.events.empty)
+        self.assertFalse(pause.done())
+        await self.server.complete("turn-1", "interrupted")
+        await asyncio.wait_for(pause, 2)
         self.assertEqual("paused", self.controller.mode)
+        self.assertEqual([], self.game.calls)
+        self.assertFalse(self.pumps[0][1].done())
+        revised = "观察已运行的养成任务"
+        await self.controller.update_task(revised)
+        self.assertEqual(revised, json.loads((self.state / "checkpoint.json").read_text())["task"])
         await self.controller.control("resume")
-        self.assertEqual(2, self.game.observations)
-        self.assertEqual(["hold"], self.game.codes)
+        self.assertIs(self.server, self.controller.server)
+        resumed = [params for method, params in self.server.calls if method == "turn/start"][-1]
+        text = resumed["input"][-1]["text"]
+        self.assertIn(revised, text)
+        self.assertIn("暂停期间的补充", text)
+        self.assertIn('"id": "native-task"', text)
+        self.assertIn('"status": "running"', text)
+        self.assertIn("不重复启动或抢占", text)
+        self.assertEqual(["observe"], self.game.calls)
+        self.assertEqual(1, sum(method == "thread/start" for method, _ in self.server.calls))
+        self.assertFalse(any(method == "thread/resume" for method, _ in self.server.calls))
+        self.server.complete_on_interrupt = True
         await self.controller.control("stop")
         self.assertEqual("stopped", self.controller.mode)
+        self.assertEqual(["observe"], self.game.calls)
 
-    async def test_pause_waits_for_late_turn_start_and_rejects_following_actions(self) -> None:
+    async def test_pause_waits_for_delayed_start_id_before_interrupt_and_terminal(self) -> None:
         await self.controller.initialize()
-        self.pumps.append(asyncio.create_task(self.controller.events()))
+        self.pump()
+        self.server.complete_on_interrupt = False
         self.server.turn_start_release.clear()
-        message = asyncio.create_task(self.controller.message("执行当前有界任务"))
+        message = asyncio.create_task(self.controller.message("执行当前任务"))
         await self.server.turn_start_entered.wait()
         pause = asyncio.create_task(self.controller.control("pause"))
         await self.wait_until(lambda: self.controller.mode == "pausing")
-        self.assertFalse(pause.done())
         self.assertFalse(any(method == "turn/interrupt" for method, _ in self.server.calls))
         self.server.turn_start_release.set()
-        await asyncio.wait_for(asyncio.gather(message, pause), 2)
+        await message
+        await self.wait_until(lambda: any(method == "turn/interrupt" for method, _ in self.server.calls))
         interrupted = next(params for method, params in self.server.calls if method == "turn/interrupt")
-        self.assertEqual(("game-thread", "turn-1"), (interrupted["threadId"], interrupted["turnId"]))
-        self.assertEqual("paused", self.controller.mode)
-        self.assertIsNone(self.controller.turn_id)
-        await self.server.events.put(
-            {
-                "id": 102,
-                "method": "item/tool/call",
-                "params": {"tool": "game_run_lua", "arguments": {"code": "must_not_run", "seconds": 1}},
-            }
-        )
-        await self.wait_until(lambda: 102 in self.server.responses)
-        reply = self.server.responses[102]
-        self.assertFalse(reply["success"])
-        self.assertEqual("game_paused", json.loads(reply["contentItems"][0]["text"])["error"]["code"])
-        self.assertEqual([], self.game.codes)
-        self.assertEqual("paused", self.controller.mode)
+        self.assertEqual("turn-1", interrupted["turnId"])
+        self.assertEqual([], self.game.calls)
+        await self.server.complete("turn-1", "interrupted")
+        await asyncio.wait_for(pause, 2)
+        self.assertEqual(("paused", None), (self.controller.mode, self.controller.turn_id))
 
-    async def test_late_completion_preserves_the_resumed_turn_and_its_control(self) -> None:
+    async def test_lost_start_response_preserves_llm_error(self) -> None:
         await self.controller.initialize()
-        self.pumps.append(asyncio.create_task(self.controller.events()))
-        await self.controller.message("执行当前任务")
+        self.pump()
+        self.server.fail_start = True
+        self.server.turn_start_release.clear()
+        starting = asyncio.create_task(self.controller.message("开始"))
+        await self.server.turn_start_entered.wait()
+        await self.server.events.put({"method": "transport/closed", "params": {}})
+        await asyncio.wait_for(self.controller.done.wait(), 2)
+        self.assertIsNone(self.controller.turn_id)
+        self.assertEqual([], self.game.calls)
+        self.server.turn_start_release.set()
+        with self.assertRaises(AppServerError):
+            await starting
+        with self.assertRaises(AppServerError) as failure:
+            await self.controller.control("stop")
+        self.assertEqual("model_turn_unconfirmed", failure.exception.code)
+        self.assertEqual("error", self.controller.mode)
+        self.assertEqual([], self.game.calls)
+
+    async def test_natural_completion_racing_interrupt_still_requires_terminal(self) -> None:
+        await self.controller.initialize()
+        self.pump()
+        await self.controller.message("开始")
+        self.server.finish_before_interrupt = True
+        await asyncio.wait_for(self.controller.control("pause"), 2)
+        self.assertEqual(("paused", None), (self.controller.mode, self.controller.turn_id))
+        self.assertEqual([], self.game.calls)
+
+    async def test_steer_failure_propagates_without_restarting_thread(self) -> None:
+        await self.controller.initialize()
+        await self.controller.message("开始")
+        self.server.fail_steer = True
+        with self.assertRaises(AppServerError) as failure:
+            await self.controller.message("补充")
+        self.assertEqual(-32600, failure.exception.code)
+        self.assertEqual(1, sum(method == "thread/start" for method, _ in self.server.calls))
+
+    async def test_late_old_completion_preserves_resumed_turn(self) -> None:
+        await self.controller.initialize()
+        self.pump()
+        await self.controller.message("开始")
         await self.controller.control("pause")
         await self.controller.control("resume")
-        self.assertEqual("turn-2", self.controller.status()["turn_id"])
-        await self.server.events.put(
-            {
-                "method": "turn/completed",
-                "params": {"threadId": "game-thread", "turn": {"id": "turn-1", "status": "interrupted"}},
-            }
-        )
+        await self.server.complete("turn-1", "interrupted")
         await self.wait_until(self.server.events.empty)
-        status = self.controller.status()
-        self.assertEqual(("turn-2", "running"), (status["turn_id"], status["mode"]))
-        await self.controller.message("补充观察当前任务")
+        self.assertEqual(("turn-2", "running"), (self.controller.turn_id, self.controller.mode))
+        await self.controller.message("当前任务补充")
         steer = [params for method, params in self.server.calls if method == "turn/steer"][-1]
         self.assertEqual("turn-2", steer["expectedTurnId"])
-        await self.controller.control("pause")
-        interrupted = [params for method, params in self.server.calls if method == "turn/interrupt"][-1]
-        self.assertEqual("turn-2", interrupted["turnId"])
-        await self.controller.control("resume")
-        await self.server.events.put(
-            {
-                "method": "turn/completed",
-                "params": {"threadId": "game-thread", "turn": {"id": "turn-3", "status": "completed"}},
-            }
-        )
-        await self.wait_until(self.server.events.empty)
-        status = self.controller.status()
-        self.assertEqual((None, "ready"), (status["turn_id"], status["mode"]))
+        await self.server.complete("turn-2")
+        await self.wait_until(lambda: self.controller.turn_id is None)
+        self.assertEqual("ready", self.controller.mode)
 
-    async def test_read_only_surface_rejects_lua_and_never_cancels_another_operator(self) -> None:
-        read_only = Controller(
+    async def test_read_only_surface_observes_without_takeover_or_cancel(self) -> None:
+        self.server.read_only = True
+        observer = Controller(
             self.server,
             self.game,
             self.state,
             "gpt-6-luna",
-            "只观察角色",
+            "只观察",
             "核对现状",
             {**self.binding, "read_only": True},
             read_only=True,
         )
-        await read_only.initialize()
+        await observer.initialize()
         start = next(params for method, params in self.server.calls if method == "thread/start")
-        tools = {tool["name"] for namespace in start["dynamicTools"] for tool in namespace["tools"]}
-        self.assertEqual({"game_observe", "game_script_status"}, tools)
-        self.assertTrue(read_only.status()["read_only"])
-        self.pumps.append(asyncio.create_task(read_only.events()))
-        # 另一个明确操作者的Lua仍在执行，只读会话不得接管或取消。
-        self.game.active = True
-        self.game.release.clear()
-        for identifier, tool, arguments in (
-            (100, "game_run_lua", {"code": "must_not_run", "seconds": 1}),
-            (101, "game_hunt", {"continuous": True}),
-        ):
+        self.assertEqual("read-only", start["sandbox"])
+        self.assertEqual(
+            {"game_observe", "game_script_status"},
+            {tool["name"] for namespace in start["dynamicTools"] for tool in namespace["tools"]},
+        )
+        self.pump(observer)
+        await observer.message("观察")
+        turn = next(params for method, params in self.server.calls if method == "turn/start")
+        self.assertEqual([{"type": "text", "text": "观察"}], turn["input"])
+        for identifier, tool in ((1, "game_observe"), (2, "game_script_status"), (3, "game_run_lua")):
             await self.server.events.put(
-                {"id": identifier, "method": "item/tool/call", "params": {"tool": tool, "arguments": arguments}}
+                {"id": identifier, "method": "item/tool/call", "params": {"tool": tool, "arguments": {}}}
             )
             await self.wait_until(lambda: identifier in self.server.responses)
-            reply = self.server.responses[identifier]
-            self.assertFalse(reply["success"])
-            failure = json.loads(reply["contentItems"][0]["text"])
-            self.assertEqual("read_only", failure["error"]["code"])
-        await read_only.control("pause")
-        await read_only.control("resume")
-        await read_only.control("stop")
-        self.assertEqual("stopped", read_only.mode)
-        self.assertEqual(0, self.game.cancellations)
-        self.assertEqual([], self.game.codes)
-        self.assertTrue(self.game.active)
+            self.assertEqual(identifier != 3, self.server.responses[identifier]["success"])
+        await observer.control("pause")
+        await observer.control("resume")
+        await observer.control("stop")
+        self.assertEqual(["observe", "script_status", "observe"], self.game.calls)
+        self.assertEqual({"id": "native-task", "status": "running"}, self.game.script)
 
-    async def test_failed_lua_continuation_wakes_owner_and_preserves_the_failure(self) -> None:
+    async def test_normal_mode_refuses_dynamic_tool_requests(self) -> None:
         await self.controller.initialize()
-        self.pumps.append(asyncio.create_task(self.controller.events()))
-        await self.controller.message("执行有界任务")
-        self.server.fail_steer = True
+        self.pump()
         await self.server.events.put(
-            {
-                "id": 101,
-                "method": "item/tool/call",
-                "params": {"tool": "game_run_lua", "arguments": {"code": "safe_move", "seconds": 1}},
-            }
+            {"id": 9, "method": "item/tool/call", "params": {"tool": "game_observe", "arguments": {}}}
         )
-        await asyncio.wait_for(self.controller.done.wait(), 2)
-        self.assertEqual("error", self.controller.mode)
-        self.assertEqual(["safe_move"], self.game.codes)
-        records = [json.loads(line) for line in (self.state / "events.jsonl").read_text().splitlines()]
-        failure = next(record for record in records if record["event"] == "continuation_failed")
-        self.assertEqual((-32600, "No active turn"), (failure["code"], failure["message"]))
-        self.assertIsNotNone(self.controller.execution)
-        with self.assertRaises(AppServerError) as execution:
-            await self.controller.execution
-        self.assertEqual(-32600, execution.exception.code)
-        self.assertEqual(1, sum(method == "turn/steer" for method, _ in self.server.calls))
+        await self.wait_until(lambda: 9 in self.server.responses)
+        self.assertFalse(self.server.responses[9]["success"])
+        self.assertEqual(0, self.game.observations)
 
-    async def test_dynamic_tool_disconnect_propagates_to_the_controller_owner(self) -> None:
+    async def test_transport_close_before_terminal_does_not_cancel_game(self) -> None:
         await self.controller.initialize()
+        self.pump()
+        await self.controller.message("开始")
+        self.server.complete_on_interrupt = False
+        pause = asyncio.create_task(self.controller.control("pause"))
+        await self.wait_until(lambda: any(method == "turn/interrupt" for method, _ in self.server.calls))
+        await self.server.events.put({"method": "transport/closed", "params": {}})
+        with self.assertRaises(AppServerError) as failure:
+            await asyncio.wait_for(pause, 2)
+        self.assertEqual("model_turn_unconfirmed", failure.exception.code)
+        self.assertEqual("error", self.controller.mode)
+        self.assertEqual([], self.game.calls)
+
+    async def test_tool_response_disconnect_propagates_to_owner(self) -> None:
+        self.server.read_only = True
+        observer = Controller(
+            self.server,
+            self.game,
+            self.state,
+            "gpt-6-luna",
+            "只观察",
+            "观察",
+            {**self.binding, "read_only": True},
+            read_only=True,
+        )
+        await observer.initialize()
         self.server.fail_response = True
-        pump = asyncio.create_task(self.controller.events())
+        pump = asyncio.create_task(observer.events())
         await self.server.events.put(
             {"id": 9, "method": "item/tool/call", "params": {"tool": "game_observe", "arguments": {}}}
         )
