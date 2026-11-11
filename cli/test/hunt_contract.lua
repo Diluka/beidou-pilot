@@ -10,6 +10,8 @@ local blocked_visits, blocked_logs, blocked_diagnostic = 0, 0, nil
 local blocked_rope_contact, released_after_block, rope_reached_at = false, false, nil
 local horizontal_velocity, brake_at, landing_at = 0, nil, nil
 local settled_jump, local_spawned, kills_before_climbing = false, false, nil
+local resume = scenario:find("^resume") ~= nil
+local recovered, resume_moves = false, 0
 local state = {
     ready = true,
     instance_id = "hunt-contract",
@@ -41,7 +43,18 @@ options = {
     max_x = 400,
     terrain = { footholds = { { id = 1, x1 = 0, x2 = 400, y1 = 200, y2 = 200 } }, ropes = {} },
 }
-if scenario == "rope" then
+if resume then
+    state.position.x, state.position.y, climbing = 100, scenario == "resume-top" and 0 or 90, true
+    if scenario == "resume-bottom" then state.position.y = 170 end
+    if scenario == "resume-budget" then options.seconds = 0.6 end
+    options.terrain.footholds[2] = { id = 2, x1 = 0, x2 = 400, y1 = 0, y2 = 0 }
+    options.terrain.ropes[1] = { x = 100, y1 = 0, y2 = 198 }
+    state.monsters = { { object_id = 1, template_id = 100, x = 140, y = 0, active = true } }
+    if scenario == "resume-bottom" then state.monsters[1].y = 200 end
+    if scenario == "resume-no-endpoint" then
+        options.min_x, options.max_x = 95, 105
+    end
+elseif scenario == "rope" then
     options.terrain.footholds[2] = { id = 2, x1 = 0, x2 = 400, y1 = 0, y2 = 0 }
     options.terrain.footholds[3] = { id = 3, x1 = 0, x2 = 400, y1 = 100, y2 = 100 }
     options.terrain.ropes[1] = { x = 100, y1 = 0, y2 = 198 }
@@ -186,6 +199,21 @@ game = {
         advance(0.01)
     end,
     move = function(direction, seconds)
+        if resume then
+            resume_moves = resume_moves + 1
+            if scenario == "resume-preempted" then
+                assert(resume_moves == 1, "recovery continued after losing control")
+                return { reason = "control_preempted" }
+            end
+            if scenario == "resume-context" then
+                state.scene_generation = 2
+                return
+            end
+            if scenario == "resume-stalled" then
+                advance(seconds)
+                return
+            end
+        end
         advance(seconds, direction == "left" or direction == "right")
         if scenario == "context" then
             state.scene_generation = 2
@@ -226,6 +254,7 @@ game = {
         state.position.y, landing_at = 170, now + 0.3
     end,
     attack = function(seconds, direction, skill_id)
+        if resume then assert(recovered and not climbing, "hunt attacked before confirming rope recovery") end
         assert(skill_id == options.skill_id, "attack mode silently changed")
         if scenario == "fall" and state.position.y < 200 then air_attacks = air_attacks + 1 end
         advance(seconds)
@@ -272,6 +301,7 @@ game = {
         return { dispatched = true, skill_dispatched = skill_id and true or nil }
     end,
     log = function(message)
+        if message:find("hunt_rope_recovered") then recovered = true end
         if message:find("hunt_route") then routes = routes + 1 end
         if message:find("hunt_summary") then summary = message end
         if message:find("hunt_navigation_blocked") then
@@ -280,7 +310,22 @@ game = {
     end,
 }
 local ok, failure = pcall(dofile, strategy)
-if scenario == "stalled" then
+if scenario == "resume-no-endpoint" then
+    assert(not ok and failure:find("hunt_rope_recovery_no_safe_endpoint"), tostring(failure))
+    assert(resume_moves == 0 and #killed == 0, "recovery ignored the hunting boundary")
+elseif scenario == "resume-stalled" then
+    assert(not ok and failure:find("hunt_rope_recovery_stalled"), tostring(failure))
+    assert(now < 4 and #killed == 0, "blocked rope recovery was unbounded or attacked")
+elseif scenario == "resume-preempted" then
+    assert(not ok and failure:find("control_preempted"), tostring(failure))
+    assert(resume_moves == 1 and #killed == 0, "recovery dispatched after control was preempted")
+elseif scenario == "resume-context" then
+    assert(not ok and failure:find("hunt_context_changed"), tostring(failure))
+    assert(resume_moves == 1 and #killed == 0, "recovery dispatched into another scene")
+elseif scenario == "resume-budget" then
+    assert(not ok and failure:find("hunt_rope_recovery_budget"), tostring(failure))
+    assert(now < 0.7 and #killed == 0, "rope recovery ignored the total hunting budget")
+elseif scenario == "stalled" then
     assert(not ok and failure:find("hunt_chase_stalled"), tostring(failure))
     assert(#killed == 0)
 elseif scenario == "context" then
@@ -294,7 +339,9 @@ elseif scenario == "rope-blocked-only" then
     assert(#killed == 1 and blocked_visits == 1 and released_after_block, "unreachable hunt retried the blocked route")
 else
     assert(ok, failure)
-    if scenario == "specified" then
+    if resume then
+        assert(recovered and #killed == 1, "hunt did not recover from the rope and obtain combat progress")
+    elseif scenario == "specified" then
         assert(#killed == 2 and state.monsters[2].active, "specified hunt attacked another monster type")
     elseif scenario == "all" then
         assert(#killed == 3 and parallel > 0, "all hunt did not move and attack while continuing to next targets")

@@ -180,6 +180,77 @@ local function platform_at(x, y, tolerance)
     end
     return selected
 end
+-- 绳梯几何只给出恢复候选，不表示原生攀爬状态。到已知端点后，
+-- 必须实际横移离开绳轴并复采平台位置，才能恢复找怪。
+local function rope_at(s)
+    local candidate
+    for _, rope in ipairs(options.terrain.ropes) do
+        if math.abs(s.position.x - rope.x) <= 5 and s.position.y >= rope.y1 - 6 and s.position.y <= rope.y2 + 6 then
+            assert(not candidate, "hunt_rope_recovery_ambiguous")
+            candidate = rope
+        end
+    end
+    return candidate
+end
+local function recovery_action(result) assert(not result or result.reason ~= "control_preempted", "control_preempted") end
+local function recover_rope(s, rope)
+    local destination, nearest = nil, math.huge
+    for i, platform in ipairs(platforms) do
+        if rope.x >= platform.left and rope.x <= platform.right then
+            local y = height(platform, rope.x)
+            local direction = math.abs(y - rope.y1) <= 12 and "up" or y >= rope.y2 - 5 and y <= rope.y2 + 55 and "down"
+            local side = platform.right - rope.x >= rope.x - platform.left and 1 or -1
+            local x = rope.x + side * 12
+            if direction and x >= platform.left and x <= platform.right and math.abs(y - s.position.y) < nearest then
+                destination, nearest = { platform = i, direction = direction, x = x, y = y }, math.abs(y - s.position.y)
+            end
+        end
+    end
+    assert(destination, "hunt_rope_recovery_no_safe_endpoint")
+    game.log(
+        string.format(
+            "hunt_rope_recovery start_x=%.1f start_y=%.1f rope_x=%.1f direction=%s goal_y=%.1f",
+            s.position.x,
+            s.position.y,
+            rope.x,
+            destination.direction,
+            destination.y
+        )
+    )
+    recovery_action(game.stop())
+    game.sleep(0.15)
+    local until_at, progress_at, previous_y = math.min(deadline, game.time() + 12), game.time(), s.position.y
+    while game.time() < until_at do
+        s = current_state()
+        assert(math.abs(s.position.x - rope.x) <= 18, "hunt_rope_recovery_left_rope")
+        if math.abs(s.position.y - previous_y) > 2 then
+            progress_at, previous_y = game.time(), s.position.y
+        end
+        if platform_at(s.position.x, s.position.y, 5) == destination.platform then
+            local before_x = s.position.x
+            recovery_action(game.move(destination.x > s.position.x and "right" or "left", 0.06))
+            recovery_action(game.stop())
+            game.sleep(0.15)
+            local after = current_state()
+            if
+                math.abs(after.position.x - before_x) > 1
+                and math.abs(after.position.x - rope.x) >= 6
+                and platform_at(after.position.x, after.position.y, 5) == destination.platform
+            then
+                game.log(string.format("hunt_rope_recovered x=%.1f y=%.1f", after.position.x, after.position.y))
+                return after
+            end
+        end
+        if game.time() - progress_at >= 3 then
+            recovery_action(game.stop())
+            error("hunt_rope_recovery_stalled")
+        end
+        if game.time() >= until_at then break end
+        recovery_action(game.move(destination.direction, math.min(0.12, until_at - game.time())))
+    end
+    recovery_action(game.stop())
+    error("hunt_rope_recovery_budget")
+end
 local last_experience, last_target_hp, combat_since, attack_target_id = nil, nil, nil, nil
 local function try_attack(s, direction, seconds)
     local target, nearest = nil, math.huge
@@ -249,6 +320,7 @@ local function move_x(s, x, allow_attack)
     return true, attack_intent
 end
 local target_id, travel, airborne_since = nil, nil, nil
+local initial_rope_checked = false
 local visited, patrol_direction = {}, 1
 local heal_at, report_at = 0, started
 local approach, unreachable_since
@@ -288,6 +360,14 @@ while game.time() < deadline do
         s = current_state()
     end
     local here = platform_at(s.position.x, s.position.y, 12)
+    if not travel and (not initial_rope_checked or not here) then
+        initial_rope_checked = true
+        local rope = rope_at(s)
+        if rope then
+            s = recover_rope(s, rope)
+            here, airborne_since, target_id, approach = platform_at(s.position.x, s.position.y, 12), nil, nil, nil
+        end
+    end
     if travel then
         local before = game.time()
         local destination = platforms[travel.to]
