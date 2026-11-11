@@ -180,6 +180,7 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `move X`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单根绳梯或单个门户；不是通用寻路 |
 | `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点及近距拾取尝试 |
 | `hunt [MOB\|all]` | 单场景自主找怪、可达跨平台和连续战斗；支持 `--skill ID`、`--range N`、限时或 `--continuous` |
+| `script run/start --library travel\|island-supply` | 显式装载旅行函数；Lua消费者在一次会话内调用已知路线并核对目的地 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
 | `script run FILE`、`script run --code CODE` | 文件或直接源码二选一，同步等待原生会话结果；中断等待不取消脚本，持续模式须明确声明 |
 | `script start FILE`、`script start --code CODE` | 原生受理后返回，脚本由客户端独立执行；返回实例、运行、请求与脚本身份 |
@@ -223,6 +224,14 @@ private/workbenches/workbench /external/workbench hunt all --skill 1001004 --ran
 ```
 
 `hunt` 默认普攻、全部怪物、60秒，`--bounds MIN MAX` 可限定横向区域，`--until-level` 指定停级，`--min-hp-ratio` 默认0.35。`--hp-item` 仅使用明确指定、库存已知的恢复品，不购买或替换药品。技能必须已学且当前后端支持；无头首批仅支持战士 `1001004/1001005`，其他类型明确拒绝。攻击距离是策略接近参数，不保证命中。无可确认的进展、无法通过的地形、生命下限或取消都有明确停止；原始日志保留所属实例，最终经验跨级时不直接相减。
+
+已知路线可在一个有界 Lua 内复用，接口与适用起点见 [Lua 旅行函数库](LUA_API.md#可选旅行函数库)。例如从50000东上层行进至相邻安全城镇：
+
+```bash
+private/workbenches/workbench /external/workbench script run --library island-supply --code 'local result = island_supply.to_town({seconds=30}); assert(result.arrived)' --seconds 35
+```
+
+`island_supply.to_field()` 从城镇西入口区域返回50000东下层。它不会购物、交任务、分配点数或继续战斗。起点不符、有段未到达、意外转场或安全条件不足时停止，`route_failed` 保留 `arrived=false`、阶段和原因；原生动作错误同时保留最近的 `route_stage` 日志。成功返回表必须经过终点地图、区域和停止后的复采确认。CLI只组合源码，原生会话继续持有生命周期；`start`、等待中断及精确取消仍遵循同一规则。
 
 在已知绳梯附近接续 `hunt` 时，策略可在总预算内恢复到狩猎边界内的已知端点，通过实际横移和平台位置复采确认脱绳后再找怪。日志 `hunt_rope_recovery` / `hunt_rope_recovered` 区分恢复尝试和已确认恢复；无安全端点、候选不唯一、遇阻或预算不足会明确停止。此行为不依赖 GUI 未知的 `settled`，也不保证所有地形都可恢复。
 
