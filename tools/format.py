@@ -28,6 +28,7 @@ SOURCES = {
         "cli/test/test_unified_control.py",
         "cli/test/test_task_management.py",
         "cli/test/test_lua_runtime.py",
+        "cli/test/test_allocation.py",
         "cli/test/test_task_transport.py",
         "cli/test/test_gui_key_input.py",
         "cli/test/test_native_item_use.py",
