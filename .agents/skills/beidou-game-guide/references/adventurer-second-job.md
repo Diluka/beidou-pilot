@@ -1,6 +1,6 @@
 # 冒险家二转加点规划
 
-适用范围：北斗 V17 冒险家，覆盖12条二转分支，以继续三转、四转为目标。2026-11-11 核对客户端技能资源与固定公开源码；**配点是研究建议，尚未逐职业实测**。本篇给出二转终态，不展开逐级加点、三转终态或四转阶段规划。
+适用范围：北斗 V17 冒险家，覆盖12条二转分支，以继续三转、四转为目标。2026-11-11 核对客户端技能资源与固定公开源码；**配点是研究建议，尚未逐职业实测**。本篇给出二转终态，不展开逐级加点或四转阶段规划；三转终态见[三转攻略](adventurer-third-job.md)。
 
 阅读顺序：先确认职业与武器，再找对应终态表，最后检查“四转前置”和“三转前核对”。表中的数字是最终技能等级，不是本次要追加的点数。
 
@@ -239,7 +239,7 @@
 | 箭神：神弩手（3220004） | 精准弩（3200000）20级 | 保留20级，不省最后1点 |
 | 冲锋队长：极速领域（5121009） | 急速拳（5101006）20级 | 保留20级，不只留短时加速等级 |
 
-本次扫描未发现其余四转职业的 `req` 直接引用二转技能；这只说明这类显式前置，不表示二转的增益、被动或武器支持到了四转就无用。主教召唤龙、弓手凤凰、船长导航等涉及**三转**技能的前置，留在三转及对应四转攻略核对，不从本篇推算。
+本次扫描未发现其余四转职业的 `req` 直接引用二转技能；这只说明这类显式前置，不表示二转的增益、被动或武器支持到了四转就无用。主教召唤龙、弓手凤凰、船长导航等涉及**三转**技能的前置，见[三转攻略的四转前置表](adventurer-third-job.md#为四转保留的三转要求)，不从本篇推算。
 
 ## 技能书与三转前核对
 
@@ -276,4 +276,4 @@
 - [职业树及SP表规则](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/constants/game/GameConstants.java)、[SP分配职业及上限校验](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/client/processor/stat/AssignSPProcessor.java)。
 - [技能书228映射](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Item.wz/Consume/0228.img.xml)、[能手册229映射](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Item.wz/Consume/0229.img.xml)。
 
-本篇仅交付二转部分；三转与12个四转职业的阶段规划按父任务的独立子任务继续。
+本篇仅交付二转部分；三转终态已另见[三转攻略](adventurer-third-job.md)，12个四转职业的阶段规划按父任务的独立子任务继续。
