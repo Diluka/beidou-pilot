@@ -74,7 +74,7 @@ class NativeCare {
 public:
     bool Begin(const MapleControl::Action& request, const MapleControl::State& state, const CareView& view,
                std::uint64_t now) {
-        if (active) return false;
+        if (active || CleanupPending()) return false;
         action = request;
         character = state.character.id;
         job = state.character.values[1];
@@ -85,6 +85,8 @@ public:
                      : request.kind == MapleControl::ActionKind::Equip      ? "inventory"
                                                                             : request.reference;
         active = true;
+        allocationFinishing = false;
+        cancelReason.clear();
         scopeFinished = false;
         allocationStarted = request.kind == MapleControl::ActionKind::AllocateAp
                             || request.kind == MapleControl::ActionKind::AllocateSp;
@@ -296,7 +298,9 @@ public:
                 const std::string& why = "care_cancelled", bool mayConfirm = true) {
         if (!active) return;
         if (allocationStarted) {
-            allocation.Cancel(Facts(state, view), now, mayConfirm);
+            cancelReason = why;
+            allocationFinishing = allocation.Pending() && !mayConfirm && ContextMatches(state, view);
+            if (!allocationFinishing) allocation.Cancel(Facts(state, view), now, mayConfirm);
             ProjectAllocation();
             if (!allocation.Confirmed()) result.reason = why;
         } else
@@ -309,6 +313,19 @@ public:
     }
 
     bool Active() const { return active; }
+
+    void ConvergeCancellation(const MapleControl::State& state, const CareView& view, std::uint64_t now,
+                              bool inputReleased) {
+        if (!allocationFinishing) return;
+        const bool sameContext = ContextMatches(state, view);
+        if (!inputReleased && sameContext) return;
+        // Dispatch remains stopped. One fresh read at real release retains any
+        // point whose target and pool have both been observed, without a retry.
+        allocation.Cancel(Facts(state, view), now, sameContext);
+        allocationFinishing = false;
+        ProjectAllocation();
+        if (!allocation.Confirmed()) result.reason = cancelReason;
+    }
 
     static bool AllowsTarget(const CareView& view, const NativeMouseInput::Target& target) {
         if (!view.known || view.blocked || target.x < 0 || target.y < 0 || target.x >= view.width
@@ -408,7 +425,7 @@ public:
             cleanupSettled = true;
     }
 
-    bool CleanupPending() const { return !active && !cleanupSettled; }
+    bool CleanupPending() const { return !active && (!cleanupSettled || allocationFinishing); }
 
     void FinishScope() {
         if (!active && !CleanupPending()) scopeFinished = true;
@@ -762,6 +779,8 @@ private:
     bool cleanupSettled = true, escapeSent = false, mouseStopRequested = false;
     bool equipmentBaselineKnown = false;
     bool scopeFinished = true;
+    bool allocationFinishing = false;
+    std::string cancelReason;
     std::uint32_t ownedDrag = 0;
 };
 }

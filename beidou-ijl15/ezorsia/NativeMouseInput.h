@@ -9,7 +9,23 @@ namespace BeiDouBridge {
 // before delivery, keep key-up work across cancellation, and never run an old tail.
 class NativeMouseInput {
 public:
-    enum class Event { Position, Down, Up, Wheel };
+    enum class Event { Position, Down, DoubleDown, Up, Wheel };
+
+    static unsigned Message(Event event) {
+        switch (event) {
+        case Event::Position:
+            return 0x200;
+        case Event::Down:
+            return 0x201;
+        case Event::DoubleDown:
+            return 0x203;
+        case Event::Up:
+            return 0x202;
+        case Event::Wheel:
+            return 0x20a;
+        }
+        return 0;
+    }
 
     struct Target {
         int x = 0;
@@ -92,7 +108,7 @@ public:
             if (deliveryEpoch == epoch) Release(false);
         } else if (!held && clickRemaining != 0) {
             owned = held = true;
-            sent = send(Event::Down, target, deliveryEpoch);
+            sent = send(clickRemaining == target.clicks ? Event::Down : Event::DoubleDown, target, deliveryEpoch);
         } else {
             requiredUp = true;
             if (clickRemaining != 0) --clickRemaining;

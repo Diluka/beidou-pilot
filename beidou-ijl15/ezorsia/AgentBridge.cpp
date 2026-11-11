@@ -738,7 +738,7 @@ bool SendMouse(BeiDouBridge::NativeMouseInput::Event event, const BeiDouBridge::
             }
         }
         ++inputEvents;
-        dispatchInput(WM_LBUTTONUP, 0, 0);
+        dispatchInput(BeiDouBridge::NativeMouseInput::Message(event), 0, 0);
         return true;
     }
     if (epoch != mouseInput.Epoch() || !previousState.ready || currentNative.user != target.character
@@ -764,13 +764,15 @@ bool SendMouse(BeiDouBridge::NativeMouseInput::Event event, const BeiDouBridge::
     if (!getNativeCursor(nativeInput, &actual) || actual.x != target.x || actual.y != target.y) return false;
     if (event == Event::Down && target.point && !care.DispatchPoint(previousState, view, target, GetTickCount64()))
         return false;
-    if (event == Event::Down && target.equipment && !care.DispatchEquipment(previousState, view, target)) return false;
+    if ((event == Event::Down || event == Event::DoubleDown) && target.equipment
+        && !care.DispatchEquipment(previousState, view, target))
+        return false;
     mouseInput.MarkDispatched(epoch);
     ++inputEvents;
     if (event == Event::Wheel)
-        dispatchInput(WM_MOUSEWHEEL, static_cast<unsigned int>(target.wheel) << 16, 0);
+        dispatchInput(BeiDouBridge::NativeMouseInput::Message(event), static_cast<unsigned int>(target.wheel) << 16, 0);
     else
-        dispatchInput(WM_LBUTTONDOWN, MK_LBUTTON, 0);
+        dispatchInput(BeiDouBridge::NativeMouseInput::Message(event), MK_LBUTTON, 0);
     return true;
 }
 
@@ -1105,7 +1107,9 @@ void Tick() {
     NativeObservation::BindEquipmentContext(instanceId, previousState.characterKnown ? previousState.character.id : 0,
                                             sceneGeneration);
     if (careTracking) {
-        care.ObserveCleanup(previousState, CaptureCareView(&care.Request()));
+        const auto view = CaptureCareView(&care.Request());
+        care.ObserveCleanup(previousState, view);
+        care.ConvergeCancellation(previousState, view, now, keyInput.Released() && mouseInput.Released());
         if (!care.Active() && !care.CleanupPending() && keyInput.Released() && mouseInput.Released()) {
             care.FinishScope();
             careTracking = false;

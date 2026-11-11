@@ -342,7 +342,7 @@ end
 
 结果沿用 `dispatched/control_released/effect/reason`，增加 `allocation`：`kind` 为 `ap/sp`，`stat/skill_id` 表示明确目标，`requested/allocated` 为请求/已双确认数量，`point_pending=true` 表示曾发出一点而尚未双确认。`points_before/value_before` 是批次开始事实，`points_after/value_after` 是最近一次事实；不可读为 `nil`。`character_id/scene_generation` 是原请求身份，`current_character_id/current_scene_generation` 标识当前读数，身份改变的值不得归因于原请求。
 
-全部确认时 `effect="confirmed"`、`reason="allocation_confirmed"`；其他情况保留 `effect="unknown"`、已确认数量及事实，有界停止。点数不足、上限/前置/职业不符可能在派发前拒绝；单侧变化、冲突、身份/场景变化、取消或未知不表示可重试。先观察实际结果，不重放不确定的一点或整批。取消不回滚已经发生的加点；真实释放与客户端关闭仍是独立事实。
+全部确认时 `effect="confirmed"`、`reason="allocation_confirmed"`；其他情况保留 `effect="unknown"`、已确认数量及事实，有界停止。点数不足、上限/前置/职业不符可能在派发前拒绝；单侧变化、冲突、身份/场景变化、取消或未知不表示可重试。先观察实际结果，不重放不确定的一点或整批。取消先停止新派发；鼠标尚待真实释放时继续保留待确认点，在释放时以同上下文的新鲜双读数收敛已确认数量，不因等待放键而丢掉已观察变化。取消不回滚已经发生的加点；真实释放与客户端关闭仍是独立事实。
 
 ```lua
 -- 仅在已核实计划明确要求本次角色加一点力量时执行。
@@ -359,7 +359,7 @@ game.face("right")
 
 `game.equip(backpack_slot, equipped_slot[, seconds[, ref]])` 从装备背包正槽穿到明确的身上负槽。目的槽已有普通装备时，正常替换会让原装备回到源背包槽。`game.unequip(equipped_slot, backpack_slot[, seconds[, ref]])` 从身上负槽卸到指定的空背包正槽；目标背包槽被占用时拒绝，不自动选择其他位置。
 
-无头使用正常装备请求和库存更新；GUI 通过本端已校准普通背包的正常双击路径穿戴，不绕过原客户端的职业、等级或其他装备资格流程。两端不修改点数、装备属性或服务端数据。角色、装备、槽位及本地可核实的条件仍需满足；声望要求不作本地未知值猜测，以正常服务端处理和实际库存结果为准。当前仅 headless 支持，GUI Lua 调用明确报 `unsupported`；原版 CLI 的既有 GUI 装备流程继续独立使用。
+无头使用正常装备请求和库存更新；GUI 通过本端已校准普通背包的正常双击路径穿戴，不绕过原客户端的职业、等级或其他装备资格流程。两端不修改点数、装备属性或服务端数据。角色、装备、槽位及本地可核实的条件仍需满足；声望要求不作本地未知值猜测，以正常服务端处理和实际库存结果为准。GUI 的唯一槽位穿戴与未支持范围见下文，原 CLI 保留声明的自动选择路径。
 
 请求只派发一次。穿戴/替换成功需源槽与目的槽的装备对象对应关系同时符合本次请求；卸下则需源身上槽清空且目标背包槽收到原装备。确认后返回 `effect="confirmed"`，仅派发、脚本返回或两处物品 ID 看似相同均不足以确认同一件装备。
 

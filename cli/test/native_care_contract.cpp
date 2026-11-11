@@ -53,6 +53,30 @@ void CheckAllocationFacts(const NativeCare& care, unsigned allocated, bool pendi
 }
 
 void MouseContract() {
+    {
+        NativeMouseInput clicks;
+        NativeMouseInput::Target target;
+        target.character = 77;
+        target.clicks = 2;
+        std::uint64_t updates = 0;
+        std::vector<unsigned> messages;
+        assert(clicks.Request(target, 0));
+        for (unsigned now = 0; now <= 300 && !clicks.Released(); now += 25) {
+            ++updates;
+            clicks.Flush(
+                now,
+                [&](auto event, const auto&, auto epoch) {
+                    messages.push_back(NativeMouseInput::Message(event));
+                    if (event == NativeMouseInput::Event::Down || event == NativeMouseInput::Event::DoubleDown)
+                        clicks.MarkDispatched(epoch);
+                    return true;
+                },
+                [&] { return updates; });
+            clicks.ConfirmRelease(77, updates, false);
+        }
+        assert(clicks.Released() && !clicks.Cancelled());
+        assert(messages == std::vector<unsigned>({0x200, 0x201, 0x202, 0x203, 0x202}));
+    }
     NativeMouseInput mouse;
     NativeMouseInput::Target target;
     target.character = 77;
@@ -158,6 +182,9 @@ void CareContract() {
     care.Tick(state, view, 8, true, mouse, key);
     assert(!care.Active() && requests.size() == 2);
     CheckAllocationFacts(care, 1, true);
+    assert(care.CleanupPending());
+    care.ConvergeCancellation(state, view, 9, true);
+    assert(!care.CleanupPending());
 
     // A native disabled skill is refused without any point request.
     view = ViewFixture("skills");
@@ -193,6 +220,47 @@ void CareContract() {
     care.Tick(state, view, 3, false, mouse, key);
     assert(!care.Active());
     CheckAllocationFacts(care, 0, true);
+}
+
+void CancelObservedPoint() {
+    auto state = StateFixture();
+    auto view = ViewFixture();
+    Action action;
+    action.kind = ActionKind::AllocateAp;
+    action.allocation.stat = "strength";
+    action.allocation.count = 2;
+    action.allocation.timeoutMs = 100;
+    NativeCare care;
+    std::vector<NativeMouseInput::Target> requests;
+    assert(care.Begin(action, state, view, 0));
+    care.Tick(
+        state, view, 1, true,
+        [&](const auto& request) {
+            requests.push_back(request);
+            return true;
+        },
+        [](unsigned) { return true; });
+    assert(care.DispatchPoint(state, view, requests[0], 2));
+    // Native Up has returned, but its character-update release proof is pending.
+    --state.character.values[10];
+    ++state.character.values[2];
+    care.Cancel(state, view, 3, "explicit_cancel", false);
+    assert(!care.Active() && care.CleanupPending());
+    care.ConvergeCancellation(state, view, 4, false);
+    CheckAllocationFacts(care, 0, true);
+    care.ConvergeCancellation(state, view, 5, true);
+    CheckAllocationFacts(care, 1, false);
+    assert(!care.CleanupPending() && requests.size() == 1);
+    care.Tick(
+        state, view, 6, true,
+        [&](const auto&) {
+            assert(false);
+            return true;
+        },
+        [](unsigned) {
+            assert(false);
+            return true;
+        });
 }
 
 void EquipmentContract() {
@@ -338,6 +406,7 @@ void WindowContract() {
 int main() {
     MouseContract();
     CareContract();
+    CancelObservedPoint();
     EquipmentContract();
     WindowContract();
 }
