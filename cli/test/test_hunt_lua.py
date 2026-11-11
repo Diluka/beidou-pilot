@@ -32,6 +32,20 @@ class HuntLuaContract(unittest.TestCase):
     def test_rope_top_landing_without_overshoot_sample_continues_hunting(self) -> None:
         subprocess.run([str(self.executable), str(self.contract), "rope", str(self.strategy)], check=True, timeout=5)
 
+    def test_resuming_on_a_rope_confirms_departure_before_hunting(self) -> None:
+        for scenario in ("resume", "resume-top", "resume-bottom"):
+            with self.subTest(scenario=scenario):
+                subprocess.run(
+                    [str(self.executable), str(self.contract), scenario, str(self.strategy)], check=True, timeout=5
+                )
+
+    def test_rope_recovery_stops_when_unsafe_stalled_or_preempted(self) -> None:
+        for scenario in ("resume-no-endpoint", "resume-stalled", "resume-preempted", "resume-context", "resume-budget"):
+            with self.subTest(scenario=scenario):
+                subprocess.run(
+                    [str(self.executable), str(self.contract), scenario, str(self.strategy)], check=True, timeout=5
+                )
+
     def test_long_progressing_rope_approach_continues_to_next_platform(self) -> None:
         subprocess.run(
             [str(self.executable), str(self.contract), "rope-long-approach", str(self.strategy)], check=True, timeout=5
