@@ -85,10 +85,11 @@ std::uint32_t SecureValue(std::uintptr_t address) {
 
 MapleControl::Observation Collect(const std::string& domain) {
     using Collector = Value (*)();
-    const std::pair<const char*, Collector> collectors[]{
-        {"stage", Stage},         {"scene", Scene},   {"inventory", Inventory},
-        {"character", Character}, {"quests", Quests}, {"hotkeys", Hotkeys},
-        {"dialog", Dialog},       {"ui", Ui},         {"shop", Shop}};
+    const std::pair<const char*, Collector> collectors[]{{"stage", Stage},         {"scene", Scene},
+                                                         {"inventory", Inventory}, {"character", Character},
+                                                         {"quests", Quests},       {"hotkeys", Hotkeys},
+                                                         {"dialog", Dialog},       {"ui", Ui},
+                                                         {"shop", Shop},           {"notifications", Notifications}};
     Collector selected = nullptr;
     for (const auto& entry : collectors)
         if (domain == entry.first) selected = entry.second;

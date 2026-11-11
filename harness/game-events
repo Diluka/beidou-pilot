@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from beidou_game_ai.events import main
+
+raise SystemExit(main())

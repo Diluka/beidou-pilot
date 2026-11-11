@@ -45,6 +45,11 @@ Separately licensed components
 - JSON for Modern C++: MIT license, third_party/json/LICENSE.MIT
 - Microsoft Detours: MIT license,
   third_party/detours/LICENSE.md
+- websockets 15.0.1, installed separately for the optional existing-session
+  event consumer:
+  https://github.com/python-websockets/websockets
+  BSD-3-Clause. Standard pip installation retains the upstream license and
+  distribution metadata. The package isn't compiled into the game client.
 - OpenAI Codex 0.167.0, distributed separately in the game AI container:
   https://github.com/openai/codex
   Source commit: 086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a

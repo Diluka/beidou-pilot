@@ -212,7 +212,7 @@ end
 
 `game.observe(domain)` 在当前原生更新线程同步读取指定领域，不需要动作控制权，也不触碰主机桥文件或经过 Python 反馈。只有调用时才采集该领域；`game.state()` 的每帧轻量采样不因此增加全量任务、技能或 UI 遍历。按业务决策需要查询，长循环仍通过 `sleep` 或动作函数让出执行权。
 
-`domain` 精确接受下列十个名称。未知名称或缺少参数会产生 Lua 参数错误；合法但后端未实现的领域返回 `status="unsupported"`。
+`domain` 精确接受下表名称。未知名称或缺少参数会产生 Lua 参数错误；合法但后端未实现的领域返回 `status="unsupported"`。
 
 | 领域 | 两端支持与主要原生字段 |
 | --- | --- |
@@ -225,7 +225,14 @@ end
 | `interaction` | 无头；`data.page` 是当前通用页面或 nil，页面和控件结构见[控件交互](#控件交互)；GUI未支持 |
 | `dialog` | GUI；`dialog_open`、`npc_id`、`dialog_type`、`lines`、`choices`、`buttons` 及来源窗口说明；无头不支持此内容领域，使用 `interaction` |
 | `ui` | GUI；`windows`、`dialog` 与原生游戏区布局；无头不支持 |
+| `notifications` | GUI；所有同类原生通知气泡的种类、已知来源、期限、状态和实际按钮；无头不支持 |
 | `shop` | GUI；`open`、`npc_id`、`buy_items/sell_items`、选择/滚动位置、`busy` 和数量窗口状态；无头不支持 |
+
+`notifications.data.notifications` 的每项保留 `id/native_kind/kind`、`source_text/text`、`sender_id/party_id/interaction_id/quest_id`、`expires_at_ms/remaining_ms`、`pending/available`、`window/buttons`。`native_kind` 保留原生整数，`kind` 只提供已证实标签，未识别为 `nil`；已知标签不会决定响应通路。关联字段未知为 `nil`，交易的 `interaction_id` 不能当作玩家 ID。原生来源槽的文字是 `source_text`；完整渲染正文尚未提取，`text=nil`，`not_covered` 明确包含 `rendered_body_text`。
+
+原生 duration 为0时表示没有自动到期时间，两个期限字段为 `nil`，仍按当前 pending 与真实控件判断可操作状态；不能据此推断服务端业务无期限。每个实际按钮保留 `control_id/layout_x/layout_y/width/height`，2000标为 `primary`、2001标为 `dismiss`，其他 `action=nil`；不能假设每类都有两个按钮，也不能把主按钮都理解为接受或成交。
+
+Lua 不包含 CLI 派生的 `@notification` 引用或桌面根坐标；本域只读，不增加 Lua GUI 输入接口。使用 CLI 响应时必须重读当前引用，派发事实、气泡状态和业务结果分别确认。组队成员观察与真实闭环继续由 #92 单独交付，公共气泡采集不依赖它。
 
 每次返回的外层结构为：
 

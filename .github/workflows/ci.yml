@@ -49,6 +49,8 @@ jobs:
           python-version: "3.14"
       - name: Build isolated Codex image
         run: docker build --tag local/beidou-game-ai:ci docker/harness
+      - name: Install existing-session event consumer dependency
+        run: python3 -m pip install --requirement harness/requirements-events.txt
       - name: Run harness contracts without authentication or a real model
         env:
           BEIDOU_GAME_AI_IMAGE: local/beidou-game-ai:ci

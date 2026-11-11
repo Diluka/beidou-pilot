@@ -20,7 +20,8 @@ from .instances import InstancePaths, selected_instance
 from .runtime import load_runtime
 
 
-DOMAINS = frozenset({"stage", "scene", "inventory", "character", "quests", "hotkeys", "dialog", "interaction", "ui", "shop"})
+DOMAINS = frozenset({"stage", "scene", "inventory", "character", "quests", "hotkeys", "dialog", "interaction", "ui", "shop",
+                     "notifications"})
 
 
 def client_root() -> Path:
