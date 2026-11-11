@@ -82,6 +82,7 @@ private/workbenches/workbench /external/workbench close
 - [游戏 AI harness](docs/HARNESS.md)：隔离 Codex、角色上下文、游戏工具与开发 AI 协作。
 - [命令使用](docs/CLI.md)：实例、观察、动作、GUI 入口和错误结果。
 - [Lua API 参考](docs/LUA_API.md)：写脚本使用的状态字段、函数参数、返回值与错误语义。
+- [Lua 脚本目录说明](shared/scripts/README.md)：内置旅行、战斗、恢复策略及示例的用途、调用入口和弃用标记。
 - [Lua 与控制协议](docs/CONTROL.md)：脚本、控制权、取消和效果边界。
 - [架构与支持范围](docs/ARCHITECTURE.md)：代码职责、外部资源、两端能力和限制。
 - [客户端能力边界与缺口索引](docs/CLIENT_LIMITATIONS.md)：实际使用成本、已入池用户结果和已有能力的适用范围。

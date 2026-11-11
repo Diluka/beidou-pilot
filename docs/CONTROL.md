@@ -24,17 +24,7 @@ private/workbenches/workbench /external/workbench script status
 
 GUI普通200类用药按物品ID与实际消费槽直接调用原生入口，不查键位。请求仍只占一个活动动作，在Lua恢复栈外的原生阶段消费；未派发时可取消，调用已进入只证明本地派发，不承诺撤销药品消耗或确认恢复。显式 `keys/press` 和其他语义动作的现有路径分别保留。
 
-```text
-shared/scripts/
-  travel/move_to.lua       同层坐标反馈与到达确认
-  travel/climb_to.lua      绳梯靠近、对齐及攀爬
-  travel/enter_portal.lua  门户接近、进入及转场确认
-  travel/_common.lua       旅行能力实际复用的检查与对齐
-  combat/fight.lua         目标选择、战斗、补给、拾取与撤退
-  combat/hunt.lua          单场景可达找怪、跨平台巡猎与移动攻击同窗
-  recovery/recover.lua     按次数或HP/MP目标用药并确认效果
-  examples/               少量公共API示例，不由正式能力加载
-```
+各脚本用途、调用入口和弃用状态集中维护在 [Lua 脚本目录说明](../shared/scripts/README.md)。连续狩猎优先使用 `combat/hunt.lua`；旧 `combat/fight.lua` 已标为弃用，现有 `fight` 命令仍保留，拾取和结束撤退行为尚未由 `hunt` 覆盖。
 
 基础操作是 `game` API 的积木，不创建逐一转发脚本。策略当前是初步脚手架，已有参数、时序和流程需按实际情况迭代，局部维护约定见 [shared/scripts/AGENTS.md](../shared/scripts/AGENTS.md)。执行期限、取消与放键由公共运行时提供；`_common.lua`不是操作入口，不预建未来能力目录。
 
