@@ -25,6 +25,11 @@ build/resources-check/plan/open 参数：
 EOF
 }
 
+fail() {
+    jq -nc --arg code "$1" --arg message "$2" '{ok:false,error:{code:$code,message:$message}}'
+    exit 2
+}
+
 if [ "$#" -eq 0 ] || [ "$1" = --help ] || [ "$1" = -h ]; then usage; exit 0; fi
 workbench=
 instance=default
@@ -33,6 +38,10 @@ backend_explicit=false
 source_ref=main
 command=
 while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --workbench|--instance|--backend|--ref)
+            [ "$#" -ge 2 ] || fail usage "缺少 $1 的值。" ;;
+    esac
     case "$1" in
         --workbench) workbench=$2; shift 2 ;;
         --instance) instance=$2; shift 2 ;;
@@ -43,11 +52,6 @@ while [ "$#" -gt 0 ]; do
         *) command=$1; shift; break ;;
     esac
 done
-
-fail() {
-    jq -nc --arg code "$1" --arg message "$2" '{ok:false,error:{code:$code,message:$message}}'
-    exit 2
-}
 
 [ -n "$workbench" ] && [ -d "$workbench" ] || fail invalid_workbench '须指定已有工作台目录。'
 workbench=$(realpath "$workbench")
@@ -64,7 +68,7 @@ running=false
 locate() {
     running=false
     inspect=
-    id=$(docker ps -aq --filter "name=^/$name$")
+    id=$(docker ps -aq --filter "name=^/$name$") || fail docker_unavailable '无法连接 Docker，未执行客户端操作。'
     [ -n "$id" ] || return 0
     inspect=$(docker inspect "$id" | jq -e --arg wb "$workbench" --arg instance "$instance" '
         .[0] | select(.Config.Labels["beidou.workbench"] == $wb
@@ -184,6 +188,10 @@ profile_explicit=false
 target_explicit=false
 timeout=90
 while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --target|--profile|--resources|--bridge-artifact|--timeout)
+            [ "$#" -ge 2 ] || fail usage "缺少 $1 的值。" ;;
+    esac
     case "$1" in
         --target) target=$2; target_explicit=true; shift 2 ;;
         --profile) profile=$2; profile_explicit=true; shift 2 ;;
@@ -324,7 +332,8 @@ build_image() {
         source_tree=$(jq -er .source.tree_sha "$bridge/manifest.json")
         git -C "$repository" cat-file -e "$source_tree^{tree}" 2>/dev/null ||
             fail bridge_source_unavailable '本地缺少桥工件的来源树，不能确认原生构建输入。'
-        git -C "$repository" diff --quiet "$source_tree" "$revision" -- beidou-ijl15 shared/lua-runtime third_party/lua third_party/detours .github/workflows/agent-bridge.yml ||
+        git -C "$repository" diff --quiet "$source_tree" "$revision" -- beidou-ijl15/ezorsia beidou-ijl15/ezorsia.sln \
+            beidou-ijl15/tools/build-agent-bridge.ps1 shared/lua-runtime third_party/lua third_party/detours .github/workflows/agent-bridge.yml ||
             fail bridge_build_required '该提交的 GUI 原生输入已变化，须准备匹配的 Windows 桥工件。'
         mkdir -p "$context/build-input"
         cp "$bridge/ijl15.dll" "$bridge/manifest.json" "$context/build-input/"
