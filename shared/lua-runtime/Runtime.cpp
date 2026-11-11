@@ -442,8 +442,8 @@ struct Runtime::Impl {
     }
 
     static int ObserveDomain(lua_State* lua) {
-        static const char* domains[]{"stage",  "scene", "inventory", "character",   "quests", "hotkeys",
-                                     "dialog", "ui",    "shop",      "invitations", "party",  nullptr};
+        static const char* domains[]{"stage",  "scene", "inventory", "character",     "quests", "hotkeys",
+                                     "dialog", "ui",    "shop",      "notifications", nullptr};
         const auto domain = domains[luaL_checkoption(lua, 1, nullptr, domains)];
         const auto& adapter = Self(lua).adapter;
         const auto& state = adapter.Observe();

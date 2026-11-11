@@ -133,11 +133,10 @@ def parser() -> Parser:
     q.add_argument("selector", nargs="?")
     q.add_argument("--accept", action="store_true", help="advance遇Yes/No时明确接受")
     q.add_argument("--seconds", type=float, default=20)
-    q = command("invitations", "读取当前好友/组队邀请，按新鲜引用明确响应")
-    q.add_argument("action", choices=["read", "accept", "reject"], default="read", nargs="?")
-    q.add_argument("reference", nargs="?", help="invitations read返回的当前@invite引用")
-    q.add_argument("--seconds", type=float, default=3, help="响应后的结果确认期限")
-    command("party", "读取本端已知的队伍成员，不打开窗口")
+    q = command("notifications", "读取所有原生通知气泡，按当前引用响应真实按钮")
+    q.add_argument("action", choices=["read", "respond"], default="read", nargs="?")
+    q.add_argument("reference", nargs="?", help="notifications read返回的当前@notification引用")
+    q.add_argument("--button", type=int, help="respond必须指定当前气泡实际存在的control_id")
     q = command("batch", "从JSON文件或stdin执行一组CLI命令，任一步失败立即停止")
     q.add_argument("--file", type=Path)
     q = command("key", "通过Lua按住并释放原版客户端按键")
@@ -345,9 +344,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             "bind",
             "press",
             "shop",
-            "invitations",
+            "notifications",
         }
-        and not (cmd in {"dialog", "ui", "shop", "invitations"} and args.action == "read")
+        and not (cmd in {"dialog", "ui", "shop", "notifications"} and args.action == "read")
     ):
         from .bridge import BridgeClient
 
@@ -383,9 +382,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 raise
             state = None
         domains = (
-            DOMAINS
-            if backend.name == "beidou"
-            else DOMAINS - {"hotkeys", "dialog", "ui", "shop", "invitations", "party"}
+            DOMAINS if backend.name == "beidou" else DOMAINS - {"hotkeys", "dialog", "ui", "shop", "notifications"}
         )
         return {
             "connected": state is not None,
@@ -453,18 +450,16 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 args.file, seconds=None if args.continuous else args.seconds, code=args.code, wait_for_start=True
             )
         return bridge.run_script(args.file, seconds=None if args.continuous else args.seconds, code=args.code)
-    if cmd == "invitations":
-        from .social import read_invitations, respond
+    if cmd == "notifications":
+        from .notifications import read_notifications, respond
 
         if args.action == "read":
-            if args.reference is not None:
-                raise ClientError("usage", "invitations read不接收邀请引用。")
-            return read_invitations(backend)
-        if args.reference is None:
-            raise ClientError("usage", "接受或拒绝需要invitations read返回的当前引用。")
-        return respond(backend, args.reference, args.action, args.seconds)
-    if cmd == "party":
-        return backend.read("social", "party")
+            if args.reference is not None or args.button is not None:
+                raise ClientError("usage", "notifications read不接收气泡引用或按钮。")
+            return read_notifications(backend)
+        if args.reference is None or args.button is None:
+            raise ClientError("usage", "notifications respond需要当前引用和--button CONTROL_ID。")
+        return respond(backend, args.reference, args.button)
     if cmd == "task":
         from .task_management import change_task, task_result
 
@@ -886,11 +881,10 @@ def main(argv: list[str] | None = None) -> int:
                 "screenshot",
                 "record",
                 "hotkeys",
-                "party",
             )
             or (args.command == "bridge" and args.action == "status")
             or (args.command == "script" and args.action == "status")
-            or (args.command == "invitations" and args.action == "read")
+            or (args.command == "notifications" and args.action == "read")
             or (args.command == "dialog" and args.action == "read")
             or (args.command == "ui" and args.action == "read")
             or (args.command == "shop" and args.action == "read")

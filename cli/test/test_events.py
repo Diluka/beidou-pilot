@@ -1,4 +1,4 @@
-"""真实共享事件发布器与 CLI 消费合同；不代替游戏邀请效果验收。"""
+"""真实共享事件发布器与 CLI 消费合同；不代替游戏通知交互效果验收。"""
 
 from contextlib import redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
@@ -50,8 +50,13 @@ int main(int argc, char** argv) {
         for (unsigned int i = 0; i < count; ++i) {
             state.observedAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
-            sequence = events.Emit(state, "invitation.opened", "client-native-ui",
-                MapleControl::Value::Object({{"kind", "friend"}, {"ref", "current-invitation"}}));
+            sequence = events.Emit(state, "notification.opened", "client-native-ui",
+                MapleControl::Value::Object({{"id", "current-notification"}, {"native_kind", 99},
+                    {"kind", MapleControl::Value()}, {"source_text", MapleControl::Value()},
+                    {"text", MapleControl::Value()}, {"expires_at_ms", MapleControl::Value()},
+                    {"remaining_ms", MapleControl::Value()}, {"pending", true}, {"available", true},
+                    {"buttons", MapleControl::Value::Array({MapleControl::Value::Object(
+                        {{"control_id", 2001}, {"action", "dismiss"}})})}}));
         }
         if (!events.Flush(state)) return 2;
         std::cout << sequence << std::endl;
@@ -101,7 +106,7 @@ int main(int argc, char** argv) {
         self.source.stdin.flush()
         return int(self.source.stdout.readline())
 
-    def test_cli_reads_native_invitation_without_taking_control_or_consuming_it(self) -> None:
+    def test_cli_preserves_unknown_notification_and_single_button_without_consuming_it(self) -> None:
         self.emit()
         handles = [
             path.open("a")
@@ -123,10 +128,24 @@ int main(int argc, char** argv) {
         event = result["events"][0]
         self.assertEqual(
             (event["type"], event["source"], event["character_id"], event["scene_generation"]),
-            ("invitation.opened", "client-native-ui", 4, 7),
+            ("notification.opened", "client-native-ui", 4, 7),
         )
         self.assertIsNone(event["expires_at_ms"])
-        self.assertEqual(event["data"], {"kind": "friend", "ref": "current-invitation"})
+        self.assertEqual(
+            event["data"],
+            {
+                "id": "current-notification",
+                "native_kind": 99,
+                "kind": None,
+                "source_text": None,
+                "text": None,
+                "expires_at_ms": None,
+                "remaining_ms": None,
+                "pending": True,
+                "available": True,
+                "buttons": [{"control_id": 2001, "action": "dismiss"}],
+            },
+        )
         self.assertEqual(self.reader.read()["events"], result["events"])
         self.assertEqual(self.reader.read(parse_cursor(json.dumps(result["cursor"])))["events"], [])
 

@@ -216,13 +216,14 @@ end
 | `hotkeys` | GUI；原生快捷键与快捷栏映射、已知布局和限制；无头不支持 |
 | `dialog` | GUI；`dialog_open`、`npc_id`、`dialog_type`、`lines`、`choices`、`buttons` 及来源窗口说明；无头不支持 |
 | `ui` | GUI；`windows`、`dialog` 与原生游戏区布局；无头不支持 |
-| `invitations` | GUI；当前好友/组队邀请的类型、来源、原生引用、期限、可用按钮和窗口；无头不支持 |
-| `party` | GUI；本端已知队伍 ID、队长和成员的 ID、姓名、职业、等级、频道与地图；无头不支持 |
+| `notifications` | GUI；所有同类原生通知气泡的种类、已知来源、期限、状态和实际按钮；无头不支持 |
 | `shop` | GUI；`open`、`npc_id`、`buy_items/sell_items`、选择/滚动位置、`busy` 和数量窗口状态；无头不支持 |
 
-`invitations.data.invitations` 中每项保留 `id/kind/sender_id/sender_name/party_id`、`expires_at_ms/remaining_ms`、`pending/available`、`window/buttons`。`kind` 为 `friend` 或 `party`；好友申请可知发送者 ID，组队邀请保留发送者姓名和队伍 ID，未知 ID 为 `nil`。`pending` 只说明原生请求仍待处理；`available` 还要求当前窗口和响应按钮可用。按钮 `control_id=2000/2001` 对应 `accept/reject`，坐标属于当前窗口；Lua 不包含 CLI 派生的 `@invite` 引用或桌面根坐标。事件和旧 `id` 不能作为仍有效的操作证明。
+`notifications.data.notifications` 的每项保留 `id/native_kind/kind`、`source_text/text`、`sender_id/party_id/interaction_id/quest_id`、`expires_at_ms/remaining_ms`、`pending/available`、`window/buttons`。`native_kind` 保留原生整数，`kind` 只提供已证实标签，未识别为 `nil`；已知标签不会决定响应通路。关联字段未知为 `nil`，交易的 `interaction_id` 不能当作玩家 ID。原生来源槽的文字是 `source_text`；完整渲染正文尚未提取，`text=nil`，`not_covered` 明确包含 `rendered_body_text`。
 
-`party.data` 保留 `party_id/leader_id/members`；`party_id=0` 表示本端当前未组队。成员字段为 `id/name/job/level/channel/channel_index/map_id/leader`，`channel_index` 保留原生值，仅已知的正常频道投影为从1开始的 `channel`，其余为 `nil`。成员在线状态尚未独立确认，不能根据列表存在推断在线。
+原生 duration 为0时表示没有自动到期时间，两个期限字段为 `nil`，仍按当前 pending 与真实控件判断可操作状态；不能据此推断服务端业务无期限。每个实际按钮保留 `control_id/layout_x/layout_y/width/height`，2000标为 `primary`、2001标为 `dismiss`，其他 `action=nil`；不能假设每类都有两个按钮，也不能把主按钮都理解为接受或成交。
+
+Lua 不包含 CLI 派生的 `@notification` 引用或桌面根坐标；本域只读，不增加 Lua GUI 输入接口。使用 CLI 响应时必须重读当前引用，派发事实、气泡状态和业务结果分别确认。组队成员观察与真实闭环继续由 #92 单独交付，公共气泡采集不依赖它。
 
 每次返回的外层结构为：
 

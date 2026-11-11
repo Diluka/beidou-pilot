@@ -46,7 +46,7 @@ def parse_cursor(text: str | None) -> EventCursor | None:
 class EventReader:
     def __init__(self, root: Path, backend: str, instance: str = "default") -> None:
         if backend != "beidou":
-            raise ClientError("unsupported_capability", "当前无头客户端尚未提供原生邀请事件。")
+            raise ClientError("unsupported_capability", "当前无头客户端尚未提供原生通知事件。")
         self.backend = backend
         self.instance = instance
         self.bridge = BridgeClient(root, backend, instance)

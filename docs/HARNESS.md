@@ -105,15 +105,17 @@ uv pip install --python /private/game-events/venv/bin/python -r harness/requirem
   --state /private/game-events/receiver --check
 ```
 
-`--check` 只初始化连接并读取指定会话，不订阅客户端事件、不发送模型输入。移除 `--check` 后，消费者装载同一 thread 的通知连接，并启动只读 `events watch` 子进程。默认只投递 `invitation.opened`；重复 `--event-type TYPE` 可显式选择其他原生事件。`invitation.closed` 等未选中的事件只推进游标，避免在模型刚处理完邀请时再次打断它。
+`--check` 只初始化连接并读取指定会话，不订阅客户端事件、不发送模型输入。移除 `--check` 后，消费者装载同一 thread 的通知连接，并启动只读 `events watch` 子进程。默认投递统一的 `notification.opened`，不按好友、组队、交易或其他业务 `kind` 过滤；`kind=null` 的未知类型同样送达，并保留真实 `native_kind`、原生字段和按钮，是否响应由模型依据当前事实和已有授权决定。重复 `--event-type TYPE` 可显式选择其他原生事件。`notification.closed` 和观察不可用等未选中的事件只推进游标，避免在模型刚处理完气泡时再次打断它；流级 `events_unavailable` 只记录诊断，不推进游标或唤醒模型。
 
-首次没有游标时，以当前最新事件序号建立基线；先看到 `events_ready`，再开始发送邀请。它不会把启动前的历史邀请当作仍然有效，已有弹窗应通过当前邀请观察另行检查。状态目录私密保存绑定和 `instance_id/run_id/seq` 游标；恢复时由 CLI 补读留存增量，重复序号不会重复通知。已知过期事件跳过；时限未知保持未知。事件缺口、身份变化或原生观察不可用不能作为邀请已处理的证据。
+首次没有游标时，以当前最新事件序号建立基线；先看到 `events_ready`，再触发气泡。它不会把启动前的历史气泡当作仍然有效，已有弹窗应通过 `notifications read` 另行检查。状态目录私密保存绑定和 `instance_id/run_id/seq` 游标；恢复时由 CLI 补读留存增量，重复序号不会重复通知。已知过期事件跳过；时限未知保持未知。事件缺口、身份变化或原生观察不可用不能作为气泡已处理的证据。
 
 默认 `--delivery steer` 在活跃回合使用 `turn/steer`，空闲时直接 `turn/start`。显式选择 `--delivery interrupt` 时，先中断当前模型回合，等待匹配的 `turn/completed`，再启动事件处理回合；不通过 `queue` 等旧回合自然结束。该选项会打断目标聊天正在处理的工作，只用于明确授权的专用控制会话。
 
 消费者只调度模型，不调用已有 `game-ai` 的 `pause/stop`、不发送游戏取消、不直接写桥命令。已提交游戏任务是否继续，遵循其原执行入口的生命周期；同步 `script run` 的 SIGINT/SIGTERM 仍会取消所属 Lua。需要让游戏任务独立于模型回合继续时，使用客户端正式支持的非阻塞执行入口，并从当前脚本状态核对结果。停止本监听器只关闭它自己的只读 watcher 与 daemon 连接。
 
-stdout 的 `event_delivered` 区分事件观察到接口受理的时间、投递调度耗时、目标 thread/turn 和实际使用的 RPC；`effect="unknown"` 表示尚未核对游戏效果。接口受理不证明模型已经理解通知，也不保证在邀请有效期内完成决策。收到通知后仍需读取当前邀请引用，按既有明确意图接受或拒绝，并以实际好友或队伍状态确认结果。连接中断、RPC 超时等不明投递结果会报错并保留未确认的游标，不自动重放模型操作。
+stdout 的 `event_delivered` 区分事件观察到接口受理的时间、投递调度耗时、目标 thread/turn 和实际使用的 RPC；`effect="unknown"` 表示尚未核对游戏效果。接口受理不证明模型已经理解通知，也不保证在气泡有效期内完成决策。收到通知后先用 `notifications read` 读取当前引用和真实按钮；确有明确操作意图时使用 `notifications respond REF --button CONTROL_ID`，不假定每种气泡都有接受或拒绝。信息类气泡可以只记录；未知 `kind` 保持未知。渲染正文尚未真实读取时 `text=null`，观察明确报告 `not_covered=["rendered_body_text"]`，不能用模板拼成已读正文。
+
+通用响应只证明本次按钮派发及当前气泡状态。交易气泡的 `primary` 只打开交易会话，不能当作资产已经成交；好友、队伍或其他业务结果仍须从相应当前状态另行核对，气泡关闭本身不代表成功。连接中断、RPC 超时等不明投递结果会报错并保留未确认的游标，不自动重放模型操作。
 
 离线合同使用真实 Unix WebSocket 假服务和 CLI 子进程，不访问模型或游戏：
 
@@ -123,4 +125,4 @@ TMPDIR="$PWD/tmp/game-events-tests" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=harness
   /private/game-events/venv/bin/python -m unittest discover -s harness/test -p test_events.py -v
 ```
 
-实际验收分别记录运行中插话、空闲唤醒、显式中断后重新处理，以及真实邀请是否仍有效、接受/拒绝和成员结果。两账号分属两个控制会话；停止接收方模型时发送方与开发协调方继续运行。监听器的离线合同和 `--check` 均不能替代这项试用。
+实际验收分别记录运行中插话、空闲唤醒、显式中断后重新处理，以及当前气泡有效性、真实按钮响应和适用的业务结果。好友与组队可用两个账号在两个控制会话中交叉确认；交易测试需单独核对授权范围，不因气泡层共用而执行资产交换。停止接收方模型时发送方与开发协调方继续运行。监听器的离线合同和 `--check` 均不能替代这项试用。

@@ -130,8 +130,9 @@ class EventDispatcher:
 
     async def deliver(self, event: ClientEvent) -> None:
         message = (
-            "客户端事件通知，不增加游戏操作授权。请及时查看当前实例的新鲜状态，按已有明确决策处理仍有效的邀请；"
-            "不使用旧引用，不因事件到达自动接受或拒绝。此通知器没有取消游戏任务。\n"
+            "客户端气泡事件，不增加游戏操作授权。请先读取本实例当前 notifications 和真实按钮，按已有授权处理仍有效的气泡；"
+            "信息类可只记录。未知 kind 和未读出的正文保留未知，不拼接模板。交易气泡的 primary 只打开交易会话，"
+            "closed 不代表业务成功，实际结果另行核对。此通知器没有取消游戏任务。\n"
             + json.dumps(event.report, ensure_ascii=False)
         )
         started = time.monotonic()
@@ -330,7 +331,7 @@ def main() -> int:
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--delivery", choices=("steer", "interrupt"), default="steer")
-    parser.add_argument("--event-type", action="append", help="需处理的事件类型；默认仅 invitation.opened。")
+    parser.add_argument("--event-type", action="append", help="需处理的事件类型；默认仅 notification.opened。")
     parser.add_argument("--interval", type=float, default=0.025)
     parser.add_argument("--seconds", type=float)
     parser.add_argument("--rpc-timeout", type=float, default=15)
@@ -344,7 +345,7 @@ def main() -> int:
         or (args.seconds is not None and (not math.isfinite(args.seconds) or args.seconds <= 0))
     ):
         parser.error("监听间隔、RPC 等待和有界时长必须大于零。")
-    args.event_type = args.event_type or ["invitation.opened"]
+    args.event_type = args.event_type or ["notification.opened"]
     os.umask(0o077)
     try:
         asyncio.run(run(args))

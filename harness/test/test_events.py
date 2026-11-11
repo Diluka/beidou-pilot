@@ -87,7 +87,7 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
         self.root = Path(directory.name)
         self.socket = self.root / "daemon.sock"
 
-    def message(self, seq: int, kind: str = "invitation.opened", *, expired: bool = False) -> JsonObject:
+    def message(self, seq: int, event_type: str = "notification.opened", *, expired: bool = False) -> JsonObject:
         now = round(time.time() * 1000)
         return {
             "event": "client_event",
@@ -101,10 +101,17 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
                 "observed_at_ms": now,
                 "scene_generation": 1,
                 "character_id": 1,
-                "type": kind,
+                "type": event_type,
                 "source": "client-native-ui",
                 "expires_at_ms": now - 1 if expired else None,
-                "data": {"invitation_id": "current-request", "kind": "party"},
+                "data": {
+                    "id": "current-notification",
+                    "kind": None,
+                    "native_kind": 99,
+                    "source_text": None,
+                    "text": None,
+                    "buttons": [{"control_id": 2000, "action": "primary"}],
+                },
             },
         }
 
@@ -141,7 +148,7 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
             rpc_timeout=2,
             interval=0.025,
             seconds=None,
-            event_type=["invitation.opened"],
+            event_type=["notification.opened"],
             check=False,
         )
 
@@ -152,13 +159,14 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(run(args), 5)
         return [json.loads(line) for line in output.getvalue().splitlines()]
 
-    async def test_active_thread_receives_invitation_without_ending_its_turn(self) -> None:
+    async def test_active_thread_receives_unknown_notification_without_ending_its_turn(self) -> None:
         peer = CodexPeer(active=True)
         reports = await self.consume(peer, self.arguments([self.message(1)]))
         dispatches = [(method, params) for method, params in peer.calls if method.startswith("turn/")]
         self.assertEqual(["turn/steer"], [method for method, _ in dispatches])
         self.assertEqual("old-turn", dispatches[0][1]["expectedTurnId"])
-        self.assertIn("current-request", dispatches[0][1]["input"][0]["text"])
+        forwarded = json.loads(dispatches[0][1]["input"][0]["text"].split("\n", 1)[1])
+        self.assertEqual(self.message(1)["data"]["data"], forwarded["data"]["data"])
         self.assertEqual(
             "unknown", next(report for report in reports if report["event"] == "event_delivered")["effect"]
         )
@@ -166,7 +174,7 @@ class EventConsumerContract(unittest.IsolatedAsyncioTestCase):
     async def test_idle_thread_wakes_once_and_checkpoint_covers_closed_and_expired_events(self) -> None:
         peer = CodexPeer(active=False)
         args = self.arguments(
-            [self.message(1), self.message(1), self.message(2, "invitation.closed"), self.message(3, expired=True)]
+            [self.message(1), self.message(1), self.message(2, "notification.closed"), self.message(3, expired=True)]
         )
         reports = await self.consume(peer, args)
         self.assertEqual(["turn/start"], [method for method, _ in peer.calls if method.startswith("turn/")])

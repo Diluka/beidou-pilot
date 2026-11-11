@@ -28,7 +28,7 @@ class Backend:
         if self.name != "beidou" and name not in {"observe", "scene", "inventory", "character", "quests", "stage"}:
             raise ClientError("unsupported_capability", "该客户端不提供此北斗窗口或原始输入能力。", {"engine": name})
         engines = {"observe", "scene", "dialog", "inventory", "quests", "desktop",
-                   "session", "ui", "stage", "character", "hotkeys", "shop", "record", "social"}
+                   "session", "ui", "stage", "character", "hotkeys", "shop", "record", "notifications"}
         if name in {"clientctl", "runtime-ui"}:
             command = [sys.executable, str(self.root / (name + ".py")), *arguments]
         elif name in engines:

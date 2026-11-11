@@ -213,7 +213,7 @@ class BridgeContract(unittest.TestCase):
             self.assertEqual(report["request_id"], self.files.command()[3])
             output = io.StringIO()
             with redirect_stdout(output):
-                self.assertEqual(2, main(["--root", str(self.files.root), "--json", "invitations", "accept", "old-ref"]))
+                self.assertEqual(2, main(["--root", str(self.files.root), "--json", "notifications", "respond", "old-ref", "--button", "2000"]))
             self.assertEqual("input_busy", json.loads(output.getvalue())["error"]["code"])
             commands = self.files.root / "commands.json"
             commands.write_text(json.dumps([["click", 10, 20]]))

@@ -235,7 +235,7 @@
     <ClCompile Include="ObserveWorld.cpp" />
     <ClCompile Include="ObserveCharacter.cpp" />
     <ClCompile Include="ObserveUi.cpp" />
-    <ClCompile Include="ObserveSocial.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="ObserveNotifications.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\Runtime.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\Observation.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\TaskTransport.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>

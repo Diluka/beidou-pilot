@@ -812,7 +812,7 @@ void Tick() {
     }
     NativeObservation::Tick(directory, instanceId, runId, sceneGeneration, sequence);
     if (now - lastPublishedAt >= 25) {
-        NativeObservation::PollInvitations(*eventTransport, previousState);
+        NativeObservation::PollNotifications(*eventTransport, previousState);
         eventsPublished = eventTransport->Flush(previousState);
         if (!Publish(previousState)) {
             if (runtime.Running())

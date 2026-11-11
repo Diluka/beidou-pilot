@@ -89,8 +89,7 @@ MapleControl::Observation Collect(const std::string& domain) {
                                                          {"inventory", Inventory}, {"character", Character},
                                                          {"quests", Quests},       {"hotkeys", Hotkeys},
                                                          {"dialog", Dialog},       {"ui", Ui},
-                                                         {"shop", Shop},           {"invitations", Invitations},
-                                                         {"party", Party}};
+                                                         {"shop", Shop},           {"notifications", Notifications}};
     Collector selected = nullptr;
     for (const auto& entry : collectors)
         if (domain == entry.first) selected = entry.second;

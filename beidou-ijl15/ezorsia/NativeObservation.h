@@ -47,9 +47,8 @@ Value Dialog();
 Value Window(std::uintptr_t address);
 Value Ui();
 Value Shop();
-Value Invitations();
-Value Party();
-void PollInvitations(MapleControl::EventTransport& events, const MapleControl::State& state);
+Value Notifications();
+void PollNotifications(MapleControl::EventTransport& events, const MapleControl::State& state);
 MapleControl::Observation Collect(const std::string& domain);
 
 // Separate read-only request lane; it never replaces a running action/script request.

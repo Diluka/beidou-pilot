@@ -36,7 +36,7 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | `snapshot [-i] [--all]` | 当前角色、场景、领域摘要及引用；`-i`省略怪物行，`--all`包含画外实体 |
 | `inspect KIND [ID]` | 领域读数或静态资源，KIND见帮助 |
 | `watch --seconds N --interval N` | 持续只读状态，独立调用为JSONL |
-| `events read [--cursor JSON]`、`events watch [--cursor JSON]` | 读取或监听本实例原生事件；首批由 GUI 邀请提供，无头明确不支持 |
+| `events read [--cursor JSON]`、`events watch [--cursor JSON]` | 读取或监听本实例原生事件；由 GUI 同类通知气泡提供，无头明确不支持 |
 | `bridge status`、`script status` | 原生桥、动作或脚本状态，只读 |
 
 容器在命令结束后常驻。短脚本返回或取消不会关闭客户端；无头 `close` 可关闭正在执行 Lua 的实例。关闭使用独立生命周期锁；同一实例正在启停时为 `lifecycle_busy`，活动脚本期间其他动作是 `input_busy`。退出状态保留 `run_dir/exit_code/stop_reason`。失败后先读取原因和实际状态，再决定重开。
@@ -52,24 +52,29 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 
 `events read` 返回当前保留区的 `events`、`first_seq/last_seq` 和完整 `cursor`；给定游标时只返回其后的事件。游标由 `instance_id/run_id/seq` 三字段组成，必须原样保留身份，不能只保存数字序号。事件带 `seq/observed_at_ms/scene_generation/character_id/type/source/expires_at_ms/data`；未知角色或期限为 `null`，`observed_at_ms` 是客户端捕获时间。
 
-`events watch` 首行是 `event="events_ready"` 及基线游标，随后每条 `event="client_event"` 的 `data` 保存完整原生事件，`cursor` 指向该条。无游标时从订阅时刻之后开始；给定游标时先输出就绪，再补发保留区内的后续事件。已有未处理邀请须另读当前邀请观察，不能把历史事件当成仍有效。默认持续监听，可用 `--seconds` 有界退出；`--interval` 默认为0.025秒，范围为0.01至1秒。中断监听只结束读者，不取消 Lua 或关闭客户端。
+`events watch` 在取得首个新鲜基线后输出 `event="events_ready"` 及游标，随后每条 `event="client_event"` 的 `data` 保存完整原生事件，`cursor` 指向该条。无游标时从订阅时刻之后开始；给定游标时先输出就绪，再补发保留区内的后续事件。已有未处理气泡须另读当前 notifications，不能把历史气泡当成仍有效。默认持续监听，可用 `--seconds` 有界退出；`--interval` 默认为0.025秒，范围为0.01至1秒。中断监听只结束读者，不取消 Lua 或关闭客户端。
 
-绑定身份后的持续监听遇到暂时过期或时钟偏差造成的 `stale_bridge_state` 时，保留游标等待新鲜采样，不投递旧文件中的事件。同一不可用期间只输出一条 `event="events_unavailable"` 流诊断；恢复后输出 `events_ready` 并从原游标继续。首次基线尚未建立时诊断中的 `cursor=null`。这些流诊断不代表新邀请；等待仍遵守 `--seconds` 和取消。单次 `events read` 保留明确失败，身份、协议及其他错误仍使监听退出。
+绑定身份后的持续监听遇到暂时失效采样引发的 `stale_bridge_state` 时，保留游标等待新鲜采样，不投递旧文件中的事件。同一不可用期间只输出一条 `event="events_unavailable"` 流诊断；恢复后输出 `events_ready` 并从原游标继续。首次基线尚未建立时诊断中的 `cursor=null`。这些流诊断不代表新气泡；等待仍遵守 `--seconds` 和取消。单次 `events read` 保留明确失败，身份、协议及其他错误仍使监听退出。
 
-原生保留最近128条事件，每个读者独立持有游标。落后于保留区返回 `events_gap`，须重新观察当前事实；身份变化返回 `events_identity_changed` 并停止，不跟随后继实例。旧桥及无头尚未提供邀请事件时返回 `unsupported_capability`；原生报告事件发布失败时返回 `events_unavailable`，不把旧文件当成正常事件流。事件通知不代表游戏操作完成：`invitation.opened` 提示发现邀请，`invitation.closed` 只表示该邀请不再可响应；`invitation.observation_unavailable` 表示本端未能继续观察。接受、拒绝及社交关系结果须经当前原生邀请与成员事实确认。
+原生保留最近128条事件，每个读者独立持有游标。落后于保留区返回 `events_gap`，须重新观察当前事实；身份变化返回 `events_identity_changed` 并停止，不跟随后继实例。旧桥及无头尚未提供通知气泡事件时返回 `unsupported_capability`；原生报告事件发布失败时返回 `events_unavailable`，不把旧文件当成正常事件流。事件通知不代表游戏操作完成：`notification.opened` 提示发现气泡，`notification.closed` 表示该气泡不再待处理，关闭载荷的 pending/available 均为 false；`notification.observation_unavailable` 表示本端未能继续观察。事件本身不代表任何后续业务完成。
 
-## GUI 社交邀请
+## 原生通知气泡
 
 ```bash
-./cli/beidou-pilot --backend beidou --json invitations
-./cli/beidou-pilot --backend beidou --json invitations accept @inviteCURRENT
-./cli/beidou-pilot --backend beidou --json invitations reject @inviteCURRENT
-./cli/beidou-pilot --backend beidou --json party
+./cli/beidou-pilot --backend beidou --json notifications
+./cli/beidou-pilot --backend beidou --json notifications respond @notificationCURRENT --button 2000
+./cli/beidou-pilot --backend beidou --json notifications respond @notificationCURRENT --button 2001
 ```
 
-`invitations` 读取本端当前好友/组队弹窗，保留发送者、原生截止时间、待处理状态和当前按钮。响应必须提供本次读取的 `ref`，引用绑定原生实例、运行和场景代次；过期、关闭、不可响应或旧实例引用返回 `stale_invitation`，不点击。GUI 按当前窗口内的原生按钮位置响应，不使用固定桌面坐标。
+`notifications` 统一列出同一原生气泡类的所有种类，包含好友、组队、交易、任务、快递等；未识别种类保留整数 `native_kind`，`kind=null`，不会静默忽略。来源槽的原始文字为 `source_text`；已证实的玩家、队伍、交互或任务标识分别保留，未知为 `null`。交易 `interaction_id` 不是发送者 ID。完整气泡正文尚未提取，`text=null`、`not_covered` 包含 `rendered_body_text`，需要时用当前截图辅助，不能拼模板冒充屏幕原文。
 
-组队接受只在本端 `party` 同时确认目标队伍、本人和邀请者成员后返回 `status="joined"`、`effect="confirmed"`；拒绝须确认邀请已结束且未加入目标队伍。气泡消失仍无法确认成员时返回 `invitation_effect_unconfirmed`，不会重复点击。好友弹窗可明确响应，但当前尚无好友关系观察；返回 `effect="unknown"`、`reason="friend_relationship_not_observed"`，不能当作已建立或已拒绝好友关系。无头尚不支持这两个社交观察域。
+气泡保留 `pending/available`、`expires_at_ms/remaining_ms`、当前 `window` 和真实 `buttons`。原生 duration 为0时两个期限字段为 `null`，不被误判为过期；这不证明服务端业务永远有效。按钮保留实际 `control_id` 和位置，2000标为 `primary`，2001标为 `dismiss`，其他语义未知。某些气泡只有关闭按钮；主按钮可能接受邀请、打开快递或进入后续确认界面，不能一律解释为“接受”。
+
+响应必须使用本次读取的 `ref` 和实际存在的 `--button`，引用绑定原生实例、运行和场景代次。过期、关闭或不可响应时返回 `stale_notification`，缺少按钮返回 `notification_button_unavailable`，不会改点另一个按钮。GUI 使用当前控件位置，不重放固定桌面坐标。
+
+返回的 `input_dispatched=true` 仅确认本轮桌面输入已派发；`after` 分别报告气泡是否还在、是否仍待处理及可响应，`effect` 保持 `unknown`。主按钮操作后气泡仍在也不报成失败，不自动再次点击。输入派发后采样不可用时，结果保留该事实并返回 `observation_error`，不能当作未发送而重放。
+
+业务结果另外核对：实际入队需要成员状态，接受交易邀请需要确认交易窗口，最终成交则是不同动作，需要独立明确授权；气泡消失不能替代这些结果。本接口不提交物品、金币或确认成交。组队成员接口和真实核验继续由 [#92](https://github.com/Diluka/beidou-pilot/issues/92) 完成，不作为公共气泡响应的内置分支。无头端明确不支持 GUI 气泡。
 
 ## 动作与 Lua
 
@@ -102,7 +107,7 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 
 `--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。CLI 不拼接、展开或改写源码。文件方式每次读取当前 UTF-8 内容。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
 
-`script run` 等待整个会话结束，原调用方的 Ctrl+C/SIGTERM 会取消该脚本。`script start` 只等待原生受理，成功返回后关闭调用终端、停止模型回合或结束事件监听均不取消 Lua；原生期限、角色变化、断线等停止规则保留。使用 `script status` 重新观察进度，明确取消使用 `script cancel --session`。活动 Lua 仍占有本实例控制权，其他脚本和普通窗口输入返回 `input_busy`；处理邀请前由操作者明确取消需要停下的脚本。`--continuous` 必须显式给出，不增加后台 Python 控制进程。
+`script run` 等待整个会话结束，原调用方的 Ctrl+C/SIGTERM 会取消该脚本。`script start` 只等待原生受理，成功返回后关闭调用终端、停止模型回合或结束事件监听均不取消 Lua；原生期限、角色变化、断线等停止规则保留。使用 `script status` 重新观察进度，明确取消使用 `script cancel --session`。活动 Lua 仍占有本实例控制权，其他脚本和普通窗口输入返回 `input_busy`；操作气泡前由操作者明确取消需要停下的脚本。`--continuous` 必须显式给出，不增加后台 Python 控制进程。
 
 在已有脚本会话中调整一项任务，先用 `script status` 取得 `script.id` 和该任务的 `revision`，再明确传给任务管理入口：
 
