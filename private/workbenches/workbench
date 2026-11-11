@@ -29,8 +29,28 @@ EOF
 }
 
 fail() {
-    jq -nc --arg code "$1" --arg message "$2" '{ok:false,error:{code:$code,message:$message}}'
+    if [ "${command-}" = build ] && [ -n "${build_stage-}" ]; then
+        build_error_code=$1
+        build_error_message=$2
+    else
+        jq -nc --arg code "$1" --arg message "$2" '{ok:false,error:{code:$code,message:$message}}'
+    fi
     exit 2
+}
+
+begin_preparation_stage() {
+    if [ "$command" = build ]; then
+        build_stage=$1
+        build_stage_started=$EPOCHREALTIME
+    fi
+}
+
+complete_preparation_stage() {
+    if [ "$command" = build ]; then
+        preparation=$(jq -nc --argjson completed "$preparation" --arg stage "$build_stage" \
+            --arg outcome "$1" --argjson details "$2" --argjson started "$build_stage_started" --argjson ended "$EPOCHREALTIME" \
+            '$completed + {($stage):($details + {outcome:$outcome,duration_ms:(($ended-$started)*1000|floor)})}')
+    fi
 }
 
 if [ "$#" -eq 0 ] || [ "$1" = --help ] || [ "$1" = -h ]; then usage; exit 0; fi
@@ -53,6 +73,19 @@ shift
 workbench=$(realpath "$workbench")
 command=${1:-status}
 if [ "$#" -gt 0 ]; then shift; fi
+if [ "$command" = build ]; then
+    preparation='{}'
+    current_instance=null
+    begin_preparation_stage setup
+    trap 'build_result=$?; if [ "$build_result" -ne 0 ]; then
+        jq -nc --arg code "${build_error_code:-build_command_failed}" \
+            --arg message "${build_error_message:-准备命令失败，原始诊断见标准错误。}" \
+            --arg stage "$build_stage" --argjson started "$build_stage_started" --argjson ended "$EPOCHREALTIME" \
+            --argjson result "$build_result" --argjson preparation "$preparation" --argjson current "$current_instance" \
+            "{ok:false,command:\"build\",error:{code:\$code,message:\$message,stage:\$stage,exit_code:\$result,
+            duration_ms:((\$ended-\$started)*1000|floor)},data:{preparation:\$preparation,current_instance:\$current}}"
+    fi' EXIT
+fi
 case "$command" in
     --help|-h) usage; exit 0 ;;
     -*) fail usage '配置从 workbench.json 读取，不接收宿主配置参数。' ;;
@@ -179,6 +212,11 @@ wait_runtime() {
 }
 
 locate
+if [ "$command" = build ] && [ -n "$id" ]; then
+    current_instance=$(jq -c '{container_id:.Id,image:.Image,running:.State.Running,
+        run_id:(.Config.Env | map(select(startswith("RUN_ID=")) | ltrimstr("RUN_ID=")) | first),
+        source_revision:.Config.Labels["org.opencontainers.image.revision"],native_inputs_match:null}' <<<"$inspect")
+fi
 case "$command" in
     close)
         mkdir -p "$state"
@@ -334,32 +372,73 @@ if [ "$command" != build ] && [ "$command" != resources-check ]; then
     fi
 fi
 
+begin_preparation_stage context
 revision=$(git -C "$repository" rev-parse --verify "$source_ref^{commit}")
 image_tag="local/beidou-pilot-$backend:$revision"
 context="$main_root/tmp/client-images/$revision"
+native_paths=(docker/headless/Dockerfile headless/Makefile headless/src shared/lua-runtime
+    third_party/maplestory-client third_party/json third_party/lua)
+if [ "$backend" = beidou ]; then
+    native_paths=(beidou-ijl15/ezorsia beidou-ijl15/ezorsia.sln beidou-ijl15/tools/build-agent-bridge.ps1
+        shared/lua-runtime third_party/lua third_party/detours .github/workflows/agent-bridge.yml)
+fi
 build_image() {
     mkdir -p "$main_root/tmp/client-images"
     exec 9>"$main_root/tmp/client-images/$revision.lock"
     flock 9
+    context_outcome=reused
+    submodules=$(git -C "$repository" ls-tree -r "$revision" | \
+        jq -Rn '[inputs | capture("^160000 commit (?<commit>[0-9a-f]+)\\t(?<path>.*)$")]')
     if [ ! -f "$context/.complete" ]; then
+        context_outcome=created
         mkdir -p "$context"
         git -C "$repository" archive "$revision" | tar -x -C "$context"
         while read -r hash path; do
             mkdir -p "$context/$path"
             git -C "$main_root/$path" archive "$hash" | tar -x -C "$context/$path"
-        done < <(git -C "$repository" ls-tree -r "$revision" | awk '$2 == "commit" {print $3, $4}')
+        done < <(jq -r '.[] | "\(.commit) \(.path)"' <<<"$submodules")
         touch "$context/.complete"
     fi
+    if [ "$command" = build ]; then
+        source_tree=$(git -C "$repository" rev-parse "$revision^{tree}")
+        if [ -n "$id" ] && [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = "$backend" ]; then
+            instance_revision=$(jq -r .source_revision <<<"$current_instance")
+            if git -C "$repository" cat-file -e "$instance_revision^{commit}" 2>/dev/null; then
+                if git -C "$repository" diff --quiet "$instance_revision" "$revision" -- "${native_paths[@]}"; then
+                    native_inputs_match=true
+                else
+                    difference=$?
+                    [ "$difference" -eq 1 ] || exit "$difference"
+                    native_inputs_match=false
+                fi
+                current_instance=$(jq -c --argjson matches "$native_inputs_match" '.native_inputs_match=$matches' <<<"$current_instance")
+            fi
+        fi
+        complete_preparation_stage "$context_outcome" "$(jq -nc --arg commit "$revision" --arg tree "$source_tree" \
+            --argjson submodules "$submodules" '{source:{commit:$commit,tree:$tree,submodules:$submodules}}')"
+    fi
+    begin_preparation_stage client_image
     if docker image inspect "$image_tag" >/dev/null 2>&1; then
         docker image inspect "$image_tag" | jq -e --arg rev "$revision" --arg backend "$backend" '
             .[0].Config.Labels | .["org.opencontainers.image.revision"] == $rev and .["beidou.backend"] == $backend' >/dev/null ||
             fail image_identity_changed '版本标签的实际镜像身份不符。'
+        image=$(docker image inspect "$image_tag" --format '{{.Id}}')
+        complete_preparation_stage reused "$(jq -nc --arg tag "$image_tag" --arg image "$image" '{tag:$tag,image:$image}')"
+        if [ "$command" = build ] && [ "$backend" = beidou ]; then
+            begin_preparation_stage bridge
+            bridge_manifest=$(docker run --rm --network none --read-only --entrypoint cat "$image" /opt/beidou-pilot/native/manifest.json)
+            complete_preparation_stage reused "$(jq -nc --argjson manifest "$bridge_manifest" '{source:"image",manifest:$manifest}')"
+        fi
         flock -u 9
         return
     fi
     dockerfile=docker/headless/Dockerfile
     if [ "$backend" = beidou ]; then
+        begin_preparation_stage bridge
         dockerfile=docker/gui/Dockerfile
+        bridge_outcome=reused
+        bridge_source=artifact
+        bridge_run=null
         if [ -z "$bridge" ]; then
             bridge="$main_root/tmp/client-images/bridges/$revision"
             if [ ! -f "$bridge/manifest.json" ]; then
@@ -367,43 +446,63 @@ build_image() {
                 [ -n "$run" ] || fail bridge_build_required '该提交的 Windows 桥工件尚未就绪；可等待 CI，或在 workbench.json 中指定匹配的 bridge_artifact。'
                 mkdir -p "$bridge"
                 gh run download "$run" --repo Diluka/beidou-pilot --name maple-agent-bridge-win32 --dir "$bridge" >&2
+                bridge_outcome=downloaded
+                bridge_source=ci
+                bridge_run=$run
             fi
         fi
         bridge=$(realpath "$bridge")
         source_tree=$(jq -er .source.tree_sha "$bridge/manifest.json")
         git -C "$repository" cat-file -e "$source_tree^{tree}" 2>/dev/null ||
             fail bridge_source_unavailable '本地缺少桥工件的来源树，不能确认原生构建输入。'
-        git -C "$repository" diff --quiet "$source_tree" "$revision" -- beidou-ijl15/ezorsia beidou-ijl15/ezorsia.sln \
-            beidou-ijl15/tools/build-agent-bridge.ps1 shared/lua-runtime third_party/lua third_party/detours .github/workflows/agent-bridge.yml ||
+        git -C "$repository" diff --quiet "$source_tree" "$revision" -- "${native_paths[@]}" ||
             fail bridge_build_required '该提交的 GUI 原生输入已变化，须准备匹配的 Windows 桥工件。'
         mkdir -p "$context/build-input"
         cp "$bridge/ijl15.dll" "$bridge/manifest.json" "$context/build-input/"
+        if [ "$command" = build ]; then
+            complete_preparation_stage "$bridge_outcome" "$(jq -nc --arg source "$bridge_source" --argjson run "$bridge_run" \
+                --slurpfile manifest "$bridge/manifest.json" '{source:$source,manifest:$manifest[0]} +
+                (if $run == null then {} else {ci_run_id:$run} end)')"
+        fi
     fi
     flock -u 9
+    begin_preparation_stage client_image
     docker build --file "$context/$dockerfile" --build-arg "SOURCE_REVISION=$revision" \
         --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY --tag "$image_tag" "$context" >&2
+    image=$(docker image inspect "$image_tag" --format '{{.Id}}')
+    complete_preparation_stage created "$(jq -nc --arg tag "$image_tag" --arg image "$image" '{tag:$tag,image:$image}')"
 }
 build_image
 if "$harness"; then
+    begin_preparation_stage harness_image
     client_image=$image_tag
     image_tag="local/beidou-pilot-$backend-ai:$revision"
+    harness_outcome=reused
     if docker image inspect "$image_tag" >/dev/null 2>&1; then
         docker image inspect "$image_tag" | jq -e --arg rev "$revision" --arg backend "$backend" '
             .[0].Config.Labels | .["org.opencontainers.image.revision"] == $rev
             and .["beidou.backend"] == $backend and .["beidou.harness"] == "codex"' >/dev/null ||
             fail image_identity_changed 'harness 镜像的版本或后端不符。'
     else
+        harness_outcome=created
         client_user=65532:65532
         if [ "$backend" = beidou ]; then client_user=root; fi
         docker build --file "$context/docker/harness/Dockerfile" --build-arg "CLIENT_IMAGE=$client_image" \
             --build-arg "CLIENT_USER=$client_user" --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY \
             --tag "$image_tag" "$context" >&2
     fi
+    image=$(docker image inspect "$image_tag" --format '{{.Id}}')
+    complete_preparation_stage "$harness_outcome" "$(jq -nc --arg tag "$image_tag" --arg image "$image" '{tag:$tag,image:$image}')"
 fi
 image=$(docker image inspect "$image_tag" --format '{{.Id}}')
 if [ "$command" = build ]; then
+    if [ -n "$id" ]; then
+        current_instance=$(jq -c --arg image "$image" '.matches_prepared_image=(.image==$image)' <<<"$current_instance")
+    fi
     jq -nc --arg image "$image" --arg revision "$revision" --arg backend "$backend" \
-        '{ok:true,command:"build",data:{image:$image,source_revision:$revision,backend:$backend}}'
+        --argjson preparation "$preparation" --argjson current "$current_instance" \
+        '{ok:true,command:"build",data:{image:$image,source_revision:$revision,backend:$backend,
+        preparation:$preparation,current_instance:$current}}'
     exit 0
 fi
 
