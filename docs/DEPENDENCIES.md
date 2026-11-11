@@ -30,6 +30,8 @@ git submodule update --init --recursive
 
 游戏 AI 镜像使用官方 Node Bookworm slim 与标准 npm 安装固定 Codex，完整保留 npm 平台包；缺失的 Codex 根许可从同版发行 tag 补齐，安装说明见[容器说明](https://github.com/Diluka/beidou-pilot/blob/main/docker/harness/README.md)。GUI 继续安装上游发布的 VirtualGL deb，使用可读的 Wine 镜像日期 tag。三类镜像保留清楚的版本/tag 与许可，采用包管理器默认校验，不再另写镜像 digest、下载或许可 hash 检查。
 
+连接已有 SSH Codex 会话的独立 `harness/game-events` 另用 `websockets==15.0.1`，由 [requirements-events.txt](../harness/requirements-events.txt) 固定并通过 pip 安装，保留发行包中的 BSD-3-Clause 许可与包元数据；上游为 [python-websockets/websockets](https://github.com/python-websockets/websockets)。它不编入游戏镜像或 CLI，也不改变既有 `game-ai` 的标准库依赖边界。安装和使用见 [HARNESS.md](HARNESS.md#向已有-ssh-codex-会话投递客户端事件)。
+
 ## 许可与外部资产
 
 项目级 [LICENSE](../LICENSE) 为AGPL-3.0-only；第三方保留各自版权与授权，汇总见 [NOTICE](../NOTICE)，其中包含Lua版权和MIT全文。分发构建需要携带适用许可。
