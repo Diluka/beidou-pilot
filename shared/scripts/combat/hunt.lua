@@ -192,16 +192,13 @@ local function rope_at(s)
     end
     return candidate
 end
-local function recovery_action(result)
-    assert(not result or result.reason ~= "control_preempted", "control_preempted")
-end
+local function recovery_action(result) assert(not result or result.reason ~= "control_preempted", "control_preempted") end
 local function recover_rope(s, rope)
     local destination, nearest = nil, math.huge
     for i, platform in ipairs(platforms) do
         if rope.x >= platform.left and rope.x <= platform.right then
             local y = height(platform, rope.x)
-            local direction = math.abs(y - rope.y1) <= 12 and "up"
-                or y >= rope.y2 - 5 and y <= rope.y2 + 55 and "down"
+            local direction = math.abs(y - rope.y1) <= 12 and "up" or y >= rope.y2 - 5 and y <= rope.y2 + 55 and "down"
             local side = platform.right - rope.x >= rope.x - platform.left and 1 or -1
             local x = rope.x + side * 12
             if direction and x >= platform.left and x <= platform.right and math.abs(y - s.position.y) < nearest then
@@ -210,23 +207,36 @@ local function recover_rope(s, rope)
         end
     end
     assert(destination, "hunt_rope_recovery_no_safe_endpoint")
-    game.log(string.format("hunt_rope_recovery start_x=%.1f start_y=%.1f rope_x=%.1f direction=%s goal_y=%.1f",
-        s.position.x, s.position.y, rope.x, destination.direction, destination.y))
+    game.log(
+        string.format(
+            "hunt_rope_recovery start_x=%.1f start_y=%.1f rope_x=%.1f direction=%s goal_y=%.1f",
+            s.position.x,
+            s.position.y,
+            rope.x,
+            destination.direction,
+            destination.y
+        )
+    )
     recovery_action(game.stop())
     game.sleep(0.15)
     local until_at, progress_at, previous_y = math.min(deadline, game.time() + 12), game.time(), s.position.y
     while game.time() < until_at do
         s = current_state()
         assert(math.abs(s.position.x - rope.x) <= 18, "hunt_rope_recovery_left_rope")
-        if math.abs(s.position.y - previous_y) > 2 then progress_at, previous_y = game.time(), s.position.y end
+        if math.abs(s.position.y - previous_y) > 2 then
+            progress_at, previous_y = game.time(), s.position.y
+        end
         if platform_at(s.position.x, s.position.y, 5) == destination.platform then
             local before_x = s.position.x
             recovery_action(game.move(destination.x > s.position.x and "right" or "left", 0.06))
             recovery_action(game.stop())
             game.sleep(0.15)
             local after = current_state()
-            if math.abs(after.position.x - before_x) > 1 and math.abs(after.position.x - rope.x) >= 6
-                and platform_at(after.position.x, after.position.y, 5) == destination.platform then
+            if
+                math.abs(after.position.x - before_x) > 1
+                and math.abs(after.position.x - rope.x) >= 6
+                and platform_at(after.position.x, after.position.y, 5) == destination.platform
+            then
                 game.log(string.format("hunt_rope_recovered x=%.1f y=%.1f", after.position.x, after.position.y))
                 return after
             end

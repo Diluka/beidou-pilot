@@ -51,7 +51,9 @@ if resume then
     options.terrain.ropes[1] = { x = 100, y1 = 0, y2 = 198 }
     state.monsters = { { object_id = 1, template_id = 100, x = 140, y = 0, active = true } }
     if scenario == "resume-bottom" then state.monsters[1].y = 200 end
-    if scenario == "resume-no-endpoint" then options.min_x, options.max_x = 95, 105 end
+    if scenario == "resume-no-endpoint" then
+        options.min_x, options.max_x = 95, 105
+    end
 elseif scenario == "rope" then
     options.terrain.footholds[2] = { id = 2, x1 = 0, x2 = 400, y1 = 0, y2 = 0 }
     options.terrain.footholds[3] = { id = 3, x1 = 0, x2 = 400, y1 = 100, y2 = 100 }
@@ -203,8 +205,14 @@ game = {
                 assert(resume_moves == 1, "recovery continued after losing control")
                 return { reason = "control_preempted" }
             end
-            if scenario == "resume-context" then state.scene_generation = 2; return end
-            if scenario == "resume-stalled" then advance(seconds); return end
+            if scenario == "resume-context" then
+                state.scene_generation = 2
+                return
+            end
+            if scenario == "resume-stalled" then
+                advance(seconds)
+                return
+            end
         end
         advance(seconds, direction == "left" or direction == "right")
         if scenario == "context" then
