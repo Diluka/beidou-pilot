@@ -20,11 +20,11 @@
 | `ref` | `main`；开发验收可明确指定已提交版本 |
 | `timeout` | `90`；5至180的数值，仅限制入图等待 |
 | `bridge_artifact` | 可选的匹配 GUI 桥工件目录；相对路径按工作目录解析，省略时经 `gh` 获取相应提交成功 CI 的工件 |
-| `server` | 开发隔离目标的显式对象；普通使用省略，不能借此覆盖固定常驻服务器 |
+| `server` | 仅特殊情况确需隔离服时使用的显式对象；日常使用、调试与实际游戏验收默认省略，使用固定常驻服务器 |
 | `harness` | 默认 `false`；`true` 时从所选客户端 base 派生包含 Codex、harness 和专用技能的镜像 |
 | `model_proxy` | 可选的 `http://IPv4:端口` 模型 HTTP 代理；省略不影响客户端和脚本，模型 API 地址仍在 provider 配置中 |
 
-开发验收的 `server` 要求 `project/service/expected_image`，`network` 可选。项目必须不是 `beidou-ms`，隔离服务器不能发布宿主端口或使用host网络；指定网络时必须是同项目 internal 网络并且服务器已连接。省略网络时，启动器为新实例建立所属 internal 连接并在关闭时回收。例如：
+调试和实际游戏验收默认复用常驻服务器与已授权的已有账号角色，只有场景必须时才新建账号或角色。确需隔离服时记录原因，其 `server` 要求 `project/service/expected_image`，`network` 可选。项目必须不是 `beidou-ms`，隔离服务器不能发布宿主端口或使用host网络；指定网络时必须是同项目 internal 网络并且服务器已连接。省略网络时，启动器为新实例建立所属 internal 连接并在关闭时回收。例如：
 
 ```json
 {

@@ -118,7 +118,7 @@ nodes:
         description: 在启动锁内检查其他运行实例的目标、世界和角色，拒绝重复接管。
       - kind: document
         value: AGENTS.md
-        description: 规定授权角色、隔离目标及GUI单一操作者边界。
+        description: 规定默认复用常驻服与授权已有账号角色、隔离服例外及GUI单一操作者边界。
   - id: client-session.persistent
     kind: invariant
     name: 动作结束与实例关闭独立
