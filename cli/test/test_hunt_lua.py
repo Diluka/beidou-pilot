@@ -32,6 +32,28 @@ class HuntLuaContract(unittest.TestCase):
     def test_rope_top_landing_without_overshoot_sample_continues_hunting(self) -> None:
         subprocess.run([str(self.executable), str(self.contract), "rope", str(self.strategy)], check=True, timeout=5)
 
+    def test_long_progressing_rope_approach_continues_to_next_platform(self) -> None:
+        subprocess.run(
+            [str(self.executable), str(self.contract), "rope-long-approach", str(self.strategy)], check=True, timeout=5
+        )
+
+    def test_blocked_rope_uses_an_alternative_or_reports_unreachable(self) -> None:
+        for scenario in ("rope-blocked", "rope-blocked-only"):
+            with self.subTest(scenario=scenario):
+                subprocess.run(
+                    [str(self.executable), str(self.contract), scenario, str(self.strategy)], check=True, timeout=5
+                )
+
+    def test_rope_grab_settles_horizontal_inertia_before_jumping(self) -> None:
+        subprocess.run(
+            [str(self.executable), str(self.contract), "rope-inertia", str(self.strategy)], check=True, timeout=5
+        )
+
+    def test_new_target_on_a_wide_platform_is_cleared_before_climbing(self) -> None:
+        subprocess.run(
+            [str(self.executable), str(self.contract), "wide-local-spawn", str(self.strategy)], check=True, timeout=5
+        )
+
     def test_stalled_approach_and_scene_change_stop_without_attacking(self) -> None:
         for scenario in ("stalled", "context"):
             with self.subTest(scenario=scenario):

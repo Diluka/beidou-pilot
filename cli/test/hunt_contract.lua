@@ -5,6 +5,11 @@ local skill_rejected, air_attacks, climbing = false, 0, false
 local crossed_real_edge = false
 local attack_lock_until, next_gui_hit, first_gui_attack, gui_progress_time = 0.8, 0.8, nil, 0
 local direction_only_turn = false
+local open_rope_x, blocked_rope_x = 100, nil
+local blocked_visits, blocked_logs, blocked_diagnostic = 0, 0, nil
+local blocked_rope_contact, released_after_block, rope_reached_at = false, false, nil
+local horizontal_velocity, brake_at, landing_at = 0, nil, nil
+local settled_jump, local_spawned, kills_before_climbing = false, false, nil
 local state = {
     ready = true,
     instance_id = "hunt-contract",
@@ -44,6 +49,44 @@ if scenario == "rope" then
         { object_id = 1, template_id = 100, x = 65, y = 200, active = true },
         { object_id = 2, template_id = 100, x = 140, y = 0, active = true },
     }
+elseif scenario == "rope-inertia" then
+    options.seconds, options.stop_level = 12, 4
+    options.terrain.footholds[2] = { id = 2, x1 = 0, x2 = 400, y1 = 0, y2 = 0 }
+    options.terrain.ropes[1] = { x = open_rope_x, y1 = 0, y2 = 170 }
+    state.monsters = {
+        { object_id = 1, template_id = 100, x = 65, y = 200, active = true },
+        { object_id = 2, template_id = 100, x = 140, y = 0, active = true },
+    }
+elseif scenario == "wide-local-spawn" then
+    options.seconds, options.stop_level, options.max_x, open_rope_x = 40, 4, 2400, 300
+    options.terrain.footholds[1].x2 = 2400
+    options.terrain.footholds[2] = { id = 2, x1 = 0, x2 = 2400, y1 = 0, y2 = 0 }
+    options.terrain.ropes[1] = { x = open_rope_x, y1 = 0, y2 = 198 }
+    state.monsters = {
+        { object_id = 1, template_id = 200, x = 2200, y = 200, active = false },
+        { object_id = 2, template_id = 100, x = 340, y = 0, active = true },
+    }
+elseif scenario == "rope-long-approach" or scenario == "rope-blocked" or scenario == "rope-blocked-only" then
+    options.seconds, options.stop_level = 26, 4
+    if scenario == "rope-long-approach" then
+        options.max_x, open_rope_x = 2400, 2100
+        options.terrain.footholds[1].x2 = 2400
+        options.terrain.ropes[1] = { x = open_rope_x, y1 = 0, y2 = 198 }
+    else
+        blocked_rope_x = 100
+        options.terrain.ropes[1] = { x = blocked_rope_x, y1 = 0, y2 = 198 }
+        if scenario == "rope-blocked" then
+            open_rope_x = 320
+            options.terrain.ropes[2] = { x = open_rope_x, y1 = 0, y2 = 198 }
+        else
+            open_rope_x = nil
+        end
+    end
+    options.terrain.footholds[2] = { id = 2, x1 = 0, x2 = options.max_x, y1 = 0, y2 = 0 }
+    state.monsters = {
+        { object_id = 1, template_id = 100, x = 65, y = 200, active = true },
+        { object_id = 2, template_id = 100, x = (open_rope_x or blocked_rope_x) + 40, y = 0, active = true },
+    }
 elseif scenario == "stalled" or scenario == "context" then
     state.monsters = { { object_id = 1, template_id = 100, x = 300, y = 200, active = true } }
 elseif scenario == "fall" then
@@ -78,9 +121,23 @@ else
         state.position.x, state.monsters = 105, {}
     end
 end
-local function advance(seconds)
+local function advance(seconds, horizontal_input)
+    if scenario == "rope-inertia" and not horizontal_input then
+        -- 释放横向键后仍有惯性；stop 后经过原生减速时间才停稳。
+        local moving = brake_at and math.max(0, math.min(seconds, brake_at - now)) or seconds
+        state.position.x = state.position.x + horizontal_velocity * moving
+        if brake_at and now + seconds >= brake_at then
+            horizontal_velocity, brake_at = 0, nil
+        end
+    end
     now = now + seconds
     if scenario == "fall" then state.position.y = math.min(200, state.position.y + seconds * 100) end
+    if scenario == "rope-inertia" and landing_at and now >= landing_at and not climbing then
+        state.position.y, landing_at = 200, nil
+    end
+    if scenario == "wide-local-spawn" and not local_spawned and now >= 0.1 then
+        state.monsters[1].active, local_spawned = true, true
+    end
 end
 local function horizontal(direction, seconds)
     if scenario == "gui-lock" or scenario == "gui-turn-stalled" then
@@ -95,6 +152,9 @@ local function horizontal(direction, seconds)
     end
     state.facing = direction == "right" and "Right" or "Left"
     state.position.x = state.position.x + (direction == "right" and 1 or -1) * seconds * 150
+    if scenario == "rope-inertia" then
+        horizontal_velocity, brake_at = (direction == "right" and 1 or -1) * 150, nil
+    end
     if scenario == "slope" then state.position.x = math.max(10, math.min(320, state.position.x)) end
     if scenario == "slope" and state.position.y < 50 then
         -- 外部物理边界直接给定这条坡道；不调用策略的分段、连接或落层算法。
@@ -114,7 +174,11 @@ game = {
     time = function() return now end,
     state = function() return copy(state) end,
     sleep = function(seconds) advance(math.max(seconds, 0.01)) end,
-    stop = function() advance(0.01) end,
+    stop = function()
+        if blocked_logs > 0 then released_after_block = true end
+        if scenario == "rope-inertia" then brake_at = now + 0.04 end
+        advance(0.01)
+    end,
     face = function(direction)
         if not (scenario == "gui-lock" or scenario == "gui-turn-stalled") or now >= attack_lock_until then
             state.facing = direction == "right" and "Right" or "Left"
@@ -122,14 +186,25 @@ game = {
         advance(0.01)
     end,
     move = function(direction, seconds)
-        advance(seconds)
+        advance(seconds, direction == "left" or direction == "right")
         if scenario == "context" then
             state.scene_generation = 2
             return
         end
         if scenario == "stalled" then return end
         if direction == "up" or direction == "down" then
-            assert(scenario == "rope" and math.abs(state.position.x - 100) <= 10, "rope approach was not aligned")
+            -- 原生边界：第一根绳梯不响应攀爬，另一根绳梯正常；不读取策略的边或平台图。
+            if blocked_rope_x and math.abs(state.position.x - blocked_rope_x) <= 10 then
+                if not blocked_rope_contact then blocked_visits = blocked_visits + 1 end
+                blocked_rope_contact = true
+                return
+            end
+            if scenario == "rope-inertia" and math.abs(state.position.x - open_rope_x) > 10 then return end
+            assert(open_rope_x and math.abs(state.position.x - open_rope_x) <= 10, "rope approach was not aligned")
+            if blocked_logs > 0 then assert(released_after_block, "blocked navigation did not release control") end
+            rope_reached_at = rope_reached_at or now
+            kills_before_climbing = kills_before_climbing or #killed
+            horizontal_velocity, brake_at, landing_at = 0, nil, nil
             climbing = true
             state.position.y = state.position.y + (direction == "up" and -1 or 1) * seconds * 100
             -- 客户端采样直接看到绳顶脱离后落回平台，过顶坐标不必可见。
@@ -141,9 +216,15 @@ game = {
             end
         else
             if not climbing then horizontal(direction, seconds) end
+            if blocked_rope_x and math.abs(state.position.x - blocked_rope_x) > 10 then blocked_rope_contact = false end
         end
     end,
-    jump = function() error("unexpected jump in contract scene") end,
+    jump = function()
+        assert(scenario == "rope-inertia", "unexpected jump in contract scene")
+        advance(0.06)
+        settled_jump = settled_jump or horizontal_velocity == 0
+        state.position.y, landing_at = 170, now + 0.3
+    end,
     attack = function(seconds, direction, skill_id)
         assert(skill_id == options.skill_id, "attack mode silently changed")
         if scenario == "fall" and state.position.y < 200 then air_attacks = air_attacks + 1 end
@@ -184,6 +265,7 @@ game = {
                 mob.active = false
                 killed[#killed + 1] = mob.template_id
                 state.character.experience = state.character.experience + 3
+                if options.stop_level and #killed == 2 then state.character.level = options.stop_level end
                 break
             end
         end
@@ -192,6 +274,9 @@ game = {
     log = function(message)
         if message:find("hunt_route") then routes = routes + 1 end
         if message:find("hunt_summary") then summary = message end
+        if message:find("hunt_navigation_blocked") then
+            blocked_logs, blocked_diagnostic = blocked_logs + 1, message
+        end
     end,
 }
 local ok, failure = pcall(dofile, strategy)
@@ -204,6 +289,9 @@ elseif scenario == "context" then
 elseif scenario == "gui-turn-stalled" then
     assert(not ok and failure:find("hunt_combat_progress_unconfirmed"), tostring(failure))
     assert(#killed == 0 and parallel == 0, "hunt kept attacking while the native facing never changed")
+elseif scenario == "rope-blocked-only" then
+    assert(not ok and failure:find("hunt_targets_unreachable"), tostring(failure))
+    assert(#killed == 1 and blocked_visits == 1 and released_after_block, "unreachable hunt retried the blocked route")
 else
     assert(ok, failure)
     if scenario == "specified" then
@@ -226,7 +314,24 @@ else
             #killed == 1 and direction_only_turn and parallel > 0 and gui_progress_time > 3,
             "hunt did not release Attack to turn or rejected native movement lock despite combat progress"
         )
+    elseif scenario == "rope-long-approach" then
+        assert(#killed == 2 and rope_reached_at > 12, "hunt stopped a progressing approach before reaching the rope")
+    elseif scenario == "rope-blocked" then
+        assert(#killed == 2 and blocked_visits == 1, "hunt did not use the available rope after a blocked route")
+    elseif scenario == "rope-inertia" then
+        assert(#killed == 2 and settled_jump, "hunt did not stop horizontal inertia before jumping to the rope")
+    elseif scenario == "wide-local-spawn" then
+        assert(
+            #killed == 2 and killed[1] == 200 and killed[2] == 100 and kills_before_climbing == 1,
+            "hunt did not clear the new same-platform target before continuing to another platform"
+        )
     else
         assert(#killed == 2 and routes > 0, "hunt did not climb and continue after clearing the first platform")
+    end
+end
+if blocked_rope_x then
+    assert(blocked_logs == 1, "blocked route was not diagnosed exactly once")
+    for _, field in ipairs({ "kind=rope", "from=", "to=", "stage=", "x=", "y=", "goal" }) do
+        assert(blocked_diagnostic:find(field, 1, true), "blocked route diagnostic missed " .. field)
     end
 end
