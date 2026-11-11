@@ -32,7 +32,8 @@ COPY docker/runtime/entrypoint.py /opt/beidou-pilot/entrypoint.py
 COPY build-input/ijl15.dll build-input/manifest.json /opt/beidou-pilot/native/
 ARG SOURCE_REVISION=unversioned
 RUN printf '%s\n' "$SOURCE_REVISION" > /opt/beidou-pilot/REVISION \
-    && ln -s /opt/beidou-pilot/cli/beidou-pilot /usr/local/bin/beidou-pilot
+    && ln -s /opt/beidou-pilot/cli/beidou-pilot /usr/local/bin/beidou-pilot \
+    && chmod -R a+rX /opt/beidou-pilot /usr/share/licenses/beidou-pilot
 
 LABEL org.opencontainers.image.title="beidou-pilot-gui" \
       org.opencontainers.image.description="Persistent GUI game client and its control CLI" \

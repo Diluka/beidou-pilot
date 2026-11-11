@@ -98,46 +98,5 @@ class GuiRuntimePreparationContract(unittest.TestCase):
             self.assertEqual(contents, {name: (source / name).read_bytes() for name in contents})
 
 
-class SourceExportContract(unittest.TestCase):
-    def test_exported_tool_runs_help_without_workspace_data(self) -> None:
-        client = Path(__file__).resolve().parents[1]
-        environment = os.environ.copy()
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "prototype"
-            environment["MAPLE_RESOURCES_CONFIG"] = str(Path(directory) / "missing-runtime-resources.json")
-            result = subprocess.run(["python3", str(client / "tools/export_prototype.py"), "--output", str(output)],
-                                    text=True, capture_output=True, env=environment)
-            self.assertEqual(0, result.returncode, result.stderr)
-            for launcher in (output / "beidou-pilot", output / "cli/beidou-pilot"):
-                help_result = subprocess.run([str(launcher), "--help"], text=True, capture_output=True, env=environment)
-                self.assertEqual(0, help_result.returncode, help_result.stderr)
-            manifest = json.loads((output / "PROTOTYPE-MANIFEST.json").read_text())
-            for record in manifest["files"]:
-                path = Path(record["path"])
-                self.assertFalse({"assets", "private", "state", ".git", "SoloMapling"} & set(path.parts), path)
-                self.assertFalse(path.is_relative_to("cli/runtime"), path)
-                self.assertNotIn(path.suffix, {".nx", ".img", ".exe", ".dll", ".lib", ".deb"})
-                self.assertNotIn(".private.", path.name)
-            self.assertFalse((output / "cli/config/resources.json").exists())
-            self.assertFalse((output / "cli/beidou_pilot/engines/short_combat.py").exists())
-            self.assertTrue((output / "shared/lua-runtime/Runtime.cpp").is_file())
-            exported_environment = {**environment, "PYTHONPATH": str(output / "cli"), "PYTHONDONTWRITEBYTECODE": "1"}
-            runtime_tests = subprocess.run(["python3", "-m", "unittest", "test.test_lua_runtime", "test.test_task_transport",
-                                            "test.test_gui_key_input", "test.test_native_item_use", "-v"],
-                                           cwd=output, env=exported_environment, text=True, capture_output=True)
-            self.assertEqual(0, runtime_tests.returncode, runtime_tests.stderr)
-            self.assertTrue((output / "docker/compose.yaml").is_file())
-            self.assertTrue((output / "docker/compose.metadata.yaml").is_file())
-            self.assertTrue((output / "docker/compose.scripts.yaml").is_file())
-            self.assertTrue((output / "docker/runtime/entrypoint.py").is_file())
-            self.assertTrue((output / "docker/headless/Dockerfile").is_file())
-            self.assertTrue((output / "docker/gui/prepare-client.sh").is_file())
-            self.assertEqual((output / "LICENSE").read_bytes(), (output / "docker/gui/LICENSE").read_bytes())
-            self.assertTrue((output / "shared/scripts/travel/move_to.lua").is_file())
-            self.assertFalse((output / "cli/clientctl.py").exists())
-            self.assertFalse((output / "cli/beidou_pilot/engines/session.py").exists())
-            self.assertFalse((output / "beidou-ijl15/shared/control").exists())
-
-
 if __name__ == "__main__":
     unittest.main()

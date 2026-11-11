@@ -36,7 +36,8 @@ COPY docker/runtime/entrypoint.py /opt/beidou-pilot/entrypoint.py
 COPY third_party/lua/lua.h /usr/share/licenses/beidou-pilot/lua.LICENSE.h
 ARG SOURCE_REVISION=unversioned
 RUN printf '%s\n' "$SOURCE_REVISION" > /opt/beidou-pilot/REVISION \
-    && ln -s /opt/beidou-pilot/cli/beidou-pilot /usr/local/bin/beidou-pilot
+    && ln -s /opt/beidou-pilot/cli/beidou-pilot /usr/local/bin/beidou-pilot \
+    && chmod -R a+rX /opt/beidou-pilot /usr/share/licenses/beidou-pilot
 LABEL org.opencontainers.image.title="beidou-pilot" \
       org.opencontainers.image.description="Persistent native headless game client instance" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \

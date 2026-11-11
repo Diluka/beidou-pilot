@@ -33,6 +33,10 @@ jobs:
           submodules: recursive
       - name: Build headless image
         run: docker build --file docker/headless/Dockerfile --tag local/beidou-pilot:ci .
+      - name: Run the packaged CLI as its runtime user
+        run: |
+          docker run --rm --network none --read-only --entrypoint beidou-pilot local/beidou-pilot:ci --help
+          docker run --rm --network none --read-only --entrypoint beidou-pilot local/beidou-pilot:ci --version
 
   game-ai-harness:
     name: Game AI harness contract

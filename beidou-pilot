@@ -12,6 +12,7 @@ usage() {
   open      创建实例并用容器内 CLI 确认入图；已有实例沿用原版本
   status    查询所选实例
   close     正常关闭并核对所属容器退出
+  resources-check  用对应无头镜像离线检查外部 NX，不登录
   其他命令  交给所属容器内的 beidou-pilot（snapshot、script、hunt 等）
 
 build/plan/open 参数：
@@ -50,7 +51,7 @@ fail() {
 
 [ -n "$workbench" ] && [ -d "$workbench" ] || fail invalid_workbench '须指定已有工作台目录。'
 workbench=$(realpath "$workbench")
-[[ "$instance" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$ ]] || fail invalid_instance '实例名格式无效。'
+[[ "$instance" =~ ^[a-z0-9][a-z0-9_-]{0,47}$ ]] || fail invalid_instance '实例名须为 1 至 48 位小写字母、数字、下划线或连字符。'
 case "$backend" in headless|beidou) ;; *) fail invalid_backend '后端须为 headless 或 beidou。' ;; esac
 [ -n "$command" ] || fail usage '缺少命令。'
 name="beidou-pilot-$(printf '%s' "$workbench" | sha256sum | cut -c1-10)-$instance"
@@ -111,7 +112,7 @@ exec_cli() {
             printf '%s\n' '取消请求尚未确认；保留所属实例，等待原命令结果。' >&2
     }
     trap forward_cancel INT TERM
-    docker exec -i --user "$cli_user" --env "BEIDOU_EXEC_TOKEN=$token" "$id" beidou-pilot --json "$@" <&0 &
+    setsid docker exec -i --user "$cli_user" --env "BEIDOU_EXEC_TOKEN=$token" "$id" beidou-pilot --json "$@" <&0 &
     child=$!
     wait "$child" || result=$?
     if "$interrupted"; then
@@ -120,6 +121,21 @@ exec_cli() {
     fi
     trap - INT TERM
     return "$result"
+}
+
+wait_runtime() {
+    local root started seconds
+    root=$(jq -r '.Config.Labels["beidou.client.root"]' <<<"$inspect")
+    started=$SECONDS
+    seconds=$(jq -nr --arg timeout "$timeout" '$timeout | tonumber | ceil')
+    until [ -f "$root/state/container.json" ]; do
+        if [ "$(docker inspect "$id" --format '{{.State.Running}}')" != true ]; then
+            docker logs "$id" >"$root/startup.log" 2>&1
+            fail client_start_failed "客户端初始化已退出，日志保存在 $root/startup.log。"
+        fi
+        [ "$((SECONDS-started))" -lt "$seconds" ] || fail client_start_timeout '客户端尚未发布启动登记，保留现场。'
+        sleep 0.05
+    done
 }
 
 locate
@@ -151,7 +167,7 @@ case "$command" in
         exec_cli status "$@"
         exit $?
         ;;
-    build|plan|open) ;;
+    build|plan|resources-check|open) ;;
     *)
         "$running" || fail client_not_running '该工作台实例没有运行中的客户端。'
         exec_cli "$command" "$@"
@@ -190,7 +206,7 @@ resource_path() {
     realpath "$path"
 }
 
-if [ "$command" = open ] && "$running"; then
+if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
     if "$backend_explicit"; then
         [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = "$backend" ] ||
             fail backend_mismatch '已有实例使用其他后端，未切换。'
@@ -204,6 +220,7 @@ if [ "$command" = open ] && "$running"; then
             and .world == ($wanted[0].world // 0) and .channel == ($wanted[0].channel // 0)' "$record" >/dev/null ||
             fail character_mismatch '已有实例角色、世界或频道与请求不同。'
     fi
+    wait_runtime
     exec_cli open --profile /config/account.private.json --timeout "$timeout"
     exit $?
 fi
@@ -257,7 +274,7 @@ resolve_target() {
         --arg network "$network" --arg ip "$target_ip" '{project:$project,service:$service,container_id:$id,image:$image,network:$network,ip:$ip}')
 }
 
-if [ "$command" != build ]; then
+if [ "$command" != build ] && [ "$command" != resources-check ]; then
     resolve_target
     if [ "$command" = plan ]; then
         jq -nc --argjson data "$resolved" '{ok:true,command:"plan",data:$data}'
@@ -294,16 +311,27 @@ build_image() {
     dockerfile=docker/headless/Dockerfile
     if [ "$backend" = beidou ]; then
         dockerfile=docker/gui/Dockerfile
-        if [ -z "$bridge" ]; then bridge=$(dirname "$(resource_path gui_dll)"); fi
+        if [ -z "$bridge" ]; then
+            bridge="$main_root/tmp/client-images/bridges/$revision"
+            if [ ! -f "$bridge/manifest.json" ]; then
+                run=$(gh run list --repo Diluka/beidou-pilot --workflow agent-bridge.yml --commit "$revision" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+                [ -n "$run" ] || fail bridge_build_required '该提交的 Windows 桥工件尚未就绪；可等待 CI 或显式指定匹配的 --bridge-artifact。'
+                mkdir -p "$bridge"
+                gh run download "$run" --repo Diluka/beidou-pilot --name maple-agent-bridge-win32 --dir "$bridge" >&2
+            fi
+        fi
         bridge=$(realpath "$bridge")
-        source_commit=$(jq -er .source.commit_sha "$bridge/manifest.json")
-        git -C "$repository" diff --quiet "$source_commit" "$revision" -- beidou-ijl15 shared/lua-runtime third_party/lua third_party/detours .github/workflows/agent-bridge.yml ||
+        source_tree=$(jq -er .source.tree_sha "$bridge/manifest.json")
+        git -C "$repository" cat-file -e "$source_tree^{tree}" 2>/dev/null ||
+            fail bridge_source_unavailable '本地缺少桥工件的来源树，不能确认原生构建输入。'
+        git -C "$repository" diff --quiet "$source_tree" "$revision" -- beidou-ijl15 shared/lua-runtime third_party/lua third_party/detours .github/workflows/agent-bridge.yml ||
             fail bridge_build_required '该提交的 GUI 原生输入已变化，须准备匹配的 Windows 桥工件。'
         mkdir -p "$context/build-input"
         cp "$bridge/ijl15.dll" "$bridge/manifest.json" "$context/build-input/"
     fi
-    docker build --file "$context/$dockerfile" --build-arg "SOURCE_REVISION=$revision" --tag "$image_tag" "$context" >&2
     flock -u 9
+    docker build --file "$context/$dockerfile" --build-arg "SOURCE_REVISION=$revision" \
+        --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY --tag "$image_tag" "$context" >&2
 }
 build_image
 image=$(docker image inspect "$image_tag" --format '{{.Id}}')
@@ -313,7 +341,15 @@ if [ "$command" = build ]; then
     exit 0
 fi
 
-[ -f "$profile" ] && [ "$(stat -c %a "$profile")" = 600 ] || fail private_file_permissions '账号 profile 须存在且权限为 0600。'
+if [ "$command" = resources-check ]; then
+    [ "$backend" = headless ] || fail unsupported_capability 'NX 离线检查使用 headless 镜像。'
+    nx=$(resource_path headless_resources)
+    exec docker run --rm --network none --read-only --cpus 2 --memory 1g --pids-limit 128 \
+        --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+        --mount "type=bind,src=$nx,dst=/data,readonly" --entrypoint /bin/beidou-headless "$image" --check-resources /data
+fi
+
+[ -f "$profile" ] && [ "$(stat -Lc %a "$profile")" = 600 ] || fail private_file_permissions '账号 profile 须存在且权限为 0600。'
 [ -f "$resources" ] || fail resources_required '须提供工作台的外部资源配置。'
 profile=$(realpath "$profile")
 resources=$(realpath "$resources")
@@ -334,6 +370,7 @@ flock -n 8 || fail lifecycle_busy '该实例正在启停。'
 locate
 if "$running"; then
     flock -u 8
+    wait_runtime
     exec_cli open --profile /config/account.private.json --timeout "$timeout"
     exit $?
 fi
@@ -404,4 +441,5 @@ rm -f "$state/pending.json"
 flock -u 7
 flock -u 8
 locate
+wait_runtime
 exec_cli open --profile /config/account.private.json --timeout "$timeout"
