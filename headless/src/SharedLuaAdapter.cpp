@@ -126,8 +126,8 @@ MapleControl::Observation SharedLuaAdapter::ObserveDomain(const std::string& dom
     return observation;
 }
 
-bool SharedLuaAdapter::Supports(MapleControl::ActionKind) const {
-    return true;
+bool SharedLuaAdapter::Supports(MapleControl::ActionKind kind) const {
+    return kind != MapleControl::ActionKind::Window;
 }
 
 bool SharedLuaAdapter::SupportsSkill() const {
@@ -552,10 +552,23 @@ void SharedLuaAdapter::CaptureAllocation() {
     result.reason = allocation.Reason();
 }
 
+std::string SharedLuaAdapter::EquipmentReference(const ms::Equip* item) const {
+    if (item == nullptr) return {};
+    std::ostringstream out;
+    out << state.instanceId << ':' << state.character.id << ':' << state.sceneGeneration << ':' << std::hex
+        << reinterpret_cast<std::uintptr_t>(item);
+    return out.str();
+}
+
 bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& error) {
     using Kind = MapleControl::ActionKind;
+    if (!Supports(action.kind)) {
+        error = "unsupported: window";
+        return false;
+    }
     if (action.kind == Kind::Stop) {
         Release();
+        result.sessionId = action.sessionId;
         return true;
     }
     if (!state.ready || (action.kind != Kind::Revive && state.character.values[6] == 0)) {
@@ -569,6 +582,7 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     auto& stage = ms::Stage::get();
     auto& player = stage.get_player();
     result = {};
+    result.sessionId = action.sessionId;
     result.reason = "native_action_dispatched";
     if (action.kind == Kind::AllocateAp || action.kind == Kind::AllocateSp) {
         allocationRequest = action.allocation;
@@ -630,6 +644,10 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
                                                      equipping ? equippedSlot : backpackSlot);
         if (!source) {
             error = "equipment_source_missing";
+            return false;
+        }
+        if (!action.reference.empty() && action.reference != EquipmentReference(source.get())) {
+            error = "equipment_reference_expired";
             return false;
         }
         if (!equipping && destination) {
@@ -1019,16 +1037,24 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
     }
     if (domain == "inventory") {
         Json items = Json::array();
-        for (const auto& item : state.inventory)
+        for (const auto& item : state.inventory) {
             items.push_back({{"inventory_type", item.inventoryType},
                              {"slot", item.slot},
                              {"item_id", item.itemId},
                              {"quantity", item.quantityKnown ? Json(item.quantity) : Json(nullptr)}});
+            if (item.inventoryType == 1) {
+                const auto source = inventory.get_equip(ms::InventoryType::EQUIP, item.slot);
+                if (source) items.back()["equipment"] = {{"object_ref", EquipmentReference(source.get())}};
+            }
+        }
         Json equipped = Json::array();
         for (int slot = 1; slot <= 51; ++slot) {
             const auto itemId = inventory.get_item_id(ms::InventoryType::EQUIPPED, slot);
-            if (itemId)
+            if (itemId) {
                 equipped.push_back({{"inventory_type", 1}, {"slot", -slot}, {"item_id", itemId}, {"quantity", 1}});
+                const auto source = inventory.get_equip(ms::InventoryType::EQUIPPED, slot);
+                if (source) equipped.back()["equipment"] = {{"object_ref", EquipmentReference(source.get())}};
+            }
         }
         Json capacities = Json::object();
         for (int type = 1; type <= 5; ++type)
@@ -1240,6 +1266,7 @@ Json SharedLuaAdapter::StateDocument() const {
           {"activate", true},
           {"allocate_ap", true},
           {"allocate_sp", true},
+          {"window", false},
           {"stop", true},
           {"raw_keys", false},
           {"skill", true},
@@ -1252,6 +1279,7 @@ Json SharedLuaAdapter::StateDocument() const {
           {"reason", result.reason}}}};
     if (result.allocation.Type() != MapleControl::Value::Kind::Null)
         document["action_result"]["allocation"] = Json::parse(result.allocation.Dump());
+    if (!result.sessionId.empty()) document["action_result"]["session_id"] = result.sessionId;
     if (lastSkill)
         document["last_skill"] = {{"skill_id", lastSkill->id},
                                   {"native_result", lastSkill->result.nativeResult},

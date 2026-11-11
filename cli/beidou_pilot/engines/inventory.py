@@ -3,9 +3,15 @@
 
 import argparse
 import json
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 
 from ..observations import observe_domain
+
+
+class EquipmentProperties(TypedDict):
+    object_ref: str | None
+    ordinary: NotRequired[bool]
+    body_slots: NotRequired[list[int]]
 
 
 class InventoryItem(TypedDict):
@@ -13,6 +19,7 @@ class InventoryItem(TypedDict):
     slot: int
     item_id: int
     quantity: int | None
+    equipment: NotRequired[EquipmentProperties]
 
 
 class InventorySnapshot(TypedDict):

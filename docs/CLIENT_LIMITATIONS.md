@@ -15,7 +15,7 @@
 | 用户需要的结果 | 当前成本或边界 | 跟踪 |
 | --- | --- | --- |
 | Lua直接消费已有领域事实 | `game.observe(domain)` 已接入原生领域；保留各端支持、来源及非实时限制 | [#40](https://github.com/Diluka/beidou-pilot/issues/40) |
-| 同会话连续完成GUI交互与养成 | 已有CLI流程尚无完整Lua语义入口；batch不承担动态判断 | [#41](https://github.com/Diluka/beidou-pilot/issues/41) |
+| 同会话连续完成GUI交互与养成 | GUI Lua 已接入普通唯一槽位穿戴、AP/SP及三种必要窗口；NPC/商店仍按各自范围，batch不承担动态判断 | [#41](https://github.com/Diluka/beidou-pilot/issues/41) |
 | 可靠打开可见近距NPC | GUI仍需可核实图形范围与有效目标；无头使用当前原生引用 | [#42](https://github.com/Diluka/beidou-pilot/issues/42) |
 | 知道箱子等对象当前是否存在及已知状态 | 原生内部实现不等于公开结构化观察 | [#43](https://github.com/Diluka/beidou-pilot/issues/43) |
 | 沿已知路线跨层、进入相邻地图并确认到达 | 仍需消费者自行编写逐段组合与确认 | [#44](https://github.com/Diluka/beidou-pilot/issues/44) |

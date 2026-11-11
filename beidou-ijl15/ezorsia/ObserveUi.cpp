@@ -78,6 +78,7 @@ struct Button {
     Point absolute;
     std::string source;
     bool uiEligible = false;
+    Value enabled;
 };
 
 struct WindowLayout {
@@ -118,6 +119,12 @@ WindowLayout ReadWindowLayout(Address address, const std::vector<unsigned char>&
             const auto origin = At<Address>(control, 0x18);
             button.width = At<unsigned int>(control, 0x1C);
             button.height = At<unsigned int>(control, 0x20);
+            // Native SetEnable (0x4c0e05 -> 0x4e01f6) and getter
+            // (0x4259dd) use IUIMsgHandler+0x28, i.e. CCtrlWnd+0x2c.
+            if (Read<Address>(child + 4) == 0x00AF0BC4) {
+                const auto enabled = Read<int>(child + 0x2C);
+                if (enabled == 0 || enabled == 1) button.enabled = enabled != 0;
+            }
             if (At<Address>(control, 0x24) != address)
                 throw ReadError("CWnd button parent does not match the observed window");
             if (origin != 0 && Read<Address>(origin) == 0x5140C0FC) {
@@ -467,7 +474,7 @@ Value CaptureWindow(Address address, const OptionalRect& camera) {
     for (const auto& button : layout.buttons) if (button.uiEligible) {
         buttons.Add(Value::Object({{"control_id", button.id},
             {"layout_x", button.local.x}, {"layout_y", button.local.y},
-            {"width", button.width}, {"height", button.height}}));
+            {"width", button.width}, {"height", button.height}, {"enabled", button.enabled}}));
     }
     Value inventory;
     if (tables[0] == 0x00B39108) {
@@ -493,6 +500,8 @@ Value CaptureWindow(Address address, const OptionalRect& camera) {
     }
     const auto name = WindowName(tables[0]);
     return Value::Object({{"address", Hex(address)}, {"vtables", Tables(tables)},
+        {"instance_ref", Hex(address) + ":" + Hex(At<Address>(header, 0x18)) + ":"
+            + Hex(At<Address>(header, 0x5C))},
         {"type_name", name == nullptr ? Value() : Value(name)}, {"width", width}, {"height", height},
         {"game_rect", Rectangle(layout.game)}, {"root_rect", Value()},
         {"buttons", buttons}, {"skills", skills}, {"inventory", inventory}});
@@ -500,6 +509,25 @@ Value CaptureWindow(Address address, const OptionalRect& camera) {
 }
 
 Value Dialog() { return CaptureDialog().value; }
+
+bool WindowActive(std::uintptr_t address, bool& known) {
+    known = false;
+    try {
+        const auto before = Read<std::array<Address, 3>>(0x00BF1650);
+        if (before[0] > 256) return false;
+        Address node = before[1];
+        bool found = false;
+        for (Address index = 0; index < before[0]; ++index) {
+            if (node == 0) return false;
+            if (Read<Address>(node) == address) found = true;
+            const auto next = Read<Address>(node - 12);
+            node = next == 0 ? 0 : next + 16;
+        }
+        if (node != 0 || Read<std::array<Address, 3>>(0x00BF1650) != before) return false;
+        known = true;
+        return found;
+    } catch (const ReadError&) { return false; }
+}
 
 Value Window(std::uintptr_t address) { return CaptureWindow(static_cast<Address>(address), Camera()); }
 

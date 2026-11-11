@@ -50,6 +50,7 @@ private:
     void ApplyRelease();
     MapleControl::AllocationFacts AllocationFacts() const;
     void CaptureAllocation();
+    std::string EquipmentReference(const ms::Equip* item) const;
     void CaptureInteraction();
     bool OpenNpc(std::int32_t objectId, std::int32_t npcId, std::string& error);
     bool OpenServerNpc(std::int32_t objectId, std::int32_t npcId, std::string& error);

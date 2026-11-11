@@ -27,7 +27,8 @@ enum class ActionKind {
     Revive,
     Activate,
     AllocateAp,
-    AllocateSp
+    AllocateSp,
+    Window
 };
 
 struct Character {
@@ -106,6 +107,7 @@ struct Action {
     int destinationSlot = 0;
     std::string reference;
     AllocationRequest allocation;
+    std::string sessionId;
 };
 
 struct SkillResult {
@@ -124,6 +126,9 @@ struct ActionResult {
     bool skillRequested = false;
     SkillResult skill;
     Value allocation;
+    Value ui;
+    Value equipment;
+    std::string sessionId;
 };
 
 // Each host supplies only native execution and its current state. The Lua

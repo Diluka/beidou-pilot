@@ -1,7 +1,7 @@
 """通过原生观察 API 读取活动窗口、布局与键盘焦点。"""
 
 import json
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 
 from .dialog import DialogRect, DialogSnapshot
 from ..observations import observe_domain, project_geometry
@@ -20,6 +20,7 @@ class UIButton(TypedDict):
     layout_y: int
     width: int
     height: int
+    enabled: NotRequired[bool | None]
 
 
 class SkillsView(TypedDict):
@@ -37,6 +38,7 @@ class InventoryView(TypedDict):
 
 class UIWindow(TypedDict):
     address: str
+    instance_ref: NotRequired[str]
     vtables: list[str]
     type_name: str | None
     width: int

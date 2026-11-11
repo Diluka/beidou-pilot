@@ -1,0 +1,343 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+#include "NativeCare.h"
+
+#include <cassert>
+#include <string>
+#include <vector>
+
+using namespace BeiDouBridge;
+using namespace MapleControl;
+
+State StateFixture() {
+    State state;
+    state.instanceId = "gui-contract";
+    state.character.id = 7;
+    state.sceneGeneration = 2;
+    state.ready = state.characterKnown = state.inGame = true;
+    state.character.values[1] = 100;
+    state.character.values[2] = 10;
+    state.character.values[6] = 100;
+    state.character.values[10] = state.character.values[11] = 5;
+    state.character.known.fill(true);
+    return state;
+}
+
+CareView ViewFixture(const std::string& name = "stats") {
+    CareView view;
+    view.known = true;
+    view.nativeUser = 77;
+    view.characterId = 7;
+    view.sceneGeneration = 2;
+    view.width = 1280;
+    view.height = 720;
+    view.focusedWindow = 100;
+    view.skillsKnown = view.sceneKnown = true;
+    CareWindow window;
+    window.address = 100;
+    window.identity = "window-1";
+    window.name = name;
+    window.geometryKnown = true;
+    window.rect = {0, 0, name == "stats" ? 210 : 175, name == "stats" ? 348 : 289};
+    window.skillsKnown = true;
+    window.tabCount = 2;
+    window.skills = {1000000};
+    window.buttons = {{name == "stats" ? 2002u : 2010u, {140, 120, 12, 12}, true, true}};
+    view.windows.push_back(window);
+    return view;
+}
+
+void CheckAllocationFacts(const NativeCare& care, unsigned allocated, bool pending) {
+    const auto data = care.Result().allocation.Dump();
+    assert(data.find("\"allocated\":" + std::to_string(allocated) + ",") != std::string::npos);
+    assert(data.find(std::string("\"point_pending\":") + (pending ? "true" : "false")) != std::string::npos);
+}
+
+void MouseContract() {
+    NativeMouseInput mouse;
+    NativeMouseInput::Target target;
+    target.character = 77;
+    target.scene = 2;
+    target.clicks = 2;
+    target.point = true;
+    std::uint64_t updates = 1;
+    std::vector<NativeMouseInput::Event> events;
+    auto send = [&](auto event, const auto&, std::uint64_t epoch) {
+        events.push_back(event);
+        if (event == NativeMouseInput::Event::Down) {
+            mouse.MarkDispatched(epoch);
+            mouse.Release();
+            // Reentrant cancellation must deliver up but never the second click.
+            mouse.Flush(
+                5,
+                [&](auto nested, const auto&, std::uint64_t) {
+                    events.push_back(nested);
+                    return true;
+                },
+                [&] { return updates; });
+        }
+        return true;
+    };
+    assert(mouse.Request(target, 0));
+    assert(mouse.Flush(0, send, [&] { return updates; }));
+    assert(mouse.Flush(1, send, [&] { return updates; }));
+    assert(!mouse.Held() && mouse.Owned() && mouse.PointDispatched());
+    assert(mouse.Cancelled());
+    assert(!mouse.Released());
+    assert(mouse.Flush(6, send, [&] { return updates; }));
+    assert(!mouse.ConfirmRelease(77, updates, false));
+    assert(!mouse.ConfirmRelease(88, ++updates, false));
+    assert(mouse.ConfirmRelease(77, ++updates, false));
+    assert(mouse.Released() && !mouse.Owned());
+    assert(events
+           == std::vector<NativeMouseInput::Event>(
+               {NativeMouseInput::Event::Position, NativeMouseInput::Event::Down, NativeMouseInput::Event::Up}));
+    mouse.ResetReport();
+    assert(!mouse.PointDispatched());
+
+    // A failed up remains required; new input cannot take over until it is delivered.
+    target.clicks = 1;
+    assert(mouse.Request(target, 10));
+    auto ordinary = [&](auto event, const auto&, std::uint64_t epoch) {
+        if (event == NativeMouseInput::Event::Down) mouse.MarkDispatched(epoch);
+        return true;
+    };
+    mouse.Flush(10, ordinary, [&] { return updates; });
+    mouse.Flush(11, ordinary, [&] { return updates; });
+    mouse.Release();
+    assert(!mouse.Flush(12, [](auto, const auto&, auto) { return false; }, [&] { return updates; }));
+    assert(mouse.ReleasePending() && !mouse.Request(target, 13));
+    mouse.Flush(13, ordinary, [&] { return updates; });
+    assert(mouse.ConfirmRelease(77, ++updates, false));
+}
+
+void CareContract() {
+    auto state = StateFixture();
+    auto view = ViewFixture();
+    Action ap;
+    ap.kind = ActionKind::AllocateAp;
+    ap.allocation.stat = "strength";
+    ap.allocation.count = 2;
+    ap.allocation.timeoutMs = 100;
+    NativeCare care;
+    std::vector<NativeMouseInput::Target> requests;
+    std::vector<unsigned> keys;
+    auto mouse = [&](const auto& request) {
+        requests.push_back(request);
+        return true;
+    };
+    auto key = [&](unsigned value) {
+        keys.push_back(value);
+        return true;
+    };
+    assert(care.Begin(ap, state, view, 0));
+    care.Tick(state, view, 1, true, mouse, key);
+    assert(requests.size() == 1 && requests.back().point);
+    CheckAllocationFacts(care, 0, false);
+    // Queuing a click is not a point request or a confirmation.
+    --state.character.values[10];
+    ++state.character.values[2];
+    assert(!care.DispatchPoint(state, view, requests.back(), 2));
+    assert(!care.Active() && care.Result().reason == "allocation_baseline_changed");
+    CheckAllocationFacts(care, 0, false);
+
+    state = StateFixture();
+    requests.clear();
+    assert(care.Begin(ap, state, view, 0));
+    care.Tick(state, view, 1, true, mouse, key);
+    assert(care.DispatchPoint(state, view, requests.back(), 2));
+    --state.character.values[10];
+    ++state.character.values[2];
+    care.Tick(state, view, 3, false, mouse, key);
+    CheckAllocationFacts(care, 0, true);
+    care.Tick(state, view, 4, true, mouse, key);
+    CheckAllocationFacts(care, 1, false);
+    care.Tick(state, view, 5, true, mouse, key);
+    assert(requests.size() == 2);
+    assert(care.DispatchPoint(state, view, requests.back(), 6));
+    care.Cancel(state, view, 7, "explicit_cancel", false);
+    care.Tick(state, view, 8, true, mouse, key);
+    assert(!care.Active() && requests.size() == 2);
+    CheckAllocationFacts(care, 1, true);
+
+    // A native disabled skill is refused without any point request.
+    view = ViewFixture("skills");
+    view.windows[0].buttons[0].enabled = false;
+    Action sp;
+    sp.kind = ActionKind::AllocateSp;
+    sp.allocation.skill = true;
+    sp.allocation.skillId = 1000000;
+    requests.clear();
+    assert(care.Begin(sp, state, view, 0));
+    care.Tick(state, view, 1, true, mouse, key);
+    assert(!care.Active() && requests.empty() && care.Result().reason == "allocation_not_enabled");
+    CheckAllocationFacts(care, 0, false);
+
+    // Changing/reusing the window address with a new native identity invalidates the operation.
+    view = ViewFixture();
+    requests.clear();
+    assert(care.Begin(ap, state, view, 0));
+    care.Tick(state, view, 1, true, mouse, key);
+    view.windows[0].identity = "window-2";
+    assert(!care.DispatchPoint(state, view, requests.back(), 2));
+    care.Tick(state, view, 3, true, mouse, key);
+    assert(!care.Active() && requests.size() == 1);
+
+    // A job change while the UI press is in flight cancels before another edge.
+    state = StateFixture();
+    view = ViewFixture();
+    requests.clear();
+    assert(care.Begin(ap, state, view, 0));
+    care.Tick(state, view, 1, true, mouse, key);
+    assert(care.DispatchPoint(state, view, requests.back(), 2));
+    state.character.values[1] = 200;
+    care.Tick(state, view, 3, false, mouse, key);
+    assert(!care.Active());
+    CheckAllocationFacts(care, 0, true);
+}
+
+void EquipmentContract() {
+    auto state = StateFixture();
+    auto view = ViewFixture("inventory");
+    auto& window = view.windows[0];
+    window.inventoryKnown = true;
+    window.firstSlot = 1;
+    window.inventoryType = 1;
+    view.inventoryKnown = true;
+    view.inventory[1] = {1302000, "source-object", true, true, {-11}};
+    view.inventory[-11] = {1332066, "wearing-object", true, true, {-11}};
+    Action equip;
+    equip.kind = ActionKind::Equip;
+    equip.sourceSlot = 1;
+    equip.destinationSlot = -11;
+    equip.durationMs = 1000;
+    equip.reference = "source-object";
+    NativeCare care;
+    std::vector<NativeMouseInput::Target> inputs;
+    auto mouse = [&](const auto& target) {
+        inputs.push_back(target);
+        return true;
+    };
+    auto key = [](unsigned) { return true; };
+    assert(care.Begin(equip, state, view, 0));
+    assert(!care.ReleasePending(false, true)); // Pulse release cannot suppress whole-workflow cancellation.
+    care.Tick(state, view, 1, true, mouse, key);
+    assert(inputs.size() == 1 && inputs[0].equipment && inputs[0].clicks == 2);
+    assert(care.DispatchEquipment(state, view, inputs[0]));
+    view.dragObject = 900;
+    view.dragInventoryType = 1;
+    view.dragSlot = 1;
+    care.ObserveCleanup(state, view);
+    std::swap(view.inventory[1], view.inventory[-11]);
+    care.Tick(state, view, 2, false, mouse, key);
+    assert(!care.Active() && care.Result().effect == "confirmed" && care.CleanupPending());
+    assert(care.ReleasePending(false, false) && care.CanEscape(view));
+    care.EscapeSent();
+    assert(!care.CanEscape(view));
+    view.dragObject = 0;
+    care.ObserveCleanup(state, view);
+    assert(!care.CleanupPending());
+    care.FinishScope();
+    view.dragObject = 999;
+    view.dragSlot = 1;
+    care.ObserveCleanup(state, view);
+    assert(!care.CleanupPending() && !care.CanEscape(view));
+    view.dragObject = 0;
+    care.Tick(state, view, 3, true, mouse, key);
+    assert(inputs.size() == 1);
+
+    // Same item ID with a new native reference invalidates the old request.
+    std::swap(view.inventory[1], view.inventory[-11]);
+    view.inventory[1].reference = "replacement-object";
+    assert(care.Begin(equip, state, view, 4));
+    assert(!care.Active() && care.Result().reason == "equipment_reference_expired");
+    assert(inputs.size() == 1);
+
+    // Cash and ambiguous automatic destinations are refused before a click.
+    equip.reference = "replacement-object";
+    view.inventory[1].ordinary = false;
+    assert(care.Begin(equip, state, view, 5));
+    assert(!care.Active());
+    view.inventory[1].ordinary = true;
+    view.inventory[1].bodySlots = {-12, -13};
+    assert(care.Begin(equip, state, view, 6));
+    assert(!care.Active());
+    view.inventory[1].bodySlots = {-11};
+    assert(care.Begin(equip, state, view, 7));
+    care.Tick(state, view, 8, true, mouse, key);
+    assert(care.DispatchEquipment(state, view, inputs.back()));
+    // Cancellation observes a late native drag, but never clears another drag.
+    care.Cancel(state, view, 9);
+    view.dragObject = 901;
+    care.ObserveCleanup(state, view);
+    assert(care.CleanupPending() && care.CanEscape(view));
+    view.dragObject = 902;
+    view.dragSlot = 2;
+    care.ObserveCleanup(state, view);
+    assert(!care.CleanupPending() && !care.CanEscape(view));
+}
+
+void WindowContract() {
+    auto state = StateFixture();
+    auto view = ViewFixture();
+    Action action;
+    action.kind = ActionKind::Window;
+    action.reference = "stats";
+    action.direction = "open";
+    action.durationMs = 1000;
+    NativeCare care;
+    std::vector<unsigned> keys;
+    std::vector<NativeMouseInput::Target> clicks;
+    auto mouse = [&](const auto& target) {
+        clicks.push_back(target);
+        return true;
+    };
+    auto key = [&](unsigned value) {
+        keys.push_back(value);
+        return true;
+    };
+    NativeMouseInput::Target root;
+    root.x = 320;
+    root.y = 110;
+    assert(NativeCare::AllowsTarget(view, root));
+    auto popup = view.windows[0];
+    popup.address = 200;
+    popup.rect = {300, 100, 100, 100};
+    view.windows.push_back(popup);
+    assert(!NativeCare::AllowsTarget(view, root));
+    view.windows.pop_back();
+    view.npcs.emplace_back(320, 150);
+    assert(!NativeCare::AllowsTarget(view, root));
+    view.npcs.clear();
+    int releaseX = 0, releaseY = 0;
+    assert(NativeCare::CancelPoint(view, 100, releaseX, releaseY));
+    assert(!view.windows[0].rect.Contains(releaseX, releaseY));
+    view.windows.clear();
+    view.gameFocused = true;
+    assert(care.Begin(action, state, view, 0));
+    care.Tick(state, view, 1, true, mouse, key);
+    care.Tick(state, view, 2, true, mouse, key);
+    assert(keys == std::vector<unsigned>{'S'} && care.Active());
+    view = ViewFixture();
+    care.Tick(state, view, 3, false, mouse, key);
+    assert(care.Active());
+    care.Tick(state, view, 4, true, mouse, key);
+    assert(!care.Active() && care.Result().effect == "confirmed");
+
+    action.direction = "close";
+    assert(care.Begin(action, state, view, 10));
+    care.Tick(state, view, 11, true, mouse, key);
+    assert(clicks.size() == 1 && clicks.back().window == 0);
+    view.gameFocused = true;
+    care.Tick(state, view, 12, true, mouse, key);
+    assert(keys.size() == 2);
+    view.windows.clear();
+    care.Tick(state, view, 13, true, mouse, key);
+    assert(!care.Active() && care.Result().effect == "confirmed");
+}
+
+int main() {
+    MouseContract();
+    CareContract();
+    EquipmentContract();
+    WindowContract();
+}

@@ -685,12 +685,12 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             return travel.climb(backend, args.x, args.to_y, seconds=args.seconds)
         return travel.portal(backend, args.name, seconds=args.seconds)
     if cmd == "ui":
-        from . import ui
+        from .control_scripts import window
 
         if args.action == "read":
             return backend.read("ui")
         if args.action == "focus":
-            return ui.focus_game(backend)
+            return window(backend, "game")
         if args.window is None:
             raise ClientError("usage", "ui open/close需要窗口名。")
         if args.window == "all":
@@ -701,7 +701,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             closed_shop = close_shop(backend)
             return {
                 "shop": closed_shop,
-                "windows": [ui.close_window(backend, w) for w in ("skills", "stats", "inventory")],
+                "windows": [window(backend, w, False) for w in ("skills", "stats", "inventory")],
             }
         if args.window == "shop":
             if args.action != "close":
@@ -709,7 +709,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             from .shop import close_shop
 
             return close_shop(backend)
-        return (ui.open_window if args.action == "open" else ui.close_window)(backend, args.window)
+        return window(backend, args.window, args.action == "open")
     if cmd == "unequip" or cmd == "equip" and backend.name == "headless":
         from .control_scripts import change_equipment
 
@@ -744,20 +744,12 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             backend, item, count=args.count, until_hp=args.until_hp, until_mp=args.until_mp, seconds=args.seconds
         )
     if cmd in ("stats", "skills"):
-        from . import stats
+        from .control_scripts import allocate
 
         if args.count < 1:
             raise ClientError("usage", "点数必须为正整数。")
         attributes = {"str": "strength", "dex": "dexterity", "int": "intelligence", "luk": "luck"}
-        if backend.name == "headless":
-            from .control_scripts import allocate
-
-            return allocate(backend, attributes[args.stat] if cmd == "stats" else args.skill, args.count)
-        return (
-            stats.allocate_ap(backend, attributes[args.stat], args.count)
-            if cmd == "stats"
-            else stats.allocate_sp(backend, args.skill, args.count)
-        )
+        return allocate(backend, attributes[args.stat] if cmd == "stats" else args.skill, args.count)
     if cmd in ("hotkeys", "bind", "press"):
         from . import hotkeys
 

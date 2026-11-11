@@ -119,8 +119,11 @@ public:
         if (active) Stop("allocation_confirmation_stopped");
     }
 
-    void Cancel(const AllocationFacts& facts, std::uint64_t now) {
-        Tick(facts, now, false);
+    void Cancel(const AllocationFacts& facts, std::uint64_t now, bool mayConfirm = true) {
+        if (mayConfirm)
+            Tick(facts, now, false);
+        else if (active)
+            current = facts;
         Cancel();
     }
 
@@ -130,6 +133,10 @@ public:
 
     bool Dispatched() const { return dispatched; }
 
+    bool Pending() const { return pending; }
+
+    unsigned Allocated() const { return allocated; }
+
     const std::string& Reason() const { return reason; }
 
     Value Report() const {
@@ -138,6 +145,8 @@ public:
                               {"skill_id", request.skill ? Value(request.skillId) : Value()},
                               {"character_id", initial.characterId},
                               {"scene_generation", initial.sceneGeneration},
+                              {"job_before", initial.job},
+                              {"job_after", current.known ? Value(current.job) : Value()},
                               {"requested", request.count},
                               {"allocated", allocated},
                               {"point_pending", pending},

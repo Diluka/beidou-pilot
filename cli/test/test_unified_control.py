@@ -133,13 +133,18 @@ class UnifiedControlContract(unittest.TestCase):
         for command, status, effect, code in cases:
             with self.subTest(command=command, status=status, effect=effect):
                 native_result = {
+                    "session_id": "growth-session",
                     "dispatched": True,
                     "control_released": True,
                     "settled": None,
                     "effect": effect,
                     "reason": "equipment_changed" if effect == "confirmed" else "equipment_confirmation_timeout",
                 }
-                report = {"status": status, "last_state": {"action_result": native_result}}
+                report = {
+                    "script_id": "growth-session",
+                    "status": status,
+                    "last_state": {"action_result": native_result},
+                }
                 with patch("beidou_pilot.control_scripts.run_source", return_value=report) as run:
                     with patch.object(Backend, "_run") as desktop:
                         output = io.StringIO()
@@ -176,8 +181,12 @@ class UnifiedControlContract(unittest.TestCase):
                         "skill_id" if skill else "stat": target,
                         "point_pending": allocated != 2,
                     }
-                    result = {"allocation": allocation, "effect": "confirmed" if allocated == 2 else "unknown"}
-                    report = {"status": status, "last_state": {"action_result": result}}
+                    result = {
+                        "session_id": "growth-session",
+                        "allocation": allocation,
+                        "effect": "confirmed" if allocated == 2 else "unknown",
+                    }
+                    report = {"script_id": "growth-session", "status": status, "last_state": {"action_result": result}}
                     with patch("beidou_pilot.control_scripts.run_source", return_value=report) as run:
                         with patch.object(Backend, "_run") as desktop:
                             output = io.StringIO()

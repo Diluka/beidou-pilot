@@ -9,12 +9,28 @@
 
 namespace NativeObservation {
 namespace {
+std::string equipmentContext;
+std::uint32_t equipmentCharacter = 0;
+
 std::uint64_t UnixMs() {
     FILETIME time{};
     GetSystemTimeAsFileTime(&time);
     const auto ticks = (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
     return (ticks - 116444736000000000ULL) / 10000;
 }
+}
+
+void BindEquipmentContext(const std::string& instance, std::uint32_t character, std::uint64_t generation) {
+    equipmentCharacter = character;
+    equipmentContext =
+        character == 0 ? "" : instance + ":" + std::to_string(character) + ":" + std::to_string(generation);
+}
+
+std::string EquipmentReference(std::uintptr_t item, std::uint32_t character) {
+    if (equipmentContext.empty() || item == 0 || character != equipmentCharacter) return {};
+    std::ostringstream value;
+    value << equipmentContext << ':' << std::hex << item;
+    return value.str();
 }
 
 void Copy(std::uintptr_t address, void* output, std::size_t size) {

@@ -56,6 +56,13 @@ def run_strategy(backend: Backend, name: str, options: JsonObject, seconds: floa
     return {**report, "strategy": name, "script_file": str(path)}
 
 
+def _session_result(report: JsonObject) -> JsonObject | None:
+    state = cast(JsonObject, report["last_state"])
+    result = cast(JsonObject | None, state.get("action_result"))
+    session = report.get("script_id")
+    return result if result is not None and session is not None and result.get("session_id") == session else None
+
+
 def action(
     backend: Backend, name: str, *, direction: str | None = None, seconds: float = 0.3, item_id: int | None = None
 ) -> JsonObject:
@@ -104,25 +111,39 @@ def change_equipment(
     unequip: bool = False,
     item_id: int | None = None,
     seconds: float = 3,
+    reference: str | None = None,
 ) -> JsonObject:
     if not math.isfinite(seconds) or not 0.001 <= seconds <= 30:
         raise ClientError("invalid_equipment_duration", "换装确认期限须为0.001至30秒。")
     name = "unequip" if unequip else "equip"
+    if reference is not None and (not reference or len(reference.encode("utf-8")) > 128 or "\0" in reference):
+        raise ClientError("invalid_equipment_reference", "装备对象引用须为1至128字节，且不含NUL。")
     source = ""
-    if item_id is not None:
+    if item_id is not None or reference is not None:
+        inventory_list = "equipped" if unequip else "items"
         source = (
             'local inventory = game.observe("inventory")\n'
             'assert(inventory.status == "ok", "inventory_unavailable")\n'
             "local selected\n"
-            f"for _, item in ipairs(inventory.data.items) do if item.slot == {source_slot} "
+            f"for _, item in ipairs(inventory.data.{inventory_list}) do if item.slot == {source_slot} "
             "and item.inventory_type == 1 then selected = item; break end end\n"
-            f'assert(selected and selected.item_id == {item_id}, "equipment_source_changed")\n'
         )
-    source += f"game.{name}({source_slot}, {destination_slot}, {_lua_literal(seconds)})\n"
+        if item_id is not None:
+            source += f'assert(selected and selected.item_id == {item_id}, "equipment_source_changed")\n'
+    if reference is not None:
+        source += (
+            "assert(selected and selected.equipment and selected.equipment.object_ref == "
+            + _lua_literal(reference)
+            + ', "equipment_reference_expired")\n'
+        )
+    arguments = f"{source_slot}, {destination_slot}, {_lua_literal(seconds)}"
+    if reference is not None:
+        arguments += ", " + _lua_literal(reference)
+    source += f"game.{name}({arguments})\n"
     report = run_source(backend, source, seconds + 2)
     state = cast(JsonObject, report["last_state"])
-    result = cast(JsonObject, state["action_result"])
-    confirmed = report["status"] == "completed" and result["effect"] == "confirmed"
+    result = _session_result(report)
+    confirmed = report["status"] == "completed" and result is not None and result.get("effect") == "confirmed"
     projected: JsonObject = {
         **report,
         "action": name,
@@ -130,11 +151,52 @@ def change_equipment(
         "destination_slot": destination_slot,
         "item_id": item_id,
         "action_result": result,
-        "effect": result["effect"],
+        "effect": result.get("effect", "unknown") if result else "unknown",
         "confirmed": confirmed,
     }
     if report["status"] == "completed" and not confirmed:
         raise ClientError("equipment_change_unconfirmed", "本次换装实际槽位变化未确认，未重试。", projected)
+    return projected
+
+
+def window(backend: Backend, name: str, opened: bool = True) -> JsonObject:
+    if backend.name != "beidou" or name not in {"inventory", "stats", "skills", "game"}:
+        raise ClientError("unsupported_capability", "仅GUI提供已识别窗口与游戏焦点入口。")
+    source = "game.focus()\n" if name == "game" else f"game.window({_lua_literal(name)}, {_lua_literal(opened)})\n"
+    report = run_source(backend, source, 5)
+    state = cast(JsonObject, report["last_state"])
+    result = _session_result(report)
+    observed = cast(JsonObject | None, result.get("ui")) if result else None
+    confirmed = (
+        report["status"] == "completed"
+        and result is not None
+        and result.get("effect") == "confirmed"
+        and observed is not None
+        and observed.get("window") == name
+        and (observed.get("game_focused") is True if name == "game" else observed.get("open") is opened)
+    )
+    projected: JsonObject = {**report, "action_result": result, "confirmed": confirmed, "ui": observed}
+    if report["status"] == "completed" and not confirmed:
+        raise ClientError("ui_not_confirmed", "窗口或焦点未确认，未重复发送输入。", projected)
+    if confirmed and name == "game":
+        projected.update(focused=True, changed=bool(result and result.get("dispatched")))
+    elif confirmed and not opened:
+        projected.update(
+            window=name,
+            closed=True,
+            already_closed=not observed.get("instance_ref"),
+            changed=bool(result and result.get("dispatched")),
+        )
+    elif confirmed:
+        observed_ui = backend.read("ui")
+        matches = [
+            entry
+            for entry in cast(list[JsonObject], observed_ui["windows"])
+            if entry.get("instance_ref") == observed.get("instance_ref")
+        ]
+        if len(matches) != 1:
+            raise ClientError("ui_window_changed", "窗口已变化，不能返回旧对象。", projected)
+        projected.update(matches[0])
     return projected
 
 
@@ -147,9 +209,13 @@ def allocate(backend: Backend, target: str | int, count: int) -> JsonObject:
     ):
         raise ClientError("invalid_allocation", "指定基础属性或正32位技能ID，以及1至100点。")
     name = "allocate_sp" if skill else "allocate_ap"
-    report = run_source(backend, f"game.{name}({_lua_literal(target)}, {count})\n", min(600, count * 1.2 + 3))
+    report = run_source(
+        backend,
+        f"game.{name}({_lua_literal(target)}, {count})\n",
+        min(600, count * 1.2 + (10 if backend.name == "beidou" else 3)),
+    )
     state = cast(JsonObject, report["last_state"])
-    result = cast(JsonObject | None, state.get("action_result"))
+    result = _session_result(report)
     allocation = cast(JsonObject | None, result.get("allocation")) if result else None
     matches = (
         allocation is not None
