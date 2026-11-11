@@ -32,11 +32,15 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/tes
 mkdir -p tmp/ci-reproduction/workbench
 jq -n --arg ref "$(git rev-parse HEAD)" '{ref:$ref}' \
   > tmp/ci-reproduction/workbench/workbench.json
-image=$(private/workbenches/workbench "$PWD/tmp/ci-reproduction/workbench" build | jq -er .data.image)
+private/workbenches/workbench "$PWD/tmp/ci-reproduction/workbench" build \
+  > tmp/ci-reproduction/build.json
+image=$(jq -er .data.image tmp/ci-reproduction/build.json)
 docker run --rm --entrypoint beidou-pilot "$image" --help
 ```
 
 无头构建只使用源码与固定依赖，不需要游戏素材、账号配置或游戏服务器访问，不推送镜像。CI job 内部直接调用同一份 `docker/headless/Dockerfile`，用户构建统一经 `private/workbenches/workbench DIR build`。容器入口默认需要运行配置；打包检查显式选择 `beidou-pilot` 帮助入口，不启动游戏。
+
+再次执行同一条 `build` 并保存另一份结果，可比较 `data.preparation` 中各阶段的 `outcome/duration_ms` 与实际镜像 ID。GUI 报告复用已有桥 manifest，不要求重新下载已装入镜像的工件。`data.current_instance` 用于核对所属实例与准备镜像的关系；准备不改变运行中的客户端。失败时结合 `error.stage`、已完成阶段及 stderr 定位问题，不把构建失败后的旧镜像当作本次成功产物。
 
 网络需能下载子模块、基础镜像及 Debian 构建包。确认网络权限并按项目网络规则选择代理后，可在启动构建前导出 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`；统一入口按 Docker标准build args 透传这些变量。代理地址须能从构建网络访问，文档不固定本机地址。
 
