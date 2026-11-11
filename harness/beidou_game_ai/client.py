@@ -27,15 +27,8 @@ class HuntRequest(TypedDict):
 
 
 class GameClient:
-    def __init__(self, cli: Path, workbench: Path, instance: str) -> None:
-        self._arguments = [
-            str(cli.resolve()),
-            "--workbench",
-            str(workbench.resolve()),
-            "--instance",
-            instance,
-            "--json",
-        ]
+    def __init__(self, cli: Path, workbench: Path) -> None:
+        self._arguments = [str(cli.resolve()), str(workbench.resolve())]
         self._identity: tuple[str, str] | None = None
         self._script_process: asyncio.subprocess.Process | None = None
         self._running = False

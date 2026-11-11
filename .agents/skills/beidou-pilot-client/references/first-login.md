@@ -16,7 +16,7 @@
 
 1. 核对目标是否支持正常游戏登录自动注册。历史 [#19](https://github.com/Diluka/beidou-pilot/issues/19) 核实过 `automatic_register` 开启时可由正常登录创建账号；这不保证任意目标或当前配置都开启。优先使用目标已有的正常账号入口，不为建号修改服务器配置。
 2. 本机索引若提供外部管理 CLI，先读其所属仓库的操作约定与技能，再用 `--help` 和 `apis account` 发现正常注册 API；别把管理 CLI 和本仓库客户端当成同一程序。本机既有工具曾静态列出 `POST /account/v1`，字段为 `name/password/language`，但静态清单不能证明运行版本支持。实际调用前核对目标与当前工具契约，凭据通过工具支持的私密输入提供。
-3. 仅在已授权的隔离目标执行正常注册。管理工具可能默认连接常驻服务；不能直接套用默认配置或为了试探而创建账号。业务成功须核对实际响应；本机管理工具约定的 `code=20000` 与 HTTP 200 是不同条件。
+3. 仅在已授权的隔离目标执行正常注册。客户端入口和管理工具都可能默认连接常驻服务；开发工作目录必须显式配置 `workbench.json.server`，并核对管理工具自己的目标，不能为试探而创建账号。业务成功须核对实际响应；本机管理工具约定的 `code=20000` 与 HTTP 200 是不同条件。
 4. 注册结果只证明账号已创建。继续确认是否已有角色和真实 CID；没有角色就进入下面的首次流程，不能先生成一份看似完整的账号配置。
 
 不通过 SQL、直接账号/角色表写入、复制存档或服务端指令补造角色；不操作正式环境数据源。正常入口不可用时，报告具体缺口或所缺权限，继续完成不受影响的准备。
@@ -31,8 +31,8 @@
 对已存在且归属正确的 GUI 会话，按当前状态操作：
 
 ```bash
-./beidou-pilot --workbench /external/gui-workbench --json inspect stage
-./beidou-pilot --workbench /external/gui-workbench --json screenshot
+private/workbenches/workbench /external/gui-workbench inspect stage
+private/workbenches/workbench /external/gui-workbench screenshot
 ```
 
 | 实际界面/结果 | 正常处理与确认 |
@@ -49,8 +49,8 @@
 docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop scroll down --ticks 1
 ```
 
-每轮观察实际界面进展；首次声明、性别和空角色列表均不能靠延长 `open --timeout` 解决。不要输出凭据或使用会把密码放进进程参数、日志的输入方式。
+每轮观察实际界面进展；首次声明、性别和空角色列表均不能靠延长工作台的入图等待设置解决。不要输出凭据或使用会把密码放进进程参数、日志的输入方式。
 
-确认真实 CID 后，在所属外部工作台保存权限为 `0600` 的 `account.json`，包含 `username/password/character_id` 和所需 `world/channel`，并配套 `server.json`。工作台整体挂到 `/work`，启动时使用本轮 `/work/runtime/INSTANCE/RUN_ID/` 中的配置快照；修改工作台原件不会替换已有实例的快照。若该容器原快照不匹配，先保存进度并正常关闭，再用真实账号配置建立实例；不能把不匹配的 `open` 当成会切换账号。
+确认真实 CID 后，在所属外部工作台保存权限为 `0600` 的 `account.json`，包含 `username/password/character_id` 和所需 `world/channel`。普通服务器由统一入口固定，开发隔离目标写入该目录的 `workbench.json.server`。整个工作目录挂到 `/work`，启动时使用本轮 `/work/runtime/default/RUN_ID/` 中的配置快照；修改工作台原件不会替换已有实例的快照。若该容器原快照不匹配，先保存进度并正常关闭，再用真实账号配置建立实例；不能把不匹配的 `open` 当成会切换账号。
 
 建号、首次界面、建角、已有角色重登和入图分别报告；未执行的步骤保持未验证。能力变化时核对当前文档与入口，再更新本参考，不冻结历史工单状态。

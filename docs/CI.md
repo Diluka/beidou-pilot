@@ -30,16 +30,17 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/tes
 
 ```bash
 mkdir -p tmp/ci-reproduction/workbench
-image=$(./beidou-pilot --workbench "$PWD/tmp/ci-reproduction/workbench" \
-  --backend headless --ref "$(git rev-parse HEAD)" --json build | jq -er .data.image)
+jq -n --arg ref "$(git rev-parse HEAD)" '{ref:$ref}' \
+  > tmp/ci-reproduction/workbench/workbench.json
+image=$(private/workbenches/workbench "$PWD/tmp/ci-reproduction/workbench" build | jq -er .data.image)
 docker run --rm --entrypoint beidou-pilot "$image" --help
 ```
 
-无头构建只使用源码与固定依赖，不需要游戏素材、账号配置或游戏服务器访问，不推送镜像。CI job 内部直接调用同一份 `docker/headless/Dockerfile`，用户构建统一经根入口。容器入口默认需要运行配置；打包检查显式选择 `beidou-pilot` 帮助入口，不启动游戏。
+无头构建只使用源码与固定依赖，不需要游戏素材、账号配置或游戏服务器访问，不推送镜像。CI job 内部直接调用同一份 `docker/headless/Dockerfile`，用户构建统一经 `private/workbenches/workbench DIR build`。容器入口默认需要运行配置；打包检查显式选择 `beidou-pilot` 帮助入口，不启动游戏。
 
-网络需能下载子模块、基础镜像及 Debian 构建包。确认网络权限并按项目网络规则选择代理后，可在启动构建前导出 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`；根入口按 Docker 标准 build args 透传这些变量。代理地址须能从构建网络访问，文档不固定本机地址。
+网络需能下载子模块、基础镜像及 Debian 构建包。确认网络权限并按项目网络规则选择代理后，可在启动构建前导出 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`；统一入口按 Docker标准build args 透传这些变量。代理地址须能从构建网络访问，文档不固定本机地址。
 
-GUI 完整镜像的本地构建通过工作台入口，例如 `./beidou-pilot --workbench /external/gui-workbench --backend beidou --ref COMMIT build`。默认由 `gh` 获取所选提交成功的 Windows 桥 CI 工件；开发时可加 `--bridge-artifact DIR` 显式复用原生输入匹配的现成工件，省去 `gh` 依赖。镜像安装该工件，原始游戏客户端、NX 与工作台仍只在运行时挂载。GUI 装配仅使用 `docker/compose.yaml`；账号、服务器配置和用户 Lua 随整个工作台进入 `/work`，不再分别挂载。GUI 与无头的打包检查都应确认容器内 CLI 可执行，不能用宿主 Python 的帮助输出代替。
+GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，开发版本放在 `ref`，然后执行 `private/workbenches/workbench /external/gui-workbench build`。默认由 `gh` 获取所选提交成功的Windows桥CI工件；开发时可在 `bridge_artifact` 配置原生输入匹配的现成工件目录，省去该路径的 `gh` 依赖。镜像安装该工件，原始游戏客户端、NX 与工作台仍只在运行时挂载。GUI 装配仅使用 `docker/compose.yaml`；账号、自动生成的服务器快照和用户Lua随整个工作目录进入 `/work`，不再分别挂载。GUI 与无头的打包检查都应确认容器内 CLI 可执行，不能用宿主 Python 的帮助输出代替。
 
 ## 查看结果与合并
 
@@ -59,6 +60,6 @@ CI 的镜像检查覆盖无头镜像；完整 GUI 镜像需按改动在本地构
 
 ## 版本与实例隔离验收
 
-涉及交付或生命周期时，在授权的不同角色和隔离目标中验证：实例 A 使用提交 X 启动，主代码更新至 Y 后再启动实例 B；核对双方的 `source_revision/image/run_id`。A 的观察、最小动作、取消放键和正常关闭仍使用 X，B 使用 Y 且不受 A 关闭影响。宿主的构建、启动、`docker exec` 路由与容器内实际结果分别记录；GUI 和无头受影响的路径分别验证。
+涉及交付或生命周期时，在授权的不同角色和隔离目标中验证：实例 A 使用提交 X 启动，主代码更新至 Y 后再启动实例 B；核对双方的 `source_revision/image/run_id`。A 的观察、最小动作、取消放键和正常关闭仍使用 X，B 使用 Y 且不受 A 关闭影响。统一入口的构建、启动、`docker exec` 路由与容器内实际结果分别记录；GUI 和无头受影响的路径分别验证。
 
 正式证据以 PR 提交及实际运行组件为准。由主提交导出的镜像不能标记成尚未提交的源码，GUI 也不能以旧桥代替包含新原生输入的工件。已有实例不会自动跟随 main，升级以正常关闭后新建实例完成。

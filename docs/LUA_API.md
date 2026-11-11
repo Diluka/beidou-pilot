@@ -9,8 +9,8 @@
 从项目根运行受信的 UTF-8 源码或文本脚本文件：
 
 ```bash
-./beidou-pilot --workbench /external/workbench --instance worker-a --json script run --code 'game.log("你好，Lua")' --seconds 20
-./beidou-pilot --workbench /external/workbench --instance worker-a --json script run /work/scripts/control.lua --seconds 20
+private/workbenches/workbench /external/workbench script run --code 'game.log("你好，Lua")' --seconds 20
+private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
 # 需要持续执行时显式使用 --continuous
 ```
 

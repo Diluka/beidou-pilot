@@ -192,7 +192,6 @@ async def run(args: argparse.Namespace) -> None:
     binding: JsonObject = {
         "cli": str(args.cli.resolve()),
         "workbench": str(args.workbench.resolve()),
-        "instance": args.instance,
         "thread_id": args.thread,
         "socket": str(args.socket.absolute()),
     }
@@ -216,11 +215,7 @@ async def run(args: argparse.Namespace) -> None:
         notifications = asyncio.create_task(dispatcher.notifications())
         command = [
             str(args.cli.resolve()),
-            "--workbench",
             str(args.workbench.resolve()),
-            "--instance",
-            args.instance,
-            "--json",
             "events",
             "watch",
             "--interval",
@@ -259,7 +254,7 @@ async def run(args: argparse.Namespace) -> None:
             if (
                 report.get("backend") not in {"beidou", "headless"}
                 or (backend is not None and report["backend"] != backend)
-                or report.get("instance") != args.instance
+                or report.get("instance") != "default"
                 or not isinstance(report.get("instance_id"), str)
                 or not isinstance(report.get("run_id"), str)
                 or (
@@ -327,11 +322,10 @@ def main() -> int:
     parser.add_argument(
         "--cli",
         type=Path,
-        default=Path(__file__).resolve().parents[2] / "beidou-pilot",
-        help="宿主 Docker 薄入口，默认同仓根目录的 beidou-pilot",
+        default=Path(__file__).resolve().parents[2] / "private/workbenches/workbench",
+        help="统一 Docker 工作台入口，默认同仓 private/workbenches/workbench",
     )
     parser.add_argument("--workbench", type=Path, required=True, help="已由操作者启动客户端容器的工作台目录")
-    parser.add_argument("--instance", default="default")
     parser.add_argument("--thread", required=True)
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--state", type=Path, required=True)

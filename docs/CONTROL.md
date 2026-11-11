@@ -5,9 +5,9 @@
 用户策略使用 `script run FILE --seconds N` 或 `script run --code CODE --seconds N`，文件和源码二选一，需要持续运行时明确 `--continuous`。两种输入复用同一装载、身份核对、错误、取消与放键链，可在现有实例中执行，无需重启客户端。基础动作直接调用统一 `game` API；复合能力装载 `shared/scripts/` 的 Lua 文件，调用方传入业务参数，Python只处理参数、生命周期与结果。
 
 ```bash
-./beidou-pilot --workbench /external/workbench --instance worker-a --json script run --code 'game.log("你好，Lua")' --seconds 20
-./beidou-pilot --workbench /external/workbench --instance worker-a --json script run /work/scripts/control.lua --seconds 20
-./beidou-pilot --workbench /external/workbench --instance worker-a --json script status
+private/workbenches/workbench /external/workbench script run --code 'game.log("你好，Lua")' --seconds 20
+private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
+private/workbenches/workbench /external/workbench script status
 ```
 
 文件路径按容器内部解析；完整工作台读写挂到 `/work`，用户脚本直接读取 `/work/scripts`，内置 Lua 随镜像版本固定。

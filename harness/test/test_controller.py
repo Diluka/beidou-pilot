@@ -172,9 +172,8 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         self.server = SessionServer(["medium", "low"])
         self.game = ControlledGame()
         self.binding: JsonObject = {
-            "cli": "/fixture/beidou-pilot",
+            "cli": "/fixture/workbench",
             "workbench": "/dedicated/workbench",
-            "instance": "worker",
             "read_only": False,
         }
         self.controller = Controller(
@@ -233,6 +232,22 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(AppServerError) as mismatch:
             await read_only.initialize()
         self.assertEqual("binding_mismatch", mismatch.exception.code)
+
+    async def test_removed_instance_binding_does_not_resume_an_old_checkpoint(self) -> None:
+        (self.state / "checkpoint.json").write_text(
+            json.dumps(
+                {
+                    "thread_id": "game-thread",
+                    "binding": {**self.binding, "instance": "default"},
+                    "model": "gpt-6-luna",
+                    "task": "原任务",
+                }
+            )
+        )
+        with self.assertRaises(AppServerError) as mismatch:
+            await self.controller.initialize()
+        self.assertEqual("binding_mismatch", mismatch.exception.code)
+        self.assertFalse(any(method == "thread/resume" for method, _ in self.server.calls))
 
     async def test_legacy_checkpoint_keeps_its_original_tools_and_history(self) -> None:
         (self.state / "checkpoint.json").write_text(

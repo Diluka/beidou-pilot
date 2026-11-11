@@ -20,8 +20,8 @@ import time
 
 sys.path.insert(0, __CLI_SOURCE__)
 arguments = sys.argv[1:]
-root = Path(arguments[arguments.index("--workbench") + 1])
-command = arguments[arguments.index("--json") + 1:]
+root = Path(arguments[0])
+command = arguments[1:]
 with (root / "calls.jsonl").open("a") as stream:
     stream.write(json.dumps({"arguments": arguments, "pid": os.getpid()}) + "\n")
 path = root / "bridge.json"
@@ -111,7 +111,7 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
                 }
             )
         )
-        self.client = GameClient(self.cli, self.root, "alpha")
+        self.client = GameClient(self.cli, self.root)
 
     async def wait_for_held_input(self) -> None:
         async with asyncio.timeout(3):
@@ -134,7 +134,7 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code, report["parsed_code"])
         status = await self.client.script_status()
         self.assertEqual(("run-a", [], None), (status["run_id"], status["held_keys"], status["script"]))
-        prefix = ["--workbench", str(self.root), "--instance", "alpha", "--json"]
+        prefix = [str(self.root)]
         commands = []
         for call in self.calls():
             arguments = call["arguments"]

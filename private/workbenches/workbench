@@ -5,23 +5,24 @@ umask 077
 
 usage() {
     cat <<'EOF'
-用法：beidou-pilot --workbench DIR [--instance NAME] [--backend headless|beidou] [--ref REF] [--json] COMMAND
+用法：private/workbenches/workbench DIR [COMMAND] [客户端命令参数]
 
-  build     从 main（或显式 --ref）的已提交代码构建/复用镜像
-  plan      只读核对目标，不构建或启动
-  open      创建实例并用容器内 CLI 确认入图；已有实例沿用原版本
-  status    查询所选实例
-  close     正常关闭并核对所属容器退出
-  resources-check  用对应无头镜像离线检查外部 NX，不登录
-  其他命令  交给所属容器内的 beidou-pilot（snapshot、script、hunt 等）
+  build            从 main 或 workbench.json.ref 构建/复用镜像
+  plan             只读核对服务器，不构建或启动
+  open             创建实例并确认入图；已有实例沿用原版本
+  status           查询本工作台，省略命令时默认执行
+  close            正常关闭并核对所属容器退出
+  resources-check  用无头镜像离线检查共享 NX，不登录
+  notes            读取本工作台 README、PLAN、HANDOFF 和脚本说明
+  其他命令         交给所属容器内的 beidou-pilot
 
-build/resources-check/plan/open 参数：
-  --server PATH          服务器配置，默认 DIR/server.json
-  --account PATH         账号配置，默认 DIR/account.json
-  --resources PATH       外部资源配置，默认 DIR/resources.json
-  --bridge-artifact DIR  开发时复用匹配的 GUI 桥工件；默认自动获取所选提交的 CI 工件
-  --workspace-server     显式授权 server.json 所选常驻 beidou-ms 服务器
-  --timeout SECONDS      入图等待，默认 90 秒
+  --list           列出本机已有工作台目录
+  --help           显示本说明
+
+目录内维护 account.json、可选 workbench.json、计划、脚本与运行数据。
+workbench.json 可配置 backend、ref、timeout、bridge_artifact；默认 headless、main、90秒。
+常驻服务器由本脚本固定；server 对象仅用于显式开发隔离目标。
+资源路径统一读取主检出 private/workbenches/resources.json，不接收命令行配置覆盖。
 EOF
 }
 
@@ -31,33 +32,43 @@ fail() {
 }
 
 if [ "$#" -eq 0 ] || [ "$1" = --help ] || [ "$1" = -h ]; then usage; exit 0; fi
-workbench=
-instance=default
-backend=headless
-backend_explicit=false
-source_ref=main
-command=
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --workbench|--instance|--backend|--ref)
-            [ "$#" -ge 2 ] || fail usage "缺少 $1 的值。" ;;
-    esac
-    case "$1" in
-        --workbench) workbench=$2; shift 2 ;;
-        --instance) instance=$2; shift 2 ;;
-        --backend) backend=$2; backend_explicit=true; shift 2 ;;
-        --ref) source_ref=$2; shift 2 ;;
-        --json) shift ;;
-        --help|-h) usage; exit 0 ;;
-        *) command=$1; shift; break ;;
-    esac
-done
-
-[ -n "$workbench" ] && [ -d "$workbench" ] || fail invalid_workbench '须指定已有工作台目录。'
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+repository=$(git -C "$here" rev-parse --show-toplevel)
+main_root=$(git -C "$repository" worktree list --porcelain | sed -n 's/^worktree //p' | head -n1)
+if [ "$1" = --list ]; then
+    [ "$#" -eq 1 ] || fail usage '--list 不接收其他参数。'
+    for directory in "$main_root/private/workbenches"/*; do
+        if [ -d "$directory" ] && { [ -f "$directory/account.json" ] || [ -f "$directory/PLAN.md" ]; }; then
+            printf '%s\n' "$directory"
+        fi
+    done
+    exit 0
+fi
+case "$1" in -*) fail usage '先指定工作目录，再指定命令；配置从工作目录读取。' ;; esac
+workbench=$1
+shift
+[ -d "$workbench" ] || fail invalid_workbench '须指定已有工作台目录。'
 workbench=$(realpath "$workbench")
-[[ "$instance" =~ ^[a-z0-9][a-z0-9_-]{0,47}$ ]] || fail invalid_instance '实例名须为 1 至 48 位小写字母、数字、下划线或连字符。'
-case "$backend" in headless|beidou) ;; *) fail invalid_backend '后端须为 headless 或 beidou。' ;; esac
-[ -n "$command" ] || fail usage '缺少命令。'
+command=${1:-status}
+if [ "$#" -gt 0 ]; then shift; fi
+case "$command" in
+    --help|-h) usage; exit 0 ;;
+    -*) fail usage '配置从 workbench.json 读取，不接收宿主配置参数。' ;;
+    build|plan|open|resources-check|close|notes)
+        [ "$#" -eq 0 ] || fail usage '宿主命令的配置从工作目录读取，不接收额外参数。' ;;
+esac
+if [ "$command" = notes ]; then
+    printf '工作台：%s\n' "$workbench"
+    for document in README.md PLAN.md HANDOFF.md scripts/README.md; do
+        if [ -f "$workbench/$document" ]; then
+            printf '\n--- %s ---\n' "$document"
+            cat -- "$workbench/$document"
+        fi
+    done
+    exit 0
+fi
+instance=default
+timeout=90
 name="beidou-pilot-$(printf '%s' "$workbench" | sha256sum | cut -c1-10)-$instance"
 state="$workbench/runtime/$instance"
 record="$state/host.json"
@@ -199,33 +210,37 @@ case "$command" in
         ;;
 esac
 
-target="$workbench/server.json"
-account="$workbench/account.json"
-resources="$workbench/resources.json"
-bridge=
-workspace_server=false
-account_explicit=false
-server_explicit=false
-timeout=90
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --server|--account|--resources|--bridge-artifact|--timeout)
-            [ "$#" -ge 2 ] || fail usage "缺少 $1 的值。" ;;
-    esac
-    case "$1" in
-        --server) target=$2; server_explicit=true; shift 2 ;;
-        --account) account=$2; account_explicit=true; shift 2 ;;
-        --resources) resources=$2; shift 2 ;;
-        --bridge-artifact) bridge=$2; shift 2 ;;
-        --workspace-server) workspace_server=true; shift ;;
-        --timeout) timeout=$2; shift 2 ;;
-        --json) shift ;;
-        *) fail usage "未知启动参数：$1" ;;
-    esac
-done
+if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
+    wait_runtime
+    exec_open
+    exit $?
+fi
 
-jq -en --arg timeout "$timeout" '$timeout | tonumber | select(. >= 5 and . <= 180)' >/dev/null 2>&1 ||
-    fail invalid_timeout '入图等待须为 5 至 180 秒。'
+settings='{}'
+if [ -f "$workbench/workbench.json" ]; then
+    settings=$(jq -e 'select(type == "object") | select(
+        ((keys - ["backend", "ref", "timeout", "bridge_artifact", "server"]) | length) == 0
+        and (if has("backend") then .backend == "headless" or .backend == "beidou" else true end)
+        and (if has("ref") then (.ref | type == "string" and length > 0) else true end)
+        and (if has("timeout") then (.timeout | type == "number" and . >= 5 and . <= 180) else true end)
+        and (if has("bridge_artifact") then (.bridge_artifact | type == "string" and length > 0) else true end)
+        and (if has("server") then (.server | type == "object"
+            and (keys == ["expected_image", "project", "service"] or keys == ["expected_image", "network", "project", "service"])
+            and all(.[]; type == "string" and length > 0) and .project != "beidou-ms") else true end)
+        )' "$workbench/workbench.json") ||
+        fail workbench_config_invalid 'workbench.json 配置无效；server 仅允许显式开发隔离目标。'
+fi
+backend=$(jq -r '.backend // "headless"' <<<"$settings")
+source_ref=$(jq -r '.ref // "main"' <<<"$settings")
+timeout=$(jq -r '.timeout // 90' <<<"$settings")
+bridge=$(jq -r '.bridge_artifact // empty' <<<"$settings")
+if [ -n "$bridge" ]; then
+    case "$bridge" in /*) ;; *) bridge="$workbench/$bridge" ;; esac
+fi
+if [ "$command" = resources-check ]; then backend=headless; fi
+account="$workbench/account.json"
+resources="$main_root/private/workbenches/resources.json"
+workspace_server=true
 
 resource_path() {
     local path
@@ -235,47 +250,25 @@ resource_path() {
 }
 
 read_server() {
-    [ -f "$target" ] || fail server_required '须提供工作台 server.json 或显式 --server。'
-    server_config=$(jq -e 'select((keys == ["expected_image","project","service"] or keys == ["expected_image","network","project","service"])
-        and all(.[]; type == "string" and length > 0))' "$target") || fail server_invalid '服务器配置字段无效。'
+    if jq -e 'has("server")' <<<"$settings" >/dev/null; then
+        workspace_server=false
+        server_config=$(jq -c '.server' <<<"$settings")
+    else
+        workspace_server=true
+        local expected_image
+        expected_image=$(docker image inspect ghcr.io/beidoums/beidou-server-all:v1.12 --format '{{.Id}}') ||
+            fail server_image_unavailable '固定常驻服务器镜像 ghcr.io/beidoums/beidou-server-all:v1.12 不可用。'
+        server_config=$(jq -nc --arg image "$expected_image" \
+            '{project:"beidou-ms",service:"beidou-server-all",expected_image:$image}')
+    fi
 }
 
-if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
-    if "$backend_explicit"; then
-        [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = "$backend" ] ||
-            fail backend_mismatch '已有实例使用其他后端，未切换。'
-    fi
-    if "$server_explicit"; then
-        read_server
-        jq -e --argjson wanted "$server_config" '.target as $actual | $wanted |
-            all(to_entries[]; $actual[.key] == .value)' "$record" >/dev/null ||
-            fail server_mismatch '已有实例服务器与请求不同。'
-    fi
-    if "$account_explicit"; then
-        jq -e --slurpfile wanted "$account" '.character_id == $wanted[0].character_id
-            and .world == ($wanted[0].world // 0) and .channel == ($wanted[0].channel // 0)' "$record" >/dev/null ||
-            fail character_mismatch '已有实例角色、世界或频道与请求不同。'
-    fi
-    wait_runtime
-    exec_open
-    exit $?
-fi
-
-if [ "$backend" = beidou ] && [ "$instance" != default ]; then
-    fail unsupported_instance 'GUI 在一个工作台中只使用 default 实例；多个工作台分别建容器。'
-fi
 resolved=
 owned_network=
 resolve_target() {
     read_server
     project=$(jq -r .project <<<"$server_config")
     service=$(jq -r .service <<<"$server_config")
-    if [ "$project" = beidou-ms ]; then
-        "$workspace_server" && [ "$service" = beidou-server-all ] ||
-            fail workspace_authorization_required '常驻目标须显式传 --workspace-server。'
-    elif "$workspace_server"; then
-        fail target_mismatch '--workspace-server 仅用于已授权的工作区目标。'
-    fi
     servers=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service")
     [ "$(wc -w <<<"$servers")" -eq 1 ] || fail target_not_unique '目标必须唯一匹配一个游戏服务容器。'
     server_info=$(docker inspect "$servers" | jq -e '.[0] | select(.State.Running and .HostConfig.NetworkMode != "host")') ||
@@ -310,9 +303,6 @@ if [ "$command" != build ] && [ "$command" != resources-check ]; then
     fi
 fi
 
-here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-repository=$(git -C "$here" rev-parse --show-toplevel)
-main_root=$(git -C "$repository" worktree list --porcelain | sed -n 's/^worktree //p' | head -n1)
 revision=$(git -C "$repository" rev-parse --verify "$source_ref^{commit}")
 image_tag="local/beidou-pilot-$backend:$revision"
 context="$main_root/tmp/client-images/$revision"
@@ -343,7 +333,7 @@ build_image() {
             bridge="$main_root/tmp/client-images/bridges/$revision"
             if [ ! -f "$bridge/manifest.json" ]; then
                 run=$(gh run list --repo Diluka/beidou-pilot --workflow agent-bridge.yml --commit "$revision" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-                [ -n "$run" ] || fail bridge_build_required '该提交的 Windows 桥工件尚未就绪；可等待 CI 或显式指定匹配的 --bridge-artifact。'
+                [ -n "$run" ] || fail bridge_build_required '该提交的 Windows 桥工件尚未就绪；可等待 CI，或在 workbench.json 中指定匹配的 bridge_artifact。'
                 mkdir -p "$bridge"
                 gh run download "$run" --repo Diluka/beidou-pilot --name maple-agent-bridge-win32 --dir "$bridge" >&2
             fi
@@ -379,7 +369,7 @@ if [ "$command" = resources-check ]; then
 fi
 
 [ -f "$account" ] && [ "$(stat -Lc %a "$account")" = 600 ] || fail private_file_permissions 'account.json 须存在且权限为 0600。'
-[ -f "$resources" ] || fail resources_required '须提供工作台的外部资源配置。'
+[ -f "$resources" ] || fail resources_required '须提供共享 private/workbenches/resources.json 资源配置。'
 account=$(realpath "$account")
 resources=$(realpath "$resources")
 nx=$(resource_path headless_resources)

@@ -1,6 +1,6 @@
 # Codex 游戏 AI
 
-`harness/` 是客户端能力的独立消费者。Codex app-server 在专用容器中保留一个角色的模型会话；宿主薄控制器通过固定工作台和实例的 Docker 入口，调用客户端容器内的 CLI，并负责开发 AI 的短协作消息。模型不进入逐帧控制，持续移动、战斗与等待仍由 Lua 执行。
+`harness/` 是客户端能力的独立消费者。Codex app-server 在专用容器中保留一个角色的模型会话；宿主薄控制器通过固定工作目录对应的 Docker 入口，调用客户端容器内的 CLI，并负责开发 AI 的短协作消息。模型不进入逐帧控制，持续移动、战斗与等待仍由 Lua 执行。
 
 准备客户端、选择授权目标与角色、核对占用及交接前，先按[游戏 AI 操作指引](PLAY_GUIDE.md)完成检查；harness 的运行配置不代替游戏操作授权。
 
@@ -15,13 +15,13 @@ docker build -t local/beidou-game-ai:0.167.0 docker/harness
 准备一份只包含角色设定、当前养成方案及操作边界的 UTF-8 文本。认证只使用本机 Codex 授权的专用副本，或运行时显式提供的 API-key 变量；不挂载整份开发 HOME、Codex 配置、技能或 MCP。认证、provider 配置及状态均保存在私密目录，不进入 Git、镜像、日志或提示词。构建过程不登录、不调用模型。发行物与许可见 [容器说明](../docker/harness/README.md)。
 
 ```bash
-./harness/game-ai --workbench /private/workbench --instance default \
+./harness/game-ai --workbench /private/workbench \
   --state /private/game-ai/state --role /private/game-ai/role.md \
   --auth-file /private/game-ai/auth.json \
   --task '在已确认安全的区域观察，执行约定的有界移动并核对停止结果'
 ```
 
-`--workbench` 选择已由操作者启动的工作台，`--instance` 选择其中的实例。客户端后端与版本由该实例的登记决定；后续命令通过 `docker exec` 使用容器内的同一份 CLI 和内置 Lua，main 更新不改变已有实例。`--cli` 可指定宿主 Docker 薄入口，默认使用同仓根目录的 `beidou-pilot`；不再通过 `--root`、`--backend` 或宿主 Python 源码选择客户端。客户端源码和 Docker socket 都不挂进模型容器。
+`--workbench` 选择已由操作者启动客户端的工作目录。harness 调用 `private/workbenches/workbench DIR COMMAND`，客户端后端和启动设置由工作目录的 `workbench.json` 决定；已有容器继续使用登记版本，main 更新不改变其 CLI 或内置 Lua。`--cli` 默认指向同仓的这个统一入口，可指定遵守同一调用协议的入口用于开发验证。harness 不再提供实例或后端命令行覆盖；客户端源码和 Docker socket 都不挂进模型容器。
 
 `--read-only` 只装载观察与脚本状态能力，拒绝 Lua 和狩猎执行，也不取消其他操作者的输入；适合先核对真实模型、状态、延迟和 token。`--paused` 在初始化后等待 `resume`，不会立即开始模型 turn。`--state` 的 Codex 子目录须允许容器 UID1000 读写，不能指向开发 Codex 目录。stdin 保持打开用于协作；EOF、SIGINT 或 SIGTERM 会停止本次玩法控制并等待释放。
 
@@ -70,7 +70,7 @@ stdin 为 JSONL，stdout 返回带事件名和时间的 JSONL；每个命令可�
 
 ## 记录与验证
 
-`--state` 保留独立 Codex 状态、`checkpoint.json` 和私密 `events.jsonl`，记录任务、回复、询问、工具结果、版本、用量及执行耗时。重启同一状态目录可续接该游戏 thread，并先取最新游戏状态；不会读取旧位置或旧引用作为当前事实。客户端绑定由宿主入口 `cli`、`workbench`、`instance` 和 `read_only` 组成，选择改变时拒绝续接。旧版本保存的 `cli/root/backend` 绑定不自动迁移或原地恢复；保留原状态目录，按新工作台选择创建独立 `--state`。
+`--state` 保留独立 Codex 状态、`checkpoint.json` 和私密 `events.jsonl`，记录任务、回复、询问、工具结果、版本、用量及执行耗时。重启同一状态目录可续接该游戏 thread，并先取最新游戏状态；不会读取旧位置或旧引用作为当前事实。客户端绑定由宿主入口 `cli`、`workbench` 和 `read_only` 组成，选择改变时拒绝续接。旧版本包含 `instance` 或 `root/backend` 的绑定不自动迁移或原地恢复；保留原状态目录，按新工作目录创建独立 `--state`。原生 `instance_id/run_id` 仍在运行时逐次核对。
 
 [OpenAI App Server 文档](https://developers.openai.com/codex/app-server) 说明动态工具随 thread 持久保存。本项目固定的 Codex `0.167.0` 只在 `thread/start` 提供 `dynamicTools`，该版本的 `thread/resume` schema 没有更新工具参数；真实无认证协议检查也确认，续接时传入此字段会被忽略。新 checkpoint 保存 `tool_surface="hunt-v1"`，续接原 thread 时恢复其已注册的四项工具。旧 checkpoint 沿用 `lua-v1` 三项工具和对应指引，并产生可观察的 `legacy_tool_surface` 事件；原 thread 与历史保持原样。需要 `game_hunt` 时，使用新的独立 `--state` 目录明确启动新游戏会话，保留原状态目录。源码更新不会自动替换已有会话的工具或修改私密常驻部署。
 
@@ -93,7 +93,7 @@ TMPDIR="$PWD/tmp/harness-tests" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=harness \
 
 `harness/game-events` 是独立的事件消费者，连接桌面应用经 SSH 使用的既有 Codex daemon 和明确指定的 thread。它不启动 `game-ai`、模型容器或游戏客户端，不创建新聊天，也不修改已有角色设定或工具。客户端事件契约由统一 CLI 的 `events read/watch` 提供，模型接入代码留在 `harness/`。
 
-此入口通过根 Docker 薄入口读取已运行工作台容器内的事件 CLI，客户端版本由实例固定。`--cli` 默认取同仓根 `beidou-pilot`，不读取宿主客户端源码。此入口单独需要 `harness/requirements-events.txt` 中固定的 `websockets` 依赖；原有 `harness/game-ai` 仍可仅用 Python 标准库。依赖安装到独立虚拟环境，例如使用本机已有的 uv：
+此入口通过 `private/workbenches/workbench DIR COMMAND` 读取已运行容器内的事件 CLI，客户端版本由其运行登记固定。`--cli` 默认取同仓的这个统一入口，不读取宿主客户端源码。此入口单独需要 `harness/requirements-events.txt` 中固定的 `websockets` 依赖；原有 `harness/game-ai` 仍可仅用 Python 标准库。依赖安装到独立虚拟环境，例如使用本机已有的 uv：
 
 ```bash
 uv venv /private/game-events/venv
@@ -104,7 +104,7 @@ uv pip install --python /private/game-events/venv/bin/python -r harness/requirem
 
 ```bash
 /private/game-events/venv/bin/python harness/game-events \
-  --workbench /external/gui-workbench --instance default \
+  --workbench /external/gui-workbench \
   --thread THREAD_UUID \
   --socket "$HOME/.codex/app-server-control/app-server-control.sock" \
   --state /private/game-events/receiver --check
@@ -112,7 +112,7 @@ uv pip install --python /private/game-events/venv/bin/python -r harness/requirem
 
 `--check` 只初始化连接并读取指定会话，不订阅客户端事件、不发送模型输入。移除 `--check` 后，消费者装载同一 thread 的通知连接，并启动只读 `events watch` 子进程。默认投递统一的 `notification.opened`，不按好友、组队、交易或其他业务 `kind` 过滤；`kind=null` 的未知类型同样送达，并保留真实 `native_kind`、原生字段和按钮，是否响应由模型依据当前事实和已有授权决定。重复 `--event-type TYPE` 可显式选择其他原生事件。`notification.closed` 和观察不可用等未选中的事件只推进游标，避免在模型刚处理完气泡时再次打断它；流级 `events_unavailable` 只记录诊断，不推进游标或唤醒模型。
 
-首次没有游标时，以当前最新事件序号建立基线；先看到 `events_ready`，再触发气泡。它不会把启动前的历史气泡当作仍然有效，已有弹窗应通过 `notifications read` 另行检查。状态目录私密保存宿主入口、工作台、实例、目标 thread/socket 的绑定及 `instance_id/run_id/seq` 游标；恢复时由同一容器 CLI 补读留存增量，重复序号不会重复通知。旧 `root/backend` 绑定保持原状态目录，不自动迁移。已知过期事件跳过；时限未知保持未知。事件缺口、身份变化或原生观察不可用不能作为气泡已处理的证据。
+首次没有游标时，以当前最新事件序号建立基线；先看到 `events_ready`，再触发气泡。它不会把启动前的历史气泡当作仍然有效，已有弹窗应通过 `notifications read` 另行检查。状态目录私密保存统一入口、工作目录、目标 thread/socket 的绑定及 `instance_id/run_id/seq` 游标；事件报告还要核对实际后端和当前工作目录的默认实例。恢复时由同一容器 CLI 补读留存增量，重复序号不会重复通知。旧版本含 `instance` 或 `root/backend` 的绑定保持原状态目录，不自动迁移。已知过期事件跳过；时限未知保持未知。事件缺口、身份变化或原生观察不可用不能作为气泡已处理的证据。
 
 默认 `--delivery steer` 在活跃回合使用 `turn/steer`，空闲时直接 `turn/start`。显式选择 `--delivery interrupt` 时，先中断当前模型回合，等待匹配的 `turn/completed`，再启动事件处理回合；不通过 `queue` 等旧回合自然结束。该选项会打断目标聊天正在处理的工作，只用于明确授权的专用控制会话。
 
