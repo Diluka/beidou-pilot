@@ -110,7 +110,7 @@ archive_exit() {
     mkdir -p "$state"
     docker logs "$id" >"$state/container.log" 2>&1
     state_json=$(docker inspect "$id" | jq '.[0].State')
-    reason=$(jq -Rr 'fromjson? | select(.event=="closed" or .event=="fatal" or .event=="startup_failed") |
+    reason=$(jq -Rr 'fromjson? | select(type=="object") | select(.event=="closed" or .event=="fatal" or .event=="startup_failed") |
         .reason // .code // empty' "$state/container.log" | tail -n1)
     jq -n --argjson state "$state_json" --arg reason "$reason" '
         {exit_code:$state.ExitCode,finished_at:$state.FinishedAt,
@@ -402,8 +402,6 @@ if [ -n "$id" ]; then
     docker rm "$id" >/dev/null
 fi
 cleanup_network
-rm -f "$record"
-rm -f "$state/exit.json"
 run_id=$(date -u +%Y%m%dT%H%M%S.%NZ)
 run_root="$state/$run_id"
 mkdir -p "$run_root"
@@ -419,6 +417,14 @@ exec 7>"$main_root/private/workbenches/.start.lock"
 flock 7
 occupied=$(docker ps -q --filter "label=beidou.target.id=$server_id" --filter "label=beidou.character.id=$character_id" --filter "label=beidou.world=$world")
 [ -z "$occupied" ] || fail character_already_controlled '该目标的角色已由另一个客户端实例控制。'
+if [ -f "$record" ]; then
+    previous_root="$state/$(jq -r .run_id "$record")"
+    mkdir -p "$previous_root"
+    for artifact in host.json exit.json container.log; do
+        if [ -f "$state/$artifact" ]; then cp "$state/$artifact" "$previous_root/$artifact"; fi
+    done
+fi
+rm -f "$record" "$state/exit.json"
 if [ -z "$network" ]; then
     network="$name-$run_id"
     docker network create --internal --label "com.docker.compose.project=$project" --label "beidou.workbench=$workbench" "$network" >/dev/null
