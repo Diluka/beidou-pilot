@@ -216,6 +216,9 @@ if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
     exit $?
 fi
 
+if [ -f "$workbench/server.json" ] || [ -f "$workbench/resources.json" ]; then
+    fail workbench_migration_required '目录含旧 server.json/resources.json；隔离服务器请配置到 workbench.json.server，资源路径请收拢到公共 resources.json。'
+fi
 settings='{}'
 if [ -f "$workbench/workbench.json" ]; then
     settings=$(jq -e 'select(type == "object") | select(
