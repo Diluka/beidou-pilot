@@ -3,6 +3,7 @@ local scenario, source = arg[1], arg[2]
 local now, inputs, portals, arrived = 0, 0, 0, 0
 local control = { owner = "main" }
 local pending, pending_at, town_fall_at
+local horizontal_velocity, air_inputs, landing_x = 0, 0, nil
 local state = {
     ready = true,
     instance_id = "route-contract",
@@ -22,6 +23,9 @@ local function copy(value)
 end
 local function advance(seconds)
     now = now + seconds
+    if scenario == "inertia" and state.map_id == 50000 then
+        state.position.x = state.position.x + horizontal_velocity * seconds
+    end
     if pending and now >= pending_at then
         state.map_id = pending
         state.position = pending == 1000000 and { x = -66, y = 274 } or { x = 1420, y = 275 }
@@ -38,6 +42,9 @@ local function advance(seconds)
     end
     if state.map_id == 50000 and state.position.x > 1389 and state.position.y < 275 then
         state.position.y = math.min(275, state.position.y + seconds * 500)
+        if scenario == "inertia" and state.position.y == 275 then
+            landing_x, horizontal_velocity = state.position.x, 0
+        end
     end
 end
 game = {
@@ -53,6 +60,7 @@ game = {
     end,
     stop = function()
         advance(0.01)
+        if state.position.y == -85 or state.position.y == 275 then horizontal_velocity = 0 end
         if not control.owner then return { reason = "control_not_owned" } end
         assert(control.owner == "main", "route tried to release another owner's input")
         control = { from = "main", reason = "stopped" }
@@ -70,7 +78,15 @@ game = {
         if scenario == "identity" then state.character.id = 2 end
         if scenario == "unknown-hp" then state.character.max_hp = nil end
         if direction == "left" or direction == "right" then
-            state.position.x = state.position.x + (direction == "right" and 1 or -1) * seconds * 125
+            if scenario == "inertia" then
+                if state.position.y > -80 and state.position.y < 275 then
+                    air_inputs = air_inputs + 1
+                else
+                    horizontal_velocity = (direction == "right" and 1 or -1) * 125
+                end
+            else
+                state.position.x = state.position.x + (direction == "right" and 1 or -1) * seconds * 125
+            end
             if scenario == "stalled" then state.position.x = math.min(1380, state.position.x) end
         else
             assert(direction == "up")
@@ -88,6 +104,10 @@ game = {
             pending_at, state.ready = now + 0.1, false
         end
         advance(seconds)
+        -- 地面沿用原合同的放键结果；只在空中保留松键后的横向余速。
+        if scenario == "inertia" and (state.position.y == -85 or state.position.y == 275) then
+            horizontal_velocity = 0
+        end
         return { reason = "native_action_dispatched" }
     end,
     log = function(message)
@@ -95,9 +115,15 @@ game = {
     end,
 }
 local ok, failure = pcall(dofile, source)
-if scenario == "normal" or scenario == "landing" then
+if scenario == "normal" or scenario == "landing" or scenario == "inertia" then
     assert(ok, failure)
     assert(arrived == 2 and portals == 2 and state.map_id == 50000, "route was not reusable for the return journey")
+    if scenario == "inertia" then
+        assert(
+            air_inputs == 0 and landing_x and landing_x > 1440,
+            "drop did not allow observed released-input drift before aligning on the lower platform"
+        )
+    end
 else
     assert(not ok and failure:find("arrived=false"), tostring(failure))
     assert(arrived == 0, "failed route reported arrival")

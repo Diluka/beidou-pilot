@@ -5,14 +5,23 @@ local function validate(condition, reason)
     if not condition then error("route_failed arrived=false stage=start reason=" .. reason) end
 end
 local function number(value) return type(value) == "number" and value == value and math.abs(value) < math.huge end
-local function region(value)
-    validate(type(value) == "table", "route_region_required")
+local function region(value, fail)
+    local function check(condition, reason)
+        if not condition then
+            if fail then
+                fail(reason)
+            else
+                validate(false, reason)
+            end
+        end
+    end
+    check(type(value) == "table", "route_region_required")
     local result = {}
     for _, key in ipairs({ "min_x", "max_x", "min_y", "max_y" }) do
-        validate(number(value[key]), "route_region_unknown")
+        check(number(value[key]), "route_region_unknown")
         result[key] = value[key]
     end
-    validate(result.min_x <= result.max_x and result.min_y <= result.max_y, "route_region_invalid")
+    check(result.min_x <= result.max_x and result.min_y <= result.max_y, "route_region_invalid")
     return result
 end
 local function inside(s, area)
@@ -72,46 +81,60 @@ function methods:walk(x, y_tolerance, label)
     self:state()
     return self
 end
-function methods:drop_to(x, y, label)
+function methods:drop_to(x, landing, label)
     self:stage(label or "drop")
     local initial = self:state()
-    if not number(x) or not number(y) or y <= initial.position.y + 10 then self:fail("unknown_drop_target") end
-    local left, right = math.min(x, initial.position.x) - 20, math.max(x, initial.position.x) + 20
-    local progress_at, nearest = game.time(), math.huge
+    landing = region(landing, function(reason) self:fail(reason) end)
+    if not number(x) or x < landing.min_x or x > landing.max_x or landing.min_y <= initial.position.y + 10 then
+        self:fail("unknown_drop_target")
+    end
+    -- 出边点和下层落区是不同事实。只在出边前推进；观察到下降后释放输入，
+    -- 允许正常空中余速进入已知落区，到达并复采后才由后续walk/portal对齐。
+    local direction = x >= initial.position.x and 1 or -1
+    local left, right =
+        math.min(initial.position.x - 10, landing.min_x), math.max(initial.position.x + 10, landing.max_x)
+    local progress_at, nearest, falling = game.time(), math.huge, false
+    self:stop()
     while game.time() < self.deadline do
         local s = self:state()
         if
             s.position.x < left
             or s.position.x > right
             or s.position.y < initial.position.y - 10
-            or s.position.y > y + 10
+            or s.position.y > landing.max_y
         then
             self:fail("drop_left_known_corridor")
         end
-        local distance = math.abs(s.position.x - x) + math.abs(s.position.y - y)
+        local distance = math.max(0, (x - s.position.x) * direction) + math.max(0, landing.min_y - s.position.y)
         if distance < nearest - 2 then
             progress_at, nearest = game.time(), distance
         end
-        if math.abs(s.position.x - x) <= 5 and math.abs(s.position.y - y) <= 5 then
+        if inside(s, landing) then
             self:stop()
             game.sleep(0.2)
             local after = self:state()
-            if
-                math.abs(after.position.x - x) <= 5
-                and math.abs(after.position.y - y) <= 5
-                and math.abs(after.position.y - s.position.y) <= 2
-            then
+            if inside(after, landing) and math.abs(after.position.y - s.position.y) <= 2 then
+                game.log(
+                    string.format("route_drop phase=region_confirmed x=%.1f y=%.1f", after.position.x, after.position.y)
+                )
                 return self
             end
-        end
-        if game.time() - progress_at >= 3 then self:fail("drop_no_progress") end
-        local dx = x - s.position.x
-        if math.abs(dx) > 4 then
-            self:action(game.move(dx > 0 and "right" or "left", math.min(0.12, math.abs(dx) / 150)))
+        elseif falling or s.position.y > initial.position.y + 5 then
+            if not falling then
+                self:stop()
+                falling = true
+                game.log(string.format("route_drop phase=falling x=%.1f y=%.1f", s.position.x, s.position.y))
+            end
+            game.sleep(0.05)
         else
+            local distance_x = (x - s.position.x) * direction
+            if distance_x > 3 then
+                self:action(game.move(direction > 0 and "right" or "left", math.min(0.08, distance_x / 150)))
+            end
             self:stop()
             game.sleep(0.05)
         end
+        if game.time() - progress_at >= 3 then self:fail("drop_no_progress") end
     end
     self:fail("budget_exhausted")
 end

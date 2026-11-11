@@ -40,7 +40,7 @@ class RouteLuaContract(unittest.TestCase):
                 'local r = travel.begin({name="unknown",seconds=10,start_map=50000,'
                 "start={min_x=1100,max_x=1350,min_y=-95,max_y=-75},destination_map=1000000,"
                 "destination={min_x=-90,max_x=-40,min_y=264,max_y=284}})\n"
-                "r:drop_to(nil,275)\n",
+                "r:drop_to(nil,{min_x=1390,max_x=1500,min_y=270,max_y=280})\n",
             )
         path = self.directory / (name + ".lua")
         path.write_text(source)
@@ -54,6 +54,9 @@ class RouteLuaContract(unittest.TestCase):
         for name in ("normal", "landing"):
             with self.subTest(name=name):
                 self.scenario(name)
+
+    def test_drop_preserves_airborne_drift_until_landing_before_portal_alignment(self) -> None:
+        self.scenario("inertia")
 
     def test_wrong_start_stall_and_budget_do_not_dispatch_later_segments(self) -> None:
         for name in ("wrong-start", "stalled", "budget", "missing-terrain"):

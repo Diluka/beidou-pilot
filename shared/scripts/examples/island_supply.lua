@@ -13,7 +13,8 @@ function island_supply.to_town(options)
         destination = { min_x = -90, max_x = -40, min_y = 264, max_y = 284 },
     })
     route:walk(1340, 10, "east-upper-platform")
-    route:drop_to(1420, 275, "east-portal-platform")
+    -- 上层到x1389结束；下层地面连续至x1530，保留边缘空间后声明落区。
+    route:drop_to(1398, { min_x = 1390, max_x = 1500, min_y = 270, max_y = 280 }, "east-portal-platform")
     route:portal(1420, 275, 1000000, "enter-town")
     return route:finish()
 end
