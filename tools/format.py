@@ -55,6 +55,7 @@ SOURCES = {
         "beidou-ijl15/ezorsia/AgentBridge.cpp",
         "beidou-ijl15/ezorsia/AgentBridge.h",
         "beidou-ijl15/ezorsia/NativeKeyInput.h",
+        "beidou-ijl15/ezorsia/NativeKeyBindings.h",
         "beidou-ijl15/ezorsia/NativeMouseInput.h",
         "beidou-ijl15/ezorsia/NativeCare.h",
         "beidou-ijl15/ezorsia/NativeItemUse.h",

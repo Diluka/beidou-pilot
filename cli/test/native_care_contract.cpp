@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "NativeCare.h"
+#include "NativeKeyBindings.h"
 
 #include <cassert>
 #include <string>
@@ -50,6 +51,48 @@ void CheckAllocationFacts(const NativeCare& care, unsigned allocated, bool pendi
     const auto data = care.Result().allocation.Dump();
     assert(data.find("\"allocated\":" + std::to_string(allocated) + ",") != std::string::npos);
     assert(data.find(std::string("\"point_pending\":") + (pending ? "true" : "false")) != std::string::npos);
+}
+
+void BindingContract() {
+    std::array<unsigned char, 89 * 5> table{};
+    std::array<unsigned, 256> keys{};
+    auto binding = [&](unsigned scan, unsigned char type, std::uint32_t id, unsigned key) {
+        table[scan * 5] = type;
+        std::memcpy(table.data() + scan * 5 + 1, &id, sizeof(id));
+        keys[scan] = key;
+    };
+    auto read = [&](unsigned scan, unsigned& key) {
+        key = keys[scan];
+        return true;
+    };
+    // Read-only V17 keymap facts from the failed GUI window trial.
+    binding(23, 4, 1, 'I');
+    binding(31, 4, 2, 'S');
+    binding(37, 4, 3, 'K');
+    binding(29, 5, 52, 17);
+    binding(44, 5, 50, 'Z');
+    binding(56, 5, 53, 18);
+    unsigned key = 0;
+    for (const auto& expected : {std::pair<unsigned, unsigned>{1, 'I'}, {2, 'S'}, {3, 'K'}}) {
+        assert(FindNativeBinding(table, NativeBindingType::Menu, expected.first, key, read));
+        assert(key == expected.second);
+    }
+    assert(FindNativeBinding(table, NativeBindingType::Action, 53, key, read) && key == 18);
+    assert(FindNativeBinding(table, NativeBindingType::Action, 52, key, read) && key == 17);
+    assert(FindNativeBinding(table, NativeBindingType::Action, 50, key, read) && key == 'Z');
+    // Same numeric ID in another type must never be used as a window shortcut.
+    binding(59, 5, 1, 112);
+    binding(23, 2, 2000000, 'I');
+    assert(!FindNativeBinding(table, NativeBindingType::Menu, 1, key, read));
+    assert(FindNativeBinding(table, NativeBindingType::Action, 1, key, read) && key == 112);
+    // A rebound menu is resolved, and a queued key is invalidated after rebind.
+    binding(19, 4, 1, 'R');
+    assert(FindNativeBinding(table, NativeBindingType::Menu, 1, key, read) && key == 'R');
+    const auto queued = key;
+    binding(19, 2, 2000000, 'R');
+    assert(!FindNativeBinding(table, NativeBindingType::Menu, 1, key, read));
+    binding(20, 4, 1, 'T');
+    assert(FindNativeBinding(table, NativeBindingType::Menu, 1, key, read) && key != queued);
 }
 
 void MouseContract() {
@@ -404,6 +447,7 @@ void WindowContract() {
 }
 
 int main() {
+    BindingContract();
     MouseContract();
     CareContract();
     CancelObservedPoint();

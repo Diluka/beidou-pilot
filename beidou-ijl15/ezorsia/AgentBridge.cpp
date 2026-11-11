@@ -4,6 +4,7 @@
 #include "TaskTransport.h"
 #include "EventTransport.h"
 #include "NativeKeyInput.h"
+#include "NativeKeyBindings.h"
 #include "NativeMouseInput.h"
 #include "NativeCare.h"
 #include "NativeItemUse.h"
@@ -548,7 +549,7 @@ std::uint64_t UnixMilliseconds() {
     return (ticks - 116444736000000000ULL) / 10000;
 }
 
-bool BindingKey(std::uint32_t id, unsigned int& key, std::string& error) {
+bool BindingKey(BeiDouBridge::NativeBindingType type, std::uint32_t id, unsigned int& key, std::string& error) {
     std::uint32_t mapped = 0;
     std::uint32_t input = 0;
     std::uint32_t vtable = 0;
@@ -558,18 +559,10 @@ bool BindingKey(std::uint32_t id, unsigned int& key, std::string& error) {
         error = "native_binding_unavailable";
         return false;
     }
-    for (unsigned int index = 0; index < 89; ++index) {
-        std::uint32_t actionId = 0;
-        std::memcpy(&actionId, table.data() + index * 5 + 1, sizeof(actionId));
-        if (table[index * 5] != 5 || actionId != id) continue;
-        // Extended navigation keys share the low seven DIK bits used by CFuncKeyMappedMan.
-        unsigned int scan = index;
-        if (index == 71 || index == 72 || index == 73 || index == 75 || index == 77 || index == 79 || index == 80
-            || index == 81 || index == 82 || index == 83)
-            scan |= 0x80;
-        if (!ReadAt(input + 0x424 + scan * 4, key) || key == 0 || key > 255) continue;
+    if (BeiDouBridge::FindNativeBinding(table, type, id, key, [input](unsigned scan, unsigned int& value) {
+            return ReadAt(input + 0x424 + scan * 4, value);
+        }))
         return true;
-    }
     error = "unsupported: native_action_not_bound";
     return false;
 }
@@ -684,7 +677,8 @@ bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
     if (down && careResult && care.Active() && careMenuAction != 0) {
         unsigned int currentKey = 0;
         std::string error;
-        if (!BindingKey(careMenuAction, currentKey, error) || currentKey != key) return false;
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Menu, careMenuAction, currentKey, error) || currentKey != key)
+            return false;
     }
     if (down && careResult && care.Active()) careKeyDispatched = true;
     keyInput.MarkDispatched(epoch);
@@ -1159,7 +1153,8 @@ void Tick() {
                 unsigned int key = 0;
                 // Resolve V17 window menu actions through the current key map.
                 careMenuAction = intent == 'S' ? 2 : intent == 'K' ? 3 : 1;
-                return BindingKey(careMenuAction, key, error) && ApplyDesiredKeys({key}, 60, error);
+                return BindingKey(BeiDouBridge::NativeBindingType::Menu, careMenuAction, key, error)
+                       && ApplyDesiredKeys({key}, 60, error);
             });
         if (!care.Active() && !keyInput.Released()) keyInput.Release();
         if ((!care.Active() || care.StopMouse()) && !mouseInput.Released()) mouseInput.Release();
@@ -1325,14 +1320,14 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         }
         break;
     case MapleControl::ActionKind::Jump:
-        if (!BindingKey(53, key, error)) return false;
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 53, key, error)) return false;
         break;
     case MapleControl::ActionKind::Attack:
         if (action.skillId != 0) break;
-        if (!BindingKey(52, key, error)) return false;
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 52, key, error)) return false;
         break;
     case MapleControl::ActionKind::Pickup:
-        if (!BindingKey(50, key, error)) return false;
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 50, key, error)) return false;
         break;
     case MapleControl::ActionKind::UseItem: {
         if (action.itemId / 10000 != 200) {
