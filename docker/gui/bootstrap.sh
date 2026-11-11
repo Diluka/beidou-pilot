@@ -2,12 +2,12 @@
 set -euo pipefail
 umask 077
 
-export DISPLAY=:97 WINEPREFIX=/work/runtime/prefix WINEARCH=win32 WINEDEBUG="${WINEDEBUG:--all}"
+export DISPLAY=:97 WINEPREFIX="$CLIENT_ROOT/runtime/prefix" WINEARCH=win32 WINEDEBUG="${WINEDEBUG:--all}"
 export WINEDLLOVERRIDES='ijl15=n,b;mscoree,mshtml='
-run_dir="/work/runtime/runs/$RUN_ID"
-mkdir -p -- "$run_dir" /work/runtime/prefix /work/runtime/bridge
-rm -rf -- /work/client
-/opt/beidou/prepare-client.sh /client /work/client /opt/beidou-pilot/native/ijl15.dll
+run_dir="$CLIENT_ROOT/runtime/runs/$RUN_ID"
+mkdir -p -- "$run_dir" "$WINEPREFIX" "$CLIENT_ROOT/runtime/bridge"
+rm -rf -- "$CLIENT_ROOT/client"
+/opt/beidou/prepare-client.sh /client "$CLIENT_ROOT/client" /opt/beidou-pilot/native/ijl15.dll
 
 desktop_pids=()
 cleanup() {
@@ -42,7 +42,7 @@ desktop_pids+=("$wm_pid")
 wineboot -u >>"$run_dir/wine.log" 2>&1
 wine regedit /S /opt/beidou/chinese-fontlink.reg >>"$run_dir/wine.log" 2>&1
 
-cd /work/client
+cd "$CLIENT_ROOT/client"
 /opt/VirtualGL/bin/vglrun -d egl wine explorer /desktop=beidou,1920x1080 BeiDou.exe >>"$run_dir/wine.log" 2>&1 &
 game_pid=$!
 while true; do

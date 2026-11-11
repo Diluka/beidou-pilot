@@ -1,9 +1,0 @@
-services:
-  client:
-    volumes:
-      - type: bind
-        source: ${USER_SCRIPTS_DIR:?需要工作台用户 Lua 目录}
-        target: /scripts
-        read_only: true
-        bind:
-          create_host_path: false

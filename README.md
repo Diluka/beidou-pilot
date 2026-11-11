@@ -32,13 +32,16 @@ git submodule update --init --recursive
 
 ```text
 /external/workbench/
-  account.private.json   0600，已有账号与角色
-  resources.json         外部 NX/原客户端及可选 XML 路径
-  target.json            已核验的隔离目标；常驻授权路径可按需准备
-  runtime/               启动器管理的独立实例运行数据
+  account.json     0600，已有账号与角色
+  server.json      服务器项目、服务和精确镜像；可指定已有 internal 网络
+  resources.json   外部 NX/原客户端及可选 XML 路径
+  scripts/         用户 Lua
+  runtime/         启动器管理的独立实例运行数据
 ```
 
-两端使用相同 profile：`username`、`password`、`character_id`，以及可省略的 `world`、`channel`（从 0 开始，默认 0）。按 [resources.example.json](cli/config/resources.example.json) 配置资源路径；原客户端、NX、账号与运行数据都不进入镜像。GUI 默认按所选提交从成功的 `agent-bridge` CI 获取匹配工件并缓存，不在外部资源配置中指定 DLL。开发时可用 `--bridge-artifact DIR` 显式复用原生输入匹配的现成 DLL 和清单；此路径不需要 `gh`。
+两端共用 `account.json`：`username`、`password`、`character_id`，以及可省略的 `world`、`channel`（从 0 开始，默认 0）。`server.json` 必填 `project/service/expected_image`，可选 `network`，示例见 [server.example.json](cli/config/server.example.json)。按 [resources.example.json](cli/config/resources.example.json) 配置资源路径；原客户端、NX、账号与运行数据都不进入镜像。GUI 默认按所选提交从成功的 `agent-bridge` CI 获取匹配工件并缓存，不在外部资源配置中指定 DLL。开发时可用 `--bridge-artifact DIR` 显式复用原生输入匹配的现成 DLL 和清单；此路径不需要 `gh`。
+
+工作台整体读写挂载到容器 `/work`，脚本直接从 `/work/scripts` 读取；本次实例使用 `/work/runtime/INSTANCE/RUN_ID` 下的配置和运行数据。GUI 装配只使用一个 `docker/compose.yaml`。原客户端 `/client` 和 NX `/data` 的格式、来源及只读挂载保持不变。
 
 用统一入口离线检查 NX：
 
@@ -46,7 +49,7 @@ git submodule update --init --recursive
 ./beidou-pilot --workbench /external/workbench --backend headless --json resources-check
 ```
 
-该命令构建或复用所选提交的无头镜像，只读检查 `resources.json` 中的 `headless_resources`，不需要 target 或 profile，也不登录。
+该命令构建或复用所选提交的无头镜像，只读检查 `resources.json` 中的 `headless_resources`，不需要服务器或账号配置，也不登录。
 
 ## 操作实例
 
@@ -62,7 +65,7 @@ git submodule update --init --recursive
 
 新实例默认从 `main` 当时的已提交版本导出构建输入并构建或复用镜像。之后 `main` 更新不改变已有实例；`status` 可查看 `source_revision/image/run_id`。开发验收可在命令前显式加 `--ref COMMIT`。`plan` 只读核对目标，不构建或启动。
 
-GUI 使用同一入口和 profile，在其工作台选择 `beidou` 后端：
+GUI 使用同一入口和 `account.json`，在其工作台选择 `beidou` 后端：
 
 ```bash
 ./beidou-pilot --workbench /external/gui-workbench --backend beidou --json open
@@ -70,7 +73,7 @@ GUI 使用同一入口和 profile，在其工作台选择 `beidou` 后端：
 ./beidou-pilot --workbench /external/gui-workbench --json close
 ```
 
-GUI 在一个工作台中只用 `default` 实例，且仅支持 `world=0`。同一目标同一角色一次只交给一个控制者。常驻 `beidou-ms` 目标须已有授权，并在 `plan/open` 时传 `--workspace-server`；没有 target 文件时，启动器为该实例准备所属 internal 连接。
+GUI 在一个工作台中只用 `default` 实例，且仅支持 `world=0`。同一目标同一角色一次只交给一个控制者。常驻 `beidou-ms` 目标须已有授权，并在 `plan/open` 时传 `--workspace-server`；`server.json` 没有指定网络时，启动器为该实例准备所属 internal 连接。
 
 日常命令通过所属容器内的 `beidou-pilot` 执行，例如 `docker exec CONTAINER beidou-pilot --json status`；GUI CLI 入口会使用客户端的 `1000:1000` 身份。动作和取消优先使用宿主薄入口，它负责向本次容器内 CLI 定向转发信号。宿主 `close` 通过 Docker 正常停止、核对退出并回收所属容器；容器内 `close` 会提示使用该生命周期入口。Lua 返回或取消只结束当前动作，实例继续运行；真实断线或原生错误会退出并保留原因。完整参数见 [CLI](docs/CLI.md)。
 

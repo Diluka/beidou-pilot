@@ -16,11 +16,11 @@ usage() {
   其他命令  交给所属容器内的 beidou-pilot（snapshot、script、hunt 等）
 
 build/resources-check/plan/open 参数：
-  --target PATH          已核验的 target，默认 DIR/target.json
-  --profile PATH         账号 profile，默认 DIR/account.private.json
+  --server PATH          服务器配置，默认 DIR/server.json
+  --account PATH         账号配置，默认 DIR/account.json
   --resources PATH       外部资源配置，默认 DIR/resources.json
   --bridge-artifact DIR  开发时复用匹配的 GUI 桥工件；默认自动获取所选提交的 CI 工件
-  --workspace-server     显式授权常驻 beidou-ms 目标；没有 target 时为本实例准备连接
+  --workspace-server     显式授权 server.json 所选常驻 beidou-ms 服务器
   --timeout SECONDS      入图等待，默认 90 秒
 EOF
 }
@@ -139,6 +139,12 @@ exec_cli() {
     return "$result"
 }
 
+exec_open() {
+    local root
+    root=$(jq -r '.Config.Env[] | select(startswith("CLIENT_ROOT=")) | ltrimstr("CLIENT_ROOT=")' <<<"$inspect")
+    exec_cli open --account "$root/account.json" --server "$root/server.json" --timeout "$timeout"
+}
+
 wait_runtime() {
     local root started seconds
     root=$(jq -r '.Config.Labels["beidou.client.root"]' <<<"$inspect")
@@ -193,22 +199,22 @@ case "$command" in
         ;;
 esac
 
-target="$workbench/target.json"
-profile="$workbench/account.private.json"
+target="$workbench/server.json"
+account="$workbench/account.json"
 resources="$workbench/resources.json"
 bridge=
 workspace_server=false
-profile_explicit=false
-target_explicit=false
+account_explicit=false
+server_explicit=false
 timeout=90
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --target|--profile|--resources|--bridge-artifact|--timeout)
+        --server|--account|--resources|--bridge-artifact|--timeout)
             [ "$#" -ge 2 ] || fail usage "缺少 $1 的值。" ;;
     esac
     case "$1" in
-        --target) target=$2; target_explicit=true; shift 2 ;;
-        --profile) profile=$2; profile_explicit=true; shift 2 ;;
+        --server) target=$2; server_explicit=true; shift 2 ;;
+        --account) account=$2; account_explicit=true; shift 2 ;;
         --resources) resources=$2; shift 2 ;;
         --bridge-artifact) bridge=$2; shift 2 ;;
         --workspace-server) workspace_server=true; shift ;;
@@ -228,22 +234,30 @@ resource_path() {
     realpath "$path"
 }
 
+read_server() {
+    [ -f "$target" ] || fail server_required '须提供工作台 server.json 或显式 --server。'
+    server_config=$(jq -e 'select((keys == ["expected_image","project","service"] or keys == ["expected_image","network","project","service"])
+        and all(.[]; type == "string" and length > 0))' "$target") || fail server_invalid '服务器配置字段无效。'
+}
+
 if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
     if "$backend_explicit"; then
         [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = "$backend" ] ||
             fail backend_mismatch '已有实例使用其他后端，未切换。'
     fi
-    if "$target_explicit"; then
-        jq -e --slurpfile wanted "$target" '.target == $wanted[0]' "$record" >/dev/null ||
-            fail target_mismatch '已有实例目标与请求不同。'
+    if "$server_explicit"; then
+        read_server
+        jq -e --argjson wanted "$server_config" '.target as $actual | $wanted |
+            all(to_entries[]; $actual[.key] == .value)' "$record" >/dev/null ||
+            fail server_mismatch '已有实例服务器与请求不同。'
     fi
-    if "$profile_explicit"; then
-        jq -e --slurpfile wanted "$profile" '.character_id == $wanted[0].character_id
+    if "$account_explicit"; then
+        jq -e --slurpfile wanted "$account" '.character_id == $wanted[0].character_id
             and .world == ($wanted[0].world // 0) and .channel == ($wanted[0].channel // 0)' "$record" >/dev/null ||
             fail character_mismatch '已有实例角色、世界或频道与请求不同。'
     fi
     wait_runtime
-    exec_cli open --profile /config/account.private.json --timeout "$timeout"
+    exec_open
     exit $?
 fi
 
@@ -253,17 +267,9 @@ fi
 resolved=
 owned_network=
 resolve_target() {
-    if [ -f "$target" ]; then
-        jq -e 'keys == ["expected_image","network","project","service"] and all(.[]; type == "string" and length > 0)' "$target" >/dev/null ||
-            fail target_invalid '目标配置字段无效。'
-        project=$(jq -r .project "$target")
-        service=$(jq -r .service "$target")
-    elif "$workspace_server"; then
-        project=beidou-ms
-        service=beidou-server-all
-    else
-        fail target_required '须给出已确认的 target，或显式授权工作区目标。'
-    fi
+    read_server
+    project=$(jq -r .project <<<"$server_config")
+    service=$(jq -r .service <<<"$server_config")
     if [ "$project" = beidou-ms ]; then
         "$workspace_server" && [ "$service" = beidou-server-all ] ||
             fail workspace_authorization_required '常驻目标须显式传 --workspace-server。'
@@ -280,9 +286,9 @@ resolve_target() {
     fi
     server_id=$(jq -r .Id <<<"$server_info")
     server_image=$(jq -r .Image <<<"$server_info")
-    if [ -f "$target" ]; then
-        [ "$(jq -r .expected_image "$target")" = "$server_image" ] || fail target_image_changed '目标镜像与已确认配置不符。'
-        network=$(jq -r .network "$target")
+    [ "$(jq -r .expected_image <<<"$server_config")" = "$server_image" ] || fail server_image_changed '服务器镜像与已确认配置不符。'
+    network=$(jq -r '.network // empty' <<<"$server_config")
+    if [ -n "$network" ]; then
         docker network inspect "$network" | jq -e --arg project "$project" '.[0] |
             .Internal and .Labels["com.docker.compose.project"] == $project' >/dev/null ||
             fail target_invalid '目标网络必须是同项目的 internal 网络。'
@@ -372,9 +378,9 @@ if [ "$command" = resources-check ]; then
         --mount "type=bind,src=$nx,dst=/data,readonly" --entrypoint /bin/beidou-headless "$image" --check-resources /data
 fi
 
-[ -f "$profile" ] && [ "$(stat -Lc %a "$profile")" = 600 ] || fail private_file_permissions '账号 profile 须存在且权限为 0600。'
+[ -f "$account" ] && [ "$(stat -Lc %a "$account")" = 600 ] || fail private_file_permissions 'account.json 须存在且权限为 0600。'
 [ -f "$resources" ] || fail resources_required '须提供工作台的外部资源配置。'
-profile=$(realpath "$profile")
+account=$(realpath "$account")
 resources=$(realpath "$resources")
 nx=$(resource_path headless_resources)
 [ -d "$nx" ] || fail resources_missing 'NX 资源目录不可用。'
@@ -394,7 +400,7 @@ locate
 if "$running"; then
     flock -u 8
     wait_runtime
-    exec_cli open --profile /config/account.private.json --timeout "$timeout"
+    exec_open
     exit $?
 fi
 if [ -n "$id" ]; then
@@ -404,11 +410,12 @@ fi
 cleanup_network
 run_id=$(date -u +%Y%m%dT%H%M%S.%NZ)
 run_root="$state/$run_id"
+container_root="/work/runtime/$instance/$run_id"
 mkdir -p "$run_root"
+install -m 600 "$account" "$run_root/account.json"
 identity=$(docker run --rm --network none --user "$(id -u):$(id -g)" \
-    --mount "type=bind,src=$profile,dst=/input/profile.json,readonly" \
-    --mount "type=bind,src=$run_root,dst=/output" --entrypoint python3 "$image" \
-    -m beidou_pilot.profile /input/profile.json --output /output/profile.private.json)
+    --mount "type=bind,src=$workbench,dst=/work" --entrypoint python3 "$image" \
+    -m beidou_pilot.profile "$container_root/account.json")
 character_id=$(jq -er .character_id <<<"$identity")
 world=$(jq -er .world <<<"$identity")
 channel=$(jq -er .channel <<<"$identity")
@@ -432,11 +439,10 @@ if [ -z "$network" ]; then
     docker network connect "$network" "$server_id"
     target_ip=$(docker inspect "$server_id" | jq -er --arg network "$network" '.[0].NetworkSettings.Networks[$network].IPAddress')
     owned_network=$network
-    target="$run_root/target.json"
-    jq -nc --arg project "$project" --arg service "$service" --arg network "$network" --arg image "$server_image" \
-        '{project:$project,service:$service,network:$network,expected_image:$image}' >"$target"
 fi
-target=$(realpath "$target")
+target="$run_root/server.json"
+jq -nc --arg project "$project" --arg service "$service" --arg network "$network" --arg image "$server_image" \
+    '{project:$project,service:$service,network:$network,expected_image:$image}' >"$target"
 if [ "$backend" = headless ]; then
     set -- docker run -d --init --name "$name" --network "$network" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=64m \
         --cpus 2 --memory 1g --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges \
@@ -444,22 +450,20 @@ if [ "$backend" = headless ]; then
         --label "beidou.workbench=$workbench" --label "beidou.client.root=$run_root" --label "beidou.client.instance=$instance" \
         --label "beidou.target.id=$server_id" --label "beidou.character.id=$character_id" --label "beidou.world=$world" \
         --env "CLIENT_IMAGE_ID=$image" --env "RUN_ID=$run_id" --env "MAPLE_INSTANCE=$instance" \
+        --env "CLIENT_ROOT=$container_root" --env "MAPLE_RESOURCES_CONFIG=$container_root/config/resources.json" \
         --env "TARGET_IP=$target_ip" --env "TARGET_CONTAINER_ID=$server_id" \
-        --mount "type=bind,src=$run_root,dst=/work" --mount "type=bind,src=$nx,dst=/data,readonly" \
-        --mount "type=bind,src=$run_root/profile.private.json,dst=/config/account.private.json,readonly" \
-        --mount "type=bind,src=$target,dst=/config/target.json,readonly"
+        --mount "type=bind,src=$workbench,dst=/work" --mount "type=bind,src=$nx,dst=/data,readonly"
     if [ -n "$metadata" ]; then set -- "$@" --mount "type=bind,src=$metadata,dst=/metadata,readonly"; fi
-    if [ -d "$workbench/scripts" ]; then set -- "$@" --mount "type=bind,src=$workbench/scripts,dst=/scripts,readonly"; fi
     "$@" "$image" >/dev/null
 else
     export CLIENT_IMAGE="$image" CLIENT_IMAGE_ID="$image" CLIENT_CONTAINER_NAME="$name" WORKBENCH_ROOT="$workbench"
-    export CLIENT_ROOT="$run_root" PROFILE_PATH="$run_root/profile.private.json" TARGET_PATH="$target"
+    export CLIENT_ROOT="$run_root" CLIENT_RUNTIME_ROOT="$container_root"
     export BEIDOU_CLIENT_DIR="$gui" HEADLESS_RESOURCES_DIR="$nx" TARGET_IP="$target_ip" TARGET_NETWORK="$network"
     export TARGET_CONTAINER_ID="$server_id" RUN_ID="$run_id" MAPLE_INSTANCE="$instance" CHARACTER_ID="$character_id" WORLD_ID="$world"
     export RENDER_GID="$(stat -c %g /dev/dri/renderD128)"
+    if [ -z "$metadata" ]; then metadata="$run_root/metadata"; mkdir -p "$metadata"; fi
+    export METADATA_ROOT="$metadata"
     set -- docker compose --project-name "$name" -f "$context/docker/compose.yaml"
-    if [ -n "$metadata" ]; then export METADATA_ROOT="$metadata"; set -- "$@" -f "$context/docker/compose.metadata.yaml"; fi
-    if [ -d "$workbench/scripts" ]; then export USER_SCRIPTS_DIR="$workbench/scripts"; set -- "$@" -f "$context/docker/compose.scripts.yaml"; fi
     "$@" up -d --no-build --pull never client >&2
 fi
 id=$(docker inspect "$name" --format '{{.Id}}')
@@ -472,4 +476,4 @@ flock -u 7
 flock -u 8
 locate
 wait_runtime
-exec_cli open --profile /config/account.private.json --timeout "$timeout"
+exec_open

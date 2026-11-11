@@ -18,7 +18,7 @@ ip6tables -P OUTPUT DROP
 ip6tables -A INPUT -i lo -j ACCEPT
 ip6tables -A OUTPUT -o lo -j ACCEPT
 exec setpriv --reuid 1000 --regid 1000 --groups "$RENDER_GID" --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs --reset-env \
-  env LANG=zh_CN.UTF-8 DISPLAY=:97 WINEPREFIX=/work/runtime/prefix WINEARCH=win32 WINEDEBUG="${WINEDEBUG:--all}" \
-  RUN_ID="$RUN_ID" MAPLE_BACKEND=beidou MAPLE_INSTANCE="$MAPLE_INSTANCE" CLIENT_ROOT=/work \
-  CLIENT_IMAGE_ID="$CLIENT_IMAGE_ID" MAPLE_RESOURCES_CONFIG=/work/config/resources.json \
-  PYTHONPATH=/opt/beidou-pilot/cli PYTHONDONTWRITEBYTECODE=1 MAPLE_BRIDGE_DIR='Z:\work\runtime\bridge' /opt/beidou/bootstrap.sh
+  env LANG=zh_CN.UTF-8 DISPLAY=:97 WINEPREFIX="$CLIENT_ROOT/runtime/prefix" WINEARCH=win32 WINEDEBUG="${WINEDEBUG:--all}" \
+  RUN_ID="$RUN_ID" MAPLE_BACKEND=beidou MAPLE_INSTANCE="$MAPLE_INSTANCE" CLIENT_ROOT="$CLIENT_ROOT" \
+  CLIENT_IMAGE_ID="$CLIENT_IMAGE_ID" MAPLE_RESOURCES_CONFIG="$MAPLE_RESOURCES_CONFIG" \
+  PYTHONPATH=/opt/beidou-pilot/cli PYTHONDONTWRITEBYTECODE=1 MAPLE_BRIDGE_DIR="$MAPLE_BRIDGE_DIR" /opt/beidou/bootstrap.sh

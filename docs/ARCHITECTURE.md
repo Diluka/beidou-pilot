@@ -29,11 +29,11 @@ Codex app-server 在独立 harness 容器中运行，宿主薄控制器分派少
 
 每个工作台实例拥有独立容器、运行目录、桥和控制锁。GUI 在一个工作台中只使用 `default`；无头可按名字建实例。同一目标同一角色仍禁止并发接管。原生 `instance_id/run_id` 继续保证请求、取消与结果属于本次运行，真实断线或错误会退出并保留事实，不自动重连或重放。
 
-容器入口读取本次私密 profile 和 target，生成内部资源映射与 `/work/state/container.json`，随后保持 PID 交给对应原生进程。容器内 CLI 通过登记、进程和原生桥直接观察、执行桌面原语与登录。`open` 完成或确认本容器入图，不再调用 Docker 创建进程。
+容器入口从本次 `CLIENT_ROOT=/work/runtime/INSTANCE/RUN_ID` 读取 `account.json`、`server.json`，生成内部资源映射与 `state/container.json`，随后保持 PID 交给对应原生进程。容器内 CLI 通过登记、进程和原生桥直接观察、执行桌面原语与登录。`open` 完成或确认本容器入图，不再调用 Docker 创建进程。
 
 宿主启动器负责 Docker 构建、创建和正常关闭。`close` 经 Docker SIGTERM 让镜像内原生客户端或 GUI bootstrap 取消、放键并退出，核对 `Running=false/Pid=0` 后保留日志并回收所属容器；容器内 `close` 明确返回 `host_lifecycle_required`。生命周期锁独立于 Lua 输入锁，活动脚本不阻挡关闭。取消原宿主命令时，启动器按本次执行 token 向对应容器内 CLI 转发信号，并等待其原生放键确认。
 
-[无头 Dockerfile](../docker/headless/Dockerfile) 是无头镜像唯一构建入口，builder 编译，运行层使用标准发行版运行依赖。[GUI Dockerfile](../docker/gui/Dockerfile) 以根上下文构建完整 GUI 客户端，[Compose](../docker/compose.yaml) 装配设备、只读资源和独立状态；可选 XML 与用户脚本通过对应覆盖文件装配。所有定义放在 `docker/`，根 `.dockerignore` 只保留两端构建必需的源码与明确桥工件输入。
+[无头 Dockerfile](../docker/headless/Dockerfile) 是无头镜像唯一构建入口，builder 编译，运行层使用标准发行版运行依赖。[GUI Dockerfile](../docker/gui/Dockerfile) 以根上下文构建完整 GUI 客户端，唯一的 [Compose](../docker/compose.yaml) 装配设备、只读资源与整个工作台；用户脚本和配置直接使用工作台中的路径。所有定义放在 `docker/`，根 `.dockerignore` 只保留两端构建必需的源码与明确桥工件输入。
 
 GUI DLL 仍由 Windows/MSVC、SDK 和匹配 Detours 库构建。完整 GUI 镜像默认通过 `gh` 获取所选提交成功 CI 的 DLL 与清单，开发时可用 `--bridge-artifact` 显式复用现有工件。启动器核对原生构建输入，无法匹配时明确拒绝；显式工件路径无需 `gh`。
 
@@ -51,7 +51,7 @@ python3 headless/tools/prepare_resources.py \
   --resources /external/resources.json
 ```
 
-转换工具需要本机 C++17 编译器；已有 NX 时无需转换。统一的 `resources-check` 根据外部配置找到 NX，使用所选提交的无头镜像和无网络短时容器离线检查，不需要 target 或 profile。
+转换工具需要本机 C++17 编译器；已有 NX 时无需转换。统一的 `resources-check` 根据外部配置找到 NX，使用所选提交的无头镜像和无网络短时容器离线检查，不需要服务器或账号配置。
 
 宿主从工作台 `resources.json` 读取外部路径，也可由宿主 `--resources PATH` 指定；相对路径按该配置文件目录解析。它不含账号，不提交。字段如下：
 
@@ -61,15 +61,17 @@ python3 headless/tools/prepare_resources.py \
 | `metadata_root` | 可选 WZ XML，只读挂到 `/metadata`；对应资料不存在时使用同源 NX 或保留未知 |
 | `gui_client` | 匹配 V17 的外部原客户端目录，只读挂到 GUI 容器 `/client` |
 
-容器入口生成 `/work/config/resources.json`，只使用内部固定路径，`MAPLE_RESOURCES_CONFIG` 指向该文件。内部配置的 `gui_dll` 固定为镜像内 `/opt/beidou-pilot/native/ijl15.dll`，构建清单位于同目录并登记到 `/work/state/agent-bridge-build.json`。每次私密 profile 快照只读挂到 `/config/account.private.json`，target 挂到 `/config/target.json`，均不进入镜像。字段与入口见 [CLI](CLI.md)。
+工作台整体读写挂载到 `/work`，根目录成对维护 `account.json`、`server.json`。本次输入保存在 `/work/runtime/INSTANCE/RUN_ID/`，`CLIENT_ROOT` 指向该目录。容器入口在其 `config/resources.json` 生成资源映射，`MAPLE_RESOURCES_CONFIG` 指向该文件；内部 `gui_dll` 固定为镜像内 `/opt/beidou-pilot/native/ijl15.dll`，清单登记在该运行根的 `state/agent-bridge-build.json`。配置、角色计划和运行数据均不进入镜像。字段与入口见 [CLI](CLI.md)。
 
-工作台可选的 `scripts/` 作为用户明确输入，只读挂到 `/scripts`。内置 `shared/scripts/` 随镜像固定，用户 Lua 文件与 `--code` 可在运行中提交，不要求重建镜像；它们不改变模型、养成或生命周期职责。
+原版 `/client`、NX `/data` 的来源、格式和只读挂载保持不变。原始 IMG 直读尚在研究，本次装配更改不合并、复制或迁移资源。GUI 未配置 WZ XML 时，唯一 Compose 使用本次运行目录中的空目录作为 `/metadata` 的挂载源；空目录不提供资料，仍按现有 Catalog 规则使用同源 NX 或保留未知。
+
+用户 Lua 是工作台中的明确输入，直接位于 `/work/scripts`，无需独立挂载。内置 `shared/scripts/` 随镜像固定，用户 Lua 文件与 `--code` 可在运行中提交，不要求重建镜像；它们不改变模型、养成或生命周期职责。
 
 名称、物品恢复属性、NPC范围和地图门户/绳梯/地形由同一个 `Catalog` 投影，现有 `inspect`、旅行、恢复与 `hunt` 共用。NX只读取属性与几何元数据，像素和音频不进入CLI或镜像。结果列出实际资料文件、SHA256及可用转换清单；`resource_version=null` 表示没有可证明的游戏版本，指纹相同不代表已经核实与运行客户端同版。地图来源遵循原生的 `Map002.nx` 优先选择，链接图没有自身地形时明确拒绝，不静默套用别图。
 
-原版 GUI 在容器私有目录 `/work/client` 组装运行副本：复制原客户端的运行文件，`Data/` 链接到只读 `/client/Data`，再用镜像内已核验的桥替换运行副本中的 `ijl15.dll`。原客户端目录保持只读，不能用硬链接或可写链接替代独立运行文件。图片库 `2ijl15.dll` 仍是桥接 DLL 的运行依赖，必须保留。
+原版 GUI 在本次 `$CLIENT_ROOT/client` 组装运行副本：复制原客户端的运行文件，`Data/` 链接到只读 `/client/Data`，再用镜像内已核验的桥替换运行副本中的 `ijl15.dll`。原客户端目录保持只读，不能用硬链接或可写链接替代独立运行文件。图片库 `2ijl15.dll` 仍是桥接 DLL 的运行依赖，必须保留。
 
-宿主的 `WORKBENCH/runtime/INSTANCE/RUN_ID/` 挂为本次容器 `/work`。GUI 的 Wine prefix、日志与桥位于 `/work/runtime/prefix`、`/work/runtime/runs` 和 `/work/runtime/bridge`；无头路径沿用 `InstancePaths` 的后端/实例布局。GUI 生成文件允许容器内 `1000:1000` 读写。GUI 使用 `DISPLAY=:97`、Xvfb/窗口管理器、VirtualGL EGL 和 `/dev/dri/renderD128`；原资源只读、硬件初始化及真实游戏效果分别验收。
+宿主工作台整体挂为 `/work`，本次实例运行根为 `/work/runtime/INSTANCE/RUN_ID`。GUI 的 Wine prefix、日志与桥位于 `$CLIENT_ROOT/runtime/prefix`、`$CLIENT_ROOT/runtime/runs` 和 `$CLIENT_ROOT/runtime/bridge`；无头路径沿用 `InstancePaths` 的后端/实例布局。GUI 生成文件允许容器内 `1000:1000` 读写。GUI 使用 `DISPLAY=:97`、Xvfb/窗口管理器、VirtualGL EGL 和 `/dev/dri/renderD128`；原资源只读、硬件初始化及真实游戏效果分别验收。
 
 GUI 准备和统一入口见 [CLI](CLI.md#原版-gui)。
 
@@ -77,7 +79,7 @@ GUI 准备和统一入口见 [CLI](CLI.md#原版-gui)。
 
 | 能力 | 北斗 GUI | 无头端 |
 | --- | --- | --- |
-| 已有角色登录、退出、状态与实例管理 | 默认单实例；普通 GUI 登录 | 命名多实例；profile 指定已有角色 |
+| 已有角色登录、退出、状态与实例管理 | 默认单实例；普通 GUI 登录 | 命名多实例；账号配置指定已有角色 |
 | 阶段、角色、场景、背包、装备、金币与技能记录 | 原生观察 | 原生对象观察；读取技能不代表可执行技能 |
 | 任务观察 | 当前原生任务对象 | 完整角色包与同会话正常增量；原始进度与未核实关联不推断 |
 | 移动、朝向、跳跃、普攻、近距拾取、停止 | 共同 Lua 语义 | 共同 Lua 语义 |

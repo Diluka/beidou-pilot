@@ -18,6 +18,8 @@ from beidou_pilot.profile import load_profile
 def main() -> None:
     os.umask(0o077)
     root = Path(os.environ["CLIENT_ROOT"]).resolve()
+    os.environ["CLIENT_ROOT"] = str(root)
+    os.environ["MAPLE_RESOURCES_CONFIG"] = str(root / "config/resources.json")
     backend = os.environ["MAPLE_BACKEND"]
     if backend not in {"headless", "beidou"}:
         raise ClientError("unsupported_backend", "镜像未指定可用的客户端后端。")
@@ -25,16 +27,16 @@ def main() -> None:
     run_id = os.environ["RUN_ID"]
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", run_id):
         raise ClientError("invalid_run_id", "容器运行 ID 格式无效。")
-    profile = load_profile(Path("/config/account.private.json"))
+    profile = load_profile(root / "account.json")
     if backend == "beidou" and (profile.world != 0 or profile.channel >= 20):
         raise ClientError("unsupported_login_destination", "原版 GUI 登录只支持世界 0 和第 1 至 20 频道。")
-    target = json.loads(Path("/config/target.json").read_text())
+    target = json.loads((root / "server.json").read_text())
     if (
         not isinstance(target, dict)
         or set(target) != {"project", "service", "network", "expected_image"}
         or any(not isinstance(value, str) or not value for value in target.values())
     ):
-        raise ClientError("target_invalid", "目标配置须提供 project、service、network 和 expected_image。")
+        raise ClientError("server_invalid", "本次服务器配置须提供 project、service、network 和 expected_image。")
     run_dir = paths.runs / run_id
     directories = {
         root / "state",
@@ -108,6 +110,7 @@ def main() -> None:
     if backend == "headless":
         os.execv("/bin/beidou-headless", ["beidou-headless", "--config", str(native_profile)])
     else:
+        os.environ["MAPLE_BRIDGE_DIR"] = "Z:" + str(paths.bridge).replace("/", "\\")
         os.execv("/opt/beidou/entrypoint.sh", ["/opt/beidou/entrypoint.sh"])
 
 

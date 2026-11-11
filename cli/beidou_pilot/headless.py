@@ -33,12 +33,12 @@ def status(root: Path, instance: str = "default") -> JsonObject:
     return result
 
 
-def open_game(root: Path, *, profile: LoginProfile, target: Path | None = None,
+def open_game(root: Path, *, profile: LoginProfile, server: Path | None = None,
               timeout: float = 90, instance: str = "default") -> JsonObject:
     if not 5 <= timeout <= 180:
         raise ClientError("invalid_open_options", "启动等待期限须为 5 至 180 秒。")
     runtime = load_runtime(root, "headless", instance)
-    runtime.verify_request(profile, target)
+    runtime.verify_request(profile, server)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         observed = status(root, instance)
@@ -47,7 +47,7 @@ def open_game(root: Path, *, profile: LoginProfile, target: Path | None = None,
         if observed["stage"] == "IN_GAME":
             character = cast(JsonObject, observed["character"])
             if character["id"] != profile.character_id:
-                raise ClientError("character_mismatch", "实际入图角色与 profile 不符，保留本容器。")
+                raise ClientError("character_mismatch", "实际入图角色与账号配置不符，保留本容器。")
             return {**observed, "ready": True, "started": False, "resumed": True}
         time.sleep(.1)
     raise ClientError("headless_open_timeout", "无头客户端未在期限内入图，保留现场。",

@@ -11,7 +11,7 @@ description: "使用 beidou-pilot 北斗游戏客户端时使用：寻找和接�
 
 - 技能源文件维护在北斗仓库 `.agents/skills/beidou-pilot-client/`。从用户技能目录的链接调用时，先解析技能真实路径找回仓库；不要在当前其他项目中猜客户端命令。
 - 首次操作先读仓库 `AGENTS.md` 和 [游戏 AI 操作指引](../../../docs/PLAY_GUIDE.md)；本会话已读过的内容不重复加载。精确参数查根入口 `beidou-pilot --help`，按需读 [CLI](../../../docs/CLI.md)，不先通读源码、历史 Issue 或服务端实现。
-- 从用户指令、仓库未跟踪的 `LOCAL.md` 等本机索引及已有交接记录找到工作台、profile、目标、养成计划和操作者。只读取本次所需内容，不回显凭据，不扫描所有账号文件。不要把私密值或某台机器的运行路径复制进技能。
+- 从用户指令、仓库未跟踪的 `LOCAL.md` 等本机索引及已有交接记录找到工作台、账号与服务器配置、养成计划和操作者。只读取本次所需内容，不回显凭据，不扫描所有账号文件。不要把私密值或某台机器的运行路径复制进技能。
 - 沿用本次任务已有的目标、账号及玩法授权；不逐步重问已经明确的选择。文件存在或服务可访问不能单独证明授权。
 
 未找到实例索引时，可只读发现新入口登记的容器：
@@ -28,8 +28,8 @@ docker ps -a --filter label=beidou.workbench \
 | 当前事实 | 下一步 |
 | --- | --- |
 | 已有运行实例、角色正确 | 读 `status`、`script status`、`snapshot`，接续原版本；无需重新 `open` 或重建 |
-| 有专用账号和已有角色，实例未运行 | 检查 profile 与 target，执行下方已有角色登录路径 |
-| 找不到 profile、但已有工作台或账号池 | 先按本机索引找回已授权资料；不直接判成“没有账号” |
+| 有专用账号和已有角色，实例未运行 | 检查 account.json 与 server.json，执行下方已有角色登录路径 |
+| 找不到账号配置、但已有工作台或账号池 | 先按本机索引找回已授权资料；不直接判成“没有账号” |
 | 确实无账号，或有账号但没有角色 | 读 [账号准备与首次登录](references/first-login.md)，区分注册、首次声明和建角；不反复尝试已有角色登录 |
 
 ## 已有角色的最短登录路径
@@ -43,9 +43,10 @@ docker ps -a --filter label=beidou.workbench \
 ./beidou-pilot --workbench /external/workbench --instance worker-a --json snapshot
 ```
 
-- 工作台必须已存在，默认提供 `account.private.json`、`resources.json` 和需要时的 `target.json`。可在 `plan/open` 后用 `--profile PATH --resources PATH --target PATH` 指定已有文件；不复制一套重复配置。
-- profile 权限严格为 `0600`，必填 `username/password/character_id`；`character_id` 是已有角色的正 int32 CID。`world/channel` 默认 0，第 1 频道写 `channel=0`。GUI 仅支持 `world=0`、第 1 至 20 频道。密码不放命令参数或输出，旧 `--character/--character-index/--channel` 登录参数已退役。
-- `plan` 只读核对目标，不构建或启动。隔离目标核对项目、服务、精确镜像与 internal 网络；常驻工作区目标仅在已有授权时给 `plan/open` 加 `--workspace-server`。启动器不负责启动游戏服务端。
+- 工作台必须已存在，默认使用成对的 `account.json`、`server.json`，资源路径放在 `resources.json`。可在 `plan/open` 后用 `--account PATH --server PATH --resources PATH` 指定已有文件。
+- `account.json` 权限严格为 `0600`，必填 `username/password/character_id`；`character_id` 是已有角色的正 int32 CID。`world/channel` 默认 0，第 1 频道写 `channel=0`。GUI 仅支持 `world=0`、第 1 至 20 频道。密码不放命令参数或输出，旧 `--character/--character-index/--channel` 登录参数已退役。
+- `server.json` 必填 `project/service/expected_image`，可选 `network`。`plan` 只读核对服务器，不构建或启动；指定网络时须为同项目的 internal 网络，未指定时由 `open` 准备本实例连接。常驻工作区目标仅在已有授权时给 `plan/open` 加 `--workspace-server`。启动器不负责启动游戏服务端。
+- 整个工作台读写挂到 `/work`，本次配置快照、桥和日志位于 `/work/runtime/INSTANCE/RUN_ID/`，容器的 `CLIENT_ROOT` 指向该目录。账号和服务器配置仍在工作台外置维护，不进入镜像。原版 `/client` 和现有 NX `/data` 的格式、来源与只读挂载保持不变；原始 IMG 直读仍待研究核实。
 - 新实例默认用 `main` 已提交版本构建或复用镜像。已有实例继续使用启动时的 CLI、内置 Lua 和桥；查 `status` 的 `source_revision/image/run_id`，不能用当前宿主 HEAD 代替实际版本。开发验收明确用 `--ref COMMIT`。
 - `open` 不自动建角。成功需确认新鲜状态 `ready=true`、匹配的角色 CID/名称、频道、地图、位置及本次原生 `instance_id/run_id`；容器运行或认证成功均不足以证明入图。
 
@@ -63,7 +64,7 @@ docker ps -a --filter label=beidou.workbench \
 ```
 
 - `script run` 等待结束；`script start` 受理后返回，结束模型回合不会取消脚本。取消使用当前 `script.id`，或向原 `script run` 命令发 Ctrl+C/SIGTERM；核对同一原生身份的终态和 `held_keys=[]`。
-- 用户文件路径按容器内部解释，工作台 `scripts/` 对应 `/scripts`；可在已有实例提交新 Lua，无需为此重建或重登。角色策略用 Lua，不加 Python 逐帧控制。
+- 用户文件路径按容器内部解释，工作台 `scripts/` 对应 `/work/scripts`；可在已有实例提交新 Lua，无需为此重建或重登。角色策略用 Lua，不加 Python 逐帧控制。
 - 动作受理、脚本完成和放键分别核对，游戏效果读实际位置、HP/MP、库存、任务等。结果不明先观察，尤其不重放消费、奖励、加点和交易。
 - 短脚本结束或取消保留客户端。需要下线时用宿主 `close`，再读 `status` 核对退出；容器内 `close` 会报 `host_lifecycle_required`。危险区域结束后先按已核实路径回到安全位置或关闭所属实例，再长时间分析。
 

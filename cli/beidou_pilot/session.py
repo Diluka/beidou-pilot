@@ -12,7 +12,7 @@ from .profile import LoginProfile
 
 
 def open_game(backend: Backend, *, profile: LoginProfile,
-              target: Path | None = None,
+              server: Path | None = None,
               timeout: float = 90) -> JsonObject:
     """使用本镜像的正常 GUI 流程登录并核对本容器角色。"""
     channel = profile.channel + 1
@@ -21,7 +21,7 @@ def open_game(backend: Backend, *, profile: LoginProfile,
     if profile.world != 0:
         raise ClientError("unsupported_world", "原版 GUI 自动登录仅支持世界 0。", {"requested": profile.world})
     runtime = backend.runtime
-    runtime.verify_request(profile, target)
+    runtime.verify_request(profile, server)
     if not runtime.running:
         raise ClientError("client_not_running", "本容器客户端已退出，请使用工作台入口重新启动。")
     stage = backend.read("stage")
@@ -63,7 +63,7 @@ def open_game(backend: Backend, *, profile: LoginProfile,
             return {"ready": True, "started": False, "resumed": resumed,
                     "skipped_login": "login" not in completed, "actions": completed,
                     "character": current_character, "channel": channel,
-                    "target_file": "/config/target.json",
+                    "server_file": str(backend.root / "server.json"),
                     "source_revision": runtime.source_revision, "image": runtime.image,
                     "stage": stage, "state": observed}
         if current in {"STOPPED", "UNKNOWN"} or time.monotonic() >= deadline:
@@ -72,12 +72,12 @@ def open_game(backend: Backend, *, profile: LoginProfile,
             with diagnostic.open("x") as stream:
                 json.dump({"stage": stage, "completed_actions": completed,
                            "requested_channel": channel, "requested_character_id": profile.character_id,
-                           "target_file": "/config/target.json"},
+                           "server_file": str(backend.root / "server.json")},
                           stream, ensure_ascii=False, indent=2)
             raise ClientError("open_stage_unknown" if current in {"STOPPED", "UNKNOWN"} else "open_timeout",
                               "客户端未达到可确认的入图状态，已保存诊断并保留现场。",
                               {"stage": stage, "completed_actions": completed,
-                               "diagnostic": str(diagnostic), "target_file": "/config/target.json"})
+                               "diagnostic": str(diagnostic), "server_file": str(backend.root / "server.json")})
         if stage.get("renderer") == "software":
             raise ClientError("software_renderer", "当前客户端使用软件渲染，停止自动登录并保留诊断现场。", stage)
         login = stage.get("login")

@@ -248,14 +248,14 @@ class UnifiedControlContract(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(self.native.state["observed_at_ms"], result["data"]["state"]["observed_at_ms"])
 
-    def test_headless_reuse_rejects_a_different_explicit_target_or_actor(self) -> None:
-        target = self.native.root / "target.json"
-        target.write_text(json.dumps({**self.native.runtime["target"], "project": "different-validation"}))
+    def test_headless_reuse_rejects_a_different_explicit_server_or_actor(self) -> None:
+        server = self.native.root / "server.json"
+        server.write_text(json.dumps({**self.native.runtime["target"], "project": "different-validation"}))
         profile = LoginProfile("fixture", "fixture", 4)
         with patch.dict(os.environ, self.native.environment), patch("beidou_pilot.headless.status") as observation:
-            with self.assertRaises(ClientError) as target_error:
-                open_game(self.native.root, target=target, profile=profile)
-            self.assertEqual("target_mismatch", target_error.exception.code)
+            with self.assertRaises(ClientError) as server_error:
+                open_game(self.native.root, server=server, profile=profile)
+            self.assertEqual("server_mismatch", server_error.exception.code)
             with self.assertRaises(ClientError) as actor_error:
                 open_game(self.native.root, profile=LoginProfile("fixture", "fixture", 7))
             self.assertEqual("character_mismatch", actor_error.exception.code)

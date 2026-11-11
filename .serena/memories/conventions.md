@@ -2,7 +2,8 @@
 
 - 自维护代码排版与文件组织见[格式规范](../../docs/FORMATTING.md)，统一入口见[tools/format.py](../../tools/format.py)；只处理明确的新自维护白名单，历史编码和第三方例外按规范保留。
 - 客户端运行代码来自实例镜像：根 beidou-pilot 只管理工作台、Git 构建输入及 Docker；Python CLI、辅助引擎和内置 Lua 在所属容器内执行。容器 --root/--backend/--instance 只核对本容器，不导入宿主或其他运行根的代码。
-- 新实例默认固定 main 的已提交版本；已有实例通过 docker exec 使用启动时的 CLI 与内置 Lua，不能随主检出更新。资源、账号、角色计划、用户 Lua 与运行数据的外置边界见 AGENTS.md 和 docs/ARCHITECTURE.md。
+- 新实例默认固定 main 的已提交版本；已有实例通过 docker exec 使用启动时的 CLI 与内置 Lua，不能随主检出更新。工作台整体读写挂到 /work，account.json/server.json 成对维护，用户脚本直接用 /work/scripts；每次 CLIENT_ROOT=/work/runtime/INSTANCE/RUN_ID，继续隔离桥、锁与日志。配置和用户数据不进镜像。
+- GUI 装配只有 docker/compose.yaml，不增加工作台子目录或可选资料的覆盖文件。原版 /client 与 NX /data 的格式、来源和只读挂载仍按当前支持边界，原始 IMG 直读需单独核实，不能随部署重命名就宣称实现。
 - cli/test 使用包相对导入共享 BridgeFiles；开发子进程测试的 PYTHONPATH 指 cli 代码根。不要散放测试或多处 sys.path 补丁。
 - Python 只在动作前静态规划，Lua 首动作核对原生 instance_id/CID/map/scene_generation；旧规划不能被新进程认领。
 - 写脚本先查 docs/LUA_API.md，常规开发无需逐次读绑定；公共接口变化同步更新该文档，记忆不复制 API 清单。

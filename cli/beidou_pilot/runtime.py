@@ -46,16 +46,27 @@ class ContainerRuntime:
             return True
         return True
 
-    def verify_request(self, profile: LoginProfile, target: Path | None = None) -> None:
+    def verify_request(self, profile: LoginProfile, server: Path | None = None) -> None:
         if (profile.character_id, profile.world, profile.channel) != (self.character_id, self.world, self.channel):
-            raise ClientError("character_mismatch", "本容器的角色、世界或频道与 profile 不同，未切换客户端。")
-        if target is not None:
+            raise ClientError("character_mismatch", "本容器的角色、世界或频道与账号配置不同，未切换客户端。")
+        if server is not None:
             try:
-                requested = json.loads(target.read_text())
+                requested = json.loads(server.read_text())
             except (OSError, ValueError) as error:
-                raise ClientError("target_unreadable", "无法读取目标配置，保留本容器。") from error
-            if requested != self.target:
-                raise ClientError("target_mismatch", "本容器的目标与请求不同，未切换客户端。")
+                raise ClientError("server_unreadable", "无法读取服务器配置，保留本容器。") from error
+            if (
+                not isinstance(requested, dict)
+                or not {"project", "service", "expected_image"}.issubset(requested)
+                or requested.keys() - {"project", "service", "expected_image", "network"}
+                or any(not isinstance(value, str) or not value for value in requested.values())
+            ):
+                raise ClientError("server_invalid", "服务器配置须提供 project、service、expected_image，可选 network。")
+            if (
+                any(requested[key] != self.target[key] for key in ("project", "service", "expected_image"))
+                or "network" in requested
+                and requested["network"] != self.target["network"]
+            ):
+                raise ClientError("server_mismatch", "本容器的服务器与请求不同，未切换客户端。")
 
 
 def load_runtime(root: Path, backend: str, instance: str = "default") -> ContainerRuntime:

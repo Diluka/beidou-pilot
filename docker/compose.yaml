@@ -29,6 +29,9 @@ services:
       RENDER_GID: ${RENDER_GID:?需要渲染设备的宿主组 ID}
       RUN_ID: ${RUN_ID:?请通过 beidou-pilot 创建运行会话}
       MAPLE_INSTANCE: ${MAPLE_INSTANCE:-default}
+      CLIENT_ROOT: ${CLIENT_RUNTIME_ROOT:?需要容器内实例目录}
+      MAPLE_RESOURCES_CONFIG: ${CLIENT_RUNTIME_ROOT:?需要容器内实例目录}/config/resources.json
+      WINEPREFIX: ${CLIENT_RUNTIME_ROOT:?需要容器内实例目录}/runtime/prefix
       WINEDEBUG: ${WINEDEBUG:--all}
     labels:
       beidou.task: client-v17-maintained
@@ -54,19 +57,13 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: ${CLIENT_ROOT:?需要实例的独立运行目录}
+        source: ${WORKBENCH_ROOT:?需要工作台绝对路径}
         target: /work
         bind:
           create_host_path: false
       - type: bind
-        source: ${PROFILE_PATH:?需要私密账号 profile}
-        target: /config/account.private.json
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${TARGET_PATH:?需要已核验的 target 配置}
-        target: /config/target.json
+        source: ${METADATA_ROOT:?需要静态资料目录或本次实例的空目录}
+        target: /metadata
         read_only: true
         bind:
           create_host_path: false
