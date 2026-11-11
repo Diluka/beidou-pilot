@@ -1,9 +1,0 @@
-services:
-  client:
-    volumes:
-      - type: bind
-        source: ${METADATA_ROOT:?需要已配置的 WZ XML 目录}
-        target: /metadata
-        read_only: true
-        bind:
-          create_host_path: false

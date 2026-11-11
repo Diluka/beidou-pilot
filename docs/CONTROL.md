@@ -6,11 +6,11 @@
 
 ```bash
 ./beidou-pilot --workbench /external/workbench --instance worker-a --json script run --code 'game.log("你好，Lua")' --seconds 20
-./beidou-pilot --workbench /external/workbench --instance worker-a --json script run /scripts/control.lua --seconds 20
+./beidou-pilot --workbench /external/workbench --instance worker-a --json script run /work/scripts/control.lua --seconds 20
 ./beidou-pilot --workbench /external/workbench --instance worker-a --json script status
 ```
 
-文件路径按容器内部解析；工作台的 `scripts/` 可只读挂到 `/scripts`，内置 Lua 随镜像版本固定。
+文件路径按容器内部解析；完整工作台读写挂到 `/work`，用户脚本直接读取 `/work/scripts`，内置 Lua 随镜像版本固定。
 
 原始按键与直接技能也是 Lua 的原版扩展。持续动作、分支和循环直接写 Lua；没有宏表达式、JSON 动作预设或 Python 反馈控制层。
 

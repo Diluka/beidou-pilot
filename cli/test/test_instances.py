@@ -94,13 +94,13 @@ class InstanceContract(unittest.TestCase):
         self.assertEqual(InstancePaths(self.files.root, "headless", "alpha").bridge, observer.directory)
 
     def test_open_rejects_retired_process_lifetime_before_login(self) -> None:
-        profile = self.files.root / "profile.json"
-        profile.write_text(
+        account = self.files.root / "account.json"
+        account.write_text(
             json.dumps({"username": "fixture", "password": "fixture", "character_id": 4, "max_seconds": 0})
         )
-        profile.chmod(0o600)
+        account.chmod(0o600)
         with patch("beidou_pilot.headless.open_game") as open_client:
-            code, report = self.cli("open", "--profile", str(profile))
+            code, report = self.cli("open", "--account", str(account))
         self.assertEqual((2, "profile_invalid"), (code, report["error"]["code"]))
         open_client.assert_not_called()
 

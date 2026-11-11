@@ -35,11 +35,11 @@ image=$(./beidou-pilot --workbench "$PWD/tmp/ci-reproduction/workbench" \
 docker run --rm --entrypoint beidou-pilot "$image" --help
 ```
 
-无头构建只使用源码与固定依赖，不需要游戏素材、账号、profile 或游戏服务器访问，不推送镜像。CI job 内部直接调用同一份 `docker/headless/Dockerfile`，用户构建统一经根入口。容器入口默认需要运行配置；打包检查显式选择 `beidou-pilot` 帮助入口，不启动游戏。
+无头构建只使用源码与固定依赖，不需要游戏素材、账号配置或游戏服务器访问，不推送镜像。CI job 内部直接调用同一份 `docker/headless/Dockerfile`，用户构建统一经根入口。容器入口默认需要运行配置；打包检查显式选择 `beidou-pilot` 帮助入口，不启动游戏。
 
 网络需能下载子模块、基础镜像及 Debian 构建包。确认网络权限并按项目网络规则选择代理后，可在启动构建前导出 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`；根入口按 Docker 标准 build args 透传这些变量。代理地址须能从构建网络访问，文档不固定本机地址。
 
-GUI 完整镜像的本地构建通过工作台入口，例如 `./beidou-pilot --workbench /external/gui-workbench --backend beidou --ref COMMIT build`。默认由 `gh` 获取所选提交成功的 Windows 桥 CI 工件；开发时可加 `--bridge-artifact DIR` 显式复用原生输入匹配的现成工件，省去 `gh` 依赖。镜像安装该工件，原始游戏客户端、NX 与 profile 仍只在运行时挂载。GUI 与无头的打包检查都应确认容器内 CLI 可执行，不能用宿主 Python 的帮助输出代替。
+GUI 完整镜像的本地构建通过工作台入口，例如 `./beidou-pilot --workbench /external/gui-workbench --backend beidou --ref COMMIT build`。默认由 `gh` 获取所选提交成功的 Windows 桥 CI 工件；开发时可加 `--bridge-artifact DIR` 显式复用原生输入匹配的现成工件，省去 `gh` 依赖。镜像安装该工件，原始游戏客户端、NX 与工作台仍只在运行时挂载。GUI 装配仅使用 `docker/compose.yaml`；账号、服务器配置和用户 Lua 随整个工作台进入 `/work`，不再分别挂载。GUI 与无头的打包检查都应确认容器内 CLI 可执行，不能用宿主 Python 的帮助输出代替。
 
 ## 查看结果与合并
 

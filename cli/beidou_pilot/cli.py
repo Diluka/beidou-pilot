@@ -76,8 +76,8 @@ def parser() -> Parser:
     q = command("skill", "通过Lua调用本后端支持的原生技能，分别报告派发与原始返回值")
     q.add_argument("id", type=int)
     q = command("open", "完成本容器登录并确认已有角色入图")
-    q.add_argument("--target", type=Path)
-    q.add_argument("--profile", type=Path, required=True, help="已有账号和角色的 0600 私密配置")
+    q.add_argument("--server", type=Path, help="本实例对应的服务器配置")
+    q.add_argument("--account", type=Path, required=True, help="已有账号和角色的 0600 配置")
     q.add_argument("--timeout", type=float, default=90)
     command("close", "提示通过宿主工作台生命周期入口关闭本容器")
     q = command("walk", "原生语义移动；方向与有界时间")
@@ -510,14 +510,14 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     if cmd == "open":
         from .profile import load_profile
 
-        profile = load_profile(args.profile)
+        profile = load_profile(args.account)
 
         if backend.name == "headless":
             from .headless import open_game as open_native
 
             return open_native(
                 backend.root,
-                target=args.target,
+                server=args.server,
                 profile=profile,
                 timeout=args.timeout,
                 instance=backend.instance,
@@ -527,7 +527,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         opened = open_game(
             backend,
             profile=profile,
-            target=args.target,
+            server=args.server,
             timeout=args.timeout,
         )
         character = cast(JsonObject, opened["character"])

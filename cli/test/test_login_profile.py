@@ -23,19 +23,22 @@ class LoginProfileContract(unittest.TestCase):
         self.files.runtime.update(character_id=7, channel=1)
         (self.root / "state/container.json").write_text(json.dumps(self.files.runtime))
         self.enterContext(patch.dict(os.environ, self.files.environment))
-        self.target = self.root / "target.json"
-        self.target.write_text(json.dumps(self.files.runtime["target"]))
-        self.profile = self.root / "profile.json"
-        self.profile.write_text(
+        self.server = self.root / "server.json"
+        self.server.write_text(
+            json.dumps({key: value for key, value in self.files.runtime["target"].items() if key != "network"})
+        )
+        self.account = self.root / "account.json"
+        self.account.write_text(
             '{"username":"fixture-user","password":"fixture-password","character_id":7,"channel":1}'
         )
-        self.profile.chmod(0o600)
+        self.account.chmod(0o600)
 
-    def test_open_requires_the_shared_profile_instead_of_legacy_gui_options(self) -> None:
+    def test_open_requires_account_and_rejects_retired_login_options(self) -> None:
         for backend in ("beidou", "headless"):
             for options in (
                 [],
-                ["--profile", str(self.profile), "--character", "First", "--character-index", "0", "--channel", "1"],
+                ["--account", str(self.account), "--character", "First", "--character-index", "0", "--channel", "1"],
+                ["--account", str(self.account), "--profile", str(self.account), "--target", str(self.server)],
             ):
                 with self.subTest(backend=backend, options=options), patch("beidou_pilot.cli.dispatch") as dispatch:
                     output = io.StringIO()
@@ -46,7 +49,7 @@ class LoginProfileContract(unittest.TestCase):
                     dispatch.assert_not_called()
 
     def test_rejects_a_cid_that_would_be_truncated_by_the_native_client(self) -> None:
-        self.profile.write_text('{"username":"fixture","password":"fixture","character_id":4294967298}')
+        self.account.write_text('{"username":"fixture","password":"fixture","character_id":4294967298}')
         native = BridgeFiles(self.root / "headless", "headless")
         output = io.StringIO()
         with (
@@ -55,13 +58,13 @@ class LoginProfileContract(unittest.TestCase):
             redirect_stdout(output),
         ):
             code = main(
-                ["--root", str(native.root), "--json", "--backend", "headless", "open", "--profile", str(self.profile)]
+                ["--root", str(native.root), "--json", "--backend", "headless", "open", "--account", str(self.account)]
             )
         self.assertEqual(2, code)
         self.assertEqual("profile_invalid", json.loads(output.getvalue())["error"]["code"])
         open_client.assert_not_called()
 
-    def test_gui_selects_the_profile_cid_and_requires_the_same_actor_in_game(self) -> None:
+    def test_gui_selects_the_account_cid_and_requires_the_same_actor_in_game(self) -> None:
         first = {"id": 6, "name": "First", "index": 0}
         desired = {"id": 7, "name": "Desired", "index": 1}
         running = {
@@ -121,10 +124,10 @@ class LoginProfileContract(unittest.TestCase):
                             str(self.root),
                             "--json",
                             "open",
-                            "--target",
-                            str(self.target),
-                            "--profile",
-                            str(self.profile),
+                            "--server",
+                            str(self.server),
+                            "--account",
+                            str(self.account),
                         ]
                     )
                 self.assertEqual(expected_code, code, output.getvalue())
@@ -132,6 +135,7 @@ class LoginProfileContract(unittest.TestCase):
                 if code == 0:
                     self.assertEqual(7, result["data"]["character"]["id"])
                     self.assertEqual(2, result["data"]["channel"])
+                    self.assertEqual(str(self.root / "server.json"), result["data"]["server_file"])
                 else:
                     self.assertEqual("character_mismatch", result["error"]["code"])
                 actions = [action for invoked in desktop.call_args_list for action in invoked.args[0]]

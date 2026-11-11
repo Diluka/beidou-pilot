@@ -6,6 +6,8 @@ build/
 private/
 evidence/
 *.private.*
+account.json
+server.json
 .env
 .env.*
 /cli/assets/
