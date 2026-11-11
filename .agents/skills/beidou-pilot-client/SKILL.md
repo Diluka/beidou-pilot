@@ -1,11 +1,21 @@
 ---
 name: beidou-pilot-client
-description: "使用 beidou-pilot 北斗游戏客户端时使用：寻找和接续工作台、启动与登录已有角色、处理无账号或首次建角、观察状态、执行 Lua、取消及关闭。新会话接手游戏或排查登录停住时优先使用；需求收集使用 beidou-pilot-requirements。"
+description: "通过 Docker 工作台使用 beidou-pilot 北斗客户端：接续已有角色、构建或启动实例、观察状态、执行和取消 Lua，并处理账号准备与首次登录。新会话接手游戏或排查登录停住时使用；需求讨论使用 beidou-pilot-requirements。"
 ---
 
-# 北斗客户端操作
+# 北斗客户端的 Docker 用法
 
-让新会话尽快接上正确的游戏实例。先复用已授权的工作台与角色，按实际状态选择登录路径；缺少账号、角色和客户端能力是不同问题。
+通过 Docker 工作台接续已授权的角色和养成进度。先定位已有容器与操作者，再按实际状态选择观察、登录或首次流程。
+
+## Docker 运行方式
+
+- 客户端分为 headless、GUI 两个镜像，安装同一份 CLI、辅助引擎和内置 Lua，各自提供原生运行环境。
+- 宿主根入口 `./beidou-pilot` 管理镜像构建、工作台选择与容器生命周期；日常命令由它通过 `docker exec` 送到所属容器内的 `beidou-pilot`。容器内 CLI 直接使用本容器的进程、桥和显示环境。
+- 新实例默认从 `main` 的已提交版本构建或复用镜像，运行中的实例保持启动时的 CLI、Lua 和原生组件。实际版本查 `status` 的 `source_revision/image/run_id`；开发验收可明确指定 `--ref COMMIT`。
+- 整个工作台读写挂到 `/work`，根目录维护成对的 `account.json`、`server.json` 和资源路径配置 `resources.json`。本次快照、桥和日志在 `/work/runtime/INSTANCE/RUN_ID/`，用户 Lua 直接使用 `/work/scripts/`。
+- 原版 `/client` 与现有 NX `/data` 继续使用当前只读挂载。原始 IMG 直读尚未实现，操作时沿用当前资源格式。
+
+日常优先通过宿主薄入口操作，它会把 Ctrl+C/SIGTERM 定向转发给本次容器内 CLI 并等待取消结果。创建和关闭容器也由该入口处理；工作台不保存客户端源码副本。
 
 ## 找回入口与已有进度
 
@@ -22,6 +32,12 @@ docker ps -a --filter label=beidou.workbench \
 ```
 
 结果只提供位置线索；无结果也不能证明没有旧实例或其他操作者。`instances` 只报告所属容器，不能列出全机工作台。同一目标同一角色只能有一个控制者，GUI 仅一名明确操作者；发现活动脚本或 harness 先按已有认领完成交接。
+
+核对容器归属后，可直接使用镜像内 CLI 做只读排查：
+
+```bash
+docker exec CONTAINER beidou-pilot --json status
+```
 
 ## 先选正确分支
 
@@ -43,11 +59,12 @@ docker ps -a --filter label=beidou.workbench \
 ./beidou-pilot --workbench /external/workbench --instance worker-a --json snapshot
 ```
 
-- 工作台必须已存在，默认使用成对的 `account.json`、`server.json`，资源路径放在 `resources.json`。可在 `plan/open` 后用 `--account PATH --server PATH --resources PATH` 指定已有文件。
+需要提前准备镜像时执行同一入口的 `build`；`open` 会自动构建或复用镜像，已有活跃实例按上表直接接续。
+
+- 工作台必须已存在。可在 `plan/open` 后用 `--account PATH --server PATH --resources PATH` 指定已有文件。
 - `account.json` 权限严格为 `0600`，必填 `username/password/character_id`；`character_id` 是已有角色的正 int32 CID。`world/channel` 默认 0，第 1 频道写 `channel=0`。GUI 仅支持 `world=0`、第 1 至 20 频道。密码不放命令参数或输出，旧 `--character/--character-index/--channel` 登录参数已退役。
 - `server.json` 必填 `project/service/expected_image`，可选 `network`。`plan` 只读核对服务器，不构建或启动；指定网络时须为同项目的 internal 网络，未指定时由 `open` 准备本实例连接。常驻工作区目标仅在已有授权时给 `plan/open` 加 `--workspace-server`。启动器不负责启动游戏服务端。
-- 整个工作台读写挂到 `/work`，本次配置快照、桥和日志位于 `/work/runtime/INSTANCE/RUN_ID/`，容器的 `CLIENT_ROOT` 指向该目录。账号和服务器配置仍在工作台外置维护，不进入镜像。原版 `/client` 和现有 NX `/data` 的格式、来源与只读挂载保持不变；原始 IMG 直读仍待研究核实。
-- 新实例默认用 `main` 已提交版本构建或复用镜像。已有实例继续使用启动时的 CLI、内置 Lua 和桥；查 `status` 的 `source_revision/image/run_id`，不能用当前宿主 HEAD 代替实际版本。开发验收明确用 `--ref COMMIT`。
+- 容器的 `CLIENT_ROOT` 指向本次运行目录。账号、服务器配置与资源在外置目录维护，不进入镜像；修改工作台原件不替换已运行实例的快照。
 - `open` 不自动建角。成功需确认新鲜状态 `ready=true`、匹配的角色 CID/名称、频道、地图、位置及本次原生 `instance_id/run_id`；容器运行或认证成功均不足以证明入图。
 
 失败先读 `status` 与所属工作台 `runtime/INSTANCE/` 日志。`profile_invalid/private_file_permissions` 核对私密文件格式和权限；`character_not_unique` 核对实际角色名单；`open_timeout/open_stage_unknown` 看 GUI 当前阶段与截图。`input_busy` 先看活动脚本和控制者；身份不符保留现场。`--timeout` 只限制入图等待，延长它不能补出账号、角色或处理首次声明。
