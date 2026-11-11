@@ -1,0 +1,4 @@
+interface:
+  display_name: "北斗客户端操作"
+  short_description: "复用北斗工作台与实例，完成已有角色登录并定位账号注册和首次建角的实际入口"
+  default_prompt: "使用 $beidou-pilot-client，先找已有工作台和角色，按当前支持的路径完成登录与游戏操作。"

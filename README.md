@@ -78,6 +78,7 @@ GUI 在一个工作台中只用 `default` 实例，且仅支持 `world=0`。同�
 
 - [业务地图](docs/business-map/README.md)：按领域查看用户结果、责任边界、主要流程与源码入口。
 - [游戏 AI 操作指引](docs/PLAY_GUIDE.md)：确认授权目标与角色占用，完成上手观察、动作核对和停止交接。
+- [客户端操作技能](.agents/skills/beidou-pilot-client/SKILL.md)：供新会话接续工作台、登录已有角色，并区分账号注册与首次建角；可显式调用 `$beidou-pilot-client`。
 - [游戏 AI harness](docs/HARNESS.md)：隔离 Codex、角色上下文、游戏工具与开发 AI 协作。
 - [命令使用](docs/CLI.md)：实例、观察、动作、GUI 入口和错误结果。
 - [Lua API 参考](docs/LUA_API.md)：写脚本使用的状态字段、函数参数、返回值与错误语义。

@@ -2,6 +2,8 @@
 
 本篇供新会话从已有授权继续工作台。宿主使用仓库根的 `./beidou-pilot`，客户端命令由它转发给所属容器。以下 `/external/workbench` 和 `worker-a` 须替换为本次已确认的工作台与实例名；参数以 `--help` 为准，完整命令、Lua 与支持范围见 [CLI](CLI.md)、[Lua API](LUA_API.md) 和[架构说明](ARCHITECTURE.md)。
 
+可使用仓库技能 [beidou-pilot-client](../.agents/skills/beidou-pilot-client/SKILL.md) 按当前状态选择最短路径；缺少账号、没有角色或停在首次界面时，查其[账号准备与首次登录](../.agents/skills/beidou-pilot-client/references/first-login.md)，不要反复执行已有角色的 `open`。
+
 ## 先确认目标、角色和操作者
 
 从用户指令及已有记录确认服务器用途、专用账号与角色、允许的玩法和本次操作者。工作台中的养成方案和交接记录负责跨会话连续性，源码版本不会替代这些资料。可从本机 `LOCAL.md` 等索引找到配置；文件存在、服务运行或账号可登录均不能替代授权。凭据只从授权私密文件读取，不进入参数值、日志或 Issue。
@@ -70,6 +72,8 @@ docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop s
 ```
 
 原语直接操作该容器的显示环境。首次声明、性别选择或空角色列表仍不等于自动建角；需要正常 GUI 首次流程时先确认账号和选择意图。无头首次登录与建角由 [#72](https://github.com/Diluka/beidou-pilot/issues/72) 跟踪，未知选择不反复重试。
+
+当前统一 `open` 要求真实已有角色 CID，尚无无角色账号的启动模式。已有且归属正确的 GUI 会话可以接续正常首次流程；全新账号没有可接续会话时，须明确这个引导缺口，不用占位 CID 或其他角色身份绕过。
 
 ## 停止、下线与交接
 
