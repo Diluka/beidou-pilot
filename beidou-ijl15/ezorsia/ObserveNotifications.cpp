@@ -89,23 +89,23 @@ Value Notifications() {
             }
             const bool available =
                 pending && window["game_rect"].Type() != Value::Kind::Null && !buttons.Elements().empty();
-            notifications.Add(
-                Value::Object({{"id", Hex(address) + ":" + Hex(deadline) + ":" + std::to_string(nativeKind) + ":"
-                                          + std::to_string(nativeId) + ":" + sourceText.Text()},
-                               {"native_kind", nativeKind},
-                               {"kind", metadata.name == nullptr ? Value() : Value(metadata.name)},
-                               {"source_text", std::move(sourceText)},
-                               {"text", Value()},
-                               {"sender_id", nativeKind == 1 ? Value(nativeId) : Value()},
-                               {"party_id", nativeKind == 5 ? Value(nativeId) : Value()},
-                               {"interaction_id", nativeKind == 2 || nativeKind == 3 ? Value(nativeId) : Value()},
-                               {"quest_id", quest ? Value(nativeId) : Value()},
-                               {"expires_at_ms", duration == 0 ? Value() : Value(observedAt + remaining)},
-                               {"remaining_ms", duration == 0 ? Value() : Value((std::max)(0, remaining))},
-                               {"pending", pending},
-                               {"available", available},
-                               {"window", std::move(window)},
-                               {"buttons", std::move(buttons)}}));
+            notifications.Add(Value::Object(
+                {{"id", Hex(address) + ":" + Hex(duration == 0 ? 0 : deadline) + ":" + std::to_string(nativeKind) + ":"
+                            + std::to_string(nativeId) + ":" + sourceText.Text()},
+                 {"native_kind", nativeKind},
+                 {"kind", metadata.name == nullptr ? Value() : Value(metadata.name)},
+                 {"source_text", std::move(sourceText)},
+                 {"text", Value()},
+                 {"sender_id", nativeKind == 1 ? Value(nativeId) : Value()},
+                 {"party_id", nativeKind == 5 ? Value(nativeId) : Value()},
+                 {"interaction_id", nativeKind == 2 || nativeKind == 3 ? Value(nativeId) : Value()},
+                 {"quest_id", quest ? Value(nativeId) : Value()},
+                 {"expires_at_ms", duration == 0 ? Value() : Value(observedAt + remaining)},
+                 {"remaining_ms", duration == 0 ? Value() : Value((std::max)(0, remaining))},
+                 {"pending", pending},
+                 {"available", available},
+                 {"window", std::move(window)},
+                 {"buttons", std::move(buttons)}}));
         }
         const auto next = Read<Address>(node - 12);
         node = next == 0 ? 0 : next + 16;

@@ -75,15 +75,11 @@ def parser() -> Parser:
     q.add_argument("--revision", type=int, help="替换或停止的预期任务revision")
     q.add_argument("--priority", type=int, help="新增或替换任务的优先级")
     q.add_argument("--timeout", type=float, default=3, help="管理结果等待秒数，不改变会话期限")
-    q = command("skill", "通过Lua调用原版原生技能入口，仅报告原始调用结果")
+    q = command("skill", "通过Lua调用本后端支持的原生技能，分别报告派发与原始返回值")
     q.add_argument("id", type=int)
     q = command("open", "启动并正常登录入图；已就绪时自动复用")
-    q.add_argument("--channel", type=int, help="新会话默认CH1；复用游戏中会话时默认保留当前频道")
-    character = q.add_mutually_exclusive_group()
-    character.add_argument("--character")
-    character.add_argument("--character-index", type=int)
     q.add_argument("--target", type=Path)
-    q.add_argument("--profile", type=Path, help="无头端已有账号/角色的0600私密运行配置")
+    q.add_argument("--profile", type=Path, required=True, help="已有账号和角色的 0600 私密配置")
     q.add_argument("--workspace-server", action="store_true", help="显式使用已授权的工作区服务")
     q.add_argument("--project", default="beidou-ms")
     q.add_argument("--service", default="beidou-server-all")
@@ -119,10 +115,10 @@ def parser() -> Parser:
     q.add_argument("id", nargs="?", type=int)
     q = command("talk", "按当前NPC名称、模板ID或引用打开对话")
     q.add_argument("target")
-    q = command("click", "操作当前快照引用，或点击根桌面坐标")
-    q.add_argument("target")
-    q.add_argument("y", nargs="?", type=int)
-    q.add_argument("--double", action="store_true")
+    q = command("click", "激活当前控件引用；GUI另可点击根桌面坐标")
+    q.add_argument("target", help="当前控件引用；GUI也接受既有引用或x坐标")
+    q.add_argument("y", nargs="?", type=int, help="仅GUI坐标点击")
+    q.add_argument("--double", action="store_true", help="仅GUI桌面双击")
     q = command("dialog", "读当前对话、选文字、下一页或确认")
     q.add_argument(
         "action",
@@ -198,6 +194,17 @@ def parser() -> Parser:
     q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"))
     q.add_argument("--retreat-x", type=int)
     q.add_argument("--loot", action="store_true", help="启用同层落地物品定向拾取")
+    q = command("hunt", "当前单一场景内自主找怪、换层和连续攻击；场景变化即停止")
+    q.add_argument("mob", nargs="?", default="all", help="怪物名称、模板ID或all（默认全部怪物）")
+    q.add_argument("--skill", type=int, help="指定已学且本后端支持的技能ID；省略时使用普攻")
+    q.add_argument("--range", type=float, default=60, dest="attack_range", help="接近目标的攻击距离，默认60")
+    duration = q.add_mutually_exclusive_group()
+    duration.add_argument("--seconds", type=float, default=60, help="狩猎期限，默认60秒")
+    duration.add_argument("--continuous", action="store_true", help="持续到取消或安全停止，Ctrl+C取消并等待放键")
+    q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"), help="限定本场景横向狩猎范围")
+    q.add_argument("--until-level", type=int, help="到达指定等级停止；仍受当前转职节点限制")
+    q.add_argument("--min-hp-ratio", type=float, default=0.35, help="HP安全下限比例，默认0.35")
+    q.add_argument("--hp-item", type=int, help="低HP时使用的明确回血物品ID，不自动买药")
     q = command("screenshot", "保存原图及游戏裁剪，不直接向会话加载图片")
     q.add_argument("name", nargs="?")
     q = command("record", "有界采集当前游戏画面与逐帧时间戳，不发送输入")
@@ -311,6 +318,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "watch",
         "events",
         "inspect",
+        "click",
         "walk",
         "face",
         "jump",
@@ -323,6 +331,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "climb",
         "portal",
         "fight",
+        "hunt",
         "batch",
         "use",
         "equip",
@@ -382,7 +391,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 raise
             state = None
         domains = (
-            DOMAINS if backend.name == "beidou" else DOMAINS - {"hotkeys", "dialog", "ui", "shop", "notifications"}
+            DOMAINS - {"interaction"}
+            if backend.name == "beidou"
+            else DOMAINS - {"hotkeys", "dialog", "ui", "shop", "notifications"}
         )
         return {
             "connected": state is not None,
@@ -494,16 +505,17 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         )
     if cmd == "open":
         from .headless import any_running as headless_running
+        from .profile import load_profile
+
+        profile = load_profile(args.profile)
 
         if backend.name == "headless":
-            if args.character is not None or args.character_index is not None or args.channel is not None:
-                raise ClientError("unsupported_capability", "无头端选角和频道由私密profile声明；不使用GUI选角参数。")
             from .headless import open_game as open_native
 
             return open_native(
                 backend.root,
                 target=args.target,
-                profile=args.profile,
+                profile=profile,
                 timeout=args.timeout,
                 workspace_server=args.workspace_server,
                 instance=backend.instance,
@@ -512,20 +524,13 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             raise ClientError("client_already_running", "无头客户端仍在运行；先正常关闭再切换客户端。")
         from .session import open_game
 
-        channel = args.channel
-        if channel is None:
-            current = backend.read("stage")
-            channel = current.get("channel") if current["stage"] == "IN_GAME" else 1
-            if channel is None:
-                raise ClientError("channel_unavailable", "现有游戏频道尚未确认，请重新 status。")
         opened = open_game(
             backend,
-            channel=channel,
-            character=args.character,
-            character_index=args.character_index,
+            profile=profile,
             target=args.target,
             project=args.project,
             service=args.service,
+            workspace_server=args.workspace_server,
             timeout=args.timeout,
         )
         character = cast(JsonObject, opened["character"])
@@ -609,6 +614,14 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             raise ClientError("usage", "dialog select需要文字、索引或当前引用。")
         return dialogs.act(backend, args.action, args.selector)
     if cmd == "click":
+        if backend.name == "headless":
+            if args.y is not None or args.double:
+                raise ClientError("unsupported_capability", "无头端只激活当前原生控件引用，不提供桌面坐标或双击。")
+            from .control_scripts import _lua_literal, run_source
+
+            report = run_source(backend, "game.activate(" + _lua_literal(args.target) + ")\n", 3)
+            state = cast(JsonObject, report["last_state"])
+            return {**report, "action": "activate", "action_result": state["action_result"]}
         if args.y is not None:
             return backend.desktop(
                 [{"action": "double-click" if args.double else "click", "x": int(args.target), "y": args.y}]
@@ -770,6 +783,20 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             shop.buy(backend, args.item, args.count)
             if args.action == "buy"
             else shop.sell(backend, args.item, args.count, slot=args.slot)
+        )
+    if cmd == "hunt":
+        from .hunting import hunt
+
+        return hunt(
+            backend,
+            args.mob,
+            seconds=None if args.continuous else args.seconds,
+            skill_id=args.skill,
+            attack_range=args.attack_range,
+            bounds=tuple(args.bounds) if args.bounds is not None else None,
+            stop_level=args.until_level,
+            min_hp_ratio=args.min_hp_ratio,
+            hp_item_id=args.hp_item,
         )
     if cmd == "fight":
         from .bridge import BridgeClient

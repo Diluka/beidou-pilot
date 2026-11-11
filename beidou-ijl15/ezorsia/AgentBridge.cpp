@@ -5,6 +5,7 @@
 #include "EventTransport.h"
 #include "NativeKeyInput.h"
 #include "NativeItemUse.h"
+#include "NativeSkillUse.h"
 #include "NativeObservation.h"
 
 #include <array>
@@ -60,7 +61,10 @@ std::string pendingStatus;
 std::string pendingReason;
 BeiDouBridge::NativeKeyInput keyInput;
 BeiDouBridge::NativeItemUse itemUse;
+BeiDouBridge::NativeSkillUse skillUse;
 bool itemResult = false;
+bool attackWindow = false;
+ULONGLONG attackWindowUntil = 0;
 std::array<unsigned int, 256> scanCodes{};
 std::array<std::uint32_t, 256> nativeScanCodes{};
 std::uint32_t nativeScanCodesOwner = 0;
@@ -68,6 +72,7 @@ bool scriptCommand = false;
 bool haveSkillResult = false;
 std::uint32_t lastSkillId = 0;
 int lastSkillResult = 0;
+std::uint64_t skillInvocationRevision = 0;
 const MapleControl::State* currentState = nullptr;
 NativeContext currentNative;
 std::uint32_t updatedCharacter = 0;
@@ -100,7 +105,7 @@ public:
 
     bool Supports(MapleControl::ActionKind kind) const override {
         return kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip
-               && kind != MapleControl::ActionKind::Revive;
+               && kind != MapleControl::ActionKind::Revive && kind != MapleControl::ActionKind::Activate;
     }
 
     bool Begin(const MapleControl::Action& action, std::string& error) override {
@@ -111,7 +116,7 @@ public:
 
     void Release() override { BeginRelease({}, {}); }
 
-    bool Released() const override { return keyInput.Released() && !itemUse.Pending(); }
+    bool Released() const override { return !attackWindow && keyInput.Released() && !itemUse.Pending(); }
 
     bool ReleasePending() const override { return keyInput.ReleasePending(); }
 
@@ -127,8 +132,11 @@ public:
 
     bool SupportsSkill() const override { return true; }
 
-    bool Skill(std::uint32_t id, int& result, std::string& error) override {
-        return InvokeNativeSkill(id, result, error);
+    bool Skill(std::uint32_t id, MapleControl::SkillResult& result, std::string& error) override {
+        if (!InvokeNativeSkill(id, result.nativeResult, error)) return false;
+        result.dispatched = true;
+        result.reason = "native_skill_requested";
+        return true;
     }
 };
 
@@ -470,6 +478,9 @@ bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
 }
 
 void BeginRelease(const std::string& status, const std::string& reason) {
+    attackWindow = false;
+    skillUse.Cancel("native_skill_cancelled");
+    if (semanticResult.skillRequested) semanticResult.skill = skillUse.Result();
     itemUse.Cancel();
     keyInput.Release();
     pendingStatus = status;
@@ -571,7 +582,7 @@ bool Publish(const MapleControl::State& state) {
         out << ']';
     } else
         out << "null";
-    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"revive\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"events\":true},\"event_stream_status\":"
+    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"attack_move\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"revive\":false,\"activate\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"monster_hp_percent\":false,\"events\":true},\"event_stream_status\":"
         << Quote(eventsPublished ? "ok" : "publish_failed") << ",\"inventory\":";
     if (state.inventoryKnown) {
         out << '[';
@@ -664,7 +675,8 @@ bool Publish(const MapleControl::State& state) {
     }
     out << ",\"last_skill\":";
     if (haveSkillResult)
-        out << "{\"skill_id\":" << lastSkillId << ",\"native_result\":" << lastSkillResult << '}';
+        out << "{\"skill_id\":" << lastSkillId << ",\"native_result\":" << lastSkillResult
+            << ",\"dispatched\":true,\"reason\":\"native_skill_requested\"}";
     else
         out << "null";
     const auto actionResult = NativeResult();
@@ -674,7 +686,17 @@ bool Publish(const MapleControl::State& state) {
         out << "null";
     else
         out << (actionResult.settled == MapleControl::Fact::True ? "true" : "false");
-    out << ",\"effect\":" << Quote(actionResult.effect) << ",\"reason\":" << Quote(actionResult.reason) << '}';
+    out << ",\"effect\":" << Quote(actionResult.effect) << ",\"reason\":" << Quote(actionResult.reason);
+    if (actionResult.skillRequested) {
+        out << ",\"skill_dispatched\":" << (actionResult.skill.dispatched ? "true" : "false")
+            << ",\"skill_native_result\":";
+        if (actionResult.skill.nativeResultKnown)
+            out << actionResult.skill.nativeResult;
+        else
+            out << "null";
+        out << ",\"skill_reason\":" << Quote(actionResult.skill.reason);
+    }
+    out << '}';
     out << ",\"input_events\":" << inputEvents << "}\n";
     const std::string bytes = out.str();
     const std::string temporary = directory + "\\state.tmp";
@@ -797,6 +819,10 @@ void Tick() {
         pendingReason.clear();
     }
     const bool ready = previousState.ready;
+    if (attackWindow && (changed || !ready || previousState.character.values[6] == 0 || now >= attackWindowUntil)) {
+        skillUse.Cancel(now >= attackWindowUntil ? "native_skill_expired" : "native_skill_context_changed");
+        BeginRelease({}, {});
+    }
     if (keyInput.Active()
         && (changed || !ready || previousState.character.values[6] == 0 || now >= keyInput.Deadline()))
         BeginRelease({}, {});
@@ -846,6 +872,28 @@ void Tick() {
         commandReason = "native_input_failed";
         pendingReason = "native_input_failed";
         BeginRelease(pendingStatus, pendingReason);
+        return;
+    }
+    if (skillUse.Pending() && attackWindow) {
+        if (keyInput.Held()[VK_LEFT] || keyInput.Held()[VK_RIGHT])
+            skillUse.DirectionDelivered(keyInput.Epoch(), characterUpdates);
+        BeiDouBridge::NativeSkillUse::Context context;
+        context.character = previousState.character.id;
+        context.user = currentNative.user;
+        context.sceneGeneration = sceneGeneration;
+        context.inputEpoch = keyInput.Epoch();
+        context.now = GetTickCount64();
+        context.updatedCharacter = updatedCharacter;
+        context.characterUpdates = characterUpdates;
+        context.facingKnown = previousState.facingKnown;
+        context.facingLeft = previousState.facingLeft;
+        const bool consumed = skillUse.Consume(context, InvokeNativeSkill);
+        if (semanticResult.skillRequested) semanticResult.skill = skillUse.Result();
+        if (!consumed) {
+            semanticResult.reason = skillUse.Result().reason;
+            runtime.Cancel("native_skill_failed");
+            BeginRelease({}, {});
+        }
     }
 }
 
@@ -927,6 +975,7 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         if (!BindingKey(53, key, error)) return false;
         break;
     case MapleControl::ActionKind::Attack:
+        if (action.skillId != 0) break;
         if (!BindingKey(52, key, error)) return false;
         break;
     case MapleControl::ActionKind::Pickup:
@@ -972,20 +1021,44 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
     case MapleControl::ActionKind::Unequip:
         error = action.kind == MapleControl::ActionKind::Equip ? "unsupported: equip" : "unsupported: unequip";
         return false;
+    case MapleControl::ActionKind::Activate:
+        error = "unsupported: activate";
+        return false;
     case MapleControl::ActionKind::Revive:
         error = "unsupported: revive";
         return false;
     case MapleControl::ActionKind::Stop:
         break;
     }
-    if (!ApplyDesiredKeys({key}, duration, error)) return false;
+    std::vector<unsigned int> keys;
+    if (key != 0) keys.push_back(key);
+    if (action.kind == MapleControl::ActionKind::Attack && !action.direction.empty())
+        keys.push_back(action.direction == "left" ? VK_LEFT : VK_RIGHT);
+    if (!ApplyDesiredKeys(keys, duration, error)) return false;
+    if (action.kind == MapleControl::ActionKind::Attack && action.skillId != 0) {
+        attackWindow = true;
+        attackWindowUntil = keys.empty() ? GetTickCount64() + duration : keyInput.Deadline();
+        BeiDouBridge::NativeSkillUse::Skill request;
+        request.skillId = action.skillId;
+        request.character = currentState->character.id;
+        request.user = currentNative.user;
+        request.sceneGeneration = sceneGeneration;
+        request.inputEpoch = keyInput.Epoch();
+        request.deadline = attackWindowUntil;
+        request.direction = action.direction.empty() ? 0 : action.direction == "left" ? -1 : 1;
+        skillUse.Request(request);
+        semanticResult.skillRequested = true;
+        semanticResult.skill = skillUse.Result();
+    }
     semanticResult.reason = "native_action_requested";
     return true;
 }
 
 MapleControl::ActionResult NativeResult() {
     auto result = semanticResult;
-    result.dispatched = itemResult ? itemUse.Dispatched() : keyInput.Dispatched() && result.reason != "already_facing";
+    result.dispatched = itemResult ? itemUse.Dispatched()
+                                   : (keyInput.Dispatched() && result.reason != "already_facing")
+                                         || (result.skillRequested && result.skill.nativeResultKnown);
     result.controlReleased = adapter.Released();
     if (result.dispatched && result.reason == "native_action_requested") result.reason = "native_action_dispatched";
     if (result.dispatched && result.reason == "native_keys_requested") result.reason = "native_keys_dispatched";
@@ -1072,10 +1145,13 @@ bool InvokeNativeSkill(std::uint32_t skillId, int& result, std::string& error) {
         error = "character_changed";
         return false;
     }
+    const auto invocation = ++skillInvocationRevision;
     result = activeSkill(reinterpret_cast<ClientPlayer*>(player), static_cast<int>(skillId), 0, nullptr);
-    haveSkillResult = true;
-    lastSkillId = skillId;
-    lastSkillResult = result;
+    if (invocation == skillInvocationRevision) {
+        haveSkillResult = true;
+        lastSkillId = skillId;
+        lastSkillResult = result;
+    }
     return true;
 }
 

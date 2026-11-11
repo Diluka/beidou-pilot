@@ -16,6 +16,7 @@
 //	along with this program.  If not, see <https://www.gnu.org/licenses/>.		//
 //////////////////////////////////////////////////////////////////////////////////
 #include "MessagingHandlers.h"
+#include "Helpers/CharacterParser.h"
 
 #include "../../Data/ItemData.h"
 #include "../../Gameplay/Stage.h"
@@ -28,6 +29,7 @@ namespace ms
 {
 	// Modes:
 	// 0 - Item(0) or Meso(1) 
+	// 1 - Quest status or progress
 	// 3 - Exp gain
 	// 4 - Fame
 	// 5 - Mesos
@@ -110,6 +112,10 @@ namespace ms
 			{
 				show_status(Color::Name::RED, "Mode: 0, Mode 2: " + std::to_string(mode2) + " is not handled.");
 			}
+		}
+		else if (mode == 1)
+		{
+			CharacterParser::parse_quest_update(recv, Stage::get().get_player().get_quests());
 		}
 		else if (mode == 3)
 		{

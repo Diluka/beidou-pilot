@@ -38,17 +38,18 @@
 | `game.move(direction, seconds)` | 方向 `left/right/up/down`；默认 `0.3`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | [动作结果](#动作结果) |
 | `game.face(direction)` | 只接受 `left/right` | 是 | 动作结果 |
 | `game.jump(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
-| `game.attack(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
+| `game.attack(seconds, direction, skill_id)` | 默认 `0.06`；可选 `direction=left/right` 同窗保持移动，可选 `skill_id` 请求指定技能；`0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果及本窗技能准入 |
 | `game.pickup(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
 | `game.use_item(item_id)` | 整数 `1..2147483647`；两端接受普通 `200` 类药品，无头另接受 `201` 类食品 | 是 | 动作结果 |
 | `game.equip(backpack_slot, equipped_slot, seconds)` | 无头普通装备；背包正槽、身上负槽；默认确认期限 `3` 秒，`0 < seconds <= 30` | 是，等待槽位变化或本次执行结束 | 动作结果 |
 | `game.unequip(equipped_slot, backpack_slot, seconds)` | 无头普通装备；身上负槽、空背包正槽；确认期限同 `equip` | 是，等待槽位变化或本次执行结束 | 动作结果 |
 | `game.revive(seconds)` | 无头普通复活；默认确认期限 `6` 秒，`0 < seconds <= 30` | 是，等待同角色恢复或期限结束 | 动作结果 |
+| `game.activate(ref)` | 当前原生控件或场景目标的不透明引用，仅接受这一个参数 | 是，等待单次控件处理和控制释放 | 动作结果 |
 | `game.stop()` | 无 | 是，等待释放确认 | 动作结果 |
 | `game.log(text)` | 字符串，限制见[日志与预算](#日志与预算) | 否 | 无 |
 | `game.keys(keys, seconds)` | 原版可选；默认租期 `0.1`，`0 < seconds <= 30` | 否 | 无 |
 | `game.press(keys, seconds)` | 原版可选；默认 `0.06`，`0 < seconds <= 30` | 是，等待释放确认 | 动作结果 |
-| `game.skill(skill_id)` | 原版可选；整数 `1..2147483647` | 否 | [技能结果](#原版直接技能) |
+| `game.skill(skill_id)` | 后端可选；整数 `1..2147483647` | 否 | [技能结果](#直接技能) |
 
 移动、战斗和按键函数等待原生输入释放或该动作的本地执行边界，服务器效果另行判断；普通换装等待正常库存更新中的源、目的槽位确认，普通复活等待同一角色实际恢复。一次函数调用也不保证只发生一次原生重复输入、只攻击一个目标或只拾取一个物品。
 
@@ -56,7 +57,7 @@
 
 `spawn` 创建由共享运行时调度的独立 Lua 任务。一个任务等待动作、控制权或 `sleep` 时，其他任务仍可调用 `state/observe/time/log/tasks`，观察和判断。任务共享 Lua 全局变量与闭包，不开放用户自行创建协程的入口。
 
-普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/equip/unequip/revive/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
+普通单脚本的 `main` 默认拥有控制，优先级为 `0`，`stop()` 后继续动作会自动恢复控制，已有动作写法继续可用。多个动作任务先调用 `game.acquire()`，取得控制后重新读取 `game.state()`，再决定下一步。`move/face/jump/attack/pickup/use_item/equip/unequip/revive/activate/keys/press/skill` 都要求当前任务拥有控制；失去控制后直接调用会报 `control_not_owned`。
 
 优先级越大越先取得控制。高优先级任务请求接管时，旧任务立即停止派发冲突动作，运行时请求释放原生输入，确认释放后才授权新任务；等待释放期间其他任务仍可观察。相同优先级保持当前控制者，等待者按请求顺序取得控制。控制权跨 `sleep()` 保留，直到 `stop()`、任务完成、任务取消或更高优先级接管。
 
@@ -130,8 +131,11 @@ end
 | `move`、`face`、`jump`、`attack`、`pickup`、`use_item`、`stop` | boolean | 后端是否实现该语义动作；当前两端均实现 |
 | `equip`、`unequip` | boolean | 是否实现普通装备穿戴/卸下；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `revive` | boolean | 是否实现正常复活请求与确认；当前 headless 为 `true`，原版 Lua 为 `false` |
+| `activate` | boolean | 是否实现原生控件引用激活；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `raw_keys` | boolean | 是否实现 `keys/press`；当前 headless 为 `false`，原版为 `true` |
-| `skill` | boolean | 是否实现直接技能；当前 headless 为 `false`，原版为 `true` |
+| `skill` | boolean | 是否实现直接技能入口；两端为 `true`，具体技能类型随后端支持范围 |
+| `attack_move` | boolean | 是否支持 `attack` 的方向与技能窗口参数；新两端构建均为 `true`，旧构建缺失时不能假定额外参数有效 |
+| `monster_hp_percent` | boolean | 是否能读取服务端目标HP百分比；headless 为 `true`，原版为 `false` |
 
 能力只表示有实现，不保证当前角色、地图、装备、库存或动作状态允许执行。可选函数在两端均已注册；`if game.skill then ...` 不能用于判断支持，必须读取能力表。没有 `native_skill`、`skills` 等能力别名。
 
@@ -186,6 +190,8 @@ end
 
 - `object_id` 是本次场景对象 ID，`template_id` 是怪物模板 ID，不可混用。
 - `active` 来自本地模型，不等于服务器确认的 HP 或击杀。
+- `hp_percent`、`hp_sequence`、`hp_source` 在无头收到该对象的服务端HP包后才提供，分别为0..100百分比、该对象生命周期中的包更新序号及 `server_mob_hp`。未收包、旧对象或GUI未支持时为未知，不能把默认0当已知0。
+- HP下降证明观察到目标状态变化；该包没有攻击者或动作ID，不可归因为本次攻击、精确伤害或击杀。结合实例、场景与OID使用序号，新对象的序号重新开始。
 - 没有怪物 `hp/max_hp` 字段，也没有通过任意 OID 强制命中的攻击接口。
 
 ### inventory 的元素
@@ -212,9 +218,10 @@ end
 | `scene` | 两端；`map_id`、`player`、`player_facing`、`monsters`、`npcs`、`drops`。NPC 提供 `object_id/template_id/name/x/y`；保留本端已知字段及限制 |
 | `inventory` | 两端；`items` 为已占用正槽，`equipped` 为身上负槽，元素含 `inventory_type/slot/item_id/quantity`；`capacities` 以字符串背包类型为键 |
 | `character` | 两端；`character_id`、`mesos`、`skills`、`skills_complete` 及本端校验说明。`skills` 以字符串技能 ID 为键，记录含 `level/master_level`；没有覆盖的名称、需求和效果仍未知 |
-| `quests` | 两端；`quests` 元素含 `quest_id/state/progress`，状态为 `started/completed`，进度保留原始文本。无头另有 `linked_progress`、快照来源和非实时声明 |
+| `quests` | 两端；`quests` 元素含 `quest_id/state/progress`，状态为 `started/completed`，进度保留原始文本。无头从完整角色包和本端正常增量维护记录；未核实的 `linked_progress` 为 nil |
 | `hotkeys` | GUI；原生快捷键与快捷栏映射、已知布局和限制；无头不支持 |
-| `dialog` | GUI；`dialog_open`、`npc_id`、`dialog_type`、`lines`、`choices`、`buttons` 及来源窗口说明；无头不支持 |
+| `interaction` | 无头；`data.page` 是当前通用页面或 nil，页面和控件结构见[控件交互](#控件交互)；GUI未支持 |
+| `dialog` | GUI；`dialog_open`、`npc_id`、`dialog_type`、`lines`、`choices`、`buttons` 及来源窗口说明；无头不支持此内容领域，使用 `interaction` |
 | `ui` | GUI；`windows`、`dialog` 与原生游戏区布局；无头不支持 |
 | `notifications` | GUI；所有同类原生通知气泡的种类、已知来源、期限、状态和实际按钮；无头不支持 |
 | `shop` | GUI；`open`、`npc_id`、`buy_items/sell_items`、选择/滚动位置、`busy` 和数量窗口状态；无头不支持 |
@@ -244,7 +251,7 @@ Lua 不包含 CLI 派生的 `@notification` 引用或桌面根坐标；本域只
 
 GUI 的 `data.read_seconds` 是本次原生领域采集耗时；CLI 的同名结果还包含外部请求与读取时间，两者不能直接作为同一段耗时比较。
 
-无头任务的 `data.source="character_data_snapshot"`、`data.live_updates=false` 明确表示角色完整包快照。`observed_at_ms` 只标记本次读取所依附的采样时间，不是任务来源最后更新时间；来源更新时间未提供。重登后读到新快照不等于同会话实时任务更新。GUI 任务读取当前原生记录，同样不解释未覆盖的任务进度语义。
+无头任务的 `data.source="character_data_snapshot_and_updates"`、`data.live_updates=true` 表示完整角色包与同会话正常增量共同维护记录。`live_update_kinds` 为 `not_started/started/completed`；移除或放弃会清除旧记录，进度串保留原文，不推断计数、可接任务或关联。`linked_progress=nil` 表示关联语义未知。`observed_at_ms` 是采样时间，不是任务来源最后更新时间；GUI同样只读取本端当前记录。
 
 非 `stage` 领域在 `ready=false` 时返回 `unavailable`、`error="native_client_not_in_game"` 和 `data=nil`，不使用旧领域缓存。换图后重新查询并核对 `instance_id/character_id/map_id/scene_generation`；旧表仍是历史拷贝，旧 NPC OID、UI 对象和任务规划不能自动用于新场景。角色变化、离开游戏与整会话取消仍遵循既有停止规则。
 
@@ -260,14 +267,14 @@ if current.data.mesos ~= nil then
     game.log("当前金币：" .. tostring(current.data.mesos))
 end
 local quests = game.observe("quests")
-if quests.status == "ok" and quests.data.live_updates == false then
-    game.log("任务为登录快照，不能据此判断当前任务进度变化")
+if quests.status == "ok" then
+    game.log("任务增量支持：" .. tostring(quests.data.live_updates))
 end
 ```
 
 ## 动作结果
 
-`move/face/jump/attack/pickup/use_item/equip/unequip/stop/press` 返回以下表：
+`move/face/jump/attack/pickup/use_item/equip/unequip/revive/activate/stop/press` 返回以下表：
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
@@ -284,6 +291,8 @@ end
 - `move` 是方向输入，不是“走到坐标”；`up/down` 按原生状态用于攀爬、门户等。没有独立的 `game.climb` 函数。坐标到达、绳梯目标和转场确认由复合策略实现。
 - `face` 可能造成少量移动。共享层请求短动作，headless 直接设置方向，原版可能短按方向或已同向时无需派发；不能据此要求两端固定同样时长或位置完全不变。
 - `jump/attack/pickup` 的可选时间是输入持续时间，不是完整动画时长。攻击、空中运动和惯性可能在释放输入后继续。
+- `attack(0.15, "right")` 同窗保持向右和普攻输入；`attack(0.15, "right", 1001004)` 同时保持方向并请求一次指定技能。Lua决定下一窗口是否继续，适配器不自动重施技能。移动派发与技能准入分别报告为标准 `dispatched` 和 `skill_dispatched/skill_native_result/skill_reason`，移动成功不代表技能已准入。
+- 移动和攻击可以同时持有意图；攻击动画是否实际限制位移、空中是否能出手由各端原生规则决定，不要求先落地或结束移动再攻击。绳梯输入等仍需策略按真实状态安排。
 - `stop` 释放当前任务控制后继续执行，不结束任务或 Lua 会话。结束任务用 `return` 或自然运行完毕。其结果的 `dispatched=true` 表示释放请求，不表示向游戏服务器发出了动作。
 - 不要在 `game.keys` 持键期间立即接另一个语义动作；先用 `game.stop()` 等待释放，再开始新的独立动作。
 
@@ -300,6 +309,18 @@ end
 恢复确认后为 `effect="confirmed"`、`reason="revive_confirmed"`；期限内未确认、角色变化或取消时保留 `effect="unknown"` 及本次派发事实，不重发。事件脚本等服务端许可不能由当前客户端预判，`revive_requestable=true` 仅说明客户端请求前置已满足。动作结果和最新 `game.state()` 共同决定后续策略，不自动继续此前战斗、复活或重连。
 
 该 Lua 能力仅 headless 提供。原版 Lua 声明 `revive=false`，调用报 `unsupported: revive`；原版 CLI `revive` 保留已识别 GUI 确认框流程。无头死亡时可以装载只读观察或显式复活 Lua；移动、攻击、用物等原有动作仍拒绝死亡角色。
+
+### 控件交互
+
+无头端通过 `game.observe("interaction").data.page` 观察当前页面，再用 `game.activate(ref)` 激活选定控件。没有当前页面时 `page=nil`。Page严格包含四项：`source`（来源字符串）、`title`（标题字符串）、`text`（正文字符串或nil）、`controls`（控件数组或nil）。每个Control只有 `role/text/enabled/ref`；`role/text/ref` 是字符串，`enabled` 为布尔值或nil。未知正文或控件不转换为空文本或空菜单，未知启用状态也不等于禁用。
+
+`scene` 中NPC目标的 `ref` 与页面控件引用由同一原生交互组件生产。引用绑定所属实例、角色、场景和页面，调用方不解析格式，也不拼对象ID、页版本、任务ID或协议选择参数。页面或场景变化后重新观察；旧引用由原生拒绝，Python不会替换或重放它。
+
+`reason="control_activated"` 只说明本次控件已处理；`effect` 不因此成为任务、奖励或消费成功。激活后再读当前交互页判断界面变化，任务和收益分别从 `quests`、背包或角色观察核对。激活预算和取消沿用脚本生命周期，不给函数增加内容参数或动作别名。
+
+普通服务端脚本页和客户端本地任务页共用上述模型。后者的 `source="client_local_quest"`，条目、正文与资格来自真实 `Quest.nx`、当前NPC及本端状态；先打开详情，再明确激活确认控件，不把可发送协议的任务ID目录当成菜单。未接任务只在本地资格已知满足时列出；已接任务可读当前详情，交付资格未知或不满足时不允许确认。已完成历史不会遮蔽普通交谈；混合来源界面通过同一模型的“交谈”导航切换。
+
+缺少 `Quest.nx`、未支持条件、重复或脚本特殊流程、复杂奖励选择均不自动补全或猜测；只有已实现的真实控件可激活。本地UI仅对已核实的普通单目标进度格式判定条件，`quests` 领域仍保留原始文本；成功正文要等真实任务状态到达，奖励另读原生事实。待响应或未解析页面保持未知，不生成假控件。GUI的 `activate` 能力为false，其已有CLI桌面消费者继续使用原流程。
 
 ### 无头普通换装
 
@@ -366,7 +387,7 @@ end
 
 `press`先提交期望输入并让出，在原生更新阶段派发，等待真实释放确认后返回标准动作结果。`dispatched`保留实际派发事实，消费前已撤销的请求为 `false`；它不识别宏表达式或 `Left+Alt:0.2` 这类文本。
 
-## 原版直接技能
+## 直接技能
 
 ```lua
 if game.capabilities().skill then
@@ -375,13 +396,15 @@ if game.capabilities().skill then
 end
 ```
 
-返回值只有：
+返回值：
 
 ```text
-{ native_result = integer, dispatched = true }
+{ native_result = integer, dispatched = boolean, reason = string, effect = "unknown" }
 ```
 
-这里的 `dispatched=true` 表示已调用原生入口。`native_result=0` 表示原生本地拒绝，非零仍不能证明动画、MP消耗、命中或服务器效果。技能调用不让出，也不等待技能完成；持续/蓄力/特殊技能需要按实际原生行为另行验证。调用失败或后端不支持时抛错，没有标准动作结果的 `effect/settled/control_released` 字段。
+GUI 的 `dispatched=true` 表示已进入原生技能入口，`native_result` 保留真实返回，0为原生本地拒绝。无头首批支持战士普通近战 `1001004/1001005`，原生准入枚举0为成功，拒绝由 `dispatched=false` 和 `reason` 说明，包括未学、职业、武器、HP/MP、冷却或动作条件；其他技能类型明确不支持。原生数值不能跨后端解释，也不能证明命中或效果。
+
+技能调用不让出，也不等待动画完成；持续策略应正常让出并根据原生结果再决定。它没有标准动作结果的 `settled/control_released` 字段。复合 `attack` 窗口会等待所属输入释放，其 `skill_*` 字段只记录本窗单次技能请求，效果仍为未知。
 
 ## 错误、期限与生命周期
 

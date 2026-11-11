@@ -18,6 +18,7 @@
 #pragma once
 
 #include "../OutPacket.h"
+#include <optional>
 
 namespace ms
 {
@@ -51,6 +52,22 @@ namespace ms
 		NpcTalkMorePacket(int32_t selection) : NpcTalkMorePacket(4, 1)
 		{
 			write_int(selection);
+		}
+	};
+
+	// Packet which tells the server of an interaction with an NPC shop
+	class QuestActionPacket : public OutPacket
+	{
+	public:
+		QuestActionPacket(bool complete, int16_t quest, int32_t npc, int16_t x, int16_t y,
+		                  std::optional<int16_t> reward) : OutPacket(OutPacket::Opcode::QUEST_ACTION)
+		{
+			write_byte(complete ? 2 : 1);
+			write_short(quest);
+			write_int(npc);
+			write_short(x);
+			write_short(y);
+			if (reward) write_short(*reward);
 		}
 	};
 

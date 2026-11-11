@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import signal
-from typing import Literal, TypeAlias, cast
+from typing import Literal, TypeAlias, TypedDict, cast
 
 
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -17,6 +17,13 @@ class GameClientError(Exception):
         self.code = code
         self.message = message
         self.details = details if details is not None else {}
+
+
+class HuntRequest(TypedDict):
+    target: str
+    skill_id: int | None
+    attack_range: float
+    seconds: float | None
 
 
 class GameClient:
@@ -123,10 +130,19 @@ class GameClient:
         state = await self._bridge()
         return {
             key: state.get(key)
-            for key in ("instance_id", "run_id", "seq", "observed_at_ms", "script", "command", "held_keys")
+            for key in (
+                "instance_id",
+                "run_id",
+                "seq",
+                "observed_at_ms",
+                "script",
+                "command",
+                "held_keys",
+                "held_actions",
+            )
         }
 
-    async def run_lua(self, code: str, seconds: float) -> JsonObject:
+    async def _run_control(self, *arguments: str) -> JsonObject:
         if self._running:
             raise GameClientError("input_busy", "本 harness 已有活动 Lua 执行。")
         self._running = True
@@ -137,7 +153,7 @@ class GameClient:
             await self._bridge()
             if self._cancel_requested:
                 return {"status": "cancelled", "cancelled": True, "reason": "cancel_requested"}
-            return await self._call("script", "run", "--code=" + code, "--seconds", str(seconds), controlled=True)
+            return await self._call(*arguments, controlled=True)
         except GameClientError as error:
             self._script_error = error
             raise
@@ -145,6 +161,17 @@ class GameClient:
             self._script_process = None
             self._running = False
             self._finished.set()
+
+    async def run_lua(self, code: str, seconds: float) -> JsonObject:
+        return await self._run_control("script", "run", "--code=" + code, "--seconds", str(seconds))
+
+    async def hunt(self, request: HuntRequest) -> JsonObject:
+        arguments = ["hunt", "--range", str(request["attack_range"])]
+        if request["skill_id"] is not None:
+            arguments += ["--skill", str(request["skill_id"])]
+        arguments += ["--continuous"] if request["seconds"] is None else ["--seconds", str(request["seconds"])]
+        arguments += ["--", request["target"]]
+        return await self._run_control(*arguments)
 
     async def cancel(self) -> JsonObject:
         if self._running:

@@ -1,4 +1,4 @@
-"""真实Runtime与GUI输入消费核心合同；外部原生回调仅模拟消息泵与角色更新。"""
+"""按GUI的C++14约定编译真实Runtime与输入合同；外部原生回调模拟消息泵与角色更新。"""
 
 from pathlib import Path
 import subprocess
@@ -22,7 +22,7 @@ class GuiKeyInputContract(unittest.TestCase):
         subprocess.run(
             [
                 "g++",
-                "-std=c++20",
+                "-std=c++14",
                 "-O0",
                 f"-I{lua}",
                 f"-I{root / 'shared/lua-runtime'}",
@@ -47,3 +47,6 @@ class GuiKeyInputContract(unittest.TestCase):
 
     def test_cancelled_or_returned_pending_requests_keep_dispatched_false(self) -> None:
         subprocess.run([str(self.executable), "undispatched"], check=True, timeout=10)
+
+    def test_skills_wait_for_consumed_direction_and_preserve_native_rejection(self) -> None:
+        subprocess.run([str(self.executable), "skill-consumption"], check=True, timeout=10)

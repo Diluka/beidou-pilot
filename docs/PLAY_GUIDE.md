@@ -32,13 +32,13 @@ python3 cli/clientctl.py plan --target /external/target.json
 ./cli/beidou-pilot --backend headless --instance worker-a --json snapshot
 ```
 
-无头 profile 须为 `0600`，包含已有账号及 `character_id`；`world/channel` 为从 0 开始的索引，CLI 返回的频道从 1 开始。`open` 可以复用身份相符的现有实例；`--timeout` 只限制启动等待，容器在命令返回后仍运行。默认运行根是本源码树的 `cli/`；若使用 `--root`，后续所有命令沿用同一绝对路径，它选择运行状态目录，不切换加载的代码版本。
+两端 `open` 都必须显式传同一格式的 `--profile PATH`。文件权限为 `0600`，包含 `username`、`password` 和已有角色的 `character_id`；`world` 与 `channel` 从 0 开始，省略时各为 0，CLI 返回的频道从 1 开始。`open` 可以复用身份相符的现有实例；`--timeout` 只限制启动等待，容器在命令返回后仍运行。默认运行根是本源码树的 `cli/`；若使用 `--root`，后续所有命令沿用同一绝对路径，它选择运行状态目录，不切换加载的代码版本。
 
 入图需同时确认新鲜状态中的 `ready`、角色 ID/名称、地图及位置；桥的 `instance_id/run_id` 应保持属于本次运行，CLI 会核对登记与原生身份。报告实际核对的服务器、频道、角色、地图和所用后端；缺字段时保留未知。仅有容器运行、登录认证或角色选择成功，不足以判断已入图。启动失败后先读 `status` 和错误中的运行目录；重开前确认原实例情况。
 
 ## 观察、选择能力并核对结果
 
-先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`，参数及输出见 [CLI](CLI.md#启动观察与关闭)。`capabilities` 的 `native_actions` 来自有效在线桥，离线为 `null`；具体领域还需检查响应的支持状态、来源和时效。未知值保持未知，例如当前无头任务是完整角色包快照，不能当作实时任务进度。
+先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`，参数及输出见 [CLI](CLI.md#启动观察与关闭)。`capabilities` 的 `native_actions` 来自有效在线桥，离线为 `null`；具体领域还需检查响应的支持状态、来源和时效。未知值保持未知；无头任务已合并正常增量，但原始进度串和关联语义不推断，具体范围查当前领域响应。
 
 在已确认安全区域，先选择一项有界动作并比较前后观察。下面只适用于已核实右侧可安全短移的场景：
 
@@ -54,9 +54,16 @@ python3 cli/clientctl.py plan --target /external/target.json
 
 ## GUI 与首次登录的边界
 
-需要当前仅 GUI 支持的操作时，先按授权完成实例与角色交接，再按 [GUI 准备与登录](CLI.md#原版-gui)运行。GUI 使用默认单实例；账号来自运行根的 `account.private.json`，已有角色可用 `open --character NAME --channel N --target PATH` 明确选择。通过 `snapshot`、`inspect stage` 和 `screenshot` 核对当前界面，优先使用当前对话正文与新鲜引用操作；GUI 桌面 `click X Y` 使用根桌面坐标，需根据当次截图定位。
+需要当前仅 GUI 支持的操作时，先按授权完成实例与角色交接，再按 [GUI 准备与登录](CLI.md#原版-gui)运行。GUI 使用默认单实例，仅支持 `world=0`，从同一份 profile 读取频道并按 `character_id` 选择已有角色：
 
-已有角色自动登录尚不覆盖新账号的全部流程。首次登录可能停在声明或性别选择；声明须在原界面滚到底部才可确认。空角色列表可能返回 `character_not_unique`，这时需要正常创建角色，不能解释为已选中或已入图。无头首次声明、性别和建角能力由 [#72](https://github.com/Diluka/beidou-pilot/issues/72) 跟踪；当前 GUI 正常界面路径可在明确账号、角色名及选择意图后执行。无法确认的选择留待决定，不反复重试登录。
+```bash
+./cli/beidou-pilot --backend beidou --json open \
+  --target /external/target.json --profile /private/account.private.json
+```
+
+GUI 不再使用运行根的固定账号或角色名称文件，也不再接受 `--character`、`--character-index`、`--channel`。通过 `snapshot`、`inspect stage` 和 `screenshot` 核对当前界面，优先使用当前对话正文与新鲜引用操作；GUI 桌面 `click X Y` 使用根桌面坐标，需根据当次截图定位。
+
+统一登录只支持已有角色。首次登录可能停在声明或性别选择；声明须在原界面滚到底部才可确认。若角色列表为空或没有唯一匹配的 CID，不能当作已选中或已入图。无头首次声明、性别和建角能力由 [#72](https://github.com/Diluka/beidou-pilot/issues/72) 跟踪；需要在 GUI 中完成首次流程时，先确认账号和选择意图，再按实际界面操作。无法确认的选择留待决定，不反复重试登录。
 
 GUI 遇到上述界面时先截图；现有根桌面点击及 `python3 cli/beidou_pilot/engines/desktop.py scroll --help` 可帮助定位所需原语。桌面入口通过 `CLIENT_ROOT` 选择运行根，默认本源码树的 `cli/`，不接受统一 CLI 的 `--root`。使用自定义运行根时须显式指向同一目录，例如：
 
@@ -64,7 +71,7 @@ GUI 遇到上述界面时先截图；现有根桌面点击及 `python3 cli/beido
 CLIENT_ROOT=/external/client-cli python3 cli/beidou_pilot/engines/desktop.py scroll down --ticks 1
 ```
 
-滚轮作用于当前鼠标所在控件，须先按当次画面定位，再有界滚动并重新截图确认。该路径不代表 CLI 已自动识别首次流程，也不补齐无头能力。NPC 接交任务等无头缺口见 [#48](https://github.com/Diluka/beidou-pilot/issues/48) 与[两端能力表](ARCHITECTURE.md#两端能力)。
+滚轮作用于当前鼠标所在控件，须先按当次画面定位，再有界滚动并重新截图确认。该路径不代表 CLI 已自动识别首次流程，也不补齐无头能力。无头新增交互按[当前页面与控件引用](CLI.md#无头控件交互)操作；普通本地任务页面及完整接交仍见 [#48](https://github.com/Diluka/beidou-pilot/issues/48) 与[两端能力表](ARCHITECTURE.md#两端能力)。
 
 ## 停止、下线与交接
 

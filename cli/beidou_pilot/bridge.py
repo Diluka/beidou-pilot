@@ -91,11 +91,16 @@ class BridgeMonster(TypedDict):
     x: float
     y: float
     active: bool
+    hp_percent: NotRequired[int | None]
+    hp_sequence: NotRequired[int | None]
+    hp_source: NotRequired[str | None]
 
 
 class NativeSkillResult(TypedDict):
     skill_id: int
     native_result: int
+    dispatched: NotRequired[bool]
+    reason: NotRequired[str | None]
 
 
 class BridgeSnapshot(TypedDict):
@@ -117,6 +122,8 @@ class BridgeSnapshot(TypedDict):
     script: NotRequired[BridgeScript | None]
     last_skill: NotRequired[NativeSkillResult | None]
     monsters: NotRequired[list[BridgeMonster] | None]
+    capabilities: NotRequired[dict[str, bool] | None]
+    held_actions: NotRequired[list[str]]
     facing: NotRequired[Literal["Left", "Right"] | None]
     dead: NotRequired[bool | None]
     revive_requestable: NotRequired[bool | None]
@@ -216,8 +223,14 @@ class BridgeClient:
         if "last_skill" in raw and raw["last_skill"] is not None:
             skill = raw["last_skill"]
             if not isinstance(skill, dict) or any(type(skill.get(field)) is not int
-                                                  for field in ("skill_id", "native_result")):
+                                                  for field in ("skill_id", "native_result")) or (
+                    "dispatched" in skill and type(skill["dispatched"]) is not bool) or (
+                    "reason" in skill and skill["reason"] is not None and not isinstance(skill["reason"], str)):
                 raise ClientError("invalid_bridge_state", "原生桥的技能调用结果字段无效。")
+        if "capabilities" in raw and raw["capabilities"] is not None and (
+                not isinstance(raw["capabilities"], dict)
+                or any(type(value) is not bool for value in raw["capabilities"].values())):
+            raise ClientError("invalid_bridge_state", "原生桥的能力声明字段无效。")
         if "facing" in raw and raw["facing"] not in ("Left", "Right", None):
             raise ClientError("invalid_bridge_state", "原生桥的角色朝向字段无效。")
         if "monsters" in raw and raw["monsters"] is not None:
@@ -231,6 +244,15 @@ class BridgeClient:
                     or "name" not in monster or (monster["name"] is not None and not isinstance(monster["name"], str))
                     or type(monster.get("active")) is not bool for monster in monsters)):
                 raise ClientError("invalid_bridge_state", "原生桥的怪物观察字段无效。")
+        if "held_actions" in raw and (not isinstance(raw["held_actions"], list)
+                or any(not isinstance(action, str) for action in raw["held_actions"])):
+            raise ClientError("invalid_bridge_state", "原生桥的语义输入状态字段无效。")
+        for monster in raw.get("monsters") or []:
+            percent, sequence, source = (monster.get(field) for field in ("hp_percent", "hp_sequence", "hp_source"))
+            if (percent is not None and (type(percent) is not int or not 0 <= percent <= 100)
+                    or sequence is not None and (type(sequence) is not int or sequence < 0)
+                    or source is not None and not isinstance(source, str)):
+                raise ClientError("invalid_bridge_state", "原生桥的目标HP观察字段无效。")
         state = cast(BridgeSnapshot, raw)
         if state["run_id"] != registration["run_id"]:
             raise ClientError("bridge_session_mismatch", "原生桥快照不属于当前登记的客户端会话。")

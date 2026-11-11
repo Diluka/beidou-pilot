@@ -26,6 +26,9 @@
 #include "../../IO/UITypes/UICashShop.h"
 #include "../../IO/UITypes/UISkillBook.h"
 #include "../../IO/UITypes/UIStatsInfo.h"
+#ifdef HEADLESS
+#include "HeadlessState.h"
+#endif
 
 namespace ms
 {
@@ -41,8 +44,19 @@ namespace ms
 
 	void ChangeStatsHandler::handle(InPacket& recv) const
 	{
-		recv.read_bool(); // 'itemreaction'
+		const bool enable_actions = recv.read_bool(); // 'itemreaction'
 		int32_t updatemask = recv.read_int();
+
+#ifdef HEADLESS
+		// Normal NPC disposal sends this empty enabled-stat packet. A new page clears the pending flag first.
+		auto& dialogue = headless_state().dialogue;
+		if (enable_actions && updatemask == 0 && dialogue.response_pending)
+		{
+			dialogue.response_pending = false;
+			dialogue.closed_by = "enable_actions_after_request";
+			++dialogue.revision;
+		}
+#endif
 
 		bool recalculate = false;
 

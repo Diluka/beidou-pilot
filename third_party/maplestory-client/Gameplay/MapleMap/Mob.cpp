@@ -427,6 +427,7 @@ namespace ms
 			percent = 0;
 
 		hppercent = percent;
+		++hp_update_sequence;
 		showhp.set_for(2000);
 	}
 
@@ -618,6 +619,11 @@ namespace ms
 	int8_t Mob::get_hp_percent() const
 	{
 		return hppercent;
+	}
+
+	uint64_t Mob::get_hp_update_sequence() const
+	{
+		return hp_update_sequence;
 	}
 
 	bool Mob::has_control() const

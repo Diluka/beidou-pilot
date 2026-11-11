@@ -25,9 +25,9 @@ class Backend:
 
     def _run(self, name: str, arguments: list[str], *, payload: str | None = None,
              stream: bool = False, stream_stdout: bool = False) -> str:
-        if self.name != "beidou" and name not in {"observe", "scene", "inventory", "character", "quests", "stage"}:
+        if self.name != "beidou" and name not in {"observe", "scene", "inventory", "character", "quests", "stage", "interaction"}:
             raise ClientError("unsupported_capability", "该客户端不提供此北斗窗口或原始输入能力。", {"engine": name})
-        engines = {"observe", "scene", "dialog", "inventory", "quests", "desktop",
+        engines = {"observe", "scene", "dialog", "interaction", "inventory", "quests", "desktop",
                    "session", "ui", "stage", "character", "hotkeys", "shop", "record", "notifications"}
         if name in {"clientctl", "runtime-ui"}:
             command = [sys.executable, str(self.root / (name + ".py")), *arguments]
@@ -121,8 +121,8 @@ class Backend:
     def read(self, name: str, *arguments: str) -> JsonObject:
         return self._json(name, list(arguments))
 
-    def text(self, name: str, *arguments: str) -> str:
-        return self._run(name, list(arguments))
+    def text(self, name: str, *arguments: str, payload: str | None = None) -> str:
+        return self._run(name, list(arguments), payload=payload)
 
     def desktop(self, actions: DesktopActions) -> JsonObject:
         """GUI的短线性桌面原语，不承接角色控制循环。"""

@@ -13,7 +13,7 @@ namespace MapleControl {
 
 // Unknown is kept separate from a known false value in both Lua and host results.
 enum class Fact { Unknown, False, True };
-enum class ActionKind { Move, Face, Jump, Attack, Pickup, UseItem, Stop, Equip, Unequip, Revive };
+enum class ActionKind { Move, Face, Jump, Attack, Pickup, UseItem, Stop, Equip, Unequip, Revive, Activate };
 
 struct Character {
     std::uint32_t id = 0;
@@ -31,6 +31,8 @@ struct Monster {
     double x = 0;
     double y = 0;
     bool active = false;
+    int hpPercent = 0;
+    std::uint64_t hpSequence = 0; // Zero means no server HP observation for this native object.
 };
 
 struct Item {
@@ -81,11 +83,20 @@ struct State {
 
 struct Action {
     ActionKind kind = ActionKind::Stop;
-    std::string direction; // left/right/up/down; Face accepts left/right.
+    std::string direction; // Move: left/right/up/down; Face: left/right; Attack: optional left/right.
     std::uint32_t durationMs = 0;
     std::uint32_t itemId = 0;
+    std::uint32_t skillId = 0; // Attack: zero holds the ordinary attack input, otherwise request one skill.
     int sourceSlot = 0;
     int destinationSlot = 0;
+    std::string reference;
+};
+
+struct SkillResult {
+    bool dispatched = false;
+    int nativeResult = 0;
+    std::string reason;
+    bool nativeResultKnown = true;
 };
 
 struct ActionResult {
@@ -94,6 +105,8 @@ struct ActionResult {
     Fact settled = Fact::Unknown;
     std::string effect = "unknown";
     std::string reason;
+    bool skillRequested = false;
+    SkillResult skill;
 };
 
 // Each host supplies only native execution and its current state. The Lua
@@ -125,7 +138,9 @@ public:
 
     virtual bool SupportsSkill() const { return false; }
 
-    virtual bool Skill(std::uint32_t, int&, std::string& error) {
+    virtual bool SupportsMonsterHpPercent() const { return false; }
+
+    virtual bool Skill(std::uint32_t, SkillResult&, std::string& error) {
         error = "unsupported: skill";
         return false;
     }

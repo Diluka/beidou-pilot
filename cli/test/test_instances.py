@@ -21,6 +21,7 @@ from beidou_pilot.errors import ClientError
 from beidou_pilot.headless import close_game, open_game, status
 from beidou_pilot.instances import InstancePaths
 from beidou_pilot.observations import NativeObserver
+from beidou_pilot.profile import LoginProfile
 from beidou_pilot.resources import ResourcePaths
 from .test_bridge import BridgeFiles
 
@@ -148,9 +149,7 @@ class InstanceContract(unittest.TestCase):
                    "State": {"Running": False, "Pid": 0, "ExitCode": 2, "FinishedAt": "2026-11-09T00:00:00Z"}}
         target = self.root / "target.json"
         target.write_text('{"project":"isolated"}')
-        profile = self.root / "profile.json"
-        profile.write_text('{"username":"fixture","password":"fixture","character_id":6}')
-        profile.chmod(0o600)
+        profile = LoginProfile("fixture", "fixture", 6)
         resources = self.root / "resources"
         resources.mkdir()
         planned = {"running": True, "ip": "10.0.0.2", "network": "isolated", "container_id": "server-alpha"}
@@ -202,9 +201,9 @@ class InstanceContract(unittest.TestCase):
                                        "max_seconds": 0}))
         profile.chmod(0o600)
         with patch("beidou_pilot.headless.docker") as docker:
-            with self.assertRaises(ClientError) as failure:
-                open_game(self.root, target=self.root / "target.json", profile=profile, instance="alpha")
-        self.assertEqual("headless_profile_invalid", failure.exception.code)
+            code, report = self.cli("--instance", "alpha", "open", "--profile", str(profile))
+        self.assertNotEqual(0, code)
+        self.assertEqual("profile_invalid", report["error"]["code"])
         docker.assert_not_called()
 
     def test_capabilities_report_offline_unknown_and_online_native_values(self) -> None:
@@ -219,15 +218,13 @@ class InstanceContract(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertTrue(report["data"]["connected"])
         self.assertEqual(sampled["capabilities"], report["data"]["native_actions"])
-        self.assertEqual(["character", "inventory", "quests", "scene", "stage"],
+        self.assertEqual(["character", "interaction", "inventory", "quests", "scene", "stage"],
                          report["data"]["observation_domains"])
 
     def test_concurrent_open_cannot_start_the_same_character_twice(self) -> None:
         target = self.root / "target.json"
         target.write_text('{"project":"isolated"}')
-        profile = self.root / "profile.json"
-        profile.write_text('{"username":"fixture","password":"fixture","character_id":6}')
-        profile.chmod(0o600)
+        profile = LoginProfile("fixture", "fixture", 6)
         resources = self.root / "resources"
         resources.mkdir()
         planned = {"running": True, "ip": "10.0.0.2", "network": "isolated", "container_id": "same-server"}

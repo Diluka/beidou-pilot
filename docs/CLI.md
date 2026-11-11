@@ -19,13 +19,13 @@
 ./cli/beidou-pilot --backend headless --instance worker-a --json close
 ```
 
-无头新实例必须显式给出 target 与权限0600的 profile；已有匹配实例可 `open` 复用。target 格式见 [target.example.json](../cli/config/target.example.json)，当前按 Docker Compose 项目/服务、精确应用镜像和 internal 网络核验，不自动启动游戏服务端。
+GUI 与无头端的 `open` 都必须显式传 `--profile PATH`，匹配的实例可复用。无头新实例还须显式传 `--target PATH`。target 格式见 [target.example.json](../cli/config/target.example.json)，按 Docker Compose 项目/服务、精确应用镜像和 internal 网络核验。使用常驻工作区目标须已获授权并显式传 `--workspace-server`；客户端不会自动启动游戏服务端。
 
 已核验目标公告的频道 IPv4 位于 `127.0.0.0/8` 时，无头客户端使用该目标的内部 IP 连接频道，并保留服务器公告的端口。其他频道地址沿用公告值。该映射只发生在无头频道连接阶段，不需要修改服务端、原客户端资源或容器网络权限；目标核验失败时仍拒绝启动。
 
-profile 需 `username/password/character_id`，可选 `world/channel` 为0基索引。角色必须已经存在，不自动创建。账号文件外置，密码不写到参数中。无头选角与频道来自 profile，不接受 GUI 的 `--character/--character-index/--channel` 选项；旧 `max_seconds` 进程期限字段明确拒绝。`--timeout`只限制启动等待。
+两端共用权限为 `0600` 的 JSON profile：`username`、`password` 和已有角色的 `character_id`（正 32 位有符号整数）必填；`world` 与 `channel` 是从 0 开始的索引，省略时各为 0，格式允许 0 至 255，实际可选范围由服务器与后端决定。游戏中的第 1 频道对应 `channel=0`。账号文件外置，密码不写到参数中。角色必须已经存在，`open` 不自动建角。`--timeout` 只限制启动等待，进程期限不通过 profile 配置。
 
-GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--character` 或 `--character-index` 选择已有角色。它需要已准备的 GUI 运行环境，默认目标配置不代表已获准操作任意服务。
+GUI 通过正常登录界面选择 profile 的频道和角色 ID，目前只支持 `world=0`。复用 GUI 会话时，显式目标必须能与当前实例的会话登记核对。旧 GUI 的 `--character`、`--character-index`、`--channel` 和运行根中的固定账号、角色名称文件已退役。迁移旧 GUI 文件时将 `name` 改为 `username`，补上核实过的 `character_id`；将原来从 1 开始的频道换成 profile 的 0 基索引。
 
 | 命令 | 行为 |
 | --- | --- |
@@ -92,10 +92,12 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | `walk DIR --seconds N`、`face DIR`、`jump` | 有界方向移动、朝向、跳跃尝试 |
 | `attack`、`pickup`、`use_item ID` | 原生尝试；`use_item`不等于消耗和恢复已确认 |
 | `revive` | 无头发一次正常复活请求并确认同角色恢复；GUI 使用已识别死亡确认框；存活时跳过 |
+| `click REF` | 无头激活当前原生控件或NPC目标引用；GUI保留既有引用与桌面点击流程 |
 | `equip ITEM --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头普通装备；明确背包正槽和身上负槽，核对物品 ID 及实际替换结果 |
 | `unequip --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头卸下普通装备；明确身上负槽和空背包正槽 |
 | `move X`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单根绳梯或单个门户；不是通用寻路 |
 | `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点及近距拾取尝试 |
+| `hunt [MOB\|all]` | 单场景自主找怪、可达跨平台和连续战斗；支持 `--skill ID`、`--range N`、限时或 `--continuous` |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
 | `script run FILE`、`script run --code CODE` | 文件或直接源码二选一，使用同一 Lua 执行链；默认限时，持续模式须明确声明 |
 | `script start FILE`、`script start --code CODE` | 原生受理后返回，脚本由客户端独立执行；返回实例、运行、请求与脚本身份 |
@@ -103,7 +105,8 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 | `task add/replace/stop` | 向指定活动Lua会话管理独立任务，不取得整会话动作锁 |
 | `task result REQUEST_ID` | 只读查询已保留的任务管理结果，包括超时后的结果 |
 | `stop`、`bridge stop` | 无其他活动动作控制者时清理遗留控制 |
-| `key KEYS --seconds N`、`skill ID` | 原版专属Lua扩展；无头明确拒绝 |
+| `key KEYS --seconds N` | 原版按键扩展；无头明确拒绝 |
+| `skill ID` | 原生技能请求；无头首批1001004/1001005，其他类型明确不支持 |
 
 `--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。CLI 不拼接、展开或改写源码。文件方式每次读取当前 UTF-8 内容。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
 
@@ -129,7 +132,17 @@ GUI `open` 使用普通登录、选频道和选角，可按 `--channel`、`--cha
 
 请求发布前，例如等待 `task.lock` 时，Ctrl+C/SIGTERM返回通用 `interrupted` 和退出码130，此时没有已发布的 `request_id`；等待管理锁超时返回 `task_management_busy`。请求发布后，等待结果超时返回 `task_result_unconfirmed`，Ctrl+C/SIGTERM返回 `task_request_interrupted` 和退出码130，这两种结果都保留已发布的 `request_id`。管理等待失败不停止整会话，也不自动重放请求；已发布的请求可用 `task result` 查询最终结果，再决定后续操作。查询结果属于响应中记录的历史实例和会话，不代表当前角色效果。
 
-移动和战斗参数只对当前场景有效。门户和部分规划依赖可选静态 WZ XML，资料不足时明确拒绝；换层、身份变化、低HP或未确认到达会停止后续动作。基础 `fight` 受转职节点限制，特殊任务、材料或职业技能策略应自行写Lua，没有未实现的占位选项。
+移动和战斗参数只对当前场景有效。地形与恢复属性优先使用已配置 XML，缺少对应 XML 时使用同源 NX；资料缺失或未支持时明确拒绝。基础 `fight` 保留同层预算与撤退行为；`hunt` 根据当前位置在本场景连续寻找可达目标，允许正常换平台和空中攻击，地图或场景代次变化则停止。两者均保留成长节点限制。
+
+```bash
+./cli/beidou-pilot --backend headless --instance worker-a --json hunt all --seconds 60
+./cli/beidou-pilot --backend headless --instance worker-a --json hunt 100100 --continuous --hp-item 2000000
+./cli/beidou-pilot --backend headless --instance worker-a --json hunt all --skill 1001004 --range 60 --seconds 30
+```
+
+`hunt` 默认普攻、全部怪物、60秒，`--bounds MIN MAX` 可限定横向区域，`--until-level` 指定停级，`--min-hp-ratio` 默认0.35。`--hp-item` 仅使用明确指定、库存已知的恢复品，不购买或替换药品。技能必须已学且当前后端支持；无头首批仅支持战士 `1001004/1001005`，其他类型明确拒绝。攻击距离是策略接近参数，不保证命中。无可确认的进展、无法通过的地形、生命下限或取消都有明确停止；原始日志保留所属实例，最终经验跨级时不直接相减。
+
+已知近距 `pt7` 脚本门户由原生 Up 输入走正常脚本门户请求，静态目标未知时保留未知，到达以在线地图和位置确认。它不补齐通用路线规划或缺失的静态查询资料。
 
 无头 `use` 接受数字ID的200类药品和201类食品。两端普通200类药品均走Lua原生用药，不要求快捷键绑定；按次数使用可不依赖XML，带HP/MP目标时需要资料已知恢复类型。
 
@@ -143,9 +156,24 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 
 原版 `equip ITEM` 保留原有 GUI 工作流，新增原生槽位参数供无头使用；原版不支持 `unequip`。换装只覆盖普通装备，不扩展强化、现金外观或其他装备操作。
 
-`skill`返回 `native_result`：0为本地拒绝，非零不能证明命中或服务器确认。对活动脚本发送原CLI的Ctrl+C/SIGTERM取消并等待放键；不要用第二个动作命令抢占。脚本能力及效果判断见 [CONTROL](CONTROL.md)。
+`skill` 保留 `native_result`、`dispatched/skill_reason` 和未知效果，顶层 `reason` 继续表达脚本终态。原生数值含义随后端不同：无头枚举0表示准入，GUI保留原返回值，不能仅凭零或非零判断命中。对活动脚本发送原CLI的Ctrl+C/SIGTERM取消并等待放键；不要用第二个动作命令抢占。脚本能力及效果判断见 [CONTROL](CONTROL.md)。
 
 无头 `snapshot` 与 `bridge status` 提供 `dead/revive_requestable`：死亡来自已就绪角色的原生 HP=0；读数不可用时保持未知。`revive_requestable` 只表示客户端请求前置已满足，不能预判事件脚本许可。无头 `revive` 通过共享 Lua 默认等待至多6秒，只有同角色 HP>0 且地图、位置有效才返回 `revived`；存活返回 `already_alive`，均无重复请求。未确认返回 `revive_not_confirmed`，取消/断线保留实际结果；检测到死亡本身不触发复活或重连。参数化等待及脚本用法见 [Lua API](LUA_API.md#无头正常复活)。
+
+## 无头控件交互
+
+先用 `snapshot` 观察 `interaction.page` 的正文和控件，再对选定控件执行一次 `click REF`；场景NPC的原生 `ref` 也使用同一激活入口。`REF` 必须替换为当前观察到的引用：
+
+```bash
+./cli/beidou-pilot --backend headless --instance worker-a --json snapshot
+./cli/beidou-pilot --backend headless --instance worker-a --json click CONTROL_REF
+```
+
+页面只有 `source/title/text/controls`，控件只有 `role/text/enabled/ref`。正文或控件未知时为 `null`，`enabled=null` 不改成 `false`。引用由原生单点生产和验证；CLI不解析引用、不按控件角色拼协议参数，也不自动重新选择或重放失效引用。`--double` 与坐标点击仍仅GUI可用。
+
+激活只报告控件处理或页面变化，不能当作任务完成、奖励或消费到账；随后用当前交互页、`inspect quests`、背包及角色核对。服务端普通脚本页和客户端本地任务页使用同一入口。本地页只显示当前状态能证明的任务条目，先读取真实资料详情，再激活确认控件；无法确认的资格不产生可用确认。缺少 `Quest.nx` 只影响本地任务界面；不根据任务ID制造菜单，不增加直接接交的内容命令。
+
+任务观察已合并完整角色包与本端正常增量，`live_updates=true`，`live_update_kinds` 为 `not_started/started/completed`。原生观察保留原始进度串，关联语义未核实，`linked_progress=null`；不靠重登刷新代替持续观察。
 
 ## 原版 GUI
 
@@ -165,11 +193,12 @@ Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/r
 
 需要 Wine 启动诊断时，可在启动命令前设置 `WINEDEBUG='+loaddll,+seh,+d3d8,+d3d'`；该值传入容器并在降权后保留，未指定时默认为 `-all`。日志写入所属运行目录的 `wine.log`，原始诊断保留在本地环境。
 
-准备权限为 `0600` 的 `cli/account.private.json`（含 `name`、`password`），以及已授权的隔离 target 和专用角色，然后使用统一入口：
+准备已授权的隔离 target 和专用角色的[统一 profile](#启动观察与关闭)，然后使用统一入口：
 
 ```bash
 ./cli/beidou-pilot --backend beidou --json doctor
-./cli/beidou-pilot --backend beidou --json open --target /external/target.json
+./cli/beidou-pilot --backend beidou --json open \
+  --target /external/target.json --profile /private/account.private.json
 ./cli/beidou-pilot --backend beidou --json snapshot
 ./cli/beidou-pilot --backend beidou --json close
 ```
@@ -180,7 +209,7 @@ Wine prefix、运行日志、桥数据分别位于 `cli/runtime/prefix`、`cli/r
 
 | 命令组 | 用途 |
 | --- | --- |
-| `talk TARGET`、`dialog`、`click REF` | 打开NPC对话、按当前正文选择、操作当前引用 |
+| `talk TARGET`、`dialog` | 原版已有NPC桌面消费者；无头使用通用控件交互 |
 | `ui read/open/close/focus` | 已识别窗口和输入焦点；`ui close all`同时处理普通商店 |
 | `equip ITEM` | 正常 GUI 穿戴并核对结果，不接受无头槽位参数 |
 | `stats`、`skills` | 正常GUI AP/SP操作，并核对结果 |

@@ -3,6 +3,8 @@
 
 #include "Runtime.h"
 #include "TaskTransport.h"
+#include "Interaction.h"
+#include "QuestInteraction.h"
 #include <nlohmann/json.hpp>
 #include "IO/KeyAction.h"
 
@@ -29,6 +31,9 @@ public:
     const MapleControl::State& Observe() const override;
     MapleControl::Observation ObserveDomain(const std::string& domain) const override;
     bool Supports(MapleControl::ActionKind kind) const override;
+    bool SupportsSkill() const override;
+    bool SupportsMonsterHpPercent() const override;
+    bool Skill(std::uint32_t id, MapleControl::SkillResult& result, std::string& error) override;
     bool Begin(const MapleControl::Action& action, std::string& error) override;
     MapleControl::ActionResult Result() const override;
     void Release() override;
@@ -43,6 +48,12 @@ private:
     nlohmann::json ObservationData(const std::string& domain, std::string& status, std::string& error) const;
     void Publish();
     void ApplyRelease();
+    void CaptureInteraction();
+    bool OpenNpc(std::int32_t objectId, std::int32_t npcId, std::string& error);
+    bool OpenServerNpc(std::int32_t objectId, std::int32_t npcId, std::string& error);
+    bool RespondNpc(std::uint64_t revision, std::int8_t response, std::optional<std::int32_t> selection,
+                    std::string& error);
+    bool RequestQuest(const QuestRequest& request, std::string& error);
     nlohmann::json StateDocument() const;
 
     std::filesystem::path directory;
@@ -62,8 +73,27 @@ private:
     };
 
     std::optional<EquipmentChange> equipmentChange;
+
+    Interaction interaction;
+    QuestInteraction questInteraction;
+    std::string localQuestUnavailable;
+
+    struct NpcTarget {
+        std::int32_t templateId;
+        std::string reference;
+    };
+
+    std::map<std::int32_t, NpcTarget> npcTargets;
+    std::optional<std::uint64_t> shownDialogueRevision;
     std::optional<std::uint32_t> reviveCharacter;
-    std::optional<ms::KeyAction::Id> heldAction;
+    std::vector<ms::KeyAction::Id> heldActions;
+
+    struct LastSkill {
+        std::uint32_t id;
+        MapleControl::SkillResult result;
+    };
+
+    std::optional<LastSkill> lastSkill;
     std::uint64_t currentTick = 0;
     std::uint64_t releaseTick = 0;
     std::uint64_t actionUntilMs = 0;

@@ -27,8 +27,8 @@ def _lua_literal(value: JsonValue) -> str:
     return repr(value)
 
 
-def run_source(backend: Backend, source: str, seconds: float) -> JsonObject:
-    if not math.isfinite(seconds) or not 0.05 <= seconds <= 600:
+def run_source(backend: Backend, source: str, seconds: float | None) -> JsonObject:
+    if seconds is not None and (not math.isfinite(seconds) or not 0.05 <= seconds <= 600):
         raise ClientError("invalid_control_budget", "Lua控制预算须为0.05至600秒。")
     directory = backend.paths.state_directory
     directory.mkdir(parents=True, exist_ok=True)
@@ -40,7 +40,7 @@ def run_source(backend: Backend, source: str, seconds: float) -> JsonObject:
         return BridgeClient(backend.root, backend.name, backend.instance).run_script(Path(stream.name), seconds=seconds)
 
 
-def run_strategy(backend: Backend, name: str, options: JsonObject, seconds: float) -> JsonObject:
+def run_strategy(backend: Backend, name: str, options: JsonObject, seconds: float | None) -> JsonObject:
     directory = Path(__file__).resolve().parents[2] / "shared/scripts"
     path = directory / (name + ".lua")
     try:
@@ -139,21 +139,24 @@ def change_equipment(
 
 
 def skill(backend: Backend, skill_id: int) -> JsonObject:
-    if backend.name != "beidou":
-        raise ClientError("unsupported_capability", "该客户端尚未提供直接技能调用。")
     if not 1 <= skill_id <= 0x7FFFFFFF:
         raise ClientError("invalid_skill", "技能ID须为正32位整数。")
+    capabilities = BridgeClient(backend.root, backend.name, backend.instance).snapshot().get("capabilities")
+    if capabilities is None or capabilities.get("skill") is not True:
+        raise ClientError("unsupported_capability", "当前原生客户端未声明支持技能调用。")
     report = run_source(backend, "game.skill(" + str(skill_id) + ")\n", 3)
     state = cast(JsonObject, report["last_state"])
     observed = cast(JsonObject | None, state.get("last_skill"))
     if report["status"] == "completed" and (observed is None or observed["skill_id"] != skill_id):
         raise ClientError("native_skill_result_unavailable", "Lua已返回，但未确认本次技能的原生返回值。", report)
+    result = observed if report["status"] == "completed" else None
     return {
         **report,
         "skill_id": skill_id,
-        "native_result": observed["native_result"]
-        if report["status"] == "completed" and observed is not None
-        else None,
+        "native_result": result["native_result"] if result is not None else None,
+        "dispatched": result.get("dispatched") if result is not None else None,
+        "skill_reason": result.get("reason") if result is not None else None,
+        "effect": "unknown",
     }
 
 

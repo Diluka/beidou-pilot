@@ -1,10 +1,12 @@
-"""本地官方 WZ XML 的静态名称与地形资料；不读取服务端状态。"""
+"""本地官方 WZ XML 或同源 NX 的静态资料；不读取服务端状态。"""
 
 from functools import cache
+import hashlib
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .backend import ClientError, JsonObject, JsonValue
+from .nx import read_nx
 from .resources import load_resources
 
 
@@ -26,15 +28,28 @@ def _properties(node: ET.Element | None) -> JsonObject:
 
 class Catalog:
     def __init__(self, client_root: Path, wz_root: Path | None = None) -> None:
+        resources = load_resources(client_root)
         if wz_root is None:
-            wz_root = load_resources(client_root).metadata_root
+            wz_root = resources.metadata_root
         self.root = wz_root.resolve()
+        self.nx_root = resources.headless_resources
+        self._loaded_sources: dict[str, Path] = {}
 
     @cache
-    def _xml(self, relative_path: str) -> ET.Element | None:
+    def _tree(self, relative_path: str) -> ET.Element | None:
         path = self.root / relative_path
         if not path.is_file():
-            return None
+            package, filename = relative_path.split("/", 1)
+            category = package.removesuffix(".wz")
+            nx_path = self.nx_root / (category + ".nx")
+            if category == "Map" and (self.nx_root / "Map002.nx").is_file():
+                nx_path = self.nx_root / "Map002.nx"
+            if not nx_path.is_file():
+                return None
+            self._loaded_sources[relative_path] = nx_path
+            parts = tuple(None if part == "*" else part for part in filename.removesuffix(".xml").split("/"))
+            return read_nx(nx_path, parts)
+        self._loaded_sources[relative_path] = path
         try:
             return ET.parse(path).getroot()
         except (ET.ParseError, OSError) as error:
@@ -42,8 +57,31 @@ class Catalog:
                               {"path": str(path), "reason": str(error)}) from error
 
     @cache
+    def _fingerprint(self, path: Path) -> str:
+        try:
+            with path.open("rb") as stream:
+                return hashlib.file_digest(stream, "sha256").hexdigest()
+        except OSError as error:
+            raise ClientError("metadata_unreadable", "本地静态资料的文件指纹无法读取。",
+                              {"path": str(path), "reason": str(error)}) from error
+
+    def _sources(self, *relative_paths: str) -> JsonObject:
+        paths = list(dict.fromkeys(self._loaded_sources[name] for name in relative_paths if name in self._loaded_sources))
+        kinds = {path.suffix for path in paths}
+        return {
+            "metadata_source": [str(path) for path in paths],
+            "metadata_sources": [{"path": str(path), "sha256": self._fingerprint(path)} for path in paths],
+            "source_kind": "local-official-nx" if kinds == {".nx"} else "local-official-wz-xml" if kinds == {".xml"}
+                           else "mixed-local-client-resources" if kinds else "unavailable",
+            "runtime_authority": False,
+            "resource_version": None,
+            "resource_manifest": str(self.nx_root / "manifest.json") if ".nx" in kinds
+                                 and (self.nx_root / "manifest.json").is_file() else None,
+        }
+
+    @cache
     def _names(self, filename: str) -> dict[int, JsonObject]:
-        root = self._xml("String.wz/" + filename + ".img.xml")
+        root = self._tree("String.wz/" + filename + ".img.xml")
         names: dict[int, JsonObject] = {}
         if root is not None:
             for node in root.iter("imgdir"):
@@ -77,11 +115,12 @@ class Catalog:
         sprite_id = npc_id
         visited: set[int] = set()
         click_rect: JsonObject | None = None
-        source = self.root / f"Npc.wz/{npc_id:07d}.img.xml"
+        sources = ["String.wz/Npc.img.xml"]
         while sprite_id not in visited:
             visited.add(sprite_id)
-            source = self.root / f"Npc.wz/{sprite_id:07d}.img.xml"
-            root = self._xml(str(source.relative_to(self.root)))
+            relative_path = f"Npc.wz/{sprite_id:07d}.img.xml"
+            sources.append(relative_path)
+            root = self._tree(relative_path)
             if root is None:
                 break
             info = _properties(root.find("./imgdir[@name='info']"))
@@ -102,42 +141,44 @@ class Catalog:
                 click_rect = {"left": -ox, "top": -oy,
                               "right": int(frame.attrib["width"]) - ox, "bottom": int(frame.attrib["height"]) - oy}
             break
+        unavailable: list[JsonValue] = []
+        if name is None:
+            unavailable.append("本地静态资料没有该 NPC 名称，保留模板 ID。")
+        if click_rect is None:
+            unavailable.append("本地静态资料没有该 NPC 的点击范围，保留未知。")
         return {"id": npc_id, "name": name, "click_rect": click_rect,
-                "metadata_source": [str(self.root / "String.wz/Npc.img.xml"), str(source)],
-                "runtime_authority": False,
-                "unavailable": [] if name else ["本地静态资料没有该 NPC 名称，保留模板 ID。"]}
+                **self._sources(*sources), "unavailable": unavailable}
 
     def monster(self, monster_id: int) -> JsonObject:
         name = self.monster_name(monster_id)
-        root = self._xml(f"Mob.wz/{monster_id:07d}.img.xml")
+        relative_path = f"Mob.wz/{monster_id:07d}.img.xml"
+        root = self._tree(relative_path)
         unavailable: list[JsonValue] = []
         if name is None:
             unavailable.append("本地静态资料没有该怪物名称，保留模板 ID。")
         if root is None:
-            unavailable.append("本地静态资料没有该怪物属性 XML。")
+            unavailable.append("本地静态资料没有该怪物属性。")
         return {"id": monster_id, "name": name, "info": _properties(root.find("./imgdir[@name='info']")
                 if root is not None else None),
-                "metadata_source": [str(self.root / "String.wz/Mob.img.xml"),
-                                    str(self.root / f"Mob.wz/{monster_id:07d}.img.xml")],
+                **self._sources("String.wz/Mob.img.xml", relative_path),
                 "unavailable": unavailable}
 
     @cache
     def map(self, map_id: int) -> JsonObject:
         relative_path = f"Map.wz/Map/Map{map_id // 100000000}/{map_id:09d}.img.xml"
-        root = self._xml(relative_path)
+        root = self._tree(relative_path)
         names = self._names("Map").get(map_id, {})
         result: JsonObject = {"id": map_id, "name": names.get("mapName"), "street_name": names.get("streetName"),
-            "metadata_source": [str(self.root / relative_path), str(self.root / "String.wz/Map.img.xml")],
-            "source_kind": "local-official-wz-xml", "runtime_authority": False,
+            "info": {},
             "portals": [], "ropes": [], "footholds": [], "npcs": [], "monsters": [], "unavailable": []}
         unavailable: list[JsonValue] = []
         if root is None:
-            unavailable.append("本地静态资料没有该地图 XML；不能推断门户或地形。")
+            unavailable.append("本地静态资料没有该地图；不能推断门户或地形。")
         else:
             info = _properties(root.find("./imgdir[@name='info']"))
             result["info"] = info
             if "link" in info:
-                unavailable.append("地图包含link引用；当前只返回本图XML，引用地图地形未合并。")
+                unavailable.append("地图包含link引用；当前只返回本图资料，引用地图地形未合并。")
             portals: list[JsonValue] = []
             for node in root.findall("./imgdir[@name='portal']/imgdir"):
                 fields = _properties(node)
@@ -164,23 +205,31 @@ class Catalog:
         if not names:
             unavailable.append("本地静态资料没有该地图名称，保留地图 ID。")
         result["unavailable"] = unavailable
-        return result
+        sources = [relative_path, "String.wz/Map.img.xml"]
+        if result["npcs"]:
+            sources.append("String.wz/Npc.img.xml")
+        if result["monsters"]:
+            sources.append("String.wz/Mob.img.xml")
+        return {**result, "geometry_source": str(self._loaded_sources[relative_path])
+                if relative_path in self._loaded_sources else None,
+                **self._sources(*sources)}
 
     @cache
     def item(self, item_id: int) -> JsonObject:
         name = self.item_name(item_id)
-        source: Path | None = None
+        relative_path: str | None = None
         node: ET.Element | None = None
         category = item_id // 1000000
         if category == 1:
             source = next(self.root.joinpath("Character.wz").glob(f"*/{item_id:08d}.img.xml"), None)
-            if source is not None:
-                node = self._xml(str(source.relative_to(self.root)))
+            relative_path = (str(source.relative_to(self.root)) if source is not None
+                             else f"Character.wz/*/{item_id:08d}.img.xml")
+            node = self._tree(relative_path)
         else:
             folder = {2: "Consume", 3: "Install", 4: "Etc", 5: "Cash"}.get(category)
             if folder is not None:
-                source = self.root / f"Item.wz/{folder}/{item_id // 10000:04d}.img.xml"
-                root = self._xml(str(source.relative_to(self.root)))
+                relative_path = f"Item.wz/{folder}/{item_id // 10000:04d}.img.xml"
+                root = self._tree(relative_path)
                 if root is not None:
                     node = root.find(f"./imgdir[@name='{item_id:08d}']")
         info = _properties(node.find("./imgdir[@name='info']") if node is not None else None)
@@ -190,10 +239,12 @@ class Catalog:
             unavailable.append("本地静态资料没有该物品名称，保留物品 ID。")
         if node is None:
             unavailable.append("本地静态资料没有该物品属性，装备要求和价格未知。")
+        sources = ["String.wz/" + {1: "Eqp", 2: "Consume", 3: "Ins", 4: "Etc", 5: "Cash"}.get(category, "Cash")
+                   + ".img.xml"]
+        if relative_path is not None:
+            sources.append(relative_path)
         return {"id": item_id, "name": name, "requirements": requirements,
             "price": info.get("price"), "price_kind": "wz-base-price-not-current-shop-price", "info": info,
             "spec": _properties(node.find("./imgdir[@name='spec']") if node is not None else None),
-            "metadata_source": [str(self.root / "String.wz" / ({1: "Eqp", 2: "Consume", 3: "Ins",
-                4: "Etc", 5: "Cash"}.get(category, "Cash") + ".img.xml")), str(source) if source else None],
-            "source_kind": "local-official-wz-xml", "runtime_authority": False,
+            **self._sources(*sources),
             "unavailable": unavailable}

@@ -139,11 +139,55 @@ public:
     std::string npcName = "向导";
 };
 
+// Admission and server samples are native fixtures; Runtime owns their public Lua contract.
+class CombatBoundary final : public NativeBoundary {
+public:
+    bool SupportsSkill() const override { return true; }
+
+    bool SupportsMonsterHpPercent() const override { return true; }
+
+    bool Skill(std::uint32_t id, MapleControl::SkillResult& skill, std::string&) override {
+        skillIds.push_back(id);
+        skill = {true, 0, "skill_dispatched"};
+        return true;
+    }
+
+    bool Begin(const MapleControl::Action& action, std::string& error) override {
+        if (!NativeBoundary::Begin(action, error)) return false;
+        requests.push_back(action);
+        if (action.skillId != 0) {
+            result.skillRequested = true;
+            result.skill = {false, 9, "native_attacking"};
+        }
+        return true;
+    }
+
+    std::vector<MapleControl::Action> requests;
+    std::vector<std::uint32_t> skillIds;
+};
+
 // This boundary controls native completion; it does not simulate inventory packets or equipment rules.
 class ConfirmationBoundary final : public NativeBoundary {
 public:
+    MapleControl::Observation ObserveDomain(const std::string& domain) const override {
+        if (domain != "interaction") return NativeBoundary::ObserveDomain(domain);
+        using MapleControl::Value;
+        return {"ok",
+                Value::Object(
+                    {{"page", Value::Object(
+                                  {{"source", "native_fixture"},
+                                   {"title", "Panel"},
+                                   {"text", "Current page"},
+                                   {"controls", Value::Array({Value::Object({{"role", "button"},
+                                                                             {"text", "Next"},
+                                                                             {"enabled", true},
+                                                                             {"ref", "opaque-native-control"}})})}})}}),
+                {}};
+    }
+
     bool Supports(MapleControl::ActionKind kind) const override {
         if (kind == MapleControl::ActionKind::Revive) return reviveSupported;
+        if (kind == MapleControl::ActionKind::Activate) return activateSupported;
         return (kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip)
                || equipmentSupported;
     }
@@ -179,6 +223,7 @@ public:
     bool pending = false;
     bool equipmentSupported = true;
     bool reviveSupported = true;
+    bool activateSupported = true;
 };
 
 // The native callback re-enters the real scheduler; it does not model NPCs.
@@ -823,8 +868,113 @@ game.revive()
           "unsupported_revive_reached_native_dispatch");
 }
 
+void CombatRequestsAndFacts() {
+    CombatBoundary native;
+    native.state.monstersKnown = true;
+    MapleControl::Monster monster;
+    monster.objectId = 17;
+    monster.active = true;
+    native.state.monsters.push_back(monster);
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("combat-contract", R"lua(
+assert(game.capabilities().skill and game.capabilities().monster_hp_percent and game.capabilities().attack_move)
+local old = game.state().monsters[1]
+assert(old.object_id == 17 and old.hp_percent == nil and old.hp_sequence == nil and old.hp_source == nil)
+local skill = game.skill(1001004)
+assert(skill.dispatched and skill.native_result == 0 and skill.reason == "skill_dispatched")
+assert(skill.effect == "unknown")
+local action = game.attack(0.08, "right", 1001005)
+assert(action.dispatched and action.control_released and action.effect == "unknown")
+assert(action.skill_dispatched == false and action.skill_native_result == 9 and action.skill_reason == "native_attacking")
+local current = game.state().monsters[1]
+assert(current.object_id == 18 and current.hp_percent == 0 and current.hp_sequence == 2)
+assert(current.hp_source == "server_mob_hp" and old.hp_percent == nil)
+game.attack(0.08, "left")
+game.stop()
+)lua",
+                        5000, error),
+          error);
+    Advance(runtime, native, 1);
+    auto& current = native.state.monsters.front();
+    current.objectId = 18;
+    current.hpPercent = 0;
+    current.hpSequence = 2;
+    Advance(runtime, native, 30);
+    Check(!runtime.Running() && runtime.CurrentStatus()->error.empty(), runtime.CurrentStatus()->error);
+    Check(native.requests.size() == 2 && native.requests[0].kind == MapleControl::ActionKind::Attack
+              && native.requests[0].direction == "right" && native.requests[0].skillId == 1001005
+              && native.requests[1].direction == "left" && native.requests[1].skillId == 0,
+          "compound_attack_was_split_or_lost_an_intent");
+    Check(native.skillIds == std::vector<std::uint32_t>{1001004}, "direct_skill_request_was_replayed");
+    Check(runtime.Start("combat-cancel", "game.attack(30, 'right', 1001004)", 5000, error), error);
+    Advance(runtime, native, 1);
+    runtime.Cancel("contract_cancel");
+    Advance(runtime, native, 10);
+    Check(!runtime.Running() && native.Released() && native.inputs.back().interrupted && native.requests.size() == 3,
+          "cancel_replayed_or_retained_a_compound_attack");
+    NativeBoundary unsupported;
+    MapleControl::Runtime gui(unsupported);
+    Check(gui.Start("unknown-feedback", "assert(not game.capabilities().monster_hp_percent)", 5000, error), error);
+    Advance(gui, unsupported, 5);
+    Check(!gui.Running() && gui.CurrentStatus()->error.empty(), gui.CurrentStatus()->error);
+}
+
+void ActivationRequests() {
+    ConfirmationBoundary native;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("activation", R"lua(
+assert(game.capabilities().activate)
+assert(game.talk == nil and game.respond == nil and game.quest_start == nil and game.quest_complete == nil)
+local observed = game.observe("interaction")
+assert(observed.status == "ok")
+local control = observed.data.page.controls[1]
+assert(control.role == "button" and control.text == "Next" and control.enabled)
+local result = game.activate(control.ref)
+assert(result.dispatched and result.control_released and result.effect == "unknown")
+assert(result.reason == "control_activated")
+)lua",
+                        3000, error),
+          error);
+    Advance(runtime, native, 2);
+    Check(native.pending && native.requests.size() == 1
+              && native.requests.back().kind == MapleControl::ActionKind::Activate
+              && native.requests.back().reference == "opaque-native-control",
+          "activation_reference_or_wait_lost");
+    native.Complete("unknown", "control_activated");
+    Advance(runtime, native, 3);
+    Check(!runtime.Running() && runtime.CurrentStatus()->error.empty() && native.requests.size() == 1,
+          "activation_was_replayed_or_claimed_a_business_result");
+    Check(runtime.Start("activation-arguments", "game.activate('opaque-native-control', 3)", 3000, error), error);
+    Advance(runtime, native, 2);
+    Check(runtime.CurrentStatus()->error.find("activate accepts only a control reference") != std::string::npos
+              && native.requests.size() == 1,
+          "activation_accepted_protocol_or_budget_arguments");
+    native.activateSupported = false;
+    Check(runtime.Start("unsupported-activation", R"lua(
+assert(not game.capabilities().activate)
+game.activate("opaque-native-control")
+)lua",
+                        3000, error),
+          error);
+    Advance(runtime, native, 3);
+    Check(runtime.CurrentStatus()->reason == "script_error"
+              && runtime.CurrentStatus()->error.find("unsupported: activate") != std::string::npos
+              && native.requests.size() == 1,
+          "unsupported_activation_reached_native_dispatch");
+}
+
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
+    if (std::string(argv[1]) == "combat-contract") {
+        CombatRequestsAndFacts();
+        return 0;
+    }
+    if (std::string(argv[1]) == "activation-requests") {
+        ActivationRequests();
+        return 0;
+    }
     if (std::string(argv[1]) == "revive-requests") {
         ReviveRequests();
         return 0;
