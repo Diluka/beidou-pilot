@@ -15,11 +15,11 @@ usage() {
   resources-check  用对应无头镜像离线检查外部 NX，不登录
   其他命令  交给所属容器内的 beidou-pilot（snapshot、script、hunt 等）
 
-build/plan/open 参数：
+build/resources-check/plan/open 参数：
   --target PATH          已核验的 target，默认 DIR/target.json
   --profile PATH         账号 profile，默认 DIR/account.private.json
   --resources PATH       外部资源配置，默认 DIR/resources.json
-  --bridge-artifact DIR  GUI 桥 DLL 与 manifest 所在目录，默认由 gui_dll 推导
+  --bridge-artifact DIR  开发时复用匹配的 GUI 桥工件；默认自动获取所选提交的 CI 工件
   --workspace-server     显式授权常驻 beidou-ms 目标；没有 target 时为本实例准备连接
   --timeout SECONDS      入图等待，默认 90 秒
 EOF

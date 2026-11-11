@@ -8,11 +8,11 @@
 
 工作台最少提供 `account.private.json`、`resources.json`，以及需要时的 `target.json`。新建实例默认一次解析 `main` 的已提交 SHA，以该树及固定子模块构建或复用对应后端镜像。显式 `--ref COMMIT` 供开发验收；构建期间代码更新不改变这次输入。已有实例后续命令只路由到所属容器；不会因宿主切换分支或 `main` 更新而换版本。
 
-`build` 只准备镜像，`plan` 只读核对目标，`open` 创建实例并调用容器内 CLI 等待或完成登录。`build/plan/open` 可显式传 `--target PATH`、`--profile PATH`、`--resources PATH`、`--bridge-artifact DIR`、`--workspace-server`、`--timeout SECONDS`；前三个路径默认取工作台中的同名文件，GUI 桥工件目录默认从资源配置的 `gui_dll` 推导。已有实例的 `open` 核对显式请求后继续原会话，不重新构建。
+`build` 只准备镜像，`resources-check` 用无头镜像离线检查 NX，`plan` 只读核对目标，`open` 创建实例并调用容器内 CLI 等待或完成登录。`build/resources-check/plan/open` 可显式传 `--target PATH`、`--profile PATH`、`--resources PATH`、`--bridge-artifact DIR`、`--workspace-server`、`--timeout SECONDS`；前三个路径默认取工作台中的同名文件，GUI 默认经 `gh` 获取所选提交成功 CI 的桥工件；`--bridge-artifact DIR` 只用于开发时显式复用原生输入匹配的现成工件。已有实例的 `open` 核对显式请求后继续原会话，不重新构建。
 
 宿主保存 `runtime/INSTANCE/host.json`，每次运行的数据位于其下的独立目录，并挂到容器 `/work`。容器的 `status/instances` 提供源码提交、实际镜像和 `run_id`；原生桥继续核对 `instance_id/run_id`。容器内公共参数 `--root/--backend/--instance` 只用于核对本容器，不能切到其他实例。直接调用可用 `docker exec CONTAINER beidou-pilot --json status`；GUI CLI 入口按客户端用户降权。动作与取消优先使用宿主薄入口以获得定向信号转发。
 
-普通结果为 JSON 信封，含 `ok/command/data`，容器命令另带 `backend/instance`；失败含 `error.code/message/details`。已识别的失败退出码为 2，中断为 130。宿主入口转发命令时使用 JSON；独立 `watch` 输出 JSONL。直接调用容器 CLI 的 `snapshot` 未加 `--json` 时，GUI 使用简洁文本，无头仍为 JSON。
+`resources-check` 输出原生资源检查 JSON；其他普通结果为 JSON 信封，含 `ok/command/data`，容器命令另带 `backend/instance`；失败含 `error.code/message/details`。已识别的失败退出码为 2，中断为 130。宿主入口转发命令时使用 JSON；独立 `watch` 输出 JSONL。直接调用容器 CLI 的 `snapshot` 未加 `--json` 时，GUI 使用简洁文本，无头仍为 JSON。
 
 ## 启动、观察与关闭
 
@@ -34,6 +34,7 @@
 | 命令 | 行为 |
 | --- | --- |
 | 宿主 `build`、`plan` | 构建/复用版本镜像；只读核对授权目标 |
+| 宿主 `resources-check` | 用所选提交的 headless 镜像离线检查外部 NX，不需要 target 或 profile |
 | `status` | 宿主可报告已停止实例；运行时由容器 CLI 提供实时阶段和版本 |
 | `doctor` | 在已有容器内检查资源与读取能力，不创建新客户端 |
 | `instances` | 返回当前容器的实例身份与版本 |
@@ -45,6 +46,15 @@
 | `bridge status`、`script status` | 只读原生桥、动作或脚本状态 |
 
 容器在短脚本返回或取消后常驻。宿主 `close` 使用独立生命周期锁，通过 Docker SIGTERM 让镜像内原生进程收尾，再确认 `Running=false/Pid=0`、保存退出日志并回收；活动 Lua 的输入锁不阻挡关闭。直接在容器内执行 `close` 返回 `host_lifecycle_required`，须改用宿主入口。同一实例正在启停时为 `lifecycle_busy`，活动脚本期间其他动作是 `input_busy`。失败先读实例状态和所属运行日志，再决定是否重开。
+
+## 离线检查资源
+
+```bash
+./beidou-pilot --workbench /external/workbench --backend headless --ref COMMIT --json resources-check \
+  --resources /external/resources.json
+```
+
+默认使用 `main` 的已提交版本，也可显式指定开发提交。命令构建或复用对应无头镜像，仅以只读方式挂载 NX 并离线检查；不读取 target/profile，不连接游戏服务器。旧 `headless/agent` 已由此入口取代。
 
 ## 动作与 Lua
 
@@ -141,11 +151,10 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 
 ## 原版 GUI
 
-GUI 是独立的完整客户端镜像，包含与无头端相同的 CLI 和 Lua，以及 Wine/VirtualGL 和已核验的桥 DLL。使用工作台的 `resources.json` 配置 `gui_client` 与同源 `headless_resources`。构建需外部 GUI 工件目录中的 `ijl15.dll` 和 `manifest.json`，用 `--bridge-artifact DIR` 显式指定，或从 `gui_dll` 路径推导。启动器核对所选提交的原生构建输入，输入不同须先取得匹配的 Windows 工件，不能给旧 DLL 换版本标签后使用。
+GUI 是独立的完整客户端镜像，包含与无头端相同的 CLI 和 Lua，以及 Wine/VirtualGL 和已核验的桥 DLL。使用工作台的 `resources.json` 配置 `gui_client` 与同源 `headless_resources`。新镜像默认通过 `gh` 下载所选提交成功的 `agent-bridge` CI 工件并缓存。开发时可用 `--bridge-artifact DIR` 显式复用已有 `ijl15.dll` 和 `manifest.json`，启动器仍核对原生构建输入；此时不需要 `gh`。工件未就绪或无法匹配时明确拒绝，不要求在工作台资源配置中手写 DLL 路径。
 
 ```bash
-./beidou-pilot --workbench /external/gui-workbench --backend beidou --json build \
-  --bridge-artifact /external/agent-bridge
+./beidou-pilot --workbench /external/gui-workbench --backend beidou --json build
 ./beidou-pilot --workbench /external/gui-workbench --backend beidou --json open
 ./beidou-pilot --workbench /external/gui-workbench --json doctor
 ./beidou-pilot --workbench /external/gui-workbench --json snapshot

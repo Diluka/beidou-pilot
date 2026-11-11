@@ -42,7 +42,7 @@ GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生
 | 独立模型会话、目标调整、询问回答、暂停和停止 | 游戏 AI；[controller.py](../../harness/beidou_game_ai/controller.py)、[client.py](../../harness/beidou_game_ai/client.py) | 三个主要流程；固定客户端绑定，不拥有客户端开关，不虚构长期记忆库 |
 | 有限命令批次、原版按键/技能扩展 | 既有领域入口；[cli.py](../../cli/beidou_pilot/cli.py)、[control_scripts.py](../../cli/beidou_pilot/control_scripts.py) | 批次是同实例的有限编排，遇错不回滚；按键/技能受执行控制权与后端能力限制，不另建控制链 |
 | 截图及有界录制 | 观察支持；[desktop.py](../../cli/beidou_pilot/engines/desktop.py)、[record.py](../../cli/beidou_pilot/engines/record.py) | GUI 画面证据，不提供无头画面，不作为持续控制策略 |
-| 构建、CI、源码白名单导出和依赖维护 | 工程交付支持；[CI.md](../CI.md)、[DEPENDENCIES.md](../DEPENDENCIES.md)、[export_prototype.py](../../cli/tools/export_prototype.py) | 不拥有游戏结果，本图不为每个工程工具单建领域；导出有独立白名单，不保证携带本业务地图 |
+| 镜像构建、CI 和依赖维护 | 工程交付支持；根 [beidou-pilot](../../beidou-pilot)、[CI.md](../CI.md)、[DEPENDENCIES.md](../DEPENDENCIES.md) | 不拥有游戏结果，本图不为每个工程工具单建领域；客户端交付统一经版本化镜像入口 |
 
 ## 阅读与查询
 

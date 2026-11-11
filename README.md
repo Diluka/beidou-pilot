@@ -21,7 +21,7 @@ third_party/     上游依赖
 
 ## 准备
 
-宿主需要 Bash、Git、Docker（含 Compose）和 jq，客户端运行不要求宿主 Python。初始化固定构建依赖：
+宿主需要 Bash、Git、Docker（含 Compose）和 jq；GUI 默认自动获取 CI 桥工件时还需要已配置的 GitHub CLI `gh`。客户端运行不要求宿主 Python。初始化固定构建依赖：
 
 ```bash
 git submodule update --init --recursive
@@ -33,12 +33,20 @@ git submodule update --init --recursive
 ```text
 /external/workbench/
   account.private.json   0600，已有账号与角色
-  resources.json         外部 NX/原客户端/GUI 桥工件路径
+  resources.json         外部 NX/原客户端及可选 XML 路径
   target.json            已核验的隔离目标；常驻授权路径可按需准备
   runtime/               启动器管理的独立实例运行数据
 ```
 
-两端使用相同 profile：`username`、`password`、`character_id`，以及可省略的 `world`、`channel`（从 0 开始，默认 0）。按 [resources.example.json](cli/config/resources.example.json) 配置资源路径；原客户端、NX、账号与运行数据都不进入镜像。GUI 构建另需与所选提交原生输入匹配的 `ijl15.dll` 和 `manifest.json`，可用 `--bridge-artifact DIR` 指定，默认从 `resources.json` 的 `gui_dll` 推导工件目录。
+两端使用相同 profile：`username`、`password`、`character_id`，以及可省略的 `world`、`channel`（从 0 开始，默认 0）。按 [resources.example.json](cli/config/resources.example.json) 配置资源路径；原客户端、NX、账号与运行数据都不进入镜像。GUI 默认按所选提交从成功的 `agent-bridge` CI 获取匹配工件并缓存，不在外部资源配置中指定 DLL。开发时可用 `--bridge-artifact DIR` 显式复用原生输入匹配的现成 DLL 和清单；此路径不需要 `gh`。
+
+用统一入口离线检查 NX：
+
+```bash
+./beidou-pilot --workbench /external/workbench --backend headless --json resources-check
+```
+
+该命令构建或复用所选提交的无头镜像，只读检查 `resources.json` 中的 `headless_resources`，不需要 target 或 profile，也不登录。
 
 ## 操作实例
 

@@ -8,7 +8,7 @@
 | `Headless image build` | Ubuntu 24.04，使用 `docker/headless/Dockerfile` 构建包含共享 CLI、Lua 与原生客户端的无头镜像 |
 | `Game AI harness contract` | 构建标准 npm 安装的固定 Codex 镜像，运行无认证的 harness 合同，含真实 app-server、Code Mode 游戏工具分派与开发询问往返 |
 
-客户端测试与无头构建从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库，无需安装 pip 依赖；其中 Lua 任务合同使用 runner 自带的 `gcc/g++` 编译真实共享 Runtime 和固定 Lua 源码，适配器只模拟原生输入与释放边界。无头镜像的编译器只放在 builder，运行层由 Bookworm 包管理器安装 Python 和原生运行依赖。两个客户端镜像安装同一份 CLI 与内置 Lua，离线测试与源码导出使用当前检出的提交，不经默认 main 启动路径替换代码。harness 合同不访问真实模型或游戏，不需要认证。
+客户端测试与无头构建从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库，无需安装 pip 依赖；其中 Lua 任务合同使用 runner 自带的 `gcc/g++` 编译真实共享 Runtime 和固定 Lua 源码，适配器只模拟原生输入与释放边界。无头镜像的编译器只放在 builder，运行层由 Bookworm 包管理器安装 Python 和原生运行依赖。两个客户端镜像安装同一份 CLI 与内置 Lua，离线测试与 CI 内部镜像构建使用当前检出的提交，不经默认 main 启动路径替换代码。harness 合同不访问真实模型或游戏，不需要认证。
 
 [Windows 桥工作流](../.github/workflows/agent-bridge.yml) 另在 PR、`main` 推送和手动触发时执行 `Windows bridge build`。它在 Windows 2022 / VS2022 中从固定 Detours 源码构建 x86 库及桥 DLL，并上传含来源清单、日志和许可证的 `maple-agent-bridge-win32` 工件。构建与下载说明见[桥构建文档](../beidou-ijl15/docs/agent-bridge-build.md)。
 
@@ -26,17 +26,20 @@ git submodule update --init --recursive
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
 ```
 
-安装并启动 Docker 后构建无头镜像：
+安装并启动 Docker 后，通过统一入口构建当前提交的无头镜像并检查容器内 CLI：
 
 ```bash
-docker build --file docker/headless/Dockerfile \
-  --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" --tag local/beidou-pilot:ci .
-docker run --rm --entrypoint beidou-pilot local/beidou-pilot:ci --help
+mkdir -p tmp/ci-reproduction/workbench
+image=$(./beidou-pilot --workbench "$PWD/tmp/ci-reproduction/workbench" \
+  --backend headless --ref "$(git rev-parse HEAD)" --json build | jq -er .data.image)
+docker run --rm --entrypoint beidou-pilot "$image" --help
 ```
 
-无头构建只使用源码与固定依赖，不需要游戏素材、账号、profile 或游戏服务器访问，不推送镜像。网络需能下载子模块、基础镜像及 Debian 构建包。容器入口默认需要运行配置；镜像打包检查通过显式 `--entrypoint beidou-pilot` 执行帮助，不启动游戏。
+无头构建只使用源码与固定依赖，不需要游戏素材、账号、profile 或游戏服务器访问，不推送镜像。CI job 内部直接调用同一份 `docker/headless/Dockerfile`，用户构建统一经根入口。容器入口默认需要运行配置；打包检查显式选择 `beidou-pilot` 帮助入口，不启动游戏。
 
-GUI 完整镜像的本地构建通过工作台入口，例如 `./beidou-pilot --workbench /external/gui-workbench --backend beidou --ref COMMIT build --bridge-artifact /external/agent-bridge`。它需要与该提交原生输入相符的 Windows DLL 与来源清单，随后把桥工件装入镜像；原始游戏客户端、NX 与 profile 仍只在运行时挂载。GUI 与无头的打包检查都应确认容器内 CLI 可执行，不能用宿主 Python 的帮助输出代替。
+网络需能下载子模块、基础镜像及 Debian 构建包。确认网络权限并按项目网络规则选择代理后，可在启动构建前导出 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`；根入口按 Docker 标准 build args 透传这些变量。代理地址须能从构建网络访问，文档不固定本机地址。
+
+GUI 完整镜像的本地构建通过工作台入口，例如 `./beidou-pilot --workbench /external/gui-workbench --backend beidou --ref COMMIT build`。默认由 `gh` 获取所选提交成功的 Windows 桥 CI 工件；开发时可加 `--bridge-artifact DIR` 显式复用原生输入匹配的现成工件，省去 `gh` 依赖。镜像安装该工件，原始游戏客户端、NX 与 profile 仍只在运行时挂载。GUI 与无头的打包检查都应确认容器内 CLI 可执行，不能用宿主 Python 的帮助输出代替。
 
 ## 查看结果与合并
 

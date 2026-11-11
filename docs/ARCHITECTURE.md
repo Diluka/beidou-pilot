@@ -35,7 +35,7 @@ Codex app-server 在独立 harness 容器中运行，宿主薄控制器分派少
 
 [无头 Dockerfile](../docker/headless/Dockerfile) 是无头镜像唯一构建入口，builder 编译，运行层使用标准发行版运行依赖。[GUI Dockerfile](../docker/gui/Dockerfile) 以根上下文构建完整 GUI 客户端，[Compose](../docker/compose.yaml) 装配设备、只读资源和独立状态；可选 XML 与用户脚本通过对应覆盖文件装配。所有定义放在 `docker/`，根 `.dockerignore` 只保留两端构建必需的源码与明确桥工件输入。
 
-GUI DLL 仍需 Windows/MSVC、SDK 和匹配 Detours 库。构建完整 GUI 镜像前准备含 DLL 与来源清单的工件；启动器核对其原生构建输入与选定提交相符，无法匹配时明确拒绝，不以旧 DLL 标成新版本。
+GUI DLL 仍由 Windows/MSVC、SDK 和匹配 Detours 库构建。完整 GUI 镜像默认通过 `gh` 获取所选提交成功 CI 的 DLL 与清单，开发时可用 `--bridge-artifact` 显式复用现有工件。启动器核对原生构建输入，无法匹配时明确拒绝；显式工件路径无需 `gh`。
 
 ## 外部资源与配置
 
@@ -47,10 +47,11 @@ GUI DLL 仍需 Windows/MSVC、SDK 和匹配 Detours 库。构建完整 GUI 镜�
 python3 headless/tools/prepare_resources.py \
   --client-root /external/BeiDou-Client \
   --output /external/headless-nx
-./headless/agent check /external/headless-nx
+./beidou-pilot --workbench /external/workbench --backend headless resources-check \
+  --resources /external/resources.json
 ```
 
-转换工具需要本机 C++17 编译器；已有 NX 时无需转换。资源检查使用无网络的短时 Docker 容器，不登录游戏。
+转换工具需要本机 C++17 编译器；已有 NX 时无需转换。统一的 `resources-check` 根据外部配置找到 NX，使用所选提交的无头镜像和无网络短时容器离线检查，不需要 target 或 profile。
 
 宿主从工作台 `resources.json` 读取外部路径，也可由宿主 `--resources PATH` 指定；相对路径按该配置文件目录解析。它不含账号，不提交。字段如下：
 
@@ -59,9 +60,8 @@ python3 headless/tools/prepare_resources.py \
 | `headless_resources` | 同源外部 NX 目录，两端只读挂到 `/data`，用于原生无头运行、静态查询和策略装载 |
 | `metadata_root` | 可选 WZ XML，只读挂到 `/metadata`；对应资料不存在时使用同源 NX 或保留未知 |
 | `gui_client` | 匹配 V17 的外部原客户端目录，只读挂到 GUI 容器 `/client` |
-| `gui_dll` | 已构建桥 DLL 的外部路径，仅用于推导默认构建工件目录；实际运行桥随镜像固定 |
 
-容器入口生成 `/work/config/resources.json`，只使用内部固定路径，`MAPLE_RESOURCES_CONFIG` 指向该文件。GUI 桥位于 `/opt/beidou-pilot/native/ijl15.dll`，构建清单位于同目录并登记到 `/work/state/agent-bridge-build.json`。每次私密 profile 快照只读挂到 `/config/account.private.json`，target 挂到 `/config/target.json`，均不进入镜像。字段与入口见 [CLI](CLI.md)。
+容器入口生成 `/work/config/resources.json`，只使用内部固定路径，`MAPLE_RESOURCES_CONFIG` 指向该文件。内部配置的 `gui_dll` 固定为镜像内 `/opt/beidou-pilot/native/ijl15.dll`，构建清单位于同目录并登记到 `/work/state/agent-bridge-build.json`。每次私密 profile 快照只读挂到 `/config/account.private.json`，target 挂到 `/config/target.json`，均不进入镜像。字段与入口见 [CLI](CLI.md)。
 
 工作台可选的 `scripts/` 作为用户明确输入，只读挂到 `/scripts`。内置 `shared/scripts/` 随镜像固定，用户 Lua 文件与 `--code` 可在运行中提交，不要求重建镜像；它们不改变模型、养成或生命周期职责。
 
@@ -101,8 +101,8 @@ Lua 通过按需 `game.observe(domain)` 复用上表已有原生观察，覆盖 
 
 无头端尚有其他玩家出现封包的解析缺口，scene 目前不提供其他玩家列表。当前基础战斗和有限移动不等于通用寻路、全职业或完整自主日程；两端物理与技能效果不承诺精确等价。同服多账号容量和长期压力需要单独验证。
 
-## 验证与源码交付
+## 验证与镜像交付
 
 离线合同、镜像构建和实际游戏结果分别判断。IPC 对端测试只能证明请求/取消契约，不能证明命中、掉落、存档或长期稳定性。实际玩法使用授权专用角色和隔离目标，退出后核对所属资源及必要存档。
 
-源码导出使用 `python3 cli/tools/export_prototype.py --output 新目录`，目标目录须不存在。工具按白名单生成源码及校验清单，展开构建所需依赖，不携带 Git 元数据、账号、运行状态、游戏资源或安装器。默认从 main 构建的工作台启动器仍需 Git 检出，以便确定提交与子模块；源码导出本身不保存运行版本登记。依赖来源和更新规则见 [DEPENDENCIES](DEPENDENCIES.md)。
+客户端构建统一使用根 `beidou-pilot build`；启动器从 Git 提交及其子模块准备固定输入，再调用对应 Dockerfile。客户端以版本化镜像交付，工作台保存其配置、计划与运行数据。依赖来源和更新规则见 [DEPENDENCIES](DEPENDENCIES.md)。
