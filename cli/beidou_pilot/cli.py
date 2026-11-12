@@ -885,6 +885,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             bounds=(bounds[0], bounds[1]),
             retreat_x=args.retreat_x if args.retreat_x is not None else int(pos["x"]),
             loot=args.loot,
+            context_state=state,
         )
         return {**report, "advancement": milestone, "stop_level_source": stop_level_source}
     if cmd == "screenshot":

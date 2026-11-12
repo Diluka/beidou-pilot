@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from beidou_pilot.backend import Backend
+from beidou_pilot.control_scripts import run_strategy
 from beidou_pilot.errors import ClientError
 from beidou_pilot.instances import InstancePaths
 from beidou_pilot.items import use
@@ -31,7 +32,29 @@ class ItemUseContract(unittest.TestCase):
             "hotkeys": {"bindings": [{"type": 2, "id": 2000000, "key": "Shift_L", "key_code": 42}],
                         "unavailable": []}}[name]
         self.focus = self.enterContext(patch("beidou_pilot.items.focus_game"))
+        self.context_state = {
+            "ready": True,
+            "instance_id": "item-use",
+            "scene_generation": 1,
+            "map_id": 100,
+            "character": {"id": 6},
+        }
+        self.item_bridge = self.enterContext(patch("beidou_pilot.items.BridgeClient")).return_value
+        self.item_bridge.snapshot.return_value = self.context_state
         self.bridge = self.enterContext(patch("beidou_pilot.control_scripts.BridgeClient")).return_value
+        self.bridge.snapshot.return_value = self.context_state
+        self.enterContext(
+            patch(
+                "beidou_pilot.control_scripts.scene_context",
+                return_value={
+                    "instance_id": "item-use",
+                    "character_id": 6,
+                    "scene_generation": 1,
+                    "map_id": 100,
+                    "terrain": {"status": "unavailable", "error": "hunt_terrain_unavailable"},
+                },
+            )
+        )
 
     def metadata(self, item_id: int, properties: dict[str, int]) -> None:
         write_img(self.root / "Data/Item/Consume" / f"{item_id // 10000:04d}.img",
@@ -45,7 +68,9 @@ class ItemUseContract(unittest.TestCase):
     def test_gui_potion_uses_native_strategy_without_binding_lookup(self) -> None:
         self.metadata(2000000, {"hp": 50})
         self.complete(2000000, 3, hp=100)
-        result = use(self.backend, 2000000, count=2, until_hp=100)
+        with patch("beidou_pilot.control_scripts.run_strategy", wraps=run_strategy) as run:
+            result = use(self.backend, 2000000, count=2, until_hp=100)
+        self.assertIs(self.context_state, run.call_args.kwargs["context_state"])
         self.assertEqual("recovery/recover", result["strategy"])
         self.assertEqual("native_lua", result["input_method"])
         self.assertEqual(1, result["used"])
@@ -54,6 +79,13 @@ class ItemUseContract(unittest.TestCase):
         self.assertIsNone(result["key"])
         self.assertNotIn("hotkeys", [call.args[0] for call in self.backend.read.call_args_list])
         self.backend.desktop.assert_not_called()
+
+    def test_recovery_rejects_character_change_between_snapshot_and_preflight(self) -> None:
+        self.context_state["character"] = {"id": 7}
+        with self.assertRaises(ClientError) as failure:
+            use(self.backend, 2000000)
+        self.assertEqual("use_context_changed", failure.exception.code)
+        self.bridge.run_script.assert_not_called()
 
     def test_headless_count_does_not_require_optional_xml(self) -> None:
         self.backend.name = "headless"

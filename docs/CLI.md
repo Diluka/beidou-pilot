@@ -198,19 +198,26 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 
 `--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。直接源码保持原样执行，不解析策略注释。文件路径按容器内部解析；工作台整体已挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，每次调用读取当前 UTF-8 文件内容。带顶层 `main(context)` 的文件是策略入口，`script run/start FILE` 会按注释校验参数并由原生 Runtime 调用入口；其他 Lua 文件保持原始 chunk 路径。两种方式都可在已运行实例中提交，无需重新构建或重启客户端，沿用相同 `game` API、错误、时限和取消规则。`script status` 不接收文件或 `--code`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，不作为游戏效果确认。
 
-策略选项写在入口附近的 Lua 注释中；类型支持 `int`、`number`、`string`、`boolean`。没有 `opt` 或 `default` 的参数必填，默认值使参数成为可选项；`min`/`max` 用于数值范围，`choices=a|b` 限定候选值。Lua 参数名中的下划线映射为 CLI 连字符：
+策略选项写在入口附近的 Lua 注释中；类型支持 `int`、`number`、`string`、`boolean`。非布尔参数没有 `opt` 或 `default` 时必填，声明默认值后可省略。布尔参数未声明 `default` 时可省略且默认为 `true`；显式 `default=false` 时省略则为 `false`。`min`/`max` 用于数值范围，`choices=a|b` 限定候选值。默认值、正向 flag 和显式值按 `choices` 校验，`--no-flag` 作为无值负向开关直接传入 `false`，不因 `choices` 未列出 `false` 而拒绝。Lua 参数名中的下划线映射为 CLI 连字符：
 
 ```lua
 --- 在当前地图观察目标。
 -- @option[type=int,min=1] mob_id 目标怪物模板 ID
 -- @option[type=int,opt,default=1001005] skill_id 可选技能 ID
+-- @option[type=boolean] observe_only 仅观察；省略时默认 true
+-- @option[type=boolean,default=false] attack_enabled 默认关闭攻击
 local function main(context)
     local map_id = context.scene.map_id
-    game.log("map=" .. tostring(map_id) .. ", mob=" .. tostring(context.options.mob_id))
+    game.log("map=" .. tostring(map_id)
+        .. ", mob=" .. tostring(context.options.mob_id)
+        .. ", observe_only=" .. tostring(context.options.observe_only)
+        .. ", attack_enabled=" .. tostring(context.options.attack_enabled))
 end
 ```
 
-`script describe FILE` 显示动态参数帮助。布尔选项可用裸 `--flag` 与 `--no-flag` 分别传入 `true`、`false`，也可显式写成 `--flag true|false`。策略的 `context.options` 包含 CLI 值和声明默认值；`context.scene` 带有本次执行前读取的 `map_id`、`scene_generation` 及静态地形。`context.scene.terrain.status` 是 `available`、`unavailable` 或 `unsupported`；只有 `available` 时才提供有来源的 `footholds` 与 `ropes`。调用入口前会重新核对地图和场景代次；上下文过期时策略主体不运行。动态角色状态继续通过 Lua API 查询。
+`script describe FILE` 显示动态参数帮助及有效默认值。布尔选项始终可省略：未显式声明 `default` 时默认 `true`，显式 `default=false` 时省略后为 `false`；裸 `--flag` 与 `--no-flag` 分别传入 `true`、`false`，也可显式写成 `--flag true|false`。默认值、正向 flag 和显式值按 `choices` 校验；负向 `--no-flag` 作为无值布尔开关直接传入 `false`，不因 `choices` 未列出 `false` 而拒绝。策略的 `context.options` 包含 CLI 值和声明默认值；`context.scene` 带有只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 及静态地形。`context.scene.terrain.status` 是 `available`、`unavailable` 或 `unsupported`；只有 `available` 时才提供有来源的 `footholds` 与 `ropes`。调用入口前会重新核对实例、角色、地图和场景代次；上下文过期时策略主体不运行。标准策略再次采样初始状态时也会与 `context.scene` 核对，避免预检后场景变化仍执行旧规划。动态角色状态继续通过 Lua API 查询。
+
+策略自有的时间预算声明为 `budget_seconds`（CLI `--budget-seconds`），与控制整个原生脚本生命周期的 `--seconds` / `--continuous` 分开。仓库内旅行、战斗和恢复策略都使用标准 `main(context)` 与 `@option`；旅行策略装载时自动组合其共用的 `_common.lua`。函数库及普通 chunk 仍保留各自原始用途。
 
 `script run` 同步等待会话结果，`script start` 等待原生受理。两者在等待期间收到 Ctrl+C/SIGINT/SIGTERM 都只结束本次等待，不取消已发布的原生任务；等待超时或观察失败同样不能证明任务停止。先用 `script status` 核对当前原生身份、`script.id` 与任务，不因结果未知而重放启动。取消须明确 `script cancel --session SCRIPT_ID`，并核对终态与放键；客户端关闭另用 `close`。原生执行期限、角色变化、断线和脚本自身错误等停止规则保留。活动 Lua 仍占有本实例控制权，其他脚本和普通窗口输入返回 `input_busy`；`--continuous` 须显式给出，不增加后台 Python 控制进程。
 

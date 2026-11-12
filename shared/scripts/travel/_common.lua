@@ -12,29 +12,22 @@ local function travel_action(result, fail)
     if result then travel_check(result.reason ~= "control_preempted", result.reason, fail) end
     return result
 end
-local function travel_initial(fail)
+local function travel_initial(context, min_hp_ratio, fail)
     local s = game.state()
+    local scene = context.scene
     travel_check(s.ready and s.character and s.position, "travel_observation_unavailable", fail)
     travel_check(
-        s.instance_id == options.instance_id and s.character.id == options.character_id,
+        s.instance_id == scene.instance_id and s.character.id == scene.character_id,
         "travel_identity_changed",
         fail
     )
-    travel_check(
-        s.map_id == options.map_id and s.scene_generation == options.scene_generation,
-        "travel_map_changed",
-        fail
-    )
+    travel_check(s.map_id == scene.map_id and s.scene_generation == scene.scene_generation, "travel_map_changed", fail)
     travel_check(
         s.character.hp and s.character.max_hp and s.character.max_hp > 0,
         "travel_observation_unavailable",
         fail
     )
-    travel_check(
-        s.character.hp > 0 and s.character.hp / s.character.max_hp >= options.min_hp_ratio,
-        "travel_hp_limit",
-        fail
-    )
+    travel_check(s.character.hp > 0 and s.character.hp / s.character.max_hp >= min_hp_ratio, "travel_hp_limit", fail)
     return s
 end
 

@@ -23,11 +23,8 @@ def _initial(backend: Backend) -> BridgeSnapshot:
     return state
 
 
-def _options(initial: BridgeSnapshot, seconds: float, min_hp_ratio: float) -> JsonObject:
-    assert initial["character"] is not None
-    return {"instance_id": initial["instance_id"], "character_id": initial["character"]["id"],
-            "map_id": initial["map_id"], "scene_generation": initial["scene_generation"],
-            "seconds": seconds, "min_hp_ratio": min_hp_ratio}
+def _options(seconds: float, min_hp_ratio: float) -> JsonObject:
+    return {"budget_seconds": seconds, "min_hp_ratio": min_hp_ratio}
 
 
 def climb(backend: Backend, x: int, to_y: int, *, direction: str | None = None,
@@ -40,9 +37,9 @@ def climb(backend: Backend, x: int, to_y: int, *, direction: str | None = None,
     ropes = cast(list[JsonObject], metadata["ropes"])
     rope_top = next((rope["y1"] for rope in ropes
                      if abs(cast(float, rope["x"]) - x) <= 3 and abs(cast(float, rope["y1"]) - to_y) <= tolerance), None)
-    options = {**_options(initial, seconds, min_hp_ratio), "x": x, "y": to_y,
+    options = {**_options(seconds, min_hp_ratio), "x": x, "y": to_y,
                "tolerance": tolerance, "direction": direction.lower() if direction else None, "rope_top": rope_top}
-    report = run_strategy(backend, "travel/climb_to", options, seconds + 1)
+    report = run_strategy(backend, "travel/climb_to", options, seconds + 1, context_state=initial)
     final = cast(BridgeSnapshot, report["last_state"])
     if report["status"] == "completed":
         character, position = final["character"], final["position"]
@@ -79,11 +76,11 @@ def portal(backend: Backend, name: str, *, seconds: float = 20, catalog: Catalog
         raise ClientError("portal_other_layer", "门户位于另一层，请先按现场地形移动或爬绳。", {"portal": selected})
     destinations = [entry for entry in portals if entry.get("name") == selected.get("target_name")] if target_map == initial["map_id"] else []
     destination = destinations[0] if len(destinations) == 1 else None
-    options: JsonObject = {**_options(initial, seconds, min_hp_ratio), "x": x, "y": y,
+    options: JsonObject = {**_options(seconds, min_hp_ratio), "x": x, "y": y,
                            "target_map": target_map, "tolerance": tolerance, "y_tolerance": y_tolerance}
     if destination is not None and type(destination.get("x")) is int and type(destination.get("y")) is int:
         options.update(destination_x=destination["x"], destination_y=destination["y"])
-    report = run_strategy(backend, "travel/enter_portal", options, seconds + 3)
+    report = run_strategy(backend, "travel/enter_portal", options, seconds + 3, context_state=initial)
     final = cast(BridgeSnapshot, report["last_state"])
     result: JsonObject = {**report, "action": "portal", "portal": selected,
                           "before": cast(JsonObject, initial), "after": cast(JsonObject, final)}

@@ -7,13 +7,14 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from beidou_pilot.backend import Backend
 from beidou_pilot.bridge import BridgeClient
 from beidou_pilot.cli import main
+from beidou_pilot.control_scripts import run_strategy
 from beidou_pilot.errors import ClientError
-from beidou_pilot.strategies import parse_options, parse_strategy
+from beidou_pilot.strategies import parse_options, parse_strategy, read_strategy_file
 from beidou_pilot.strategy_scene import scene_context
 from .test_bridge import BridgeFiles
 
@@ -39,6 +40,8 @@ class LuaStrategyContract(unittest.TestCase):
         self.path = self.files.root / "strategy.lua"
         self.path.write_text(POLICY, encoding="utf-8")
         self.scene = {
+            "instance_id": self.files.state["instance_id"],
+            "character_id": self.files.state["character"]["id"],
             "map_id": self.files.state["map_id"],
             "scene_generation": self.files.state["scene_generation"],
             "terrain": {
@@ -115,6 +118,7 @@ class LuaStrategyContract(unittest.TestCase):
         self.assertTrue(data["options"][0]["required"])
         self.assertEqual(1001005, data["options"][1]["default"])
         self.assertEqual(["near", "far"], data["options"][3]["choices"])
+        self.assertFalse(data["options"][4]["default"])
         self.assertIn("[--cautious|--no-cautious]", data["usage"])
 
     def test_boolean_negation_is_a_valueless_false_flag(self) -> None:
@@ -129,19 +133,90 @@ class LuaStrategyContract(unittest.TestCase):
                 parse_options(metadata, list(arguments))
             self.assertEqual("invalid_strategy_option", raised.exception.code)
 
-    def test_required_boolean_help_matches_supported_flag_forms(self) -> None:
+    def test_boolean_without_explicit_default_is_optional_true(self) -> None:
         self.path.write_text(
             "-- @option[type=boolean] enabled 启用策略\nlocal function main(context)\nend\n", encoding="utf-8"
         )
         code, output = self.cli("script", "describe", str(self.path))
         self.assertEqual(0, code, output)
         data = json.loads(output)["data"]
-        self.assertIn("--enabled|--no-enabled", data["usage"])
+        self.assertIn("[--enabled|--no-enabled]", data["usage"])
+        self.assertEqual(False, data["options"][0]["required"])
+        self.assertTrue(data["options"][0]["default"])
         metadata = parse_strategy(self.path.read_text(encoding="utf-8"))
+        self.assertIsNotNone(metadata)
+        assert metadata is not None
+        self.assertEqual({"enabled": True}, parse_options(metadata, []))
+        self.assertEqual({"enabled": True}, parse_options(metadata, ["--enabled"]))
+        self.assertEqual({"enabled": False}, parse_options(metadata, ["--no-enabled"]))
+
+    def test_boolean_without_explicit_default_is_passed_to_entry(self) -> None:
+        self.path.write_text(
+            "-- @option[type=boolean] enabled 启用策略\nlocal function main(context)\nend\n", encoding="utf-8"
+        )
+        for arguments, expected in (((), "true"), (("--enabled",), "true"), (("--no-enabled",), "false")):
+            with (
+                self.subTest(arguments=arguments),
+                patch.object(BridgeClient, "snapshot", return_value=self.files.state),
+                patch(
+                    "beidou_pilot.strategy_scene.load_hunt_terrain",
+                    return_value={**self.scene["terrain"], "map_id": 100},
+                ),
+                patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run,
+            ):
+                code, output = self.cli("script", "run", str(self.path), *arguments)
+            self.assertEqual(0, code, output)
+            self.assertIn(f'["enabled"]={expected}', run.call_args.kwargs["code"])
+
+    def test_boolean_inputs_obey_choices_before_script_dispatch(self) -> None:
+        source = "-- @option[type=boolean,choices=true] enabled 启用策略\nlocal function main(context)\nend\n"
+        metadata = parse_strategy(source)
         self.assertIsNotNone(metadata)
         assert metadata is not None
         self.assertEqual({"enabled": True}, parse_options(metadata, ["--enabled"]))
         self.assertEqual({"enabled": False}, parse_options(metadata, ["--no-enabled"]))
+        with self.assertRaises(ClientError) as raised:
+            parse_options(metadata, ["--enabled", "false"])
+        self.assertEqual("invalid_strategy_option", raised.exception.code)
+        with self.assertRaises(ClientError) as raised:
+            parse_strategy(
+                "-- @option[type=boolean,choices=false] enabled 仅允许关闭\nlocal function main(context)\nend\n"
+            )
+        self.assertEqual("invalid_strategy_metadata", raised.exception.code)
+
+        self.path.write_text(source, encoding="utf-8")
+        with (
+            patch("beidou_pilot.cli.Backend", wraps=Backend) as backend,
+            patch.object(BridgeClient, "run_script") as run,
+        ):
+            code, output = self.cli("script", "run", str(self.path), "--enabled", "false")
+        self.assertEqual(2, code)
+        self.assertEqual("invalid_strategy_option", json.loads(output)["error"]["code"])
+        backend.assert_not_called()
+        run.assert_not_called()
+
+    def test_explicit_false_boolean_default_is_preserved(self) -> None:
+        metadata = parse_strategy(
+            "-- @option[type=boolean,default=false] enabled 启用策略\nlocal function main(context)\nend\n"
+        )
+        self.assertIsNotNone(metadata)
+        assert metadata is not None
+        self.assertEqual({"enabled": False}, parse_options(metadata, []))
+        self.assertEqual({"enabled": True}, parse_options(metadata, ["--enabled"]))
+        self.assertEqual({"enabled": False}, parse_options(metadata, ["--no-enabled"]))
+
+    def test_explicit_false_default_can_match_false_only_choices(self) -> None:
+        metadata = parse_strategy(
+            "-- @option[type=boolean,default=false,choices=false] disabled 默认关闭\n"
+            "local function main(context)\nend\n"
+        )
+        self.assertIsNotNone(metadata)
+        assert metadata is not None
+        self.assertEqual({"disabled": False}, parse_options(metadata, []))
+        self.assertEqual({"disabled": False}, parse_options(metadata, ["--no-disabled"]))
+        with self.assertRaises(ClientError) as raised:
+            parse_options(metadata, ["--disabled"])
+        self.assertEqual("invalid_strategy_option", raised.exception.code)
 
     def test_policy_flag_is_not_abbreviated_as_a_cli_control_flag(self) -> None:
         self.path.write_text(
@@ -230,11 +305,114 @@ class LuaStrategyContract(unittest.TestCase):
             self.assertNotIn("main(__beidou_context)", run.call_args.kwargs["code"])
             self.assertEqual(script_file, json.loads(output)["data"].get("script_file"))
 
+    def test_python_strategy_adapter_uses_declared_options_and_rejects_unknown_fields(self) -> None:
+        backend = Mock(spec=Backend)
+        backend.root, backend.name, backend.instance = self.files.root, "headless", "default"
+        options = {
+            "mob_id": 100100,
+            "budget_seconds": 60,
+            "stop_level": 10,
+            "floor_y": 20,
+            "min_x": -50,
+            "max_x": 50,
+            "retreat_x": 0,
+            "loot": False,
+        }
+        with (
+            patch("beidou_pilot.control_scripts.scene_context", return_value=self.scene),
+            patch("beidou_pilot.control_scripts.run_source", return_value={"status": "completed"}) as run,
+        ):
+            run_strategy(backend, "combat/fight", options, 61, context_state=self.files.state)
+        source = run.call_args.args[1]
+        self.assertIn('["loot"]=false', source)
+        self.assertIn('["mob_id"]=100100', source)
+        self.assertIn("return main(__beidou_context)", source)
+        self.assertEqual(61, run.call_args.args[2])
+
+        with patch("beidou_pilot.control_scripts.run_source") as unpublished:
+            with self.assertRaises(ClientError) as raised:
+                run_strategy(
+                    backend,
+                    "combat/fight",
+                    {"mob_id": 100100, "not_declared": True},
+                    61,
+                    context_state=self.files.state,
+                )
+        self.assertEqual("invalid_strategy_option", raised.exception.code)
+        unpublished.assert_not_called()
+
+        with (
+            patch("beidou_pilot.control_scripts.scene_context") as scene,
+            patch("beidou_pilot.control_scripts.run_source") as unpublished,
+        ):
+            with self.assertRaises(ClientError) as raised:
+                run_strategy(
+                    backend,
+                    "travel/climb_to",
+                    {"x": 10, "y": 20, "direction": 1},
+                    21,
+                    context_state=self.files.state,
+                )
+        self.assertEqual("invalid_strategy_option", raised.exception.code)
+        scene.assert_not_called()
+        unpublished.assert_not_called()
+
+    def test_builtin_policies_declare_main_and_travel_helpers_are_loaded(self) -> None:
+        scripts = Path(__file__).resolve().parents[2] / "shared/scripts"
+        for relative in (
+            "travel/move_to.lua",
+            "travel/climb_to.lua",
+            "travel/enter_portal.lua",
+            "combat/hunt.lua",
+            "combat/fight.lua",
+            "recovery/recover.lua",
+        ):
+            with self.subTest(script=relative):
+                source, metadata = read_strategy_file(scripts / relative)
+                self.assertIsNotNone(metadata)
+                self.assertIn("local function main(context)", source)
+        travel_source, travel_metadata = read_strategy_file(scripts / "travel/move_to.lua")
+        self.assertIsNotNone(travel_metadata)
+        self.assertIn("local function travel_initial(context, min_hp_ratio, fail)", travel_source)
+        self.assertEqual(
+            {"budget_seconds": 20.0, "tolerance": 8, "y_tolerance": 45, "min_hp_ratio": 0.0, "x": 10},
+            parse_options(travel_metadata, ["--x", "10"]),
+        )
+        _, fight_metadata = read_strategy_file(scripts / "combat/fight.lua")
+        assert fight_metadata is not None
+        fight_options = parse_options(
+            fight_metadata,
+            [
+                "--mob-id",
+                "100100",
+                "--stop-level",
+                "10",
+                "--floor-y",
+                "20",
+                "--min-x",
+                "-50",
+                "--max-x",
+                "50",
+                "--retreat-x",
+                "0",
+            ],
+        )
+        self.assertIs(fight_options["loot"], False)
+        _, recovery_metadata = read_strategy_file(scripts / "recovery/recover.lua")
+        assert recovery_metadata is not None
+        recovery_options = parse_options(recovery_metadata, ["--item-id", "2000000", "--budget-seconds", "5"])
+        self.assertEqual(
+            {"heals_hp": False, "heals_mp": False, "healing_known": False, "consume_only": False},
+            {name: recovery_options[name] for name in ("heals_hp", "heals_mp", "healing_known", "consume_only")},
+        )
+
     def test_scene_context_keeps_catalog_source_and_reports_missing_terrain(self) -> None:
         terrain = self.scene["terrain"]
         catalog_result = terrain | {"map_id": 100}
         with patch("beidou_pilot.strategy_scene.load_hunt_terrain", return_value=catalog_result):
             available = scene_context(self.files.root, self.files.state)
+        self.assertEqual(self.files.state["instance_id"], available["instance_id"])
+        self.assertEqual(self.files.state["character"]["id"], available["character_id"])
         self.assertEqual(1, available["scene_generation"])
         self.assertEqual(terrain["source"], available["terrain"]["source"])
         self.assertEqual(1, len(available["terrain"]["footholds"]))

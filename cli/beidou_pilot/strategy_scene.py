@@ -10,9 +10,15 @@ from .hunt_terrain import load_hunt_terrain
 
 def scene_context(client_root: Path, state: BridgeSnapshot) -> JsonObject:
     map_id = state["map_id"]
-    if not state["ready"] or map_id is None:
+    character = state["character"]
+    if not state["ready"] or map_id is None or character is None:
         raise ClientError("strategy_scene_unavailable", "当前原生快照没有就绪的角色和地图，未启动策略。")
-    scene: JsonObject = {"map_id": map_id, "scene_generation": state["scene_generation"]}
+    scene: JsonObject = {
+        "instance_id": state["instance_id"],
+        "character_id": character["id"],
+        "map_id": map_id,
+        "scene_generation": state["scene_generation"],
+    }
     try:
         terrain = load_hunt_terrain(client_root, map_id)
     except ClientError as error:

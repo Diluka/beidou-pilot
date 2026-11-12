@@ -281,7 +281,19 @@ class UnifiedControlContract(unittest.TestCase):
                 "last_state": {**state, "position": {"x": 40, "y": 20}, "action_result": native_result},
             }
 
-        with patch("beidou_pilot.control_scripts.run_source", side_effect=run):
+        def scene(root, state):
+            return {
+                "instance_id": state["instance_id"],
+                "character_id": state["character"]["id"],
+                "map_id": state["map_id"],
+                "scene_generation": state["scene_generation"],
+                "terrain": {"status": "unavailable", "error": "hunt_terrain_unavailable"},
+            }
+
+        with (
+            patch("beidou_pilot.control_scripts.run_source", side_effect=run),
+            patch("beidou_pilot.control_scripts.scene_context", side_effect=scene),
+        ):
             for name, files in (("beidou", self.files), ("headless", self.native)):
                 with patch.dict(os.environ, files.environment):
                     report = move_to_x(Backend(files.root, name), 40, seconds=3)
@@ -297,6 +309,10 @@ class UnifiedControlContract(unittest.TestCase):
             sources[0].replace("client-1", "selected-instance"), sources[1].replace("headless-1", "selected-instance")
         )
         self.assertEqual("game.attack()\n", sources[2])
+        self.assertIn("local options = context.options", sources[0])
+        self.assertNotIn("local options = {", sources[0])
+        self.assertIn("local function travel_initial(context, min_hp_ratio, fail)", sources[0])
+        self.assertIn("return main(__beidou_context)", sources[0])
         with patch(
             "beidou_pilot.control_scripts.run_source",
             return_value={"status": "cancelled", "reason": "time_limit", "last_state": self.native.state},

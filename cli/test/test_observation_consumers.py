@@ -50,8 +50,9 @@ class ObservationConsumerContract(unittest.TestCase):
                     portal(backend, "out", catalog=catalog)
         self.assertEqual("portal_identity_changed", failure.exception.code)
         options = run.call_args.args[2]
-        self.assertEqual(("first", 4, 100, 3), tuple(options[key] for key in
-                         ("instance_id", "character_id", "map_id", "scene_generation")))
+        self.assertEqual(initial, run.call_args.kwargs["context_state"])
+        self.assertEqual((10, 20, 200), tuple(options[key] for key in ("x", "y", "target_map")))
+        self.assertNotIn("instance_id", options)
 
 
 class SnapshotConsumerContract(unittest.TestCase):

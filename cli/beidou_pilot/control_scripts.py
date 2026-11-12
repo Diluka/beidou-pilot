@@ -6,8 +6,10 @@ import tempfile
 from typing import cast
 
 from .backend import Backend
-from .bridge import BridgeClient
+from .bridge import BridgeClient, BridgeSnapshot
 from .errors import ClientError, JsonObject, JsonValue
+from .strategies import compile_strategy, parse_options, read_strategy_file
+from .strategy_scene import scene_context
 
 
 def _lua_literal(value: JsonValue) -> str:
@@ -40,19 +42,52 @@ def run_source(backend: Backend, source: str, seconds: float | None) -> JsonObje
         return BridgeClient(backend.root, backend.name, backend.instance).run_script(Path(stream.name), seconds=seconds)
 
 
-def run_strategy(backend: Backend, name: str, options: JsonObject, seconds: float | None) -> JsonObject:
+def run_strategy(
+    backend: Backend,
+    name: str,
+    options: JsonObject,
+    seconds: float | None,
+    *,
+    context_state: BridgeSnapshot | None = None,
+) -> JsonObject:
     directory = Path(__file__).resolve().parents[2] / "shared/scripts"
     path = directory / (name + ".lua")
-    try:
-        common = (directory / "travel/_common.lua").read_text(encoding="utf-8") if name.startswith("travel/") else ""
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
+    source, metadata = read_strategy_file(path)
+    if metadata is None:
         raise ClientError(
-            "strategy_script_unavailable",
-            "无法装载共享Lua策略。",
-            {"script": name, "path": str(path), "reason": str(error)},
-        ) from error
-    report = run_source(backend, "local options = " + _lua_literal(options) + "\n" + common + "\n" + source, seconds)
+            "strategy_metadata_missing", "共享Lua文件未声明main(context)策略入口。", {"script": name, "path": str(path)}
+        )
+    declared = {option.name: option for option in metadata.options}
+    unknown = options.keys() - declared.keys()
+    if unknown:
+        raise ClientError(
+            "invalid_strategy_option", "共享Lua策略调用传入了未声明参数。", {"script": name, "options": sorted(unknown)}
+        )
+    arguments: list[str] = []
+    for option in metadata.options:
+        value = options.get(option.name)
+        if value is None:
+            continue
+        if option.type == "boolean":
+            if type(value) is not bool:
+                raise ClientError("invalid_strategy_option", f"共享Lua策略布尔参数 {option.flag} 必须为布尔值。")
+            arguments.append(option.flag if value else "--no-" + option.name.replace("_", "-"))
+        else:
+            if option.type == "int" and type(value) is not int:
+                raise ClientError("invalid_strategy_option", f"共享Lua策略整数参数 {option.flag} 必须为整数。")
+            if option.type == "number" and type(value) not in (int, float):
+                raise ClientError("invalid_strategy_option", f"共享Lua策略数值参数 {option.flag} 必须为数字。")
+            if option.type == "string" and not isinstance(value, str):
+                raise ClientError("invalid_strategy_option", f"共享Lua策略文本参数 {option.flag} 必须为字符串。")
+            arguments.extend((option.flag, str(value)))
+    strategy_options = parse_options(metadata, arguments)
+    state = (
+        context_state
+        if context_state is not None
+        else BridgeClient(backend.root, backend.name, backend.instance).snapshot()
+    )
+    scene = scene_context(backend.root, state)
+    report = run_source(backend, compile_strategy(source, strategy_options, scene), seconds)
     return {**report, "strategy": name, "script_file": str(path)}
 
 
@@ -274,15 +309,11 @@ def move_to_x(backend: Backend, x: int, *, seconds: float = 20, tolerance: int =
     options: JsonObject = {
         "x": x,
         "tolerance": tolerance,
-        "seconds": seconds,
+        "budget_seconds": seconds,
         "y_tolerance": 45,
         "min_hp_ratio": 0,
-        "instance_id": initial["instance_id"],
-        "character_id": initial["character"]["id"],
-        "map_id": initial["map_id"],
-        "scene_generation": initial["scene_generation"],
     }
-    report = run_strategy(backend, "travel/move_to", options, seconds + 1)
+    report = run_strategy(backend, "travel/move_to", options, seconds + 1, context_state=initial)
     final = cast(JsonObject, report["last_state"])
     if report["status"] == "completed":
         position = cast(JsonObject | None, final["position"])
@@ -318,6 +349,7 @@ def fight(
     bounds: tuple[int, int],
     retreat_x: int,
     loot: bool,
+    context_state: BridgeSnapshot | None = None,
 ) -> JsonObject:
     if (
         not math.isfinite(seconds)
@@ -331,7 +363,7 @@ def fight(
         "combat/fight",
         {
             "mob_id": mob_id,
-            "seconds": seconds,
+            "budget_seconds": seconds,
             "stop_level": stop_level,
             "floor_y": floor_y,
             "min_x": bounds[0],
@@ -340,6 +372,7 @@ def fight(
             "loot": loot,
         },
         seconds + 1,
+        context_state=context_state,
     )
     return {
         **report,
