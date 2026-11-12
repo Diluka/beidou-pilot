@@ -129,8 +129,14 @@ def _parse_option(attributes: str, name: str, description: str, line: int) -> St
         choices = tuple(_value(choice, kind, line) for choice in values["choices"].split("|"))
         if not choices or any(choice == "" for choice in choices):
             raise _invalid_metadata("@option choices 必须包含非空的 | 分隔值。", line)
-    has_default = "default" in values
-    default = _value(values["default"], kind, line) if has_default else None
+    explicit_default = "default" in values
+    has_default = explicit_default or kind == "boolean"
+    if explicit_default:
+        default = _value(values["default"], kind, line)
+    elif kind == "boolean":
+        default = True
+    else:
+        default = None
     if default is not None:
         if minimum is not None and default < minimum or maximum is not None and default > maximum:
             raise _invalid_metadata("@option 默认值超出 min/max 范围。", line)
@@ -213,7 +219,7 @@ def parse_options(metadata: StrategyMetadata, arguments: list[str]) -> JsonObjec
             and not separator
             and (index + 1 == len(arguments) or arguments[index + 1].startswith("--"))
         ):
-            raw_value = "false" if flag.startswith("--no-") else "true"
+            raw_value = "true"
         elif separator:
             raw_value = inline
         elif index + 1 < len(arguments):
