@@ -211,25 +211,26 @@ def parse_options(metadata: StrategyMetadata, arguments: list[str]) -> JsonObjec
         if option.type == "boolean" and flag != option.flag:
             if separator:
                 raise ClientError("invalid_strategy_option", f"布尔参数 {flag} 不接收值。")
-            value = False
+            parsed[option.name] = False
+            index += 1
+            continue
+        if (
+            option.type == "boolean"
+            and not separator
+            and (index + 1 == len(arguments) or arguments[index + 1].startswith("--"))
+        ):
+            raw_value = "true"
+        elif separator:
+            raw_value = inline
+        elif index + 1 < len(arguments):
+            index += 1
+            raw_value = arguments[index]
         else:
-            if (
-                option.type == "boolean"
-                and not separator
-                and (index + 1 == len(arguments) or arguments[index + 1].startswith("--"))
-            ):
-                raw_value = "true"
-            elif separator:
-                raw_value = inline
-            elif index + 1 < len(arguments):
-                index += 1
-                raw_value = arguments[index]
-            else:
-                raise ClientError("invalid_strategy_option", f"策略参数 {flag} 需要一个值。")
-            try:
-                value = _value(raw_value, option.type, 0)
-            except ClientError as error:
-                raise ClientError("invalid_strategy_option", f"策略参数 {flag} 的值无效：{error.message}") from error
+            raise ClientError("invalid_strategy_option", f"策略参数 {flag} 需要一个值。")
+        try:
+            value = _value(raw_value, option.type, 0)
+        except ClientError as error:
+            raise ClientError("invalid_strategy_option", f"策略参数 {flag} 的值无效：{error.message}") from error
         if (
             option.minimum is not None
             and value < option.minimum

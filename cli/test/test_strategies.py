@@ -151,7 +151,7 @@ class LuaStrategyContract(unittest.TestCase):
         self.assertEqual({"enabled": False, "disabled": False}, parse_options(metadata, ["--no-enabled"]))
         self.assertEqual({"enabled": False, "disabled": False}, parse_options(metadata, ["--enabled", "false"]))
 
-    def test_boolean_choices_validate_implicit_default_and_cli_value(self) -> None:
+    def test_boolean_choices_validate_default_and_explicit_value_but_not_negated_flag(self) -> None:
         with self.assertRaises(ClientError) as raised:
             parse_strategy(
                 "-- @option[type=boolean,choices=false] enabled 仅允许关闭\nlocal function main(context)\nend\n"
@@ -164,8 +164,9 @@ class LuaStrategyContract(unittest.TestCase):
         self.assertIsNotNone(metadata)
         assert metadata is not None
         self.assertEqual({"enabled": True}, parse_options(metadata, []))
+        self.assertEqual({"enabled": False}, parse_options(metadata, ["--no-enabled"]))
         with self.assertRaises(ClientError) as raised:
-            parse_options(metadata, ["--no-enabled"])
+            parse_options(metadata, ["--enabled=false"])
         self.assertEqual("invalid_strategy_option", raised.exception.code)
 
     def test_policy_flag_is_not_abbreviated_as_a_cli_control_flag(self) -> None:
