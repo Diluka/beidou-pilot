@@ -7,6 +7,7 @@
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 namespace NativeObservation {
