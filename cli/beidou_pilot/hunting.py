@@ -11,7 +11,7 @@ from .engines.character import LearnedSkill
 from .errors import ClientError, JsonObject
 from .hunt_terrain import load_hunt_terrain
 from .observations import NativeObserver
-from .rules import advancement
+from .rules import combat_stop_level
 
 
 def hunt(
@@ -23,6 +23,7 @@ def hunt(
     attack_range: float = 60,
     bounds: tuple[int, int] | None = None,
     stop_level: int | None = None,
+    first_job: str | None = None,
     min_hp_ratio: float = 0.35,
     hp_item_id: int | None = None,
 ) -> JsonObject:
@@ -79,13 +80,9 @@ def hunt(
     if skill_id is not None:
         if capabilities.get("skill") is not True:
             raise ClientError("unsupported_capability", "当前原生客户端未声明支持技能调用，未开始狩猎。")
-    milestone = advancement(cast(JsonObject, character))
-    if milestone is not None:
-        if milestone["due"]:
-            raise ClientError("advancement_due", "先完成当前阶段转职，再继续狩猎。", milestone)
-        stop_level = (
-            min(stop_level, cast(int, milestone["level"])) if stop_level is not None else cast(int, milestone["level"])
-        )
+    stop_level, stop_level_source, milestone = combat_stop_level(
+        cast(JsonObject, character), first_job=first_job, until_level=stop_level,
+    )
 
     mob_id = None
     if mob != "all":
@@ -166,6 +163,8 @@ def hunt(
         "terrain_source": terrain["source"],
         "bounds": [min_x, max_x],
         "requested_level": stop_level,
+        "advancement": milestone,
+        "stop_level_source": stop_level_source,
         "effect": "inspect_final_state",
         "experience_delta": gained,
         "before": {
