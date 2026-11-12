@@ -101,3 +101,38 @@ def portal(backend: Backend, name: str, *, seconds: float = 20, catalog: Catalog
             and abs(after["x"] - cast(float, x)) + abs(after["y"] - cast(float, y)) > 60):
         return {**result, "status": "arrived", "verification": "client-position-at-same-map-destination"}
     raise ClientError("portal_transition_unconfirmed", "Lua已返回，未确认地图或同图目的地变化。", {"after": cast(JsonObject, final)})
+
+
+def walk_to(backend: Backend, x: int, y: int, *, seconds: float = 30, plan_only: bool = False,
+            min_hp_ratio: float = .25, tolerance: int = 12) -> JsonObject:
+    """在同一张地图内按静态平台图走到目标坐标，含跳台上行、落层与绳梯。"""
+    if not math.isfinite(seconds) or not 1 <= seconds <= 120:
+        raise ClientError("invalid_travel_budget", "跨平台移动时间预算须为1至120秒。")
+    if not math.isfinite(min_hp_ratio) or not 0 <= min_hp_ratio <= 1:
+        raise ClientError("invalid_hp_limit", "HP安全比例须为0至1。")
+    if not 1 <= tolerance <= 40:
+        raise ClientError("invalid_travel_tolerance", "到达容差须为1至40。")
+    initial = _initial(backend)
+    options: JsonObject = {"budget_seconds": seconds, "min_hp_ratio": min_hp_ratio,
+                           "target_x": x, "target_y": y, "tolerance": tolerance, "plan_only": plan_only}
+    report = run_strategy(backend, "travel/walk_to", options, seconds + 3, context_state=initial)
+    final = cast(BridgeSnapshot, report["last_state"])
+    result: JsonObject = {**report, "action": "walk_to", "target": {"x": x, "y": y},
+                          "before": cast(JsonObject, initial), "after": cast(JsonObject, final)}
+    if plan_only:
+        return {**result, "status": "planned" if report["status"] == "completed" else report["status"]}
+    if report["status"] != "completed":
+        return result
+    character, after = final["character"], final["position"]
+    if (not final["ready"] or final["instance_id"] != initial["instance_id"]
+            or final["map_id"] != initial["map_id"]
+            or final["scene_generation"] != initial["scene_generation"]
+            or character is None or character["id"] != cast(JsonObject, initial["character"])["id"]
+            or after is None):
+        raise ClientError("walk_to_identity_changed", "Lua已返回，最终角色、地图或原生实例未确认。",
+                          {"after": cast(JsonObject, final)})
+    # 精确到达由策略内的稳定复采负责；外层只拒绝明显不符的位置，和门户同图目的地的判断口径一致。
+    if abs(after["x"] - x) > 60 or abs(after["y"] - y) > 45:
+        raise ClientError("walk_to_not_confirmed", "Lua已返回，最终坐标未到达目标。",
+                          {"target": {"x": x, "y": y}, "after": cast(JsonObject, final)})
+    return {**result, "status": "arrived", "verification": "client-position"}

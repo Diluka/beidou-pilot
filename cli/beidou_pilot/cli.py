@@ -134,10 +134,12 @@ def parser() -> Parser:
     q = command("key", "通过Lua按住并释放原版客户端按键")
     q.add_argument("keys", nargs="+")
     q.add_argument("--seconds", type=float, default=0.15, help="单次按住0.05～30秒，结束后释放")
-    q = command("move", "客户端内Lua按实际坐标在当前层水平移动")
+    q = command("move", "客户端内Lua按实际坐标移动；给出--to-y时跨平台寻路")
     q.add_argument("x", type=int)
+    q.add_argument("--to-y", type=int, help="目标世界高度；给出后按平台图跨层移动")
     q.add_argument("--seconds", type=float, default=20)
     q.add_argument("--tolerance", type=int, default=8)
+    q.add_argument("--plan-only", action="store_true", help="只输出平台路径，不移动")
     q = command("climb", "对齐绳梯并爬到指定世界y")
     q.add_argument("x", type=int)
     q.add_argument("--to-y", type=int, required=True)
@@ -731,9 +733,16 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         return press_keys(backend, args.keys, seconds=args.seconds)
     if cmd in ("move", "climb", "portal"):
         if cmd == "move":
-            from .control_scripts import move_to_x
+            if args.to_y is None:
+                if args.plan_only:
+                    raise ClientError("usage", "--plan-only需要同时给出--to-y。")
+                from .control_scripts import move_to_x
 
-            return move_to_x(backend, args.x, seconds=args.seconds, tolerance=args.tolerance)
+                return move_to_x(backend, args.x, seconds=args.seconds, tolerance=args.tolerance)
+            from . import travel
+
+            return travel.walk_to(backend, args.x, args.to_y, seconds=args.seconds,
+                                  plan_only=args.plan_only, tolerance=args.tolerance)
         from . import travel
 
         if cmd == "climb":

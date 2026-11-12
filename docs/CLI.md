@@ -180,7 +180,7 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `equip ITEM --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头普通装备；明确背包正槽和身上负槽，核对物品 ID 及实际替换结果 |
 | `unequip --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头卸下普通装备；明确身上负槽和空背包正槽 |
 | `stats STAT COUNT`、`skills SKILL [COUNT]` | 明确属性/技能与点数；两端 Lua 原生逐点双确认，GUI 复用本端必要窗口；未知或部分结果保留现状，按最新状态继续 |
-| `move X`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单根绳梯或单个门户；通用寻路属于后续能力 |
+| `move X`、`move X --to-y Y`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单地图跨平台寻路、单根绳梯或单个门户；`move --to-y` 用静态平台图（走、跳台上升、落层、绳梯）行进，不支持跨地图自动选路 |
 | `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点及近距拾取尝试 |
 | `hunt [MOB\|all]` | 单场景自主找怪、可达跨平台和连续战斗；支持 `--skill ID`、`--range N`、限时或 `--continuous` |
 | `script run/start --library travel\|island-supply` | 显式装载旅行函数；Lua消费者在一次会话内调用已知路线并核对目的地 |
@@ -195,6 +195,8 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `stop`、`bridge stop` | 无其他活动动作控制者时清理遗留控制 |
 | `key KEYS --seconds N` | 原版按键扩展；无头端按自身能力声明返回 |
 | `skill ID` | 原生技能请求；无头首批1001004/1001005，其他类型明确不支持 |
+
+[跨平台移动](../../shared/scripts/travel/walk_to.lua)只处理当前地图：按静态地形平台图计算最短平台路径，逐段执行走、跳台、落层与绳梯，落地后重新采样再规划。目标坐标必须落在平台范围内，`--plan-only` 只输出规划路径不输入；对话窗口打开、身份或地图变化、HP低于安全比例时明确失败并且不猜测结果。
 
 `--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。直接源码保持原样执行，不解析策略注释。文件路径按容器内部解析；工作台整体已挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，每次调用读取当前 UTF-8 文件内容。带顶层 `main(context)` 的文件是策略入口，`script run/start FILE` 会按注释校验参数并由原生 Runtime 调用入口；其他 Lua 文件保持原始 chunk 路径。两种方式都可在已运行实例中提交，沿用相同 `game` API、错误、时限和取消规则。`script status` 只接收 `--session`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
 

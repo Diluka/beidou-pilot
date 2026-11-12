@@ -355,6 +355,7 @@ def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata | None]:
             "move_to.lua",
             "climb_to.lua",
             "enter_portal.lua",
+            "walk_to.lua",
         }:
             source = (directory / "_common.lua").read_text(encoding="utf-8") + "\n" + source
     except (OSError, UnicodeError) as error:
