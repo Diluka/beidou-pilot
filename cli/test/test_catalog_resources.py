@@ -165,6 +165,66 @@ class CatalogResourceContract(unittest.TestCase):
         self.assertEqual({}, monster["info"])
         self.assertTrue(monster["unavailable"])
 
+    def test_unresolved_img_references_do_not_supply_placeholder_geometry(self) -> None:
+        write_img(
+            self.data / "String/Npc.img",
+            {
+                "2003": {"name": "罗宾"},
+                "2006": {"name": "缺失引用"},
+                "2007": {"name": "未解析引用链"},
+                "2008": {"name": "缺失地图引用"},
+                "2009": {"name": "有效外链"},
+                "2010": {"name": "缺失来源"},
+                "2011": {"name": "有效来源"},
+                "2012": {"name": "未解析来源链"},
+            },
+        )
+        write_img(
+            self.data / "Npc/0002006.img",
+            {"stand": {"0": Canvas(10, 20, {"origin": Vector(1, 2), "_outlink": "missing.img/b.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002007.img",
+            {"stand": {"0": Canvas(12, 24, {"origin": Vector(2, 4), "_outlink": "0002006.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002008.img",
+            {"stand": {"0": Canvas(14, 28, {"origin": Vector(3, 6), "_outlink": "Map/Map0/000050000.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002009.img",
+            {"stand": {"0": Canvas(1, 1, {"origin": Vector(20, 50), "_outlink": "0002004.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002010.img",
+            {"stand": {"0": Canvas(10, 20, {"origin": Vector(1, 2), "source": "missing.img/b.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002011.img",
+            {"stand": {"0": Canvas(1, 1, {"origin": Vector(20, 50), "source": "0002004.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002012.img",
+            {"stand": {"0": Canvas(12, 24, {"origin": Vector(2, 4), "source": "0002010.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/b.img",
+            {"stand": {"0": Canvas(91, 92, {"origin": Vector(20, 50)})}},
+        )
+        catalog = Catalog(self.root)
+        for npc_id in (2006, 2007, 2008, 2010, 2012):
+            with self.subTest(npc_id=npc_id):
+                npc = catalog.npc(npc_id)
+                self.assertIsNone(npc["click_rect"])
+                self.assertNotIn(str(self.data / "Npc/b.img"), npc["metadata_source"])
+
+        linked = catalog.npc(2009)
+        sourced = catalog.npc(2011)
+        self.assertEqual({"left": -20, "top": -50, "right": 20, "bottom": 10}, linked["click_rect"])
+        self.assertEqual(linked["click_rect"], sourced["click_rect"])
+        self.assertIn(str(self.data / "Npc/0002004.img"), linked["metadata_source"])
+        self.assertIn(str(self.data / "Npc/0002004.img"), sourced["metadata_source"])
+
     def test_legacy_xml_and_nx_are_not_catalog_sources(self) -> None:
         xml = self.root / "xml/String.wz/Mob.img.xml"
         xml.parent.mkdir(parents=True)

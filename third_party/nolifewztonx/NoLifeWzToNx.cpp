@@ -61,6 +61,7 @@ namespace sys = boost::filesystem;
 #include <regex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <sstream>
 
@@ -555,7 +556,7 @@ struct wztonx {
         n.source_file_id = nr.source_file_id;
         return true;
     }
-    bool resolve_source(std::vector<id_t> link) {
+    bool resolve_source(std::vector<id_t> link, std::unordered_set<id_t> const & pending_sources) {
         auto & n = nodes[link.back()];
         link.pop_back();
         auto & s = strings[n.data.string];
@@ -567,16 +568,19 @@ struct wztonx {
         if (!parts.empty() && parts.front() == sys::path(wzfilename).filename().string())
             parts.erase(parts.begin());
         id_t r = 0;
-        for (auto const & part : parts)
+        for (auto const & part : parts) {
             r = get_child_full(r, part);
-        if (r == 0) return false;
+            if (r == 0) return false;
+        }
+        if (pending_sources.find(r) != pending_sources.end()) return false;
         auto & nr = nodes[r];
+        if (nr.data_type != node::type::bitmap) return false;
         auto & pn = nodes[link.back()];
         pn.data = nr.data;
         pn.source_file_id = nr.source_file_id;
         return true;
     }
-    bool resolve_outlink(std::vector<id_t> link) {
+    bool resolve_outlink(std::vector<id_t> link, std::unordered_set<id_t> const & pending_outlinks) {
         auto & n = nodes[link.back()];
         link.pop_back();
         auto & s = strings[n.data.string];
@@ -587,13 +591,14 @@ struct wztonx {
             parts.push_back(segment);
         if (!parts.empty() && parts.front() == sys::path(wzfilename).filename().string())
             parts.erase(parts.begin());
-        if (parts[0] == "Map")
-            return true;
         id_t r = 0;
-        for (auto const & part : parts)
+        for (auto const & part : parts) {
             r = get_child_full(r, part);
-        if (r == 0) return false;
+            if (r == 0) return false;
+        }
+        if (pending_outlinks.find(r) != pending_outlinks.end()) return false;
         auto & nr = nodes[r];
+        if (nr.data_type != node::type::bitmap) return false;
         auto & pn = nodes[link.back()];
         pn.data = nr.data;
         pn.source_file_id = nr.source_file_id;
@@ -649,6 +654,11 @@ struct wztonx {
     void source_fail(std::vector<id_t> & link, std::string const& str) {
         auto & n = nodes[link.back()];
         std::cerr << "Failed to find " << str << " for [" << strings[n.data.string] << "]." << std::endl;
+        auto & parent = nodes[link[link.size() - 2]];
+        if (parent.data_type == node::type::bitmap) {
+            parent.data_type = node::type::none;
+            parent.source_file_id = UINT32_MAX;
+        }
     }
     void directory(id_t dir_node) {
         std::vector<id_t> directories;
@@ -960,8 +970,10 @@ struct wztonx {
         progress("Parsing source......");
         find_links(0, "source");
         for (;;) {
-            auto it = std::remove_if(links.begin(), links.end(), [this](std::vector<id_t> const & v) {
-                return resolve_source(v);
+            std::unordered_set<id_t> pending_sources;
+            for (auto const & link : links) pending_sources.insert(link[link.size() - 2]);
+            auto it = std::remove_if(links.begin(), links.end(), [this, &pending_sources](std::vector<id_t> const & v) {
+                return resolve_source(v, pending_sources);
                 });
             auto diff = links.end() - it;
             links.erase(it, links.end());
@@ -974,8 +986,10 @@ struct wztonx {
         progress("Parsing _outlink....");
         find_links(0, "_outlink");
         for (;;) {
-            auto it = std::remove_if(links.begin(), links.end(), [this](std::vector<id_t> const & v) {
-                return resolve_outlink(v);
+            std::unordered_set<id_t> pending_outlinks;
+            for (auto const & link : links) pending_outlinks.insert(link[link.size() - 2]);
+            auto it = std::remove_if(links.begin(), links.end(), [this, &pending_outlinks](std::vector<id_t> const & v) {
+                return resolve_outlink(v, pending_outlinks);
                 });
             auto diff = links.end() - it;
             links.erase(it, links.end());
