@@ -193,6 +193,7 @@ def parser() -> Parser:
     q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"))
     q.add_argument("--retreat-x", type=int)
     q.add_argument("--loot", action="store_true", help="启用同层落地物品定向拾取")
+    q.add_argument("--hp-item", type=int, help="低生命值使用的明确药品ID；省略时按库存挑回血量最大的普通药")
     q = command("hunt", "当前单一场景内自主找怪、换层和连续攻击；场景变化即停止")
     q.add_argument("mob", nargs="?", default="all", help="怪物名称、模板ID或all（默认全部怪物）")
     q.add_argument("--skill", type=int, help="指定已学且本后端支持的技能ID；省略时使用普攻")
@@ -895,6 +896,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             bounds=(bounds[0], bounds[1]),
             retreat_x=args.retreat_x if args.retreat_x is not None else int(pos["x"]),
             loot=args.loot,
+            hp_item=args.hp_item,
             context_state=state,
         )
         return {**report, "advancement": milestone, "stop_level_source": stop_level_source}

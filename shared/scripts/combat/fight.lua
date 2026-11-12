@@ -6,6 +6,7 @@
 -- @option[type=int] min_x 安全范围最小水平坐标
 -- @option[type=int] max_x 安全范围最大水平坐标
 -- @option[type=int] retreat_x 结束时尝试返回的水平锚点
+-- @option[type=int,opt,min=1] hp_item 低生命值时使用的明确物品 ID；省略时按库存选择回血量最大的普通药品
 -- @option[type=boolean,opt,default=false] loot 默认关闭近距拾取；启用后才尝试拾取
 local function main(context)
     local options = context.options
@@ -40,14 +41,23 @@ local function main(context)
         assert(math.abs(s.position.y - options.floor_y) <= 45, "wrong_floor")
         if s.character.hp < s.character.max_hp * 0.6 then
             local potion = nil
-            for _, preferred in ipairs({ 2000013, 2000000 }) do
+            local function have(item_id)
                 for _, item in ipairs(s.inventory or {}) do
-                    if item.quantity and item.quantity > 0 and item.item_id == preferred then
-                        potion = item.item_id
+                    if item.quantity and item.quantity > 0 and item.item_id == item_id then return true end
+                end
+                return false
+            end
+            if options.hp_item then
+                assert(have(options.hp_item), "no_hp_potion")
+                potion = options.hp_item
+            else
+                -- 未指定时按回血量从高到低挑库存里真实存在的普通 HP 药。
+                for _, candidate in ipairs({ 2000002, 2000001, 2000000, 2000013 }) do
+                    if have(candidate) then
+                        potion = candidate
                         break
                     end
                 end
-                if potion then break end
             end
             assert(potion, "no_hp_potion")
             if game.time() >= heal_at then
