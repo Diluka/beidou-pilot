@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
+      - name: Build shared IMG parser for Catalog tests
+        run: make -C headless build/libbeidou-img.so
       - name: Run offline tests
         run: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
 
