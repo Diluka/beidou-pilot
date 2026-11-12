@@ -35,7 +35,7 @@
 
 现有动作摆脱键位配置依赖沿用[#36](https://github.com/Diluka/beidou-pilot/issues/36)，普通药品的首个实施增量由[#39](https://github.com/Diluka/beidou-pilot/issues/39)跟踪。各端技能支持声明与结果确认以对应文档为准。特定台阶对照继续由[#32](https://github.com/Diluka/beidou-pilot/issues/32)跟踪；已验证的正常路径可继续使用，未确认差异按待核实事实记录。
 
-同图其他玩家由[#57](https://github.com/Diluka/beidou-pilot/issues/57)跟进：无头端已提供 `scene.players` 结构化观察；GUI 端原生用户池观察仍待交付，两端按同一字段口径。
+同图其他玩家的 `scene.players` 结构化观察两端均已提供（[#57](https://github.com/Diluka/beidou-pilot/issues/57)）：无头端来自原生角色对象，GUI 端来自原版客户端用户池，两端按同一字段口径；HP、装备、队伍关系与 GUI 不可见状态语义不在本观察范围。
 
 ## 已有结果与后续验证
 

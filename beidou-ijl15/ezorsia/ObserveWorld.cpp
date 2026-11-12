@@ -2,14 +2,44 @@
 #include "stdafx.h"
 #include "NativeObservation.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 namespace NativeObservation {
 namespace {
 using Address = std::uint32_t;
+
+// BeiDou Client V17 user pool layout. Addresses are absolute in this
+// non-ASLR client and stay next to the other fixed observation addresses.
+constexpr Address kUserPoolGlobal = 0x00BEBFA8;
+constexpr Address kUserPoolVtable = 0x00B3D778;
+constexpr Address kUserMapVtable = 0x00B3D7A0;
+constexpr Address kUserNodeVtable = 0x00B3D7A8;
+constexpr Address kUserWrapperVtable = 0x00B3D7A4;
+constexpr Address kRemoteUserVtable = 0x00B3D898;
+constexpr Address kRemoteUserVtable2 = 0x00B3D874;
+constexpr Address kLocalUserVtable = 0x00B3D20C;
+constexpr Address kLocalUserVtable2 = 0x00B3D1E8;
+constexpr Address kPoolLocalUser = 0x08;
+constexpr Address kPoolUserMap = 0x0C;
+constexpr Address kPoolMapBuckets = 0x10;
+constexpr Address kPoolMapBucketCount = 0x14;
+constexpr Address kPoolMapCount = 0x18;
+constexpr Address kNodeNext = 0x04;
+constexpr Address kNodeKey = 0x08;
+constexpr Address kNodeWrapper = 0x10;
+constexpr Address kWrapperUser = 0x10;
+constexpr Address kUserCid = 0x11A8;
+constexpr Address kUserName = 0x11AC;
+constexpr Address kUserLevel = 0x2AE0;
+constexpr Address kUserPosX = 0x116C;
+constexpr Address kUserPosY = 0x1170;
+constexpr Address kUserFlags = 0x570;
 
 std::string Hex(Address address) {
     std::ostringstream output;
@@ -40,6 +70,16 @@ Value TemplateName(Address field) {
     catch (const ReadError&) {
         return {};
     }
+}
+
+std::string PlayerName(Address field) {
+    const auto pointer = Read<Address>(field);
+    if (pointer == 0) return {};
+    const auto length = Read<std::uint32_t>(pointer - 4);
+    if (length == 0) return {};
+    if (length > 64) throw ReadError("A player name exceeds the observation boundary.");
+    const auto bytes = Bytes(pointer, length);
+    return Utf8(std::string(bytes.begin(), bytes.end()));
 }
 
 Value Rect(std::int32_t left, std::int32_t top, std::int32_t right, std::int32_t bottom) {
@@ -302,6 +342,85 @@ Value Stage() {
     return output;
 }
 
+void Players(std::vector<MapleControl::OtherPlayer>& output) {
+    output.clear();
+    const auto pool = Read<Address>(kUserPoolGlobal);
+    if (pool == 0 || Read<Address>(pool) != kUserPoolVtable)
+        throw ReadError("The current user pool does not match the V17 layout.");
+    Address ownCid = 0;
+    const auto local = Read<Address>(pool + kPoolLocalUser);
+    if (local != 0) {
+        const auto tables = Read<std::array<Address, 2>>(local);
+        if (tables[0] != kLocalUserVtable || tables[1] != kLocalUserVtable2)
+            throw ReadError("The local user does not match the V17 layout.");
+        ownCid = Read<std::uint32_t>(local + kUserCid);
+    }
+    if (Read<Address>(pool + kPoolUserMap) != kUserMapVtable)
+        throw ReadError("The user map does not match the V17 layout.");
+    const auto buckets = Read<Address>(pool + kPoolMapBuckets);
+    const auto bucketCount = Read<std::uint32_t>(pool + kPoolMapBucketCount);
+    const auto count = Read<std::uint32_t>(pool + kPoolMapCount);
+    if (bucketCount > 4096 || count > 512 || (count != 0 && buckets == 0))
+        throw ReadError("The user map exceeds the observation limit.");
+    std::set<Address> visited;
+    std::uint32_t observed = 0;
+    for (std::uint32_t bucket = 0; bucket < bucketCount; ++bucket) {
+        auto node = buckets != 0 ? Read<Address>(buckets + bucket * 4) : 0;
+        while (node != 0) {
+            if (!visited.insert(node).second) throw ReadError("The user map contains a cycle.");
+            if (Read<Address>(node) != kUserNodeVtable)
+                throw ReadError("A user map node does not match the V17 layout.");
+            const auto next = Read<Address>(node + kNodeNext);
+            const auto cid = Read<std::uint32_t>(node + kNodeKey);
+            const auto wrapper = Read<Address>(node + kNodeWrapper);
+            if (wrapper == 0) throw ReadError("A user map node has no wrapper.");
+            if (Read<Address>(wrapper) != kUserWrapperVtable)
+                throw ReadError("A user wrapper does not match the V17 layout.");
+            const auto user = Read<Address>(wrapper + kWrapperUser);
+            if (user == 0) throw ReadError("A user wrapper has no player object.");
+            const auto tables = Read<std::array<Address, 2>>(user);
+            if (tables[0] != kRemoteUserVtable || tables[1] != kRemoteUserVtable2)
+                throw ReadError("A remote user does not match the V17 layout.");
+            if (Read<std::uint32_t>(user + kUserCid) != cid)
+                throw ReadError("A remote user identity does not match its map key.");
+            if (cid != ownCid) {
+                MapleControl::OtherPlayer player;
+                player.reference = std::to_string(cid);
+                player.characterId = cid;
+                player.characterIdKnown = true;
+                player.x = Read<std::int32_t>(user + kUserPosX);
+                player.y = Read<std::int32_t>(user + kUserPosY);
+                const auto flags = Read<std::uint32_t>(user + kUserFlags);
+                player.facingKnown = true;
+                player.facingLeft = (flags & 1) != 0;
+                const auto level = Read<unsigned char>(user + kUserLevel);
+                if (level != 0) {
+                    player.level = level;
+                    player.levelKnown = true;
+                }
+                try {
+                    player.name = PlayerName(user + kUserName);
+                } catch (const ReadError&) {
+                    player.name.clear();
+                }
+                output.push_back(std::move(player));
+            }
+            node = next;
+            if (++observed > count) throw ReadError("The user map contains more nodes than recorded.");
+        }
+    }
+    if (observed != count) throw ReadError("The user map changed while being observed.");
+    if (Read<Address>(kUserPoolGlobal) != pool || Read<Address>(pool + kPoolUserMap) != kUserMapVtable
+        || Read<Address>(pool + kPoolMapBuckets) != buckets
+        || Read<std::uint32_t>(pool + kPoolMapBucketCount) != bucketCount
+        || Read<std::uint32_t>(pool + kPoolMapCount) != count)
+        throw ReadError("The user map changed while being observed.");
+    std::sort(output.begin(), output.end(), [](const MapleControl::OtherPlayer& left,
+                                               const MapleControl::OtherPlayer& right) {
+        return left.characterId < right.characterId;
+    });
+}
+
 Value Scene() {
     const auto field = Read<Address>(0x00BEDED4);
     const auto user = Read<Address>(0x00BEBF98);
@@ -309,11 +428,34 @@ Value Scene() {
         throw ReadError("The current game scene has no verified local character.");
     const auto coordinates = Read<std::array<std::int32_t, 2>>(user + 0x116C);
     const auto flags = Read<std::uint32_t>(user + 0x570);
+    auto players = Value::Array();
+    auto unavailable = Value::Array();
+    bool playersComplete = true;
+    try {
+        std::vector<MapleControl::OtherPlayer> observed;
+        Players(observed);
+        for (const auto& player : observed)
+            players.Add(Value::Object(
+                {{"reference", player.reference},
+                 {"character_id", player.characterIdKnown ? Value(player.characterId) : Value()},
+                 {"name", player.name.empty() ? Value() : Value(player.name)},
+                 {"level", player.levelKnown ? Value(player.level) : Value()},
+                 {"x", player.x},
+                 {"y", player.y},
+                 {"facing", player.facingKnown ? Value(player.facingLeft ? "Left" : "Right") : Value()}}));
+    } catch (const ReadError& error) {
+        players = Value();
+        playersComplete = false;
+        unavailable.Add(std::string("Player list unavailable: ") + error.what());
+    }
     auto output = Value::Object({
         {"source", "client-native-api"}, {"readonly", true}, {"map_id", SecureValue(field + 0x138)},
         {"player", Value::Object({{"x", coordinates[0]}, {"y", coordinates[1]}})},
         {"monsters", Monsters()}, {"drops", Drops()}, {"npcs", Npcs()},
-        {"player_facing", flags & 1 ? "Left" : "Right"}, {"raw_flags", flags}, {"pending_dynamic", false}
+        {"players", players}, {"players_complete", playersComplete},
+        {"not_covered", Value::Array({"other_player_hp", "other_player_equipment", "other_player_party_relation"})},
+        {"player_facing", flags & 1 ? "Left" : "Right"}, {"raw_flags", flags}, {"pending_dynamic", false},
+        {"unavailable", unavailable}
     });
     if (Read<Address>(0x00BEDED4) != field || Read<Address>(0x00BEBF98) != user)
         throw ReadError("The current scene changed during observation.");
