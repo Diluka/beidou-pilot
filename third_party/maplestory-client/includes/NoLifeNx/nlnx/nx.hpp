@@ -29,5 +29,7 @@ namespace nl
 		// Loads the pre-defined nodes from a standard setup of nx files for MapleStory
 		// Only call this function once
 		void load_all();
+		// Retains a metadata-only file view and returns its root node.
+		node add_file(file&&);
 	}
 }

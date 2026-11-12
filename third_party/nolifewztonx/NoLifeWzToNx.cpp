@@ -61,6 +61,7 @@ namespace sys = boost::filesystem;
 #include <regex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <sstream>
 
@@ -78,6 +79,11 @@ using namespace std::string_literals;
 using namespace std::chrono_literals;
 
 namespace nl {
+extern uint8_t key_bms[65536];
+extern uint8_t key_gms[65536];
+extern uint8_t key_kms[65536];
+}
+namespace nl::wz {
 // Some typedefs
 typedef char char8_t;
 typedef uint32_t id_t;
@@ -85,9 +91,9 @@ typedef uint8_t key_t;
 typedef int32_t int_t;
 // The keys
 // TODO - Use AES to generate these keys at runtime
-extern key_t key_bms[65536];
-extern key_t key_gms[65536];
-extern key_t key_kms[65536];
+using ::nl::key_bms;
+using ::nl::key_gms;
+using ::nl::key_kms;
 key_t const * keys[3] = {key_bms, key_gms, key_kms};
 // Tables for color lookups
 uint8_t const table4[0x10] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
@@ -166,9 +172,9 @@ struct imapfile {
         offset = base;
     }
     ~imapfile() {
-        UnmapViewOfFile(base);
-        CloseHandle(map_handle);
-        CloseHandle(file_handle);
+        if (base) UnmapViewOfFile(base);
+        if (map_handle) CloseHandle(map_handle);
+        if (file_handle && file_handle != INVALID_HANDLE_VALUE) CloseHandle(file_handle);
     }
 #else
     int file_handle = 0;
@@ -191,8 +197,10 @@ struct imapfile {
         offset = base;
     }
     ~imapfile() {
-        munmap(const_cast<char *>(base), file_size);
-        close(file_handle);
+        if (base) {
+            munmap(const_cast<char *>(base), file_size);
+            close(file_handle);
+        }
     }
 #endif
     size_t tell() { return static_cast<size_t>(offset - base); }
@@ -287,6 +295,8 @@ struct node {
     uint32_t name = 0;
     uint32_t children = 0;
     uint16_t num = 0;
+    uint16_t source_order = 0;
+    uint32_t source_file_id = UINT32_MAX;
     type data_type = type::none;
     union _data {
         int64_t integer = 0;
@@ -517,7 +527,7 @@ struct wztonx {
         if (strings[it->name] != str) return 0;
         return static_cast<id_t>(it - nodes.begin());
     }
-    bool resolve_uol(std::vector<id_t> uol) {
+    bool resolve_uol(std::vector<id_t> uol, std::unordered_set<id_t> const & pending) {
         auto & n = nodes[uol.back()];
         uol.pop_back();
         if (n.data_type != node::type::uol) throw std::runtime_error("Welp. I failed.");
@@ -525,23 +535,28 @@ struct wztonx {
         auto b = 0u;
         for (auto i = 0u; i < s.size(); ++i)
             if (s[i] == '/') {
-                if (i - b == 2 && s[b] == '.' && s[b + 1] == '.')
+                if (i - b == 2 && s[b] == '.' && s[b + 1] == '.') {
+                    if (uol.size() == 1) return false;
                     uol.pop_back();
-                else
-                    uol.push_back(get_child(uol.back(), s.substr(b, i - b)));
+                } else {
+                    auto const child = get_child_full(uol.back(), s.substr(b, i - b));
+                    if (child == 0) return false;
+                    uol.push_back(child);
+                }
                 b = ++i;
             }
-        uol.push_back(get_child(uol.back(), s.substr(b)));
+        uol.push_back(get_child_full(uol.back(), s.substr(b)));
         if (uol.back() == 0) return false;
         auto & nr = nodes[uol.back()];
-        if (nr.data_type == node::type::uol) return false;
+        if (nr.data_type == node::type::uol || pending.find(uol.back()) != pending.end()) return false;
         n.data_type = nr.data_type;
         n.children = nr.children;
         n.num = nr.num;
         n.data.integer = nr.data.integer;
+        n.source_file_id = nr.source_file_id;
         return true;
     }
-    bool resolve_source(std::vector<id_t> link) {
+    bool resolve_source(std::vector<id_t> link, std::unordered_set<id_t> const & pending) {
         auto & n = nodes[link.back()];
         link.pop_back();
         auto & s = strings[n.data.string];
@@ -553,15 +568,19 @@ struct wztonx {
         if (!parts.empty() && parts.front() == sys::path(wzfilename).filename().string())
             parts.erase(parts.begin());
         id_t r = 0;
-        for (auto const & part : parts)
+        for (auto const & part : parts) {
             r = get_child_full(r, part);
-        if (r == 0) return false;
+            if (r == 0) return false;
+        }
+        if (pending.find(r) != pending.end()) return false;
         auto & nr = nodes[r];
+        if (nr.data_type != node::type::bitmap) return false;
         auto & pn = nodes[link.back()];
         pn.data = nr.data;
+        pn.source_file_id = nr.source_file_id;
         return true;
     }
-    bool resolve_outlink(std::vector<id_t> link) {
+    bool resolve_outlink(std::vector<id_t> link, std::unordered_set<id_t> const & pending) {
         auto & n = nodes[link.back()];
         link.pop_back();
         auto & s = strings[n.data.string];
@@ -572,18 +591,20 @@ struct wztonx {
             parts.push_back(segment);
         if (!parts.empty() && parts.front() == sys::path(wzfilename).filename().string())
             parts.erase(parts.begin());
-        if (parts[0] == "Map")
-            return true;
         id_t r = 0;
-        for (auto const & part : parts)
+        for (auto const & part : parts) {
             r = get_child_full(r, part);
-        if (r == 0) return false;
+            if (r == 0) return false;
+        }
+        if (pending.find(r) != pending.end()) return false;
         auto & nr = nodes[r];
+        if (nr.data_type != node::type::bitmap) return false;
         auto & pn = nodes[link.back()];
         pn.data = nr.data;
+        pn.source_file_id = nr.source_file_id;
         return true;
     }
-    bool resolve_inlink(std::vector<id_t> link) {
+    bool resolve_inlink(std::vector<id_t> link, std::unordered_set<id_t> const & pending) {
         auto & n = nodes[link.back()];
         link.pop_back();
         auto & s = strings[n.data.string];
@@ -606,9 +627,11 @@ struct wztonx {
             if (link.size() == 0) break;
             r = link.back();
         }
-        if (r == 0) return false;
+        if (r == 0 || pending.find(r) != pending.end()) return false;
         auto & nr = nodes[r];
+        if (nr.data_type != node::type::bitmap) return false;
         pn.data = nr.data;
+        pn.source_file_id = nr.source_file_id;
         return true;
     }
     void uol_fail(std::vector<id_t> & uol) {
@@ -624,12 +647,19 @@ struct wztonx {
         if (n.data_type == node::type::uol) {
             //std::cerr << " = \"" << strings[n.data.string] << "\"" << std::endl;
             // If we failed to resolve any uols, just turn them into useless empty nodes
+#ifndef NL_PRESERVE_UNRESOLVED_UOL
             n.data_type = node::type::none;
+#endif
         } else { std::cerr << " claims to be an invalid UOL but isn't a UOL???" << std::endl; }
     }
     void source_fail(std::vector<id_t> & link, std::string const& str) {
         auto & n = nodes[link.back()];
         std::cerr << "Failed to find " << str << " for [" << strings[n.data.string] << "]." << std::endl;
+        auto & parent = nodes[link[link.size() - 2]];
+        if (parent.data_type == node::type::bitmap) {
+            parent.data_type = node::type::none;
+            parent.source_file_id = UINT32_MAX;
+        }
     }
     void directory(id_t dir_node) {
         std::vector<id_t> directories;
@@ -641,6 +671,7 @@ struct wztonx {
         nodes.resize(ni + count);
         for (auto i = 0u; i < count; ++i) {
             auto & nn = nodes[ni + i];
+            nn.source_order = static_cast<uint16_t>(i);
             auto type = in.read<uint8_t>();
             switch (type) {
             case 1: throw std::runtime_error("Found the elusive type 1 directory");
@@ -704,6 +735,7 @@ struct wztonx {
             nodes.resize(nodes.size() + count);
             for (auto i = 0u; i < count; ++i) {
                 auto & nn = nodes[ni + i];
+                nn.source_order = static_cast<uint16_t>(i);
                 auto es = std::to_string(i);
                 nn.name = add_string(std::move(es));
                 extended_property(ni, p_offset);
@@ -734,6 +766,7 @@ struct wztonx {
         nodes.resize(nodes.size() + count);
         for (auto i = 0u; i < count; ++i) {
             auto & nn = nodes[ni + i];
+            nn.source_order = static_cast<uint16_t>(i);
             nn.name = read_prop_string(p_offset);
             auto type = in.read<uint8_t>();
             uint8_t num;
@@ -916,61 +949,44 @@ struct wztonx {
     }
     void finish_parse() {
         for (auto const & n : nodes_to_sort) sort_nodes(n.first, n.second);
-        std::cout << "Parsing uol.........";
-        //uol
+#ifndef NL_NO_PROGRESS_OUTPUT
+        auto progress = [](char const * value) { std::cout << value; };
+#else
+        auto progress = [](char const *) {};
+#endif
+        progress("Parsing references...");
         find_uols(0);
-        for (;;) {
-            auto it = std::remove_if(uols.begin(), uols.end(), [this](std::vector<id_t> const & v) {
-                return resolve_uol(v);
-            });
-            auto diff = uols.end() - it;
-            uols.erase(it, uols.end());
-            if (diff == 0) break;
-        }
-        for (auto & it : uols) uol_fail(it);
-        std::cout << "Done!" << std::endl;
-        //source
-        std::cout << "Parsing source......";
         find_links(0, "source");
-        for (;;) {
-            auto it = std::remove_if(links.begin(), links.end(), [this](std::vector<id_t> const & v) {
-                return resolve_source(v);
-                });
-            auto diff = links.end() - it;
-            links.erase(it, links.end());
-            if (diff == 0) break;
-        }
-        for (auto & it : links) source_fail(it, "source");
+        auto sources = std::move(links);
         links.clear();
-        std::cout << "Done!" << std::endl;
-        //_outlink
-        std::cout << "Parsing _outlink....";
         find_links(0, "_outlink");
-        for (;;) {
-            auto it = std::remove_if(links.begin(), links.end(), [this](std::vector<id_t> const & v) {
-                return resolve_outlink(v);
-                });
-            auto diff = links.end() - it;
-            links.erase(it, links.end());
-            if (diff == 0) break;
-        }
-        for (auto & it : links) source_fail(it, "_outlink");
+        auto outlinks = std::move(links);
         links.clear();
-        std::cout << "Done!" << std::endl;
-        //_inlink
-        std::cout << "Parsing _inlink.....";
         find_links(0, "_inlink");
-        for (;;) {
-            auto it = std::remove_if(links.begin(), links.end(), [this](std::vector<id_t> const & v) {
-                return resolve_inlink(v);
-                });
-            auto diff = links.end() - it;
-            links.erase(it, links.end());
-            if (diff == 0) break;
-        }
-        for (auto & it : links) source_fail(it, "_inlink");
+        auto inlinks = std::move(links);
         links.clear();
-        std::cout << "Done!" << std::endl;
+
+        for (;;) {
+            std::unordered_set<id_t> pending;
+            for (auto const & uol : uols) pending.insert(uol.back());
+            for (auto const * group : {&sources, &outlinks, &inlinks})
+                for (auto const & link : *group) pending.insert(link[link.size() - 2]);
+
+            auto remaining = uols.size() + sources.size() + outlinks.size() + inlinks.size();
+            auto erase_resolved = [](auto & group, auto resolve) {
+                group.erase(std::remove_if(group.begin(), group.end(), resolve), group.end());
+            };
+            erase_resolved(uols, [this, &pending](auto const & path) { return resolve_uol(path, pending); });
+            erase_resolved(sources, [this, &pending](auto const & path) { return resolve_source(path, pending); });
+            erase_resolved(outlinks, [this, &pending](auto const & path) { return resolve_outlink(path, pending); });
+            erase_resolved(inlinks, [this, &pending](auto const & path) { return resolve_inlink(path, pending); });
+            if (remaining == uols.size() + sources.size() + outlinks.size() + inlinks.size()) break;
+        }
+        for (auto & path : uols) uol_fail(path);
+        for (auto & path : sources) source_fail(path, "source");
+        for (auto & path : outlinks) source_fail(path, "_outlink");
+        for (auto & path : inlinks) source_fail(path, "_inlink");
+        progress("Done!\n");
     }
     void calculate_offsets() {
         offset = 0;
@@ -1039,7 +1055,13 @@ struct wztonx {
     void write_nodes() {
         std::cout << "Writing nodes.......";
         out.seek(node_offset);
-        out.write(nodes.data(), nodes.size() * 20);
+        for (auto const & n : nodes) {
+            out.write(n.name);
+            out.write(n.children);
+            out.write(n.num);
+            out.write(static_cast<uint16_t>(n.data_type));
+            out.write(&n.data, sizeof(n.data));
+        }
         std::cout << "Done!" << std::endl;
     }
     void write_strings() {
@@ -1297,6 +1319,11 @@ struct imgtonx : wztonx {
         finish_parse();
     }
 };
+}
+namespace nl {
+using id_t = wz::id_t;
+using wztonx = wz::wztonx;
+using imgtonx = wz::imgtonx;
 }
 #ifndef NL_NO_MAIN
 int main(int argc, char ** argv) {

@@ -28,7 +28,7 @@ git submodule update --init --recursive
 private/workbenches/workbench --help
 ```
 
-将公共资源路径配置保存在主检出目录的 `private/workbenches/resources.json`，字段示例见 [resources.example.json](cli/config/resources.example.json)。各工作目录及开发 worktree 共用这一份配置；原版 `/client` 与 NX `/data` 的格式、来源和只读挂载保持不变，当前未实现原始 IMG 直读。
+将公共资源路径配置保存在主检出目录的 `private/workbenches/resources.json`，字段示例见 [resources.example.json](cli/config/resources.example.json)。各工作目录及开发 worktree 共用这一份配置；GUI 原版客户端只读挂载到 `/client`，原版 `Data/` 同时只读挂载到 `/data`，供无头运行时和 Python 静态查询共用原生 IMG 解析器，不需要预先生成 NX、XML 或 PKG4 中间文件。
 
 常驻服务器的项目、服务和公开镜像引用由统一脚本固定，普通工作目录不维护 `server.json`。启动器继续核对实际服务器镜像。调试和实际游戏验收默认使用常驻服，优先复用已授权的已有账号、角色及就绪实例，减少主机内存占用；仅在验证场景必须时新建账号或角色。隔离服仅用于常驻服无法安全完成验证等特殊情况，需说明原因，并在 `workbench.json` 中显式选择非 `beidou-ms` 服务器；格式和边界见 [CLI](docs/CLI.md#工作目录配置)。
 
@@ -66,7 +66,7 @@ private/workbenches/workbench /external/workbench capabilities
 private/workbenches/workbench /external/workbench close
 ```
 
-只给目录时默认为只读 `status`；`--list` 列出主检出 `private/workbenches/` 下已有的工作目录，`notes` 读取指定目录的计划和交接。需要先准备镜像时使用同一入口的 `build`。离线 NX 检查使用 `resources-check`，不登录游戏。
+只给目录时默认为只读 `status`；`--list` 列出主检出 `private/workbenches/` 下已有的工作目录，`notes` 读取指定目录的计划和交接。需要先准备镜像时使用同一入口的 `build`。离线 IMG 检查使用 `resources-check`，不登录游戏。
 
 新实例默认取 `main` 当时的已提交版本构建或复用镜像；后端、开发 `ref`、等待期限和可选桥工件在工作目录内配置，不通过宿主命令行覆盖。已有实例的命令继续使用其已登记容器，修改新建设置或更新 `main` 都不会更换运行中的 CLI 与内置策略。实际版本查 `status` 的 `source_revision/image/run_id`。
 

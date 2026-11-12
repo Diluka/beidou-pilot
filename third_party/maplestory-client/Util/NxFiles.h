@@ -24,31 +24,10 @@
 
 #include "../Error.h"
 
-#include <array>
-
 namespace ms
 {
 	namespace NxFiles
 	{
-		// Number of needed files
-		constexpr uint8_t NUM_FILES = 11;
-
-		// Names of the needed game files
-		constexpr std::array<const char*, NUM_FILES> filenames =
-		{
-			"Base.nx",
-			"Character.nx",
-			"Effect.nx",
-			"Etc.nx",
-			"Item.nx",
-			"Map.nx",
-			"Mob.nx",
-			"Npc.nx",
-			"Reactor.nx",
-			"Skill.nx",
-			"String.nx"
-		};
-
 		// Initialize NX
 		// Headless metadata does not require a particular graphical UI generation.
 		Error init();

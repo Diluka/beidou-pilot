@@ -38,10 +38,19 @@
 #  include <unistd.h>
 #endif
 #include <stdexcept>
+#include <utility>
 
 namespace nl {
     file::file(std::string name) {
         open(name);
+    }
+    file::file(file&& other) : m_data(std::exchange(other.m_data, nullptr)) {}
+    file& file::operator=(file&& other) {
+        if (this != &other) {
+            close();
+            m_data = std::exchange(other.m_data, nullptr);
+        }
+        return *this;
     }
     file::~file() {
         close();
@@ -99,9 +108,30 @@ namespace nl {
         m_data->string_table = reinterpret_cast<uint64_t const *>(reinterpret_cast<char const *>(m_data->base) + m_data->header->string_offset);
         m_data->bitmap_table = reinterpret_cast<uint64_t const *>(reinterpret_cast<char const *>(m_data->base) + m_data->header->bitmap_offset);
         m_data->audio_table = reinterpret_cast<uint64_t const *>(reinterpret_cast<char const *>(m_data->base) + m_data->header->audio_offset);
+        m_data->node_count = m_data->header->node_count;
+        m_data->string_count = m_data->header->string_count;
+        m_data->bitmap_count = m_data->header->bitmap_count;
+        m_data->audio_count = m_data->header->audio_count;
+    }
+    void file::open_nodes(std::vector<node::data>&& nodes, std::vector<std::string_view>&& strings,
+                          std::shared_ptr<void> owner) {
+        close();
+        m_data = new data();
+        m_data->memory_backed = true;
+        m_data->owned_nodes = std::move(nodes);
+        m_data->owned_strings = std::move(strings);
+        m_data->owner = std::move(owner);
+        m_data->node_table = m_data->owned_nodes.data();
+        m_data->node_count = static_cast<uint32_t>(m_data->owned_nodes.size());
+        m_data->string_count = static_cast<uint32_t>(m_data->owned_strings.size());
     }
     void file::close() {
         if (!m_data) return;
+        if (m_data->memory_backed) {
+            delete m_data;
+            m_data = nullptr;
+            return;
+        }
 #ifdef _WIN32
         ::UnmapViewOfFile(m_data->base);
         ::CloseHandle(m_data->map);
@@ -120,19 +150,23 @@ namespace nl {
         return root();
     }
     uint32_t file::string_count() const {
-        return m_data->header->string_count;
+        return m_data->string_count;
     }
     uint32_t file::bitmap_count() const {
-        return m_data->header->bitmap_count;
+        return m_data->bitmap_count;
     }
     uint32_t file::audio_count() const {
-        return m_data->header->audio_count;
+        return m_data->audio_count;
     }
     uint32_t file::node_count() const {
-        return m_data->header->node_count;
+        return m_data->node_count;
     }
     std::string file::get_string(uint32_t i) const {
-        auto const s = reinterpret_cast<char const *>(m_data->base) + m_data->string_table[i];
+        return std::string(m_data->get_string_view(i));
+    }
+    std::string_view _file_data::get_string_view(uint32_t i) const {
+        if (memory_backed) return owned_strings[i];
+        auto const s = reinterpret_cast<char const *>(base) + string_table[i];
         return {s + 2, *reinterpret_cast<uint16_t const *>(s)};
     }
 }

@@ -425,7 +425,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
 
             available = verify_binaries(backend.root)
         else:
-            available = resources.headless_resources.is_dir()
+            available = resources.game_data.is_dir()
         return {
             "backend": backend.name,
             "root": str(backend.root),

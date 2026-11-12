@@ -29,7 +29,7 @@ GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生
 | --- | --- | --- |
 | 按实例名新建、复用或拒绝不匹配角色 | 客户端会话；[headless.py](../../cli/beidou_pilot/headless.py)、[session.py](../../cli/beidou_pilot/session.py) | 打开场景；GUI 默认单实例、无头命名实例，保留目标核验与角色排他规则 |
 | 活动 Lua 期间关闭、保存退出原因 | 客户端会话；[headless.py](../../cli/beidou_pilot/headless.py)、[instances.py](../../cli/beidou_pilot/instances.py) | 独立关闭场景；Lua 结束不关闭容器，GUI 网络清理可能待办 |
-| 外部资源转换、核验复用和装配 GUI 副本 | 外部资源；[prepare_resources.py](../../headless/tools/prepare_resources.py)、[prepare-client.sh](../../docker/gui/prepare-client.sh) | 资源准备流程和运行副本操作；不覆盖原件 |
+| 配置、只读核验原版 IMG 与装配 GUI 副本 | 外部资源；[架构资源说明](../ARCHITECTURE.md#外部资源与配置)、[prepare-client.sh](../../docker/gui/prepare-client.sh) | 运行时资源读取和运行副本操作；不覆盖原件 |
 | 名称、NPC 点击范围、地形和物品恢复类型查询 | 外部资源；[catalog.py](../../cli/beidou_pilot/catalog.py) | 静态查询和资料数据；缺资料保持未知，不代替实时对象 |
 | 查询本端领域、能力、快照及持续观察 | 游戏事实观察；[observations.py](../../cli/beidou_pilot/observations.py)、[snapshot.py](../../cli/beidou_pilot/snapshot.py)、[cli.py](../../cli/beidou_pilot/cli.py) | 观察操作和快照流程；无头任务仅登录快照，CLI 观察面与 Lua 状态面分别判断 |
 | 文件或源码运行、协作任务、版本替换和结果查询 | Lua 执行；[bridge.py](../../cli/beidou_pilot/bridge.py)、[task_management.py](../../cli/beidou_pilot/task_management.py)、[Runtime.cpp](../../shared/lua-runtime/Runtime.cpp) | 执行与任务管理流程；替换先编译，旧任务放键后安装新版本，等待失败不自动重放 |

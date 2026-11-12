@@ -1,4 +1,16 @@
 ARG WINE_BASE=scottyhardy/docker-wine:stable-11.0-20261025
+
+FROM ${WINE_BASE} AS img-parser-build
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /source
+COPY headless/src/ImgResources.cpp headless/src/ImgResources.h headless/src/
+COPY third_party/nolifewztonx/ third_party/nolifewztonx/
+RUN g++ -std=c++17 -O2 -fPIC -shared headless/src/ImgResources.cpp \
+    third_party/nolifewztonx/Keys.cpp -o /libbeidou-img.so
+
 FROM ${WINE_BASE}
 USER root
 
@@ -6,7 +18,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     ca-certificates curl iptables iproute2 xdotool x11-utils x11-apps xvfb xfwm4 \
     imagemagick fonts-wqy-microhei locales python3 util-linux \
     libgl1 libgl1:i386 libegl1 libegl1:i386 libgl1-mesa-dri libgl1-mesa-dri:i386 mesa-utils \
-    libxtst6 libxtst6:i386 libxv1 libxv1:i386 libglu1-mesa libglu1-mesa:i386 \
+    libxtst6 libxtst6:i386 libxv1 libxv1:i386 libglu1-mesa libglu1-mesa:i386 libstdc++6 \
     && curl --fail --location --retry 3 \
         https://github.com/VirtualGL/virtualgl/releases/download/3.1.5/virtualgl_3.1.5_amd64.deb \
         --output /tmp/virtualgl.deb \
@@ -27,6 +39,7 @@ COPY third_party/detours/LICENSE.md /usr/share/licenses/beidou-pilot/detours.LIC
 COPY third_party/lua/lua.h /usr/share/licenses/beidou-pilot/lua.LICENSE.h
 COPY cli/beidou-pilot cli/runtime-ui.py /opt/beidou-pilot/cli/
 COPY cli/beidou_pilot/ /opt/beidou-pilot/cli/beidou_pilot/
+COPY --from=img-parser-build /libbeidou-img.so /opt/beidou-pilot/lib/libbeidou-img.so
 COPY shared/scripts/ /opt/beidou-pilot/shared/scripts/
 COPY docker/runtime/entrypoint.py /opt/beidou-pilot/entrypoint.py
 COPY build-input/ijl15.dll build-input/manifest.json /opt/beidou-pilot/native/
@@ -42,6 +55,7 @@ LABEL org.opencontainers.image.title="beidou-pilot-gui" \
       beidou.backend=beidou
 ENV LANG=zh_CN.UTF-8 DISPLAY=:97 WINEPREFIX=/work/runtime/prefix WINEARCH=win32 \
     CLIENT_ROOT=/work MAPLE_BACKEND=beidou MAPLE_RESOURCES_CONFIG=/work/config/resources.json \
+    LD_LIBRARY_PATH=/opt/beidou-pilot/lib \
     PYTHONPATH=/opt/beidou-pilot/cli PYTHONDONTWRITEBYTECODE=1
 WORKDIR /work
 STOPSIGNAL SIGTERM

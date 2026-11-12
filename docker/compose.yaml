@@ -57,7 +57,7 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: ${HEADLESS_RESOURCES_DIR:?需要同源 NX 资源目录}
+        source: ${GAME_DATA_DIR:?需要原版 Data/IMG 目录}
         target: /data
         read_only: true
         bind:
@@ -65,12 +65,6 @@ services:
       - type: bind
         source: ${WORKBENCH_ROOT:?需要工作台绝对路径}
         target: /work
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${METADATA_ROOT:?需要静态资料目录或本次实例的空目录}
-        target: /metadata
-        read_only: true
         bind:
           create_host_path: false
 

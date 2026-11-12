@@ -86,7 +86,7 @@ private/workbenches/workbench /external/workbench close
 | --- | --- |
 | `build` | 构建或复用所选版本镜像 |
 | `plan` | 只读核对授权目标，不构建或启动 |
-| `resources-check` | 用headless镜像离线检查公共NX，无需账号或服务器，不启动或切换现存实例 |
+| `resources-check` | 用headless镜像离线解析配置的只读原版 Data/IMG，无需账号或服务器，不启动或切换现存实例 |
 | `status` | 报告未运行实例；运行时由容器CLI读取实时阶段与版本 |
 | `doctor` | 在已有容器内检查资源和读取能力 |
 | `instances` | 返回当前容器实例身份与版本 |
@@ -121,7 +121,7 @@ private/workbenches/workbench /external/workbench ai \
 private/workbenches/workbench /external/workbench resources-check
 ```
 
-该命令固定选择headless镜像，读取公共资源配置并只读检查NX，不读取账号、不连接游戏服务器，也不创建或切换已有客户端。GUI工作目录也可使用，无需修改其后端设置。
+该命令固定选择headless镜像，读取公共资源配置并只读解析原版 Data/IMG，不读取账号、不连接游戏服务器，也不创建或切换已有客户端。GUI工作目录也可使用，无需修改其后端设置。
 
 ## 客户端事件
 
@@ -234,7 +234,7 @@ private/workbenches/workbench /external/workbench task result REQUEST_ID
 
 请求发布前，例如等待 `task.lock` 时，Ctrl+C/SIGTERM返回通用 `interrupted` 和退出码130，此时没有已发布的 `request_id`；等待管理锁超时返回 `task_management_busy`。请求发布后，等待结果超时返回 `task_result_unconfirmed`，Ctrl+C/SIGTERM返回 `task_request_interrupted` 和退出码130，这两种结果都保留已发布的 `request_id`。管理等待失败不停止整会话，也不自动重放请求；已发布的请求可用 `task result` 查询最终结果，再决定后续操作。查询结果属于响应中记录的历史实例和会话，不代表当前角色效果。
 
-移动和战斗参数只对当前场景有效。地形与恢复属性优先使用已配置 XML，缺少对应 XML 时使用同源 NX；资料缺失或未支持时明确拒绝。基础 `fight` 保留同层预算与撤退行为；`hunt` 根据当前位置在本场景连续寻找可达目标，允许正常换平台和空中攻击，地图或场景代次变化则停止。两者均保留成长节点限制。
+移动和战斗参数只对当前场景有效。地形与恢复属性通过配置的只读原版 `Data/**/*.img` 和共享原生解析器读取；资料缺失或未支持时明确拒绝。基础 `fight` 保留同层预算与撤退行为；`hunt` 根据当前位置在本场景连续寻找可达目标，允许正常换平台和空中攻击，地图或场景代次变化则停止。两者均保留成长节点限制。
 
 ```bash
 private/workbenches/workbench /external/workbench hunt all --seconds 60
@@ -267,9 +267,9 @@ private/workbenches/workbench /external/workbench script run --library island-su
 
 已知近距 `pt7` 脚本门户由原生 Up 输入走正常脚本门户请求，静态目标未知时保留未知，到达以在线地图和位置确认。它不补齐通用路线规划或缺失的静态查询资料。
 
-无头 `use` 接受数字ID的200类药品和201类食品。两端普通200类药品均走Lua原生用药，不要求快捷键绑定；按次数使用可不依赖XML，带HP/MP目标时需要资料已知恢复类型。
+无头 `use` 接受数字ID的200类药品和201类食品。两端普通200类药品均走Lua原生用药，不要求快捷键绑定；按次数使用可不依赖静态恢复资料，带HP/MP目标时需要资料已知恢复类型。
 
-无头201类食品不带HP/MP目标时为明确单次消费，仅接受 `--count 1`（默认值），满HP/MP仍会提交一次。它不依赖可选XML；结果 `effect="consumption"`、`effect_confirmed=true` 只表示库存已恰减一。前后HP/MP分别保留，观察到增长时 `recovery_confirmed=true`，否则为 `null`，不能把满血消费说成恢复成功。`healing_metadata_known` 与 `metadata_unavailable` 说明静态恢复资料的已知范围。带HP/MP目标时沿用有界恢复流程，仍需资料已知恢复类型。
+无头201类食品不带HP/MP目标时为明确单次消费，仅接受 `--count 1`（默认值），满HP/MP仍会提交一次。该路径不依赖静态恢复资料；结果 `effect="consumption"`、`effect_confirmed=true` 只表示库存已恰减一。前后HP/MP分别保留，观察到增长时 `recovery_confirmed=true`，否则为 `null`，不能把满血消费说成恢复成功。`healing_metadata_known` 与 `metadata_unavailable` 说明静态恢复资料的已知范围。带HP/MP目标时沿用有界恢复流程，仍需资料已知恢复类型。
 
 `use_item ID` 及 `game.use_item(ID)` 只报告单次原生派发，食品消耗和恢复须由后续观察确认。GUI其他已支持恢复品保留背包工作流；203类传送卷仅支持GUI单次使用，不接受HP/MP目标。
 
@@ -294,13 +294,13 @@ private/workbenches/workbench /external/workbench click CONTROL_REF
 
 页面只有 `source/title/text/controls`，控件只有 `role/text/enabled/ref`。正文或控件未知时为 `null`，`enabled=null` 不改成 `false`。引用由原生单点生产和验证；CLI不解析引用、不按控件角色拼协议参数，也不自动重新选择或重放失效引用。`--double` 与坐标点击仍仅GUI可用。
 
-激活只报告控件处理或页面变化，不能当作任务完成、奖励或消费到账；随后用当前交互页、`inspect quests`、背包及角色核对。服务端普通脚本页和客户端本地任务页使用同一入口。本地页只显示当前状态能证明的任务条目，先读取真实资料详情，再激活确认控件；无法确认的资格不产生可用确认。缺少 `Quest.nx` 只影响本地任务界面；不根据任务ID制造菜单，不增加直接接交的内容命令。
+激活只报告控件处理或页面变化，不能当作任务完成、奖励或消费到账；随后用当前交互页、`inspect quests`、背包及角色核对。服务端普通脚本页和客户端本地任务页使用同一入口。本地页只显示当前状态能证明的任务条目，先读取真实资料详情，再激活确认控件；无法确认的资格不产生可用确认。缺少原版 Quest IMG 只影响本地任务界面；不根据任务ID制造菜单，不增加直接接交的内容命令。
 
 任务观察已合并完整角色包与本端正常增量，`live_updates=true`，`live_update_kinds` 为 `not_started/started/completed`。原生观察保留原始进度串，关联语义未核实，`linked_progress=null`；不靠重登刷新代替持续观察。
 
 ## 原版 GUI
 
-GUI 镜像包含与无头端相同的CLI与Lua，以及Wine/VirtualGL和匹配的桥DLL。其资源路径仍从公共 `private/workbenches/resources.json` 读取，原版 `/client` 与NX `/data` 不迁移或改格式。工作目录的 `workbench.json` 设置 `backend="beidou"` 后，使用相同入口：
+GUI 镜像包含与无头端相同的CLI与Lua，以及Wine/VirtualGL和匹配的桥DLL。其资源路径仍从公共 `private/workbenches/resources.json` 读取；原版客户端只读挂到 `/client`，`game_data` 指向的 `Data/` 只读挂到 `/data`，供 Catalog 使用共享原生解析器。工作目录的 `workbench.json` 设置 `backend="beidou"` 后，使用相同入口：
 
 ```bash
 private/workbenches/workbench /external/gui-workbench build

@@ -17,9 +17,12 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include "nxfwd.hpp"
+#include "node.hpp"
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace nl {
     struct _file_data;
@@ -46,6 +49,9 @@ namespace nl {
         file & operator=(file &&);
         //Opens the file with the given name
         void open(std::string name);
+        //Owns a stable in-memory node and string view without creating an NX file.
+        void open_nodes(std::vector<node::data>&& nodes, std::vector<std::string_view>&& strings,
+                       std::shared_ptr<void> owner);
         //Closes the given file
         //Any nodes derived from this file become invalid after closing it
         //Any attempts to use invalid nodes will result in undefined behavior

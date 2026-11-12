@@ -7,7 +7,6 @@
 
 #include <array>
 #include <cstdint>
-#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -30,8 +29,7 @@ public:
     using Sender = std::function<bool(const QuestRequest&, std::string&)>;
     using DialogOpener = std::function<bool(std::uint32_t, std::int32_t, std::string&)>;
 
-    QuestInteraction(Interaction& interaction, Sender sender, DialogOpener opener,
-                     std::filesystem::path resource = "Quest.nx");
+    QuestInteraction(Interaction& interaction, Sender sender, DialogOpener opener);
     ~QuestInteraction();
 
     // Native state and quest objects remain alive while this provider owns a page.
@@ -87,7 +85,6 @@ private:
     Interaction& interaction;
     Sender sender;
     DialogOpener dialogOpener;
-    std::filesystem::path resourcePath;
     bool resourcesLoaded = false;
     std::vector<Definition> definitions;
     const MapleControl::State* state = nullptr;

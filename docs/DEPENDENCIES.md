@@ -60,4 +60,4 @@ HTTP_PROXY=http://PROXY_HOST:PORT HTTPS_PROXY=http://PROXY_HOST:PORT \
 
 无头运行层沿用 Debian 的系统版权与公共许可目录，另保留项目及编入客户端的第三方声明；GUI 与 harness 镜像也携带项目和实际分发组件的适用许可。运行镜像不通过反查 dpkg 归属再复制一套系统许可。
 
-北斗原始客户端、7z、EXE/DLL、IMG/WZ、转换NX、账号和运行状态继续外部提供，不作为代码子模块引入。
+北斗原始客户端、7z、EXE/DLL、IMG/WZ、账号和运行状态继续外部提供，不作为代码子模块引入；运行时直接读取只读 IMG，不要求预生成 NX。

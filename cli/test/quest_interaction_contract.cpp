@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "QuestInteraction.h"
+#include "Util/NxFiles.h"
+
+#include <nlnx/node.hpp>
+#include <nlnx/nx.hpp>
 
 #include <algorithm>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -37,6 +42,9 @@ bool HasControl(const Interaction& model, const std::string& text) {
 
 int main(int argc, char** argv) {
     Check(argc == 2, "quest_fixture_path_required");
+    std::filesystem::current_path(argv[1]);
+    const auto resourceError = ms::NxFiles::init();
+    Check(!resourceError, "original_img_resources_did_not_initialize");
     Interaction model;
     const Interaction::Context context{"provider-contract", 1, 2};
     model.ResetContext(context);
@@ -72,7 +80,7 @@ int main(int argc, char** argv) {
             requests.push_back(request);
             return true;
         },
-        openServer, argv[1]);
+        openServer);
     std::string error;
     const auto activate = [&](const std::string& text) {
         error.clear();
@@ -194,8 +202,8 @@ int main(int argc, char** argv) {
     Check(!provider.Open(42, 777, state, quests, error) && error.empty()
               && model.CurrentPage()->source == "native_packet",
           "completed_related_quests_permanently_intercepted_server_dialogue");
-    QuestInteraction unavailable(
-        model, [&](const QuestRequest&, std::string&) { return false; }, openServer, std::string(argv[1]) + ".missing");
+    nl::nx::Quest = {};
+    QuestInteraction unavailable(model, [&](const QuestRequest&, std::string&) { return false; }, openServer);
     Check(!unavailable.Open(42, 777, state, quests, error) && !error.empty()
               && model.CurrentPage()->source == "native_packet",
           "missing_optional_quest_resource_blocked_another_provider");

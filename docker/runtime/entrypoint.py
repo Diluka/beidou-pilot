@@ -59,8 +59,7 @@ def main() -> None:
         manifest.unlink(missing_ok=True)
         manifest.symlink_to("/opt/beidou-pilot/native/manifest.json")
     resources = {
-        "metadata_root": "/metadata",
-        "headless_resources": "/data",
+        "game_data": "/data",
         "gui_client": "/client",
         "gui_dll": "/opt/beidou-pilot/native/ijl15.dll",
     }

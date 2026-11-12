@@ -45,6 +45,12 @@ namespace nl
 			return *files.back();
 		}
 
+		node add_file(file&& value)
+		{
+			files.emplace_back(new file(std::move(value)));
+			return *files.back();
+		}
+
 		node Base, Character, Effect, Etc, Item, Map, Map001, Map002, Map2, Mob, Mob001, Mob002, Mob2, Morph, Npc, Quest, Reactor, Skill, Skill001, Skill002, Skill003, Sound, Sound001, Sound002, Sound2, String, TamingMob, UI;
 
 		void load_all()

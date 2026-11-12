@@ -215,14 +215,15 @@ namespace nl {
         return def;
     }
     bitmap node::get_bitmap() const {
-        if (m_data && m_data->type == type::bitmap && m_file->header->bitmap_count)
-            return to_bitmap();
-        return {nullptr, 0, 0};
+        if (!m_data || m_data->type != type::bitmap) return {nullptr, 0, 0};
+        if (m_file->memory_backed)
+            return {nullptr, m_data->bitmap.width, m_data->bitmap.height};
+        return m_file->bitmap_count ? to_bitmap() : bitmap{nullptr, 0, 0};
     }
     audio node::get_audio() const {
-        if (m_data && m_data->type == type::audio && m_file->header->audio_count)
-            return to_audio();
-        return {nullptr, 0};
+        if (!m_data || m_data->type != type::audio) return {nullptr, 0};
+        if (m_file->memory_backed) return {nullptr, m_data->audio.length};
+        return m_file->audio_count ? to_audio() : audio{nullptr, 0};
     }
     bool node::get_bool() const {
         return m_data && m_data->type == type::integer && to_integer() ? true : false;
@@ -239,9 +240,7 @@ namespace nl {
     std::string node::name() const {
         if (!m_data)
             return {};
-        auto const s = reinterpret_cast<char const *>(m_file->base)
-            + m_file->string_table[m_data->name];
-        return {s + 2, *reinterpret_cast<uint16_t const *>(s)};
+        return std::string(m_file->get_string_view(m_data->name));
     }
     size_t node::size() const {
         return m_data ? m_data->num : 0u;
@@ -254,16 +253,14 @@ namespace nl {
             return {nullptr, m_file};
         auto p = m_file->node_table + m_data->children;
         auto n = m_data->num;
-        auto const b = reinterpret_cast<const char *>(m_file->base);
-        auto const t = m_file->string_table;
         for (;;) {
             if (!n)
                 return {nullptr, m_file};
             auto const n2 = static_cast<decltype(n)>(n >> 1);
             auto const p2 = p + n2;
-            auto const sl = b + t[p2->name];
-            auto const l1 = *reinterpret_cast<uint16_t const *>(sl);
-            auto const s = reinterpret_cast<uint8_t const *>(sl + 2);
+            auto const name = m_file->get_string_view(p2->name);
+            auto const l1 = static_cast<uint16_t>(name.size());
+            auto const s = reinterpret_cast<uint8_t const *>(name.data());
             auto const os = reinterpret_cast<uint8_t const *>(o);
             bool z = false;
             auto const len = l1 < l ? l1 : l;
@@ -296,9 +293,7 @@ namespace nl {
         return m_data->dreal;
     }
     std::string node::to_string() const {
-        auto const s = reinterpret_cast<char const *>(m_file->base)
-            + m_file->string_table[m_data->string];
-        return {s + 2, *reinterpret_cast<uint16_t const *>(s)};
+        return std::string(m_file->get_string_view(m_data->string));
     }
     vector2i node::to_vector() const {
         return {m_data->vector[0], m_data->vector[1]};

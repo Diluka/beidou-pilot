@@ -13,22 +13,21 @@ from beidou_pilot.binaries import verify_binaries
 from beidou_pilot.catalog import Catalog
 from beidou_pilot.errors import ClientError
 from beidou_pilot.resources import load_resources
+from test.img_fixture import write_img
 
 
 class ResourceConfigurationContract(unittest.TestCase):
-    def test_relocated_config_supplies_external_metadata_and_native_assets(self) -> None:
+    def test_relocated_config_supplies_original_img_resources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "settings").mkdir()
-            (root / "metadata/String.wz").mkdir(parents=True)
-            (root / "metadata/String.wz/Map.img.xml").write_text(
-                '<imgdir name="Map"><imgdir name="100"><string name="mapName" value="训练场"/></imgdir></imgdir>')
+            write_img(root / "Data/String/Map.img", {"100": {"mapName": "训练场"}})
             config = root / "settings/resources.json"
-            config.write_text(json.dumps({"metadata_root": "../metadata", "headless_resources": "../nx"}))
+            config.write_text(json.dumps({"game_data": "../Data"}))
             with patch.dict(os.environ, {"MAPLE_RESOURCES_CONFIG": str(config)}):
                 paths = load_resources(root / "separate-client")
                 self.assertEqual("训练场", Catalog(root / "separate-client").map_name(100))
-            self.assertEqual(root / "nx", paths.headless_resources)
+            self.assertEqual(root / "Data", paths.game_data)
             self.assertEqual(config, paths.config_file)
 
     def test_misspelled_external_resource_setting_is_reported(self) -> None:

@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "QuestInteraction.h"
 
-#include <nlnx/file.hpp>
 #include <nlnx/node.hpp>
+#include <nlnx/nx.hpp>
 
 #include <algorithm>
 #include <charconv>
 #include <initializer_list>
 #include <limits>
 #include <map>
-#include <stdexcept>
 
 namespace {
 constexpr auto Source = "client_local_quest";
@@ -41,8 +40,8 @@ bool HasOnlyFields(nl::node record, std::initializer_list<const char*> supported
 }
 }
 
-QuestInteraction::QuestInteraction(Interaction& model, Sender send, DialogOpener open, std::filesystem::path path)
-    : interaction(model), sender(std::move(send)), dialogOpener(std::move(open)), resourcePath(std::move(path)) {}
+QuestInteraction::QuestInteraction(Interaction& model, Sender send, DialogOpener open)
+    : interaction(model), sender(std::move(send)), dialogOpener(std::move(open)) {}
 
 QuestInteraction::~QuestInteraction() {
     Reset();
@@ -50,18 +49,11 @@ QuestInteraction::~QuestInteraction() {
 
 bool QuestInteraction::Load(std::string& error) {
     if (resourcesLoaded) return true;
-    nl::file file;
-    try {
-        if (!std::filesystem::is_regular_file(resourcePath)) {
-            error = "quest_resources_unavailable";
-            return false;
-        }
-        file.open(resourcePath.string());
-    } catch (const std::runtime_error& failure) {
-        error = "quest_resources_unavailable: " + std::string(failure.what());
+    const auto root = nl::nx::Quest;
+    if (!root) {
+        error = "quest_resources_unavailable";
         return false;
     }
-    const auto root = file.root();
     const auto info = root["QuestInfo.img"];
     const auto check = root["Check.img"];
     if (!info || !check) {
