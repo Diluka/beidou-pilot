@@ -38,6 +38,7 @@ struct ClientPlayer;
 using ActiveSkill = int(__thiscall*)(ClientPlayer*, int, int, int*);
 struct ClientContext;
 using UseItem = void(__thiscall*)(ClientContext*, int, int);
+using InventoryInputReady = int(__thiscall*)(ClientContext*, int, int);
 using SetNativeCursor = int(__thiscall*)(InputSystem*, int, int);
 using GetNativeCursor = int(__thiscall*)(InputSystem*, POINT*);
 
@@ -47,6 +48,7 @@ const auto dispatchInput = reinterpret_cast<InputMessage>(0x009F97B7);
 const auto inputModifiers = reinterpret_cast<InputModifiers>(0x0059B1EB);
 const auto activeSkill = reinterpret_cast<ActiveSkill>(0x00966F7A);
 const auto useItem = reinterpret_cast<UseItem>(0x00A092FB);
+const auto inventoryInputReady = reinterpret_cast<InventoryInputReady>(0x00485BF7);
 const auto setNativeCursor = reinterpret_cast<SetNativeCursor>(0x0059A887);
 const auto getNativeCursor = reinterpret_cast<GetNativeCursor>(0x0059A388);
 
@@ -334,6 +336,15 @@ BeiDouBridge::CareView CaptureCareView(const MapleControl::Action* action, bool 
             }
         }
         if (action != nullptr && action->kind == MapleControl::ActionKind::Equip) {
+            // CUIItem's button-down route (0x0081D450) queries this read-only
+            // predicate with (500, 0): request lock, live HP and native game time
+            // since the last request. A released mouse does not imply readiness.
+            const auto context = NativeObservation::Read<std::uint32_t>(0x00BE7918);
+            const auto clock = NativeObservation::Read<std::uint32_t>(0x00BE7B38);
+            if (context != 0 && clock != 0 && NativeObservation::Read<std::uint32_t>(context + 0x20B8) != 0) {
+                view.inventoryInputKnown = true;
+                view.inventoryInputReady = inventoryInputReady(reinterpret_cast<ClientContext*>(context), 500, 0) != 0;
+            }
             const auto inventory = NativeObservation::Inventory();
             const auto& errors = CareField(inventory, "unavailable");
             view.inventoryKnown = CareTrue(CareField(inventory, "checksums_valid"))

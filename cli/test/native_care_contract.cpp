@@ -33,6 +33,7 @@ CareView ViewFixture(const std::string& name = "stats") {
     view.height = 720;
     view.focusedWindow = 100;
     view.skillsKnown = view.sceneKnown = true;
+    view.inventoryInputKnown = view.inventoryInputReady = true;
     CareWindow window;
     window.address = 100;
     window.identity = "window-1";
@@ -387,6 +388,129 @@ void EquipmentContract() {
     assert(!care.CleanupPending() && !care.CanEscape(view));
 }
 
+void EquipmentReadinessContract() {
+    auto state = StateFixture();
+    auto view = ViewFixture("inventory");
+    view.windows[0].inventoryKnown = true;
+    view.windows[0].firstSlot = view.windows[0].inventoryType = 1;
+    view.inventoryKnown = true;
+    view.inventory[2] = {1040002, "shirt-bag", true, true, {-5}};
+    view.inventory[-5] = {1040002, "shirt-worn", true, true, {-5}};
+    Action equip;
+    equip.kind = ActionKind::Equip;
+    equip.sourceSlot = 2;
+    equip.destinationSlot = -5;
+    equip.durationMs = 1000;
+    equip.reference = "shirt-bag";
+    NativeCare care;
+    std::vector<NativeMouseInput::Target> inputs;
+    auto mouse = [&](const auto& target) {
+        inputs.push_back(target);
+        return true;
+    };
+    auto key = [](unsigned) {
+        assert(false);
+        return true;
+    };
+    assert(care.Begin(equip, state, view, 0));
+    care.Tick(state, view, 1, true, mouse, key);
+    assert(inputs.size() == 1 && care.DispatchEquipment(state, view, inputs.back()));
+    std::swap(view.inventory[2], view.inventory[-5]);
+    view.inventoryInputReady = false;
+    // The native request may still be locked when the exchange is observed.
+    care.Tick(state, view, 2, true, mouse, key);
+    assert(!care.Active() && care.Result().effect == "confirmed");
+
+    // A fresh, immediate inverse request waits before its first click. Mouse
+    // release from the previous action does not bypass native readiness.
+    equip.reference = "shirt-worn";
+    assert(care.Begin(equip, state, view, 2));
+    care.Tick(state, view, 3, true, mouse, key);
+    care.Tick(state, view, 499, true, mouse, key);
+    assert(care.Active() && inputs.size() == 1);
+    assert(care.Result().reason == "equipment_waiting_native_ready");
+    view.inventoryInputReady = true;
+    care.Tick(state, view, 500, true, mouse, key);
+    assert(inputs.size() == 2 && care.DispatchEquipment(state, view, inputs.back()));
+    std::swap(view.inventory[2], view.inventory[-5]);
+    care.Tick(state, view, 501, true, mouse, key);
+    assert(!care.Active() && care.Result().effect == "confirmed");
+    assert(view.inventory[2].reference == "shirt-bag");
+
+    equip.reference = "shirt-bag";
+    view.inventoryInputReady = false;
+    assert(care.Begin(equip, state, view, 600));
+    care.Tick(state, view, 601, true, mouse, key);
+    care.Cancel(state, view, 602);
+    view.inventoryInputReady = true;
+    care.Tick(state, view, 603, true, mouse, key);
+    assert(!care.Active() && care.Result().effect == "unknown" && inputs.size() == 2);
+
+    view.inventoryInputReady = false;
+    assert(care.Begin(equip, state, view, 700));
+    care.Tick(state, view, 701, true, mouse, key);
+    care.Tick(state, view, 1700, true, mouse, key);
+    assert(!care.Active() && care.Result().reason == "equipment_native_not_ready" && inputs.size() == 2);
+
+    view.inventoryInputKnown = false;
+    assert(care.Begin(equip, state, view, 1800));
+    care.Tick(state, view, 1801, true, mouse, key);
+    assert(!care.Active() && care.Result().reason == "equipment_native_readiness_unavailable" && inputs.size() == 2);
+
+    view.inventoryInputKnown = view.inventoryInputReady = true;
+    assert(care.Begin(equip, state, view, 1900));
+    care.Tick(state, view, 1901, true, mouse, key);
+    assert(inputs.size() == 3);
+    view.inventoryInputReady = false;
+    assert(!care.DispatchEquipment(state, view, inputs.back()));
+    view.inventoryInputReady = true;
+    care.Tick(state, view, 1902, true, mouse, key);
+    assert(!care.Active() && care.StopMouse() && care.Result().effect == "unknown" && inputs.size() == 3);
+
+    // Waiting cannot relax the object or scene binding.
+    view.inventoryInputReady = false;
+    assert(care.Begin(equip, state, view, 2000));
+    care.Tick(state, view, 2001, true, mouse, key);
+    view.inventory[2].reference = "replaced-shirt";
+    view.inventoryInputReady = true;
+    care.Tick(state, view, 2002, true, mouse, key);
+    assert(!care.Active() && care.Result().reason == "equipment_objects_changed" && inputs.size() == 3);
+    view.inventory[2].reference = "shirt-bag";
+    view.inventoryInputReady = false;
+    assert(care.Begin(equip, state, view, 2100));
+    care.Tick(state, view, 2101, true, mouse, key);
+    ++state.sceneGeneration;
+    care.Tick(state, view, 2102, true, mouse, key);
+    assert(!care.Active() && care.Result().reason == "care_context_changed" && inputs.size() == 3);
+
+    // Readiness can disappear after the first down. The second down is then
+    // suppressed, while the actual mouse-up obligation still reaches release.
+    state = StateFixture();
+    view.inventoryInputReady = true;
+    NativeMouseInput pulse;
+    std::vector<unsigned> messages;
+    std::uint64_t updates = 0;
+    assert(care.Begin(equip, state, view, 2200));
+    care.Tick(state, view, 2201, true, [&](const auto& target) { return pulse.Request(target, 2201); }, key);
+    for (unsigned now = 2201; now < 2600 && !pulse.Released(); now += 25) {
+        ++updates;
+        pulse.Flush(
+            now,
+            [&](NativeMouseInput::Event event, const auto& target, auto) {
+                if ((event == NativeMouseInput::Event::Down || event == NativeMouseInput::Event::DoubleDown)
+                    && !care.DispatchEquipment(state, view, target))
+                    return false;
+                messages.push_back(NativeMouseInput::Message(event));
+                if (event == NativeMouseInput::Event::Down) view.inventoryInputReady = false;
+                return true;
+            },
+            [&]() { return updates; });
+        pulse.ConfirmRelease(77, updates, false);
+    }
+    assert((messages == std::vector<unsigned>{0x200, 0x201, 0x202, 0x202}));
+    assert(!care.Active() && pulse.Released() && !pulse.Held());
+}
+
 void WindowContract() {
     auto state = StateFixture();
     auto view = ViewFixture();
@@ -452,5 +576,6 @@ int main() {
     CareContract();
     CancelObservedPoint();
     EquipmentContract();
+    EquipmentReadinessContract();
     WindowContract();
 }

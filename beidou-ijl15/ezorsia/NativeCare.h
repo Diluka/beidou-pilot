@@ -65,6 +65,7 @@ struct CareView {
     unsigned skillLevel = 0;
     unsigned skillMaximum = 0;
     bool inventoryKnown = false;
+    bool inventoryInputKnown = false, inventoryInputReady = false;
     std::map<int, CareEquipment> inventory;
 };
 
@@ -94,6 +95,7 @@ public:
         sourceEquipment = destinationEquipment = CareEquipment{};
         equipmentBaselineKnown = false;
         equipmentQueued = equipmentInputStarted = mouseStopRequested = escapeSent = false;
+        equipmentWaitingReady = false;
         cleanupSettled = true;
         ownedDrag = 0;
         toggleSent = focusSent = false;
@@ -197,7 +199,8 @@ public:
             return;
         }
         if (now >= deadline) {
-            Cancel(state, view, now, "care_window_not_confirmed");
+            Cancel(state, view, now,
+                   equipmentWaitingReady ? "equipment_native_not_ready" : "care_window_not_confirmed");
             return;
         }
         if (windowName == "game") {
@@ -384,6 +387,13 @@ public:
         if (!active || !equipmentStarted || !equipmentQueued || !ContextMatches(state, view) || !view.known
             || view.blocked || !EquipmentFactsKnown(view) || !EquipmentUnchanged(view))
             return false;
+        // Recheck after queuing, before either down. Once queued, failure ends
+        // this attempt; it must never turn into another uncertain double-click.
+        if (!view.inventoryInputKnown || !view.inventoryInputReady) {
+            Stop(view.inventoryInputKnown ? "equipment_native_not_ready" : "equipment_native_readiness_unavailable");
+            mouseStopRequested = true;
+            return false;
+        }
         for (const auto& window : view.windows)
             if (window.address == windowAddress && window.identity == windowIdentity) {
                 const int index = action.sourceSlot - window.firstSlot;
@@ -527,6 +537,15 @@ private:
     template <class Mouse> void EquipmentInput(const CareView& view, const CareWindow& window, const Mouse& mouse) {
         if (!EquipmentFactsKnown(view) || !EquipmentUnchanged(view)) {
             Stop("equipment_objects_changed");
+            return;
+        }
+        if (!view.inventoryInputKnown) {
+            Stop("equipment_native_readiness_unavailable");
+            return;
+        }
+        equipmentWaitingReady = !view.inventoryInputReady;
+        if (equipmentWaitingReady) {
+            result.reason = "equipment_waiting_native_ready";
             return;
         }
         if (!window.inventoryKnown || window.expanded) {
@@ -769,6 +788,7 @@ private:
     MapleControl::ActionResult result;
     MapleControl::Allocation allocation;
     CareEquipment sourceEquipment, destinationEquipment;
+    bool equipmentWaitingReady = false;
     std::uint32_t character = 0, nativeUser = 0, windowAddress = 0, activation = 0, job = 0;
     std::uint64_t generation = 0, deadline = 0, pointDeadline = 0;
     std::string windowName, windowIdentity;
