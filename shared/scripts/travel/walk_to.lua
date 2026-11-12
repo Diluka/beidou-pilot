@@ -228,9 +228,36 @@ local function main(context)
         if edge.kind == "walk" then
             move_toward_x(edge.destination_x, 6)
         elseif edge.kind == "step" then
+            -- 相邻高差在客户端里是一串窄台，需要走到边缘后反复起跳，逐级落地。
             if math.abs(state().position.x - edge.x) > 10 then move_toward_x(edge.x, 8) end
-            travel_action(game.jump(), fail)
-            game.sleep(0.05)
+            local target_y = height(platforms[edge.to], edge.destination_x)
+            for jump_index = 1, 12 do
+                local s = state()
+                if s.position.y <= target_y + 6 then break end
+                if jump_index == 12 then fail("step_climb_limit") end
+                travel_action(game.jump(), fail)
+                -- 等到真正落地（连续两次高度不变）再判断是否上去了。
+                local stable, previous = 0, nil
+                local until_at = math.min(deadline, game.time() + 1.2)
+                while game.time() < until_at do
+                    local y = state().position.y
+                    if previous and math.abs(y - previous) < 0.5 then
+                        stable = stable + 1
+                        if stable >= 2 then break end
+                    else
+                        stable = 0
+                    end
+                    previous = y
+                    game.sleep(0.05)
+                end
+                local landed = state()
+                if landed.position.y > s.position.y - 6 then
+                    -- 没有升高：换个横向位置再试，窄台通常只在几像素范围内接得住。
+                    travel_action(game.move(jump_index % 2 == 0 and "right" or "left", 0.12), fail)
+                    game.sleep(0.1)
+                    travel_action(game.stop(), fail)
+                end
+            end
             move_toward_x(edge.destination_x, 6)
         elseif edge.kind == "jumpup" then
             local s = state()
@@ -272,12 +299,21 @@ local function main(context)
             local upward = height(platforms[edge.from], rope.x) > height(platforms[edge.to], rope.x)
             local stop_y = upward and (rope.y1 + 2) or (rope.y2 - 2)
             for _ = 1, 2 do
+                -- 绳轴对齐需要小幅脉冲反复收敛，单次移动会因惯性越过绳索。
+                local align_until = math.min(deadline, game.time() + 5)
+                while game.time() < align_until do
+                    local s = state()
+                    local dx = rope.x - s.position.x
+                    if math.abs(dx) <= 3 then break end
+                    travel_action(game.move(dx > 0 and "right" or "left", 0.03), fail)
+                end
+                travel_action(game.stop(), fail)
+                game.sleep(0.2)
                 local s = state()
-                local dx = rope.x - s.position.x
-                if math.abs(dx) > 2 then
-                    travel_action(
-                        game.move(dx > 0 and "right" or "left", math.min(0.12, math.max(0.02, math.abs(dx) / 150))), fail)
-                    game.sleep(0.05)
+                if math.abs(s.position.x - rope.x) > 3 then
+                    local dx = rope.x - s.position.x
+                    travel_action(game.move(dx > 0 and "right" or "left", 0.03), fail)
+                    game.sleep(0.1)
                     s = state()
                 end
                 local hold = math.max(0.3, math.min(9, math.abs(stop_y - s.position.y) / 90 + 1.5))
