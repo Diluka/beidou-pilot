@@ -494,6 +494,30 @@ API 参数无效、后端能力缺失、原生状态或输入路线不可用时�
 - 每项任务大约每50000条Lua VM指令让出一次，其他可运行任务与游戏更新继续。若在不能让出的原生调用中耗尽指令预算，会报错；不要依赖自动预算代替正常控制循环中的 `sleep`。
 - 这不提供任意原生C函数的CPU或内存隔离，脚本必须受信。使用 `game.time()`计算期限，`observed_at_ms`是Unix采样时间，二者不可相减。
 
+## 策略文件入口与运行上下文
+
+策略文件可在顶层声明固定 `main(context)` 入口。`script run/start FILE` 检查策略注释，在原生 Runtime 内先核对调用时的地图和场景代次，再调用入口；顶层代码用于声明策略和函数，不应开始控制。入口只接收一个上下文表，基础状态和动作仍使用本文件前述的 `game.state()`、`game.observe()` 与动作 API。
+
+运行参数用紧邻策略源码的 `@option` 注释声明。支持 `int`、`number`、`string`、`boolean` 四种类型；未标 `opt`、也没有 `default` 的参数必填。可选修饰符为 `default=值`、数值型 `min=值` / `max=值` 和 `choices=值1|值2`。默认值使参数成为可选项，默认值和输入值都按声明校验。
+
+```lua
+--- 按目标怪物 ID 观察当前场景。
+-- @option[type=int,min=1] mob_id 目标怪物模板 ID
+-- @option[type=int,opt,default=1001005] skill_id 可选技能 ID
+local function main(context)
+    local map_id = context.scene.map_id
+    game.log("map=" .. tostring(map_id) .. ", mob=" .. tostring(context.options.mob_id))
+end
+```
+
+CLI 参数名把 Lua 下划线转为连字符，例如 `mob_id` 使用 `--mob-id 1001001`。布尔选项可用裸 `--flag` 与 `--no-flag` 分别传入 `true`、`false`，也可显式写成 `--flag true|false`。`context.options` 仅包含实际提供的值和声明的默认值；未提供且无默认值的可选项为 `nil`。`script describe FILE` 根据注释输出每项参数的类型、必填状态、默认值、范围、候选值和调用用法。
+
+`context.scene` 绑定 CLI 装载前观察到的当前地图。它包含 `map_id`、`scene_generation` 与 `terrain`：地形可用时，`terrain.status` 为 `available`，并提供来源路径 `source`、`footholds` 和 `ropes`；数据不可用或当前地图只引用另一张地图时，状态分别为 `unavailable` 或 `unsupported`，并提供错误代码、说明和来源详情，不提供空地形或借用地图的坐标。策略需要静态地形时，应先检查 `terrain.status`。
+
+策略入口调用前会重新读取 `game.state()`；若角色尚未就绪、地图变化或场景代次变化，脚本以 `strategy_scene_context_stale` 结束，策略主体不会运行。静态数据读取或验证失败时，CLI 在发布脚本前报告错误。该上下文不会替代 `game.state()` / `game.observe()` 返回的动态事实。
+
+没有顶层 `main(context)` 声明的 Lua 文件仍按原始 chunk 执行。`--code` 始终保留原始源码语义，不解析策略注释或注入入口上下文。
+
 ## Lua 环境
 
 开放基础库及 `table/string/math/utf8`。可正常使用函数、表、条件、循环、`assert/error`等Lua语法和这些库。

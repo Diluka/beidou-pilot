@@ -16,6 +16,7 @@ from .catalog import Catalog
 from . import dialogs
 from .rules import FIRST_JOB_LEVELS, advancement, combat_stop_level
 from .snapshot import collect, format_snapshot
+from .strategies import compile_strategy, describe_strategy, parse_options, read_strategy_file
 from . import __version__
 
 
@@ -42,8 +43,8 @@ def parser() -> Parser:
     p.add_argument("--version", action="version", version="beidou-pilot " + __version__)
     sub = p.add_subparsers(dest="command", required=True, parser_class=Parser)
 
-    def command(name: str, help_text: str) -> argparse.ArgumentParser:
-        return sub.add_parser(name, help=help_text, parents=[common])
+    def command(name: str, help_text: str, *, allow_abbrev: bool = True) -> argparse.ArgumentParser:
+        return sub.add_parser(name, help=help_text, parents=[common], allow_abbrev=allow_abbrev)
 
     command("status", "当前客户端阶段与角色，不启动、不输入")
     command("instances", "列出本目录已登记的无头实例，不启动客户端")
@@ -51,8 +52,8 @@ def parser() -> Parser:
     command("doctor", "检查本地运行条件与读取能力，不启动客户端")
     q = command("bridge", "读取原生桥状态，或停止桥持有的按键")
     q.add_argument("action", choices=["status", "stop"], nargs="?", default="status")
-    q = command("script", "在客户端内运行Lua控制脚本，或只读当前脚本状态")
-    q.add_argument("action", choices=["run", "start", "status", "cancel"])
+    q = command("script", "在客户端内运行Lua控制脚本，或只读当前脚本状态", allow_abbrev=False)
+    q.add_argument("action", choices=["run", "start", "status", "cancel", "describe"])
     q.add_argument("--session", help="cancel必须指定当前script.id，只取消匹配脚本")
     q.add_argument("--library", choices=["travel", "island-supply"], help="为run/start显式装载公共Lua函数")
     source = q.add_mutually_exclusive_group()
@@ -443,20 +444,31 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
 
         return skill(backend, args.id)
     if cmd == "script":
-        from .bridge import BridgeClient
-
-        bridge = BridgeClient(backend.root, backend.name, backend.instance)
         if args.library is not None and args.action not in {"run", "start"}:
             raise ClientError("usage", "--library仅用于script run/start。")
         if args.action == "cancel":
             if args.session is None or args.file is not None or args.code is not None:
                 raise ClientError("usage", "script cancel需要--session，不接收Lua文件或源码。")
+            from .bridge import BridgeClient
+
+            bridge = BridgeClient(backend.root, backend.name, backend.instance)
             return bridge.cancel_script(args.session)
         if args.session is not None:
             raise ClientError("usage", "--session仅用于script cancel。")
+        if args.action == "describe":
+            if args.file is None or args.code is not None or args.library is not None:
+                raise ClientError("usage", "script describe需要一个已声明main(context)的Lua文件。")
+            if args.strategy_metadata is None:
+                raise ClientError(
+                    "strategy_metadata_missing", "Lua文件未声明main(context)策略入口。", {"path": str(args.file)}
+                )
+            return describe_strategy(args.file, args.strategy_metadata)
         if args.action == "status":
             if args.file is not None or args.code is not None:
                 raise ClientError("usage", "script status不接收脚本文件或源码。")
+            from .bridge import BridgeClient
+
+            bridge = BridgeClient(backend.root, backend.name, backend.instance)
             state = bridge.snapshot()
             return {
                 "source": "client-native-bridge",
@@ -469,18 +481,43 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             }
         if args.file is None and args.code is None:
             raise ClientError("usage", "script run/start需要UTF-8本地Lua文件或--code源码。")
-        consumer_file = args.file
-        if args.library is not None:
-            from .script_libraries import with_library
+        from .bridge import BridgeClient
 
-            args.code = with_library(args.library, args.file, args.code)
-            args.file = None
-        if args.action == "start":
+        bridge = BridgeClient(backend.root, backend.name, backend.instance)
+        consumer_file = args.file
+        if args.strategy_metadata is not None:
+            from .strategy_scene import scene_context
+
+            scene = scene_context(backend.root, bridge.snapshot())
+            source = cast(str, args.strategy_source)
+            if args.library is not None:
+                from .script_libraries import with_library
+
+                source = with_library(args.library, None, source)
+            code = compile_strategy(source, args.strategy_options, scene)
             report = bridge.run_script(
-                args.file, seconds=None if args.continuous else args.seconds, code=args.code, wait_for_start=True
+                None,
+                seconds=None if args.continuous else args.seconds,
+                code=code,
+                wait_for_start=args.action == "start",
             )
+            report = {**report, "script_file": str(consumer_file), "policy_entry": "main(context)"}
         else:
-            report = bridge.run_script(args.file, seconds=None if args.continuous else args.seconds, code=args.code)
+            code = args.code
+            if args.file is not None:
+                code = cast(str, args.strategy_source)
+            if args.library is not None:
+                from .script_libraries import with_library
+
+                code = with_library(args.library, None, code)
+            report = bridge.run_script(
+                None,
+                seconds=None if args.continuous else args.seconds,
+                code=code,
+                wait_for_start=args.action == "start",
+            )
+            if consumer_file is not None:
+                report = {**report, "script_file": str(consumer_file)}
         if args.library is not None:
             return {**report, "library": args.library, "consumer_file": str(consumer_file) if consumer_file else None}
         return report
@@ -896,7 +933,43 @@ def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     json_output = "--json" in arguments
     try:
-        args = parser().parse_args(arguments)
+        args, unrecognized = parser().parse_known_args(arguments)
+        args.strategy_metadata = None
+        args.strategy_source = None
+        args.strategy_options = {}
+        if args.command == "script" and args.action in {"run", "start", "describe"} and args.file is not None:
+            args.strategy_source, args.strategy_metadata = read_strategy_file(args.file)
+            if args.strategy_metadata is not None and args.action in {"run", "start"}:
+                args.strategy_options = parse_options(args.strategy_metadata, unrecognized)
+                unrecognized = []
+            elif args.action == "describe" and args.strategy_metadata is None:
+                raise ClientError(
+                    "strategy_metadata_missing", "Lua文件未声明main(context)策略入口。", {"path": str(args.file)}
+                )
+            elif unrecognized:
+                raise ClientError("usage", "该Lua文件未声明动态策略参数：" + " ".join(unrecognized))
+        if args.command == "script" and args.action == "describe" and args.file is None:
+            raise ClientError("usage", "script describe需要一个Lua策略文件。")
+        if unrecognized:
+            raise ClientError("usage", "unrecognized arguments: " + " ".join(unrecognized))
+        if args.command == "script" and args.action == "describe":
+            if args.library is not None or args.session is not None or args.continuous or args.seconds != 30:
+                raise ClientError("usage", "script describe只接收策略文件和通用选择选项。")
+            data = describe_strategy(cast(Path, args.file), args.strategy_metadata)
+            print(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "command": "script",
+                        "backend": getattr(args, "backend", os.environ.get("MAPLE_BACKEND", "beidou")),
+                        "instance": getattr(args, "instance", os.environ.get("MAPLE_INSTANCE", "default")),
+                        "data": data,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+            return 0
         backend = Backend(
             getattr(args, "root", Path(os.environ.get("CLIENT_ROOT", "/work"))),
             getattr(args, "backend", os.environ.get("MAPLE_BACKEND", "beidou")),
@@ -918,7 +991,7 @@ def main(argv: list[str] | None = None) -> int:
                 "hotkeys",
             )
             or (args.command == "bridge" and args.action == "status")
-            or (args.command == "script" and args.action == "status")
+            or (args.command == "script" and args.action in {"status", "describe"})
             or (args.command == "notifications" and args.action == "read")
             or (args.command == "dialog" and args.action == "read")
             or (args.command == "ui" and args.action == "read")

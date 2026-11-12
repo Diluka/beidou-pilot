@@ -4,6 +4,8 @@
 
 用户策略使用 `script run FILE --seconds N` 或 `script run --code CODE --seconds N`，文件和源码二选一，需要持续运行时明确 `--continuous`。两种输入复用同一装载、身份核对、错误、取消与放键链，可在现有实例中执行，无需重启客户端。基础动作直接调用统一 `game` API；复合能力装载 `shared/scripts/` 的 Lua 文件，调用方传入业务参数，Python只处理参数、装载、显式取消与结果。
 
+带顶层 `main(context)` 的文件声明策略入口；`script run/start FILE` 从 Lua 注释读取选项合同、校验动态 CLI 参数，并由 CLI 注入本次地图与可用的静态地形后调用入口。`script describe FILE` 输出该文件的动态参数用法。无入口的文件继续作为原始 chunk 执行，`--code` 不启用策略元数据处理。策略入口继续走同一原生 Runtime 生命周期，start 受理、状态查询与显式取消合同不变。
+
 ```bash
 private/workbenches/workbench /external/workbench script run --code 'game.log("你好，Lua")' --seconds 20
 private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
