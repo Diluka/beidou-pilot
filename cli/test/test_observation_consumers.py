@@ -149,6 +149,25 @@ class SnapshotConsumerContract(unittest.TestCase):
         self.assertFalse(full["monsters"][0]["visible"])
         self.assertIn("画外", format_snapshot(full))
 
+    def test_beginner_snapshot_lists_candidates_without_inventing_a_route(self) -> None:
+        self.domains["dialog"] = {"camera_viewport": None, "dialog_open": False, "npc_id": None,
+                                  "dialog_type": None, "lines": [], "choices": [], "buttons": []}
+        for backend in ("headless", "beidou"):
+            for level in (7, 8, 10):
+                with self.subTest(backend=backend, level=level):
+                    self.backend.name = backend
+                    self.domains["observe"]["character"].update(job=0, level=level)
+                    report = collect(self.backend)
+                    milestone = report["advancement"]
+                    self.assertIsNone(milestone["level"])
+                    self.assertIsNone(milestone["due"])
+                    self.assertEqual({"magician": 8, "warrior": 10, "bowman": 10, "thief": 10, "pirate": 10},
+                                     {c["first_job"]: c["level"] for c in milestone["candidates"]})
+                    text = format_snapshot(report)
+                    self.assertIn("首转路线未知", text)
+                    self.assertIn("魔法师8级", text)
+                    self.assertIn("fight/hunt", text)
+
 
 if __name__ == "__main__":
     unittest.main()

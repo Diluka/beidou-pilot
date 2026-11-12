@@ -226,6 +226,17 @@ private/workbenches/workbench /external/workbench hunt all --skill 1001004 --ran
 
 `hunt` 默认普攻、全部怪物、60秒，`--bounds MIN MAX` 可限定横向区域，`--until-level` 指定停级，`--min-hp-ratio` 默认0.35。`--hp-item` 仅使用明确指定、库存已知的恢复品，不购买或替换药品。技能必须已学且当前后端支持；无头首批仅支持战士 `1001004/1001005`，其他类型明确拒绝。攻击距离是策略接近参数，不保证命中。无可确认的进展、无法通过的地形、生命下限或取消都有明确停止；原始日志保留所属实例，最终经验跨级时不直接相减。
 
+`fight`、`hunt` 均接受 `--first-job magician|warrior|bowman|thief|pirate`，只为本次新手练级明确首转路线：魔法师默认停8级，战士、弓箭手、飞侠、海盗默认停10级。`--until-level` 可以更早停止；高于明确转职节点时仍停在该节点，例如 `--first-job magician --until-level 10` 实际停8级。达到或超过已知节点后返回 `advancement_due`，不再装载战斗脚本。已转职角色依据当前职业沿用30/70/120级节点，`--first-job`不覆盖它们。
+
+```bash
+private/workbenches/workbench /external/workbench hunt all --first-job magician --seconds 60
+private/workbenches/workbench /external/workbench fight 100100 --first-job warrior --bounds -200 200
+```
+
+新手路线未知时，两端 `status`/`snapshot` 的 `advancement.level`、`due` 为 `null`，`candidates` 列出各路线节点，不保存或推断前次命令的选择。没有路线也没有 `--until-level` 时，`fight`/`hunt` 先停在8级检查点；到达后再次默认调用返回 `advancement_route_required`，要求明确路线或本次目标。检查点不代表角色已选魔法师。未知路线下显式给出的 `--until-level` 按调用方目标执行，包括10级；调用方须按养成计划选择边界。
+
+两入口结果的 `requested_level` 是实际装载的停级，`advancement` 保留当前节点或未知候选，`stop_level_source` 区分 `advancement`、`first_job_checkpoint`、`until_level`。无适用节点且未明确停级时，`fight` 仍以下一级为目标（`next_level`），`hunt` 不附加等级上限（`none`）。停级在Lua观察到等级达到或超过边界时生效；这些提示不表示满足转职全部条件，命令不会自动转职或加点。
+
 已知路线可在一个有界 Lua 内复用，接口与适用起点见 [Lua 旅行函数库](LUA_API.md#可选旅行函数库)。例如从50000东上层行进至相邻安全城镇：
 
 ```bash

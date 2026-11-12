@@ -14,7 +14,7 @@ from typing import Iterator, cast
 from .backend import Backend, ClientError, JsonObject
 from .catalog import Catalog
 from . import dialogs
-from .rules import advancement
+from .rules import FIRST_JOB_LEVELS, advancement, combat_stop_level
 from .snapshot import collect, format_snapshot
 from . import __version__
 
@@ -185,6 +185,7 @@ def parser() -> Parser:
     q.add_argument("mob", help="当前地图怪物名或模板ID")
     q.add_argument("--seconds", type=float, default=60)
     q.add_argument("--until-level", type=int)
+    q.add_argument("--first-job", choices=FIRST_JOB_LEVELS, help="本次新手练级的首转路线；magician停8级，其余停10级")
     q.add_argument("--floor-y", type=int)
     q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"))
     q.add_argument("--retreat-x", type=int)
@@ -198,6 +199,7 @@ def parser() -> Parser:
     duration.add_argument("--continuous", action="store_true", help="持续到明确取消或安全停止；Ctrl+C只结束等待")
     q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"), help="限定本场景横向狩猎范围")
     q.add_argument("--until-level", type=int, help="到达指定等级停止；仍受当前转职节点限制")
+    q.add_argument("--first-job", choices=FIRST_JOB_LEVELS, help="本次新手练级的首转路线；magician停8级，其余停10级")
     q.add_argument("--min-hp-ratio", type=float, default=0.35, help="HP安全下限比例，默认0.35")
     q.add_argument("--hp-item", type=int, help="低HP时使用的明确回血物品ID，不自动买药")
     q = command("screenshot", "保存原图及游戏裁剪，不直接向会话加载图片")
@@ -234,7 +236,10 @@ def status(backend: Backend) -> JsonObject:
     if backend.name == "headless":
         from .headless import status as native_status
 
-        return native_status(backend.root, backend.instance)
+        result = native_status(backend.root, backend.instance)
+        if result["stage"] == "IN_GAME" and result["character"] is not None:
+            result["advancement"] = advancement(cast(JsonObject, result["character"]))
+        return result
     stage = backend.read("stage")
     result: JsonObject = {
         "stage": stage["stage"],
@@ -796,6 +801,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             attack_range=args.attack_range,
             bounds=tuple(args.bounds) if args.bounds is not None else None,
             stop_level=args.until_level,
+            first_job=args.first_job,
             min_hp_ratio=args.min_hp_ratio,
             hp_item_id=args.hp_item,
         )
@@ -827,22 +833,23 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         bounds = args.bounds or floor_bounds(catalog.map(state["map_id"]), pos["x"], y)
         if bounds is None:
             raise ClientError("floor_unknown", "请用--bounds明确本次同层战斗范围。")
-        milestone = advancement(cast(JsonObject, char))
-        if milestone and milestone["due"]:
-            raise ClientError("advancement_due", "先完成当前阶段转职，再继续战斗。", milestone)
-        stop_level = args.until_level or (cast(int, milestone["level"]) if milestone else char["level"] + 1)
-        if milestone:
-            stop_level = min(stop_level, cast(int, milestone["level"]))
-        return lua_fight(
+        stop_level, stop_level_source, milestone = combat_stop_level(
+            cast(JsonObject, char),
+            first_job=args.first_job,
+            until_level=args.until_level,
+            default_level=char["level"] + 1,
+        )
+        report = lua_fight(
             backend,
             mob_id=mob_id,
             seconds=args.seconds,
-            stop_level=stop_level,
+            stop_level=cast(int, stop_level),
             floor_y=y,
             bounds=(bounds[0], bounds[1]),
             retreat_x=args.retreat_x if args.retreat_x is not None else int(pos["x"]),
             loot=args.loot,
         )
+        return {**report, "advancement": milestone, "stop_level_source": stop_level_source}
     if cmd == "screenshot":
         name = args.name or datetime.now(timezone.utc).strftime("shot-%Y%m%dT%H%M%S-") + str(os.getpid())
         return backend.read("desktop", "screenshot", name, "--game-crop")
