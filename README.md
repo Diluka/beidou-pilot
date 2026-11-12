@@ -17,7 +17,7 @@ shared/
 third_party/                    上游依赖
 ```
 
-`private/workbenches/workbench` 是版本化的公共脚本。该目录中的账号、共享 `resources.json`、工作目录和运行数据继续被 Git 忽略；不再提供仓库根宿主脚本或各工作目录的转发脚本。容器内命令仍叫 `beidou-pilot`。
+`private/workbenches/workbench` 是版本化的公共脚本。该目录中的账号、共享 `resources.json`、工作目录和运行数据继续被 Git 忽略；宿主入口只有这一个版本化脚本，各工作目录直接调用它。容器内命令仍叫 `beidou-pilot`。
 
 ## 准备
 
@@ -28,7 +28,7 @@ git submodule update --init --recursive
 private/workbenches/workbench --help
 ```
 
-将公共资源路径配置保存在主检出目录的 `private/workbenches/resources.json`，字段示例见 [resources.example.json](cli/config/resources.example.json)。各工作目录及开发 worktree 共用这一份配置；GUI 原版客户端只读挂载到 `/client`，原版 `Data/` 同时只读挂载到 `/data`，供无头运行时和 Python 静态查询共用原生 IMG 解析器，不需要预先生成 NX、XML 或 PKG4 中间文件。
+将公共资源路径配置保存在主检出目录的 `private/workbenches/resources.json`，字段示例见 [resources.example.json](cli/config/resources.example.json)。各工作目录及开发 worktree 共用这一份配置；GUI 原版客户端只读挂载到 `/client`，原版 `Data/` 同时只读挂载到 `/data`，供无头运行时和 Python 静态查询共用原生 IMG 解析器，直接读取原版资源。
 
 常驻服务器的项目、服务和公开镜像引用由统一脚本固定，普通工作目录不维护 `server.json`。启动器继续核对实际服务器镜像。调试和实际游戏验收默认使用常驻服，优先复用已授权的已有账号、角色及就绪实例，减少主机内存占用；仅在验证场景必须时新建账号或角色。隔离服仅用于常驻服无法安全完成验证等特殊情况，需说明原因，并在 `workbench.json` 中显式选择非 `beidou-ms` 服务器；格式和边界见 [CLI](docs/CLI.md#工作目录配置)。
 
@@ -66,13 +66,13 @@ private/workbenches/workbench /external/workbench capabilities
 private/workbenches/workbench /external/workbench close
 ```
 
-只给目录时默认为只读 `status`；`--list` 列出主检出 `private/workbenches/` 下已有的工作目录，`notes` 读取指定目录的计划和交接。需要先准备镜像时使用同一入口的 `build`。离线 IMG 检查使用 `resources-check`，不登录游戏。
+只给目录时默认执行只读的 `status`；`--list` 列出主检出 `private/workbenches/` 下已有的工作目录，`notes` 读取指定目录的计划和交接。需要先准备镜像时使用同一入口的 `build`。离线 IMG 检查使用 `resources-check`，不登录游戏。
 
-新实例默认取 `main` 当时的已提交版本构建或复用镜像；后端、开发 `ref`、等待期限和可选桥工件在工作目录内配置，不通过宿主命令行覆盖。已有实例的命令继续使用其已登记容器，修改新建设置或更新 `main` 都不会更换运行中的 CLI 与内置策略。实际版本查 `status` 的 `source_revision/image/run_id`。
+新实例默认取 `main` 当时的已提交版本构建或复用镜像；后端、开发 `ref`、等待期限和可选桥工件在工作目录内配置，不通过宿主命令行覆盖。已有实例的命令继续使用其已登记容器，运行中的 CLI 与内置策略保持启动时的版本；修改新建设置或更新 `main` 后，新实例再按新版本构建。实际版本查 `status` 的 `source_revision/image/run_id`。
 
-日常命令经宿主入口转到所属容器内的 `beidou-pilot`。核对容器归属后也可只读排查：`docker exec CONTAINER beidou-pilot --json status`。脚本 CLI 中断只结束等待，已发布的原生任务继续；等待超时或观察失败也不能当作任务已停止。先读当前脚本状态，明确取消用 `script cancel --session`，核对终态和放键；`close` 另行关闭并回收所属容器。Lua 返回或取消后实例继续运行，真实断线或错误会保留退出原因。完整参数见 [CLI](docs/CLI.md)。
+日常命令经宿主入口转到所属容器内的 `beidou-pilot`。核对容器归属后也可只读排查：`docker exec CONTAINER beidou-pilot --json status`。脚本 CLI 中断只结束等待，已发布的原生任务继续；等待超时或观察失败时，任务是否停止以当前脚本状态为准。先读当前脚本状态，明确取消用 `script cancel --session`，核对终态和放键；`close` 另行关闭并回收所属容器。Lua 返回或取消后实例继续运行，真实断线或错误会保留退出原因。完整参数见 [CLI](docs/CLI.md)。
 
-需要游戏 AI 时，在 `workbench.json` 设置 `harness=true`，然后使用同一入口的 `open`、`ai`；模型 HTTP 代理 `model_proxy="http://IPv4:端口"` 按需配置。构建先准备对应客户端 base，再派生包含 Node/Codex、Python harness 和专用 CLI 技能的镜像；继承用于打包复用，客户端继续作为 PID1，LLM 独立启停。角色、认证及常驻状态均通过容器内路径提供，普通模式直接使用 CLI，只读模式关闭 shell。退出 LLM 会保留脚本，重新接入先观察已有任务；取消脚本和关闭客户端分别执行明确命令。配置、协作和跨运行续接见 [harness 用法](docs/HARNESS.md)。
+需要游戏 AI 时，在 `workbench.json` 设置 `harness=true`，然后使用同一入口的 `open`、`ai`；模型 HTTP 代理 `model_proxy="http://IPv4:端口"` 按需配置。构建先准备对应客户端 base，再派生包含 Node/Codex、Python harness 和专用 CLI 技能的镜像；继承用于打包复用，客户端继续作为 PID1，LLM 独立启停。角色、认证及常驻状态均通过容器内路径提供，普通模式直接使用 CLI，只读模式关闭 shell。退出 LLM 后脚本继续运行，重新接入时先观察已有任务；取消脚本和关闭客户端分别执行明确命令。配置、协作和跨运行续接见 [harness 用法](docs/HARNESS.md)。
 
 ## 文档与开发
 
