@@ -741,8 +741,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 return move_to_x(backend, args.x, seconds=args.seconds, tolerance=args.tolerance)
             from . import travel
 
-            return travel.walk_to(backend, args.x, args.to_y, seconds=args.seconds,
-                                  plan_only=args.plan_only, tolerance=args.tolerance)
+            return travel.walk_to(
+                backend, args.x, args.to_y, seconds=args.seconds, plan_only=args.plan_only, tolerance=args.tolerance
+            )
         from . import travel
 
         if cmd == "climb":
