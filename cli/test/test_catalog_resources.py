@@ -225,6 +225,46 @@ class CatalogResourceContract(unittest.TestCase):
         self.assertIn(str(self.data / "Npc/0002004.img"), linked["metadata_source"])
         self.assertIn(str(self.data / "Npc/0002004.img"), sourced["metadata_source"])
 
+    def test_mixed_reference_chains_wait_for_resolved_geometry(self) -> None:
+        write_img(
+            self.data / "Npc/0002013.img",
+            {"stand": {"0": Canvas(1, 1, {"source": "0002014.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002014.img",
+            {"stand": {"0": Canvas(3, 4, {"_outlink": "missing.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002015.img",
+            {"stand": {"0": Canvas(1, 1, {"source": "0002016.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002016.img",
+            {"stand": {"0": Canvas(3, 4, {"_outlink": "0002004.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002017.img",
+            {"stand": {"0": Uol("../../0002014.img/stand/0")}},
+        )
+        write_img(
+            self.data / "Npc/0002018.img",
+            {"stand": {"0": Canvas(1, 1, {"_outlink": "0002019.img/stand/0"})}},
+        )
+        write_img(
+            self.data / "Npc/0002019.img",
+            {"stand": {"0": Canvas(5, 6, {"_inlink": "missing/0"})}},
+        )
+
+        directory = ImgDirectory(self.data / "Npc")
+        for npc_id in (2013, 2017, 2018):
+            with self.subTest(npc_id=npc_id):
+                tree, _ = directory.read_tree((f"{npc_id:07d}.img",))
+                self.assertIsNone(tree.find("./imgdir[@name='stand']/canvas[@name='0']"))
+        tree, sources = directory.read_tree(("0002015.img",))
+        canvas = tree.find("./imgdir[@name='stand']/canvas[@name='0']")
+        self.assertEqual(("40", "60"), (canvas.attrib["width"], canvas.attrib["height"]))
+        self.assertEqual({"0002015.img", "0002004.img"}, {path.name for path in sources})
+
     def test_legacy_xml_and_nx_are_not_catalog_sources(self) -> None:
         xml = self.root / "xml/String.wz/Mob.img.xml"
         xml.parent.mkdir(parents=True)
