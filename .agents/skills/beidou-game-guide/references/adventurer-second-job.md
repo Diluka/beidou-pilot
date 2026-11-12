@@ -247,7 +247,7 @@
 
 **这些二转技能无需技能书或能手册**，满足前置后直接花SP提升即可。
 
-四转技能的书籍获取方法暂未收录。
+四转技能所需书籍与阶段顺序见[四转攻略](adventurer-fourth-job.md)，获取入口见[独立技能书指引](fourth-job-skillbooks.md)。
 
 准备三转时，除了本职业表格，还要记得处理余点：弓手有11点补一转，剑客和准骑士最后1点可放备用武器或补一转。走弓、弩、拳路线的角色，分别把精准弓、精准弩、急速拳留到20，后面四转还需要。
 
@@ -268,4 +268,4 @@
 - [职业树及SP表规则](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/constants/game/GameConstants.java)、[SP分配职业及上限校验](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/client/processor/stat/AssignSPProcessor.java)。
 - [技能书228映射](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Item.wz/Consume/0228.img.xml)、[能手册229映射](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Item.wz/Consume/0229.img.xml)。
 
-整理日期：2026-11-11。三转后的加点见[三转攻略](adventurer-third-job.md)；四转加点暂未收录。
+整理日期：2026-11-11。三转后的加点见[三转攻略](adventurer-third-job.md)；四转后的分阶段规划见[四转攻略](adventurer-fourth-job.md)。

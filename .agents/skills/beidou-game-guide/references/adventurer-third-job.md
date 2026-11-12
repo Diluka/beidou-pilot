@@ -10,7 +10,7 @@
 
 推荐方案优先保留常用攻击、移动和辅助技能，武器技能只点所选路线，表中的0表示这套方案舍弃了该项。偏重防御、控制或其他打法时，可以采用文中的换点办法；自己调整时，留意前置和151点总数。
 
-**三转技能无需技能书或能手册**，满足前置后直接花SP提升。四转加点与技能书获取方法暂未收录。
+**三转技能无需技能书或能手册**，满足前置后直接花SP提升。四转阶段顺序见[四转加点攻略](adventurer-fourth-job.md)，书籍与解锁入口见[独立获取指引](fourth-job-skillbooks.md)。
 
 ## 战士
 
@@ -281,4 +281,4 @@
 - [职业树及SP表规则](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/constants/game/GameConstants.java)、[SP分配职业及上限校验](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/client/processor/stat/AssignSPProcessor.java)：三转按技能资源上限处理，四转还会检查能手等级；文中前置来自资源中的 `req`。
 - [技能书228映射](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Item.wz/Consume/0228.img.xml)、[能手册229映射](https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Item.wz/Consume/0229.img.xml)。
 
-整理日期：2026-11-11。二转加点见[二转攻略](adventurer-second-job.md)；四转加点与技能书获取方法暂未收录。
+整理日期：2026-11-11。二转加点见[二转攻略](adventurer-second-job.md)；四转阶段顺序见[四转加点攻略](adventurer-fourth-job.md)，书籍与解锁入口见[独立获取指引](fourth-job-skillbooks.md)。
