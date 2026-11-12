@@ -19,9 +19,7 @@ class CatalogResourceContract(unittest.TestCase):
         self.data = self.root / "Data"
         self._write_resources()
         (self.root / "config").mkdir()
-        (self.root / "config/resources.json").write_text(
-            json.dumps({"game_data": str(self.data)})
-        )
+        (self.root / "config/resources.json").write_text(json.dumps({"game_data": str(self.data)}))
 
     def _write_resources(self) -> None:
         write_img(
@@ -38,9 +36,7 @@ class CatalogResourceContract(unittest.TestCase):
                 "info": {"returnMap": 1000000},
                 "portal": {"0": {"pn": "east", "pt": 2, "tm": 1000000, "tn": "west", "x": 1430, "y": 269}},
                 "ladderRope": {"1": {"l": 0, "uf": 1, "x": 262, "y1": -23, "y2": 333}},
-                "foothold": {
-                    "1": {"0": {"5": {"x1": 90, "x2": 180, "y1": 335, "y2": 335, "prev": 4, "next": 8}}}
-                },
+                "foothold": {"1": {"0": {"5": {"x1": 90, "x2": 180, "y1": 335, "y2": 335, "prev": 4, "next": 8}}}},
                 "life": {
                     "0": {"type": "n", "id": "2003", "x": 167, "y": 335},
                     "1": {"type": "m", "id": "100100", "x": 500, "y": -25},
@@ -115,14 +111,24 @@ class CatalogResourceContract(unittest.TestCase):
         self.assertEqual(["price", "zMarker"], [child.attrib["name"] for child in info])
 
         expected = {
-            "map": {self.data / "Map002/Map/Map0/000050000.img", self.data / "String/Map.img",
-                    self.data / "String/Npc.img", self.data / "String/Mob.img"},
+            "map": {
+                self.data / "Map002/Map/Map0/000050000.img",
+                self.data / "String/Map.img",
+                self.data / "String/Npc.img",
+                self.data / "String/Mob.img",
+            },
             "monster": {self.data / "Mob/0100100.img", self.data / "String/Mob.img"},
             "npc": {self.data / "Npc/0002003.img", self.data / "Npc/0002004.img", self.data / "String/Npc.img"},
             "potion": {self.data / "Item/Consume/0200.img", self.data / "String/Consume.img"},
             "weapon": {self.data / "Character/Weapon/01322005.img", self.data / "String/Eqp.img"},
         }
-        for key, result in (("map", map_data), ("monster", monster), ("npc", npc), ("potion", potion), ("weapon", weapon)):
+        for key, result in (
+            ("map", map_data),
+            ("monster", monster),
+            ("npc", npc),
+            ("potion", potion),
+            ("weapon", weapon),
+        ):
             with self.subTest(id=result["id"]):
                 paths = {str(path) for path in expected[key]}
                 self.assertEqual(paths, set(result["metadata_source"]))
@@ -151,10 +157,10 @@ class CatalogResourceContract(unittest.TestCase):
         self.assertTrue(npc["unavailable"])
         self.assertNotIn(str(self.data / "Npc/missing.img"), npc["metadata_source"])
         unresolved, _ = ImgDirectory(self.data / "Npc").read_tree(("0002005.img",))
-        self.assertEqual("../../missing.img/0002004.img/stand/0",
-                         unresolved.find("./imgdir[@name='stand']/uol").attrib["path"])
-        self.assertEqual("../../../0002004.img/stand/0",
-                         unresolved.find("./imgdir[@name='walk']/uol").attrib["path"])
+        self.assertEqual(
+            "../../missing.img/0002004.img/stand/0", unresolved.find("./imgdir[@name='stand']/uol").attrib["path"]
+        )
+        self.assertEqual("../../../0002004.img/stand/0", unresolved.find("./imgdir[@name='walk']/uol").attrib["path"])
         self.assertIsNone(monster["name"])
         self.assertEqual({}, monster["info"])
         self.assertTrue(monster["unavailable"])
@@ -162,7 +168,9 @@ class CatalogResourceContract(unittest.TestCase):
     def test_legacy_xml_and_nx_are_not_catalog_sources(self) -> None:
         xml = self.root / "xml/String.wz/Mob.img.xml"
         xml.parent.mkdir(parents=True)
-        xml.write_text('<imgdir name="Mob.img"><imgdir name="100100"><string name="name" value="XML蜗牛"/></imgdir></imgdir>')
+        xml.write_text(
+            '<imgdir name="Mob.img"><imgdir name="100100"><string name="name" value="XML蜗牛"/></imgdir></imgdir>'
+        )
         (self.root / "nx").mkdir()
         (self.root / "nx/Mob.nx").write_bytes(b"PKG4")
 
@@ -170,8 +178,9 @@ class CatalogResourceContract(unittest.TestCase):
 
         self.assertEqual("绿蜗牛", result["name"])
         self.assertEqual(8, result["info"]["maxHP"])
-        self.assertEqual({str(self.data / "String/Mob.img"), str(self.data / "Mob/0100100.img")},
-                         set(result["metadata_source"]))
+        self.assertEqual(
+            {str(self.data / "String/Mob.img"), str(self.data / "Mob/0100100.img")}, set(result["metadata_source"])
+        )
         self.assertEqual("local-original-img", result["source_kind"])
         self.assertIsNone(result["resource_version"])
 
@@ -185,8 +194,10 @@ class CatalogResourceContract(unittest.TestCase):
         self.assertEqual([], result["npcs"])
         self.assertEqual([], result["monsters"])
         self.assertEqual("local-original-img", result["source_kind"])
-        self.assertEqual({str(self.data / "Map002/Map/Map0/000050000.img"), str(self.data / "String/Map.img")},
-                         set(result["metadata_source"]))
+        self.assertEqual(
+            {str(self.data / "Map002/Map/Map0/000050000.img"), str(self.data / "String/Map.img")},
+            set(result["metadata_source"]),
+        )
 
 
 if __name__ == "__main__":

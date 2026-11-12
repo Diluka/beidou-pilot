@@ -17,17 +17,26 @@ class HuntTerrainContract(unittest.TestCase):
         self.root = Path(temporary.name)
         self.data = self.root / "Data"
         (self.root / "config").mkdir()
-        (self.root / "config/resources.json").write_text(
-            json.dumps({"game_data": str(self.data)})
-        )
+        (self.root / "config/resources.json").write_text(json.dumps({"game_data": str(self.data)}))
 
     def test_reads_configured_img_footholds_and_ropes(self) -> None:
         source = write_img(
             self.data / "Map002/Map/Map0/000050000.img",
             {
-                "foothold": {"1": {"0": {"5": {
-                    "x1": 90, "x2": 180, "y1": 335, "y2": 335, "prev": 4, "next": 8,
-                }}}},
+                "foothold": {
+                    "1": {
+                        "0": {
+                            "5": {
+                                "x1": 90,
+                                "x2": 180,
+                                "y1": 335,
+                                "y2": 335,
+                                "prev": 4,
+                                "next": 8,
+                            }
+                        }
+                    }
+                },
                 "ladderRope": {"1": {"x": 262, "y1": -23, "y2": 333}},
             },
         )
