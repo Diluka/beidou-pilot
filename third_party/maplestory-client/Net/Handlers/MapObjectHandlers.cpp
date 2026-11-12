@@ -76,7 +76,7 @@ namespace ms
 		if (Stage::get().is_player(cid))
 			return;
 
-		uint16_t level = recv.read_short();
+		uint16_t level = recv.read_byte();
 		std::string name = recv.read_string();
 
 		recv.read_string();	// guildname

@@ -21,6 +21,7 @@ namespace ms
 		uint64_t tx_packets = 0;
 		uint16_t last_opcode = 0;
 		uint64_t packet_parse_errors = 0;
+		uint64_t player_packet_parse_errors = 0;
 		std::string last_packet_error;
 		uint8_t hp_alert = 0;
 		uint8_t mp_alert = 0;

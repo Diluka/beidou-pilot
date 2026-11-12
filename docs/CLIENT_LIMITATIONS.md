@@ -35,7 +35,7 @@
 
 现有动作摆脱键位配置依赖沿用[#36](https://github.com/Diluka/beidou-pilot/issues/36)，普通药品的首个实施增量由[#39](https://github.com/Diluka/beidou-pilot/issues/39)跟踪。各端技能支持声明与结果确认以对应文档为准。特定台阶对照继续由[#32](https://github.com/Diluka/beidou-pilot/issues/32)跟踪；已验证的正常路径可继续使用，未确认差异按待核实事实记录。
 
-同图其他玩家尚缺公开结构化观察，也已入池[#57](https://github.com/Diluka/beidou-pilot/issues/57)；它支持既有旁观/协作消费，无头端按原生结构化事实交付。
+同图其他玩家由[#57](https://github.com/Diluka/beidou-pilot/issues/57)跟进：无头端已提供 `scene.players` 结构化观察；GUI 端原生用户池观察仍待交付，两端按同一字段口径。
 
 ## 已有结果与后续验证
 

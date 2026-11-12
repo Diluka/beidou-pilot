@@ -149,6 +149,34 @@ class SnapshotConsumerContract(unittest.TestCase):
         self.assertFalse(full["monsters"][0]["visible"])
         self.assertIn("画外", format_snapshot(full))
 
+    def test_other_players_keep_identity_completeness_and_unknown_fields(self) -> None:
+        self.backend.name = "headless"
+        self.domains["scene"]["players"] = [
+            {"reference": "7", "character_id": 7, "name": "同伴", "level": 10,
+             "x": 30.5, "y": -2.0, "facing": "Left"},
+            {"reference": "0x1234", "character_id": None, "name": None, "level": None,
+             "x": 1.0, "y": 2.0, "facing": None}]
+        self.domains["scene"]["players_complete"] = True
+        report = collect(self.backend)
+        self.assertIs(report["players_complete"], True)
+        first = next(player for player in report["players"] if player.get("character_id") == 7)
+        self.assertEqual("同伴", first["name"])
+        self.assertEqual(10, first["level"])
+        self.assertEqual(30.0, first["dx"])
+        self.assertIsNone(first["visible"])
+        self.assertIn(first["ref"], report["refs"])
+        second = next(player for player in report["players"] if player.get("character_id") is None)
+        self.assertIsNone(second["character_id"])
+        self.assertIsNone(second["name"])
+        self.assertIsNone(second["level"])
+        self.assertEqual(0.5, second["dx"])
+        self.assertIn(second["ref"], report["refs"])
+        text = format_snapshot(report)
+        self.assertIn("玩家 同伴 Lv10", text)
+        self.assertIn("玩家 未知 Lv?", text)
+        self.domains["scene"]["players_complete"] = False
+        self.assertIs(collect(self.backend)["players_complete"], False)
+
     def test_beginner_snapshot_lists_candidates_without_inventing_a_route(self) -> None:
         self.domains["dialog"] = {"camera_viewport": None, "dialog_open": False, "npc_id": None,
                                   "dialog_type": None, "lines": [], "choices": [], "buttons": []}
