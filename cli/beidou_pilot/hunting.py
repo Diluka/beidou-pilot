@@ -133,22 +133,17 @@ def hunt(
     if not min_x <= position["x"] <= max_x:
         raise ClientError("outside_hunt_area", "角色当前不在指定狩猎范围内，未输入。")
     options: JsonObject = {
-        "instance_id": initial["instance_id"],
-        "character_id": character["id"],
-        "map_id": initial["map_id"],
-        "scene_generation": initial["scene_generation"],
         "mob_id": mob_id,
         "skill_id": skill_id,
-        "seconds": seconds,
+        "budget_seconds": seconds,
         "attack_range": attack_range,
         "stop_level": stop_level,
         "min_hp_ratio": min_hp_ratio,
         "hp_item_id": hp_item_id,
         "min_x": min_x,
         "max_x": max_x,
-        "terrain": terrain,
     }
-    report = run_strategy(backend, "combat/hunt", options, seconds)
+    report = run_strategy(backend, "combat/hunt", options, seconds, context_state=initial)
     final = cast(BridgeSnapshot, report["last_state"])
     after = final["character"]
     gained = (

@@ -5,6 +5,7 @@ import time
 from typing import TypedDict, cast
 
 from .backend import Backend, ClientError, JsonObject
+from .bridge import BridgeClient, BridgeSnapshot
 from .catalog import Catalog
 from .engines.inventory import InventoryItem, InventorySnapshot
 from .engines.ui import UIWindow
@@ -131,7 +132,15 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
         if not math.isfinite(seconds) or seconds < 0:
             raise ClientError("invalid_budget", "用药时限须为有限的非负秒数。")
         deadline = min(deadline, started + seconds) if deadline is not None else started + seconds
+    native_use = item_id // 10000 == 200 or backend.name == "headless" and item_id // 10000 == 201
+    context_state: BridgeSnapshot | None = (
+        BridgeClient(backend.root, backend.name, backend.instance).snapshot() if native_use else None
+    )
     before_character = read_character(backend)
+    if context_state is not None:
+        initial_character = context_state["character"]
+        if not context_state["ready"] or initial_character is None or initial_character["id"] != before_character["id"]:
+            raise ClientError("use_context_changed", "角色读取期间原生实例或角色身份已变化，未使用物品。")
     if until_hp is not None and not 1 <= until_hp <= before_character["max_hp"]:
         raise ClientError("invalid_hp_target", "目标 HP 须在 1 与当前最大 HP 之间。")
     if until_mp is not None and not 1 <= until_mp <= before_character["max_mp"]:
@@ -145,7 +154,6 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
     heals_mp = any(isinstance(value, (int, float)) and value > 0 for value in (mp_amount, mp_ratio))
     move_to = specification.get("moveTo")
     teleports = type(move_to) is int and move_to > 0
-    native_use = item_id // 10000 == 200 or backend.name == "headless" and item_id // 10000 == 201
     consume_only = backend.name == "headless" and item_id // 10000 == 201 and until_hp is None and until_mp is None
     if backend.name == "headless" and not native_use:
         raise ClientError("unsupported_capability", "无头端仅支持200类药品和201类食品。", {"item_id": item_id})
@@ -199,11 +207,11 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
                 if deadline is not None:
                     budget = max(0, min(budget, deadline - time.monotonic()))
         report = run_strategy(backend, "recovery/recover", {
-            "item_id": item_id, "count": count, "seconds": budget,
+            "item_id": item_id, "count": count, "budget_seconds": budget,
             "target_hp": until_hp, "target_mp": until_mp,
             "heals_hp": heals_hp, "heals_mp": heals_mp,
             "healing_known": heals_hp or heals_mp, "consume_only": consume_only,
-        }, min(600, max(3, budget + 2)))
+        }, min(600, max(3, budget + 2)), context_state=context_state)
         final = cast(JsonObject, report["last_state"])
         after_character = cast(Character | None, final.get("character"))
         final_inventory = cast(list[InventoryItem] | None, final.get("inventory"))

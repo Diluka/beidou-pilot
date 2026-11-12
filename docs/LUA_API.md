@@ -509,25 +509,30 @@ API 参数无效、后端能力缺失、原生状态或输入路线不可用时�
 
 ## 策略文件入口与运行上下文
 
-策略文件可在顶层声明固定 `main(context)` 入口。`script run/start FILE` 检查策略注释，在原生 Runtime 内先核对调用时的地图和场景代次，再调用入口；顶层代码用于声明策略和函数，控制逻辑写在入口内。入口只接收一个上下文表，基础状态和动作仍使用本文件前述的 `game.state()`、`game.observe()` 与动作 API。
+策略文件可在顶层声明固定 `main(context)` 入口。`script run/start FILE` 检查策略注释，在原生 Runtime 内先核对调用时的实例、角色、地图和场景代次，再调用入口；顶层代码用于声明策略和函数，控制逻辑写在入口内。入口只接收一个上下文表，基础状态和动作仍使用本文件前述的 `game.state()`、`game.observe()` 与动作 API。通用执行期限仍由 CLI `--seconds` / `--continuous` 控制；策略自有预算应使用独立的 `budget_seconds` 运行参数，避免与执行期限混淆。
 
-运行参数用紧邻策略源码的 `@option` 注释声明。支持 `int`、`number`、`string`、`boolean` 四种类型；非布尔参数未标 `opt`、也没有 `default` 时必填。布尔参数未显式声明 `default` 时可省略且默认为 `true`，显式 `default=false` 时省略则为 `false`。可选修饰符为 `default=值`、数值型 `min=值` / `max=值` 和 `choices=值1|值2`。默认值、正向布尔 flag 和显式值按声明校验；`--no-flag` 作为无值负向开关直接传入 `false`，保留框架的布尔开关语义，不参与 `choices` 校验。
+运行参数用紧邻策略源码的 `@option` 注释声明。支持 `int`、`number`、`string`、`boolean` 四种类型；未标 `opt`、也没有 `default` 的非布尔参数必填。布尔参数始终可省略：未显式声明 `default` 时默认 `true`，显式 `default=false` 可覆盖该默认值。可选修饰符为 `default=值`、数值型 `min=值` / `max=值` 和 `choices=值1|值2`。默认值、正向布尔 flag 和显式值按声明校验；`--no-flag` 作为无值负向开关直接传入 `false`，不参与 `choices` 校验。
 
 ```lua
 --- 按目标怪物 ID 观察当前场景。
 -- @option[type=int,min=1] mob_id 目标怪物模板 ID
 -- @option[type=int,opt,default=1001005] skill_id 可选技能 ID
+-- @option[type=boolean] observe_only 仅观察；省略时默认 true
+-- @option[type=boolean,default=false] attack_enabled 默认关闭攻击
 local function main(context)
     local map_id = context.scene.map_id
-    game.log("map=" .. tostring(map_id) .. ", mob=" .. tostring(context.options.mob_id))
+    game.log("map=" .. tostring(map_id)
+        .. ", mob=" .. tostring(context.options.mob_id)
+        .. ", observe_only=" .. tostring(context.options.observe_only)
+        .. ", attack_enabled=" .. tostring(context.options.attack_enabled))
 end
 ```
 
-CLI 参数名把 Lua 下划线转为连字符，例如 `mob_id` 使用 `--mob-id 1001001`。布尔选项可用裸 `--flag` 与 `--no-flag` 分别传入 `true`、`false`，也可显式写成 `--flag true|false`；省略时使用声明默认值，未声明时为 `true`。`choices` 校验默认值、正向 flag 和显式值；`--no-flag` 作为负向布尔开关直接传入 `false`，不会因 `choices` 未列出 `false` 而拒绝。`context.options` 包含实际提供的值和默认值；未提供且无默认值的可选项为 `nil`。`script describe FILE` 根据注释输出每项参数的类型、必填状态、默认值、范围、候选值和调用用法。
+CLI 参数名把 Lua 下划线转为连字符，例如 `mob_id` 使用 `--mob-id 1001001`。布尔选项可用裸 `--flag` 与 `--no-flag` 分别传入 `true`、`false`，也可显式写成 `--flag true|false`。省略布尔选项时，`context.options` 收到声明的默认值；未显式声明时收到 `true`，`default=false` 时收到 `false`。`choices` 校验默认值、正向 flag 和显式值；`--no-flag` 不会因 `choices` 未列出 `false` 而拒绝。其他可选参数仅在实际提供或声明默认值时出现在 `context.options` 中。`script describe FILE` 根据注释输出每项参数的类型、必填状态、有效默认值、范围、候选值和调用用法。
 
-`context.scene` 绑定 CLI 装载前观察到的当前地图。它包含 `map_id`、`scene_generation` 与 `terrain`：地形可用时，`terrain.status` 为 `available`，并提供来源路径 `source`、`footholds` 和 `ropes`；数据不可用或当前地图只引用另一张地图时，状态分别为 `unavailable` 或 `unsupported`，并提供错误代码、说明和来源详情，不提供空地形或借用地图的坐标。策略需要静态地形时，应先检查 `terrain.status`。
+`context.scene` 绑定 CLI 装载前观察到的当前场景，包含只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 与静态 `terrain`。地形可用时，`terrain.status` 为 `available`，并提供来源路径 `source`、`footholds` 和 `ropes`；数据不可用或当前地图只引用另一张地图时，状态分别为 `unavailable` 或 `unsupported`，并提供错误代码、说明和来源详情，不提供空地形或借用地图的坐标。策略需要静态地形时，应先检查 `terrain.status`。身份字段由 CLI 创建，不能作为普通 `@option` 覆盖；动态 HP、位置、技能和库存等事实仍从当前 `game.state()` / `game.observe()` 读取。
 
-策略入口调用前会重新读取 `game.state()`；若角色尚未就绪、地图变化或场景代次变化，脚本以 `strategy_scene_context_stale` 结束，策略主体不会运行。静态数据读取或验证失败时，CLI 在发布脚本前报告错误。该上下文不会替代 `game.state()` / `game.observe()` 返回的动态事实。
+通用入口调用前会重新读取 `game.state()`，并对比就绪状态及上述身份锚点；不匹配时以 `strategy_scene_context_stale` 结束，策略主体不会运行。策略入口内若再采样初始状态，也应在派发动作前与 `context.scene` 再核对一次，以覆盖预检与主体之间发生的场景变化；后续跨地图或可能换角色的操作仍按业务边界核对。静态数据读取或验证失败时，CLI 在发布脚本前报告错误。该上下文不会替代 `game.state()` / `game.observe()` 返回的动态事实。
 
 没有顶层 `main(context)` 声明的 Lua 文件仍按原始 chunk 执行。`--code` 始终保留原始源码语义，不解析策略注释或注入入口上下文。
 

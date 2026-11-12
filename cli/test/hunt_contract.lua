@@ -32,11 +32,7 @@ local function copy(value)
     return result
 end
 options = {
-    instance_id = state.instance_id,
-    character_id = 1,
-    scene_generation = 1,
-    map_id = 1,
-    seconds = scenario == "stalled" and 6 or 8,
+    budget_seconds = scenario == "stalled" and 6 or 8,
     attack_range = 60,
     min_hp_ratio = 0.35,
     min_x = 0,
@@ -46,7 +42,7 @@ options = {
 if resume then
     state.position.x, state.position.y, climbing = 100, scenario == "resume-top" and 0 or 90, true
     if scenario == "resume-bottom" then state.position.y = 170 end
-    if scenario == "resume-budget" then options.seconds = 0.6 end
+    if scenario == "resume-budget" then options.budget_seconds = 0.6 end
     options.terrain.footholds[2] = { id = 2, x1 = 0, x2 = 400, y1 = 0, y2 = 0 }
     options.terrain.ropes[1] = { x = 100, y1 = 0, y2 = 198 }
     state.monsters = { { object_id = 1, template_id = 100, x = 140, y = 0, active = true } }
@@ -63,7 +59,7 @@ elseif scenario == "rope" then
         { object_id = 2, template_id = 100, x = 140, y = 0, active = true },
     }
 elseif scenario == "rope-inertia" then
-    options.seconds, options.stop_level = 12, 4
+    options.budget_seconds, options.stop_level = 12, 4
     options.terrain.footholds[2] = { id = 2, x1 = 0, x2 = 400, y1 = 0, y2 = 0 }
     options.terrain.ropes[1] = { x = open_rope_x, y1 = 0, y2 = 170 }
     state.monsters = {
@@ -71,7 +67,7 @@ elseif scenario == "rope-inertia" then
         { object_id = 2, template_id = 100, x = 140, y = 0, active = true },
     }
 elseif scenario == "wide-local-spawn" then
-    options.seconds, options.stop_level, options.max_x, open_rope_x = 40, 4, 2400, 300
+    options.budget_seconds, options.stop_level, options.max_x, open_rope_x = 40, 4, 2400, 300
     options.terrain.footholds[1].x2 = 2400
     options.terrain.footholds[2] = { id = 2, x1 = 0, x2 = 2400, y1 = 0, y2 = 0 }
     options.terrain.ropes[1] = { x = open_rope_x, y1 = 0, y2 = 198 }
@@ -80,7 +76,7 @@ elseif scenario == "wide-local-spawn" then
         { object_id = 2, template_id = 100, x = 340, y = 0, active = true },
     }
 elseif scenario == "rope-long-approach" or scenario == "rope-blocked" or scenario == "rope-blocked-only" then
-    options.seconds, options.stop_level = 26, 4
+    options.budget_seconds, options.stop_level = 26, 4
     if scenario == "rope-long-approach" then
         options.max_x, open_rope_x = 2400, 2100
         options.terrain.footholds[1].x2 = 2400
@@ -118,7 +114,7 @@ elseif scenario == "slope" then
     state.position.x, state.position.y = 40, 0
     state.monsters = { { object_id = 1, template_id = 100, x = 280, y = 100, active = true } }
 elseif scenario == "gui-lock" or scenario == "gui-turn-stalled" then
-    options.seconds = scenario == "gui-lock" and 12 or 23
+    options.budget_seconds = scenario == "gui-lock" and 12 or 23
     state.facing = "Left"
     state.monsters = { { object_id = 1, template_id = 100, x = 70, y = 200, active = true, hp_percent = 100 } }
 else
@@ -309,8 +305,33 @@ game = {
         end
     end,
 }
-local ok, failure = pcall(dofile, strategy)
-if scenario == "resume-no-endpoint" then
+local scene = {
+    instance_id = state.instance_id,
+    character_id = state.character.id,
+    map_id = state.map_id,
+    scene_generation = state.scene_generation,
+    terrain = { status = "available", footholds = options.terrain.footholds, ropes = options.terrain.ropes },
+}
+if scenario == "stale-entry" then scene.character_id = scene.character_id + 1 end
+local handle = assert(io.open(strategy, "r"))
+local source = handle:read("*a")
+handle:close()
+local prefix = [[
+local __beidou_context = ...
+local __beidou_state = game.state()
+if not (__beidou_state.ready and __beidou_state.instance_id == __beidou_context.scene.instance_id
+    and __beidou_state.character and __beidou_state.character.id == __beidou_context.scene.character_id
+    and __beidou_state.map_id == __beidou_context.scene.map_id
+    and __beidou_state.scene_generation == __beidou_context.scene.scene_generation) then
+    error("strategy_scene_context_stale")
+end
+]]
+local chunk = assert(load(prefix .. source .. "\nreturn main(__beidou_context)", "@hunt-contract"))
+local ok, failure = pcall(chunk, { options = options, scene = scene })
+if scenario == "stale-entry" then
+    assert(not ok and failure:find("strategy_scene_context_stale"), tostring(failure))
+    assert(#killed == 0 and parallel == 0, "stale context dispatched a hunt action")
+elseif scenario == "resume-no-endpoint" then
     assert(not ok and failure:find("hunt_rope_recovery_no_safe_endpoint"), tostring(failure))
     assert(resume_moves == 0 and #killed == 0, "recovery ignored the hunting boundary")
 elseif scenario == "resume-stalled" then

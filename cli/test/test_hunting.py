@@ -70,10 +70,9 @@ class HuntingEntryContract(unittest.TestCase):
                 self.assertEqual(expected_mob, options["mob_id"])
                 self.assertIsNone(options["skill_id"])
                 self.assertEqual(30, options["stop_level"])
-                self.assertEqual(
-                    ("client-1", 4, 100, 1),
-                    tuple(options[k] for k in ("instance_id", "character_id", "map_id", "scene_generation")),
-                )
+                self.assertEqual(duration, options["budget_seconds"])
+                self.assertNotIn("terrain", options)
+                self.assertEqual(self.files.state, run.call_args.kwargs["context_state"])
                 result = json.loads(output.getvalue())["data"]
                 self.assertEqual("same_scene", result["scope"])
                 self.assertEqual({"mob_id": expected_mob, "all_monsters": expected_mob is None}, result["target"])

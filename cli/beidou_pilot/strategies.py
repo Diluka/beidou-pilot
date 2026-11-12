@@ -129,9 +129,8 @@ def _parse_option(attributes: str, name: str, description: str, line: int) -> St
         choices = tuple(_value(choice, kind, line) for choice in values["choices"].split("|"))
         if not choices or any(choice == "" for choice in choices):
             raise _invalid_metadata("@option choices 必须包含非空的 | 分隔值。", line)
-    explicit_default = "default" in values
-    has_default = explicit_default or kind == "boolean"
-    if explicit_default:
+    has_default = "default" in values or kind == "boolean"
+    if "default" in values:
         default = _value(values["default"], kind, line)
     elif kind == "boolean":
         default = True
@@ -334,7 +333,9 @@ def compile_strategy(source: str, options: JsonObject, scene: JsonObject) -> str
     return (
         f"local __beidou_context = {context}\n"
         "local __beidou_state = game.state()\n"
-        "if not (__beidou_state.ready and __beidou_state.map_id == __beidou_context.scene.map_id "
+        "if not (__beidou_state.ready and __beidou_state.instance_id == __beidou_context.scene.instance_id "
+        "and __beidou_state.character and __beidou_state.character.id == __beidou_context.scene.character_id "
+        "and __beidou_state.map_id == __beidou_context.scene.map_id "
         "and __beidou_state.scene_generation == __beidou_context.scene.scene_generation) then\n"
         '    error("strategy_scene_context_stale")\n'
         "end\n"
@@ -346,10 +347,20 @@ def compile_strategy(source: str, options: JsonObject, scene: JsonObject) -> str
 
 
 def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata | None]:
+    directory = Path(__file__).resolve().parents[2] / "shared/scripts/travel"
+    resolved = path.resolve()
     try:
         source = path.read_bytes().decode("utf-8")
+        if resolved.parent == directory.resolve() and resolved.name in {
+            "move_to.lua",
+            "climb_to.lua",
+            "enter_portal.lua",
+        }:
+            source = (directory / "_common.lua").read_text(encoding="utf-8") + "\n" + source
     except (OSError, UnicodeError) as error:
         raise ClientError(
-            "invalid_script_file", "无法读取UTF-8 Lua文件，未发布执行请求。", {"path": str(path), "reason": str(error)}
+            "invalid_script_file",
+            "无法读取UTF-8 Lua策略或其辅助文件，未发布执行请求。",
+            {"path": str(path), "reason": str(error)},
         ) from error
     return source, parse_strategy(source)

@@ -36,6 +36,7 @@ class AdvancementEntryContract(unittest.TestCase):
         state["character"].update(job=job, level=level)
         state["capabilities"] = {"attack_move": True}
         state["monsters"] = []
+        self.last_state = state
         output = io.StringIO()
         target = "beidou_pilot." + ("control_scripts" if command == "fight" else "hunting") + ".run_strategy"
         with (
@@ -76,6 +77,7 @@ class AdvancementEntryContract(unittest.TestCase):
                         self.assertEqual(1, run.call_count)
                         self.assertEqual("combat/" + command, run.call_args.args[1])
                         self.assertEqual(expected_level, run.call_args.args[2]["stop_level"])
+                        self.assertEqual(self.last_state, run.call_args.kwargs["context_state"])
                         data = report["data"]
                         self.assertEqual(expected_level, data["requested_level"])
                         self.assertEqual(source, data["stop_level_source"])

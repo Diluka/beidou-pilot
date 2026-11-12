@@ -49,7 +49,15 @@
 
 ## 调用与维护
 
-旅行、战斗和恢复策略依赖 CLI 注入的 `options`；旅行策略还依赖 `_common.lua`。日常使用优先选择上表对应命令，参数与依赖由对应命令装载。
+六个仍由 CLI 消费的旅行、战斗和恢复策略都声明 `main(context)` 与 `@option`；`script describe FILE` 可查看参数，`script run FILE` 可按同一声明传值。旅行策略的 `_common.lua` 由策略装载器按内置文件路径自动组合，其他辅助库和函数库示例仍按各自用途加载。Python 命令适配器继续负责解析游戏目录资料、预检用户输入并映射现有参数；Lua 入口从 `context.options` 取运行配置，从 `context.scene` 取身份锚点和可用静态地形。策略预算字段使用 `budget_seconds`，与 CLI 控制整个原生脚本生命周期的 `--seconds` / `--continuous` 分开。普通 Lua chunk、`--code` 与示例函数库仍保持原始语义。
+
+内置策略随镜像位于 `/opt/beidou-pilot/shared/scripts/`，可以通过通用入口直接查看和调用，例如：
+
+```bash
+beidou-pilot script describe /opt/beidou-pilot/shared/scripts/travel/move_to.lua
+beidou-pilot script run /opt/beidou-pilot/shared/scripts/travel/move_to.lua \
+  --x 400 --budget-seconds 20 --seconds 21
+```
 
 自定义策略放工作台的 `scripts/`，在容器内对应 `/work/scripts/`，通过统一宿主入口提交：
 
