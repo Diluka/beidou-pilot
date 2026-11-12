@@ -87,6 +87,22 @@ def equip(backend: Backend, item_id: int) -> JsonObject:
     if item is None:
         raise ClientError("item_missing", "装备背包中没有该物品。", {"item_id": item_id})
     slot = item["slot"]
+    properties = item.get("equipment")
+    if properties is None or not properties.get("object_ref"):
+        raise ClientError("equipment_metadata_unavailable", "当前装备对象引用不可用，未执行换装。")
+    if properties.get("ordinary") is not True:
+        raise ClientError("unsupported_capability", "当前只支持已核实的普通装备。")
+    slots = properties.get("body_slots")
+    if not slots:
+        raise ClientError("equipment_slot_requirement", "本端未提供当前角色可确认的兼容身上槽位。")
+    if len(slots) == 1 and -19 <= slots[0] < 0:
+        from .control_scripts import change_equipment
+
+        report = change_equipment(backend, slot, slots[0], item_id=item_id, reference=properties["object_ref"])
+        return {**report, "item_id": item_id, "equipped": report["confirmed"],
+                "changed": report["confirmed"], "bag_slot": slot, "slot": slots[0]}
+    # Original CLI still consumes its established automatic selection for
+    # ambiguous/special slots; Lua refuses them instead of guessing a destination.
     _select_slot(backend, 1, slot)
     deadline = time.monotonic() + 1.2
     after = read_inventory(backend, 1, equipped=True)

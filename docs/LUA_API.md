@@ -45,8 +45,12 @@ private/workbenches/workbench /external/workbench script run /work/scripts/contr
 | `game.attack(seconds, direction, skill_id)` | 默认 `0.06`；可选 `direction=left/right` 同窗保持移动，可选 `skill_id` 请求指定技能；`0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果及本窗技能准入 |
 | `game.pickup(seconds)` | 默认 `0.06`，有限数且 `0 < seconds <= 30` | 是，等待输入释放确认 | 动作结果 |
 | `game.use_item(item_id)` | 整数 `1..2147483647`；两端接受普通 `200` 类药品，无头另接受 `201` 类食品 | 是 | 动作结果 |
-| `game.equip(backpack_slot, equipped_slot, seconds)` | 无头普通装备；背包正槽、身上负槽；默认确认期限 `3` 秒，`0 < seconds <= 30` | 是，等待槽位变化或本次执行结束 | 动作结果 |
-| `game.unequip(equipped_slot, backpack_slot, seconds)` | 无头普通装备；身上负槽、空背包正槽；确认期限同 `equip` | 是，等待槽位变化或本次执行结束 | 动作结果 |
+| `game.equip(backpack_slot, equipped_slot, seconds, ref)` | 普通装备；背包正槽、身上负槽；默认期限 `3` 秒，可选当前对象引用，范围见正文 | 是，等待槽位变化或本次执行结束 | 动作结果 |
+| `game.unequip(equipped_slot, backpack_slot, seconds, ref)` | 无头普通装备；身上负槽、空背包正槽；确认期限同 `equip` | 是，等待槽位变化或本次执行结束 | 动作结果 |
+| `game.allocate_ap(stat, count, seconds)` | 两端；明确基础属性与 `1..100` 点；每点确认期限默认 `1.2` 秒，`0 < seconds <= 30` | 是，逐点双确认或有界停止 | 动作结果及 `allocation` |
+| `game.allocate_sp(skill_id, count, seconds)` | 两端；明确冒险家职业技能与 `1..100` 点；每点确认期限同 AP | 是，逐点双确认或有界停止 | 动作结果及 `allocation` |
+| `game.window(name, opened, seconds)` | GUI 的 `inventory/stats/skills`，明确开关布尔值；默认 `3` 秒，`0 < seconds <= 30` | 是，等待当前窗口与释放确认 | 动作结果及 `ui` |
+| `game.focus(seconds)` | GUI 游戏焦点；默认期限 `3` 秒，范围同窗口 | 是，等待焦点与释放确认 | 动作结果及 `ui` |
 | `game.revive(seconds)` | 无头普通复活；默认确认期限 `6` 秒，`0 < seconds <= 30` | 是，等待同角色恢复或期限结束 | 动作结果 |
 | `game.activate(ref)` | 当前原生控件或场景目标的不透明引用，仅接受这一个参数 | 是，等待单次控件处理和控制释放 | 动作结果 |
 | `game.stop()` | 无 | 是，等待释放确认 | 动作结果 |
@@ -133,7 +137,9 @@ end
 | --- | --- | --- |
 | `backend` | string | 当前为 `headless` 或 `beidou` |
 | `move`、`face`、`jump`、`attack`、`pickup`、`use_item`、`stop` | boolean | 后端是否实现该语义动作；当前两端均实现 |
-| `equip`、`unequip` | boolean | 是否实现普通装备穿戴/卸下；当前 headless 为 `true`，原版 Lua 为 `false` |
+| `equip`、`unequip` | boolean | 无头支持普通穿戴/卸下；GUI 支持唯一兼容槽位的普通穿戴，卸下为 `false`；歧义槽位不猜测 |
+| `allocate_ap`、`allocate_sp` | boolean | 两端均支持明确逐点双确认；仅冒险家普通职业 SP 池，其他池明确拒绝 |
+| `window` | boolean | GUI 支持三种必要窗口与游戏焦点；无头为 `false`，不伪造 GUI |
 | `revive` | boolean | 是否实现正常复活请求与确认；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `activate` | boolean | 是否实现原生控件引用激活；当前 headless 为 `true`，原版 Lua 为 `false` |
 | `raw_keys` | boolean | 是否实现 `keys/press`；当前 headless 为 `false`，原版为 `true` |
@@ -326,11 +332,34 @@ end
 
 缺少 `Quest.nx`、未支持条件、重复或脚本特殊流程、复杂奖励选择均不自动补全或猜测；只有已实现的真实控件可激活。本地UI仅对已核实的普通单目标进度格式判定条件，`quests` 领域仍保留原始文本；成功正文要等真实任务状态到达，奖励另读原生事实。待响应或未解析页面保持未知，不生成假控件。GUI的 `activate` 能力为false，其已有CLI桌面消费者继续使用原流程。
 
-### 无头普通换装
+### 明确 AP/SP 分配
 
-`game.equip(backpack_slot, equipped_slot[, seconds])` 从装备背包正槽穿到明确的身上负槽。目的槽已有普通装备时，正常替换会让原装备回到源背包槽。`game.unequip(equipped_slot, backpack_slot[, seconds])` 从身上负槽卸到指定的空背包正槽；目标背包槽被占用时拒绝，不自动选择其他位置。
+`game.allocate_ap(stat, count[, seconds])` 只接受 `strength/dexterity/intelligence/luck`。`game.allocate_sp(skill_id, count[, seconds])` 接受正 int32 技能 ID。两者绑定本次脚本角色、本实例、当前场景代次与职业；读取、登录和升级不会调用这些入口。调用方先核实计划，再明确给出目标与数量。
 
-两个入口使用正常装备请求和库存更新，不模拟快捷键或拖放，不修改点数、装备属性或服务端数据。角色、装备、槽位及本地可核实的条件仍需满足；声望要求不作本地未知值猜测，以正常服务端处理和实际库存结果为准。当前仅 headless 支持，GUI Lua 调用明确报 `unsupported`；原版 CLI 的既有 GUI 装备流程继续独立使用。
+两端 CLI 与 Lua 共用逐点确认组件。无头通过本端职业链、技能资源和已学记录核对技能资格；GUI 使用本端当前职业技能页和原生按钮使能资格，并读回真实技能记录。两者均只支持冒险家普通职业 SP 池；新手派生池及特殊职业池明确拒绝。GUI 无法预先取得的完整等级上限或具体前置原因保持未知，每点只在当前原生按钮明确可用时请求；达到限制后停止并保留已确认数量。AP 不支持 HP/MP，未知服务器上限不作本地猜测。
+
+初始点数必须足够本批请求。每点只提交一次，只有目标基础属性/技能等级恰增一、剩余 AP/SP 恰减一才计入 `allocated`；AP 还要求其他三项基础属性不变。点数与技能包可以分批到达，等待期间不重复请求。下一点在之后的原生更新重新核对条件。`seconds` 是每点确认期限，GUI 每次必要窗口/页签定位另有至多6秒准备期限；整批仍受脚本总时限、控制权和显式取消约束。
+
+结果沿用 `dispatched/control_released/effect/reason`，增加 `allocation`：`kind` 为 `ap/sp`，`stat/skill_id` 表示明确目标，`requested/allocated` 为请求/已双确认数量，`point_pending=true` 表示曾发出一点而尚未双确认。`points_before/value_before` 是批次开始事实，`points_after/value_after` 是最近一次事实；不可读为 `nil`。`character_id/scene_generation` 是原请求身份，`current_character_id/current_scene_generation` 标识当前读数，身份改变的值不得归因于原请求。
+
+全部确认时 `effect="confirmed"`、`reason="allocation_confirmed"`；其他情况保留 `effect="unknown"`、已确认数量及事实，有界停止。点数不足、上限/前置/职业不符可能在派发前拒绝；单侧变化、冲突、身份/场景变化、取消或未知不表示可重试。先观察实际结果，不重放不确定的一点或整批。取消先停止新派发；鼠标尚待真实释放时继续保留待确认点，在释放时以同上下文的新鲜双读数收敛已确认数量，不因等待放键而丢掉已观察变化。取消不回滚已经发生的加点；真实释放与客户端关闭仍是独立事实。
+
+```lua
+-- 仅在已核实计划明确要求本次角色加一点力量时执行。
+local result = game.allocate_ap("strength", 1)
+assert(result.effect == "confirmed" and result.allocation.allocated == 1)
+if game.capabilities().window then
+    assert(game.window("stats", false).effect == "confirmed")
+    assert(game.focus().effect == "confirmed")
+end
+game.face("right")
+```
+
+### 明确普通换装
+
+`game.equip(backpack_slot, equipped_slot[, seconds[, ref]])` 从装备背包正槽穿到明确的身上负槽。目的槽已有普通装备时，正常替换会让原装备回到源背包槽。`game.unequip(equipped_slot, backpack_slot[, seconds[, ref]])` 从身上负槽卸到指定的空背包正槽；目标背包槽被占用时拒绝，不自动选择其他位置。
+
+无头使用正常装备请求和库存更新；GUI 通过本端已校准普通背包的正常双击路径穿戴，不绕过原客户端的职业、等级或其他装备资格流程。两端不修改点数、装备属性或服务端数据。角色、装备、槽位及本地可核实的条件仍需满足；声望要求不作本地未知值猜测，以正常服务端处理和实际库存结果为准。GUI 的唯一槽位穿戴与未支持范围见下文，原 CLI 保留声明的自动选择路径。
 
 请求只派发一次。穿戴/替换成功需源槽与目的槽的装备对象对应关系同时符合本次请求；卸下则需源身上槽清空且目标背包槽收到原装备。确认后返回 `effect="confirmed"`，仅派发、脚本返回或两处物品 ID 看似相同均不足以确认同一件装备。
 
@@ -343,6 +372,36 @@ if not game.capabilities().equip then return end
 game.acquire()
 local result = game.equip(backpack_slot, equipped_slot)
 game.log("换装结果：" .. result.effect .. "，原因：" .. tostring(result.reason))
+```
+
+GUI 仅接受原生装备实例被明确识别为普通装备、原生物品/槽位/性别谓词给出唯一目标、且目的槽在 `-19..-1` 的穿戴。戒指、双吊坠等多目标或特殊槽位明确拒绝，不把 GUI 自动选择当作指定槽位成功；原 CLI 的既有自动选择路径仍可使用。GUI `unequip` 未支持。背包展开、布局/视口/引用不明、窗口或装备对象变化时停止；窗口、技能页、槽位等待均复用本次 Runtime 控制权，不产生另一操作者。
+
+装备库存条目可提供 `equipment.object_ref`；它绑定本实例、角色、场景代次和当前原生对象。可作为第四参数，派发前不匹配即拒绝。省略时绑定动作开始时的当前对象，不表示可重放旧槽位请求。GUI 另提供已知的 `ordinary/body_slots`；这些字段在其他后端缺失时保持未知。换装确认要求同一源、目的对象实际交换，不能只看相同物品 ID；GUI 结果的 `equipment` 保留前后引用。取消后只对本次识别的拖拽发送一次正常 Escape 收尾，不清除其他拖拽；释放不可确认时不会报告已释放。
+
+GUI 连续换装在本次期限内等待原生背包输入就绪后才排队第一次双击；鼠标已释放或上次交换已确认，不代表下一次原生请求已就绪。等待原因可为 `equipment_waiting_native_ready`，期限内未就绪以 `equipment_native_not_ready` 停止；就绪事实不可读则为 `equipment_native_readiness_unavailable`。每次按下前重新核对就绪、窗口与对象，排队后失效立即停止并释放；派发后的未知结果不会自动补发。
+
+### GUI 必要窗口与连续消费
+
+`game.window(name, opened[, seconds])` 的 `name` 仅为 `inventory/stats/skills`，`opened` 必须为布尔值；`game.focus([seconds])` 恢复可确认的游戏焦点。开窗前解析当前原生窗口动作键位，派发前再次核对，不盲发已改绑的 I/S/K。使用唯一且布局已确认的窗口，拒绝遮挡、对话/商店占用或未知目标。未确认时不重复切换；结果的 `ui` 包含窗口名、开关状态、当前窗口引用和游戏焦点。
+
+GUI 养成动作可保留已打开窗口；后续角色动作前由脚本明确关窗、恢复焦点并核对。三种必要窗口之外的 NPC/商店仍使用既有声明范围，不由这些入口补齐。
+
+语义动作结果的 `session_id` 表示所属 Lua 会话；快照保留的最后动作不一定属于新会话。CLI 养成投影只接纳与本次 `script_id` 匹配的结果；新会话在动作前取消时，不把旧分配数量或旧窗口确认当成本次结果。原始按键等扩展没有相应标记时保持未知。
+
+```lua
+local bag = game.observe("inventory")
+assert(bag.status == "ok")
+-- source_slot/target_slot 来自已核实计划与当前原生读数。
+local selected
+for _, item in ipairs(bag.data.items) do
+    if item.inventory_type == 1 and item.slot == source_slot then selected = item end
+end
+assert(selected and selected.equipment and type(selected.equipment.object_ref) == "string")
+local changed = game.equip(source_slot, target_slot, 3, selected.equipment.object_ref)
+assert(changed.effect == "confirmed")
+assert(game.window("inventory", false).effect == "confirmed")
+assert(game.focus().effect == "confirmed")
+game.face("right")
 ```
 
 ## 原版按键

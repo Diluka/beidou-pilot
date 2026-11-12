@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Observation.h"
+#include "Allocation.h"
 
 #include <array>
 #include <cstdint>
@@ -13,7 +14,22 @@ namespace MapleControl {
 
 // Unknown is kept separate from a known false value in both Lua and host results.
 enum class Fact { Unknown, False, True };
-enum class ActionKind { Move, Face, Jump, Attack, Pickup, UseItem, Stop, Equip, Unequip, Revive, Activate };
+enum class ActionKind {
+    Move,
+    Face,
+    Jump,
+    Attack,
+    Pickup,
+    UseItem,
+    Stop,
+    Equip,
+    Unequip,
+    Revive,
+    Activate,
+    AllocateAp,
+    AllocateSp,
+    Window
+};
 
 struct Character {
     std::uint32_t id = 0;
@@ -90,6 +106,8 @@ struct Action {
     int sourceSlot = 0;
     int destinationSlot = 0;
     std::string reference;
+    AllocationRequest allocation;
+    std::string sessionId;
 };
 
 struct SkillResult {
@@ -107,6 +125,10 @@ struct ActionResult {
     std::string reason;
     bool skillRequested = false;
     SkillResult skill;
+    Value allocation;
+    Value ui;
+    Value equipment;
+    std::string sessionId;
 };
 
 // Each host supplies only native execution and its current state. The Lua

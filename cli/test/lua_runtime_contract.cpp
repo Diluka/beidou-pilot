@@ -50,6 +50,7 @@ public:
         remaining = static_cast<int>(action.durationMs / 20);
         if (remaining == 0) remaining = 1;
         result = {};
+        result.sessionId = action.sessionId;
         result.dispatched = true;
         result.reason = "native_input_" + std::to_string(inputs.size());
         return true;
@@ -186,8 +187,11 @@ public:
     }
 
     bool Supports(MapleControl::ActionKind kind) const override {
+        if (kind == MapleControl::ActionKind::Window) return windowSupported;
         if (kind == MapleControl::ActionKind::Revive) return reviveSupported;
         if (kind == MapleControl::ActionKind::Activate) return activateSupported;
+        if (kind == MapleControl::ActionKind::AllocateAp || kind == MapleControl::ActionKind::AllocateSp)
+            return allocationSupported;
         return (kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip)
                || equipmentSupported;
     }
@@ -197,6 +201,7 @@ public:
         requests.push_back(action);
         pending = true;
         result = {};
+        result.sessionId = action.sessionId;
         result.dispatched = true;
         return true;
     }
@@ -224,6 +229,8 @@ public:
     bool equipmentSupported = true;
     bool reviveSupported = true;
     bool activateSupported = true;
+    bool allocationSupported = true;
+    bool windowSupported = true;
 };
 
 // The native callback re-enters the real scheduler; it does not model NPCs.
@@ -733,6 +740,128 @@ error("query_resumed_for_another_character")
     Check(native.queries.size() == 3 && native.inputs.empty(), "invalid_domain_reached_native_collector");
 }
 
+void WindowRequests() {
+    ConfirmationBoundary native;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("window-requests", R"lua(
+assert(game.capabilities().window)
+local opened = game.window("stats", true, 0.5)
+assert(opened.session_id == "window-requests")
+assert(opened.ui.open and opened.ui.instance_ref == "window-1")
+local focused = game.focus()
+assert(focused.ui.game_focused and focused.effect == "confirmed")
+local equipped = game.equip(1, -11, 3, "source-object")
+assert(equipped.equipment.source_ref_after == "wearing-object")
+)lua",
+                        5000, error),
+          error);
+    Advance(runtime, native, 2);
+    Check(native.requests.size() == 1 && native.requests[0].kind == MapleControl::ActionKind::Window
+              && native.requests[0].reference == "stats" && native.requests[0].direction == "open"
+              && native.requests[0].durationMs == 500,
+          "window_request_changed");
+    native.result.ui = MapleControl::Value::Object({{"open", true}, {"instance_ref", "window-1"}});
+    native.Complete("confirmed", "window_open_confirmed");
+    Advance(runtime, native, 1);
+    Check(native.requests.size() == 2 && native.requests[1].reference == "game"
+              && native.requests[1].direction == "focus",
+          "focus_request_changed");
+    native.result.ui = MapleControl::Value::Object({{"game_focused", true}});
+    native.Complete("confirmed", "game_focus_confirmed");
+    Advance(runtime, native, 1);
+    Check(native.requests.size() == 3 && native.requests[2].reference == "source-object", "equipment_reference_lost");
+    native.result.equipment = MapleControl::Value::Object({{"source_ref_after", "wearing-object"}});
+    native.Complete("confirmed", "equipment_change_confirmed");
+    Advance(runtime, native, 2);
+    Check(!runtime.Running() && runtime.CurrentStatus()->status == "completed"
+              && runtime.CurrentStatus()->error.empty(),
+          runtime.CurrentStatus()->error);
+    for (const auto* source : {"game.window('unknown',true)", "game.window('stats',1)", "game.window('stats',true,31)",
+                               "game.focus(1,2)", "game.equip(1,-11,3,'')", "game.equip(1,-11,3,'x',1)"}) {
+        Check(runtime.Start("invalid-ui", source, 5000, error), error);
+        Advance(runtime, native, 3);
+        Check(runtime.CurrentStatus()->reason == "script_error", "invalid_ui_request_accepted");
+    }
+    native.windowSupported = false;
+    Check(runtime.Start("unsupported-window", "assert(not game.capabilities().window);game.window('stats',true)", 5000,
+                        error),
+          error);
+    Advance(runtime, native, 3);
+    Check(runtime.CurrentStatus()->reason == "script_error" && native.requests.size() == 3,
+          "unsupported_window_dispatched");
+}
+
+void AllocationRequests() {
+    ConfirmationBoundary native;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("allocation-requests", R"lua(
+assert(game.capabilities().allocate_ap and game.capabilities().allocate_sp)
+local ap = game.allocate_ap("strength", 2)
+assert(ap.control_released and ap.effect == "confirmed")
+assert(ap.allocation.allocated == 2 and ap.allocation.requested == 2)
+local sp = game.allocate_sp(1000000, 3, 0.5)
+assert(sp.effect == "unknown" and sp.allocation.allocated == 1 and sp.allocation.point_pending)
+game.move("right", 0.02)
+)lua",
+                        5000, error),
+          error);
+    Advance(runtime, native, 3);
+    Check(native.requests.size() == 1 && native.pending, "allocation_repeated_before_confirmation");
+    const auto& ap = native.requests.front();
+    Check(ap.kind == MapleControl::ActionKind::AllocateAp && ap.allocation.stat == "strength"
+              && ap.allocation.count == 2 && ap.allocation.timeoutMs == 1200,
+          "explicit_ap_request_changed");
+    native.result.allocation = MapleControl::Value::Object({{"allocated", 2}, {"requested", 2}});
+    native.Complete("confirmed", "allocation_confirmed");
+    Advance(runtime, native, 1);
+    Check(native.requests.size() == 2 && native.pending, "sp_request_missing");
+    const auto& sp = native.requests.back();
+    Check(sp.kind == MapleControl::ActionKind::AllocateSp && sp.allocation.skill && sp.allocation.skillId == 1000000
+              && sp.allocation.count == 3 && sp.allocation.timeoutMs == 500,
+          "explicit_sp_request_changed");
+    native.result.allocation = MapleControl::Value::Object({{"allocated", 1}, {"point_pending", true}});
+    native.Complete("unknown", "allocation_not_confirmed");
+    Advance(runtime, native, 1);
+    Check(native.requests.size() == 3 && native.requests.back().kind == MapleControl::ActionKind::Move,
+          "following_action_missing_or_allocation_replayed");
+    native.Complete("unknown", "move_dispatched");
+    Advance(runtime, native, 3);
+    Check(!runtime.Running() && runtime.CurrentStatus()->status == "completed"
+              && runtime.CurrentStatus()->error.empty(),
+          runtime.CurrentStatus()->error);
+    for (const auto* source :
+         {"game.allocate_ap('hp',1)", "game.allocate_ap('strength',0)", "game.allocate_ap('strength',101)",
+          "game.allocate_sp(0,1)", "game.allocate_sp(1000000,1,0)", "game.allocate_sp(1000000,1,31)"}) {
+        Check(runtime.Start("invalid-allocation", source, 5000, error), error);
+        Advance(runtime, native, 3);
+        Check(runtime.CurrentStatus()->reason == "script_error", "invalid_allocation_not_rejected");
+    }
+    Check(native.requests.size() == 3, "invalid_allocation_dispatched");
+    Check(
+        runtime.Start("cancel-allocation", "game.allocate_ap('strength',2); error('old_request_resumed')", 5000, error),
+        error);
+    Advance(runtime, native, 1);
+    runtime.Cancel("explicit_cancel");
+    Advance(runtime, native, 3);
+    Check(native.requests.size() == 4 && native.Released() && !runtime.Running()
+              && runtime.CurrentStatus()->reason == "explicit_cancel" && runtime.CurrentStatus()->error.empty(),
+          "allocation_cancel_replayed_or_resumed");
+    native.allocationSupported = false;
+    Check(runtime.Start("unsupported-allocation", R"lua(
+assert(not game.capabilities().allocate_ap and not game.capabilities().allocate_sp)
+game.allocate_ap("strength", 1)
+)lua",
+                        5000, error),
+          error);
+    Advance(runtime, native, 3);
+    Check(runtime.CurrentStatus()->reason == "script_error"
+              && runtime.CurrentStatus()->error.find("unsupported: allocate_ap") != std::string::npos
+              && native.requests.size() == 4,
+          "unsupported_allocation_reached_native_dispatch");
+}
+
 void EquipmentRequests() {
     ConfirmationBoundary native;
     native.state.inventoryKnown = true;
@@ -977,6 +1106,14 @@ int main(int argc, char** argv) {
     }
     if (std::string(argv[1]) == "revive-requests") {
         ReviveRequests();
+        return 0;
+    }
+    if (std::string(argv[1]) == "window-requests") {
+        WindowRequests();
+        return 0;
+    }
+    if (std::string(argv[1]) == "allocation-requests") {
+        AllocationRequests();
         return 0;
     }
     if (std::string(argv[1]) == "equipment-requests") {

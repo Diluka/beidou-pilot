@@ -48,6 +48,9 @@ private:
     nlohmann::json ObservationData(const std::string& domain, std::string& status, std::string& error) const;
     void Publish();
     void ApplyRelease();
+    MapleControl::AllocationFacts AllocationFacts() const;
+    void CaptureAllocation();
+    std::string EquipmentReference(const ms::Equip* item) const;
     void CaptureInteraction();
     bool OpenNpc(std::int32_t objectId, std::int32_t npcId, std::string& error);
     bool OpenServerNpc(std::int32_t objectId, std::int32_t npcId, std::string& error);
@@ -62,6 +65,8 @@ private:
     MapleControl::Runtime runtime;
     MapleControl::TaskTransport taskTransport;
     MapleControl::ActionResult result;
+    std::optional<MapleControl::AllocationRequest> allocationRequest;
+    MapleControl::Allocation allocation;
 
     struct EquipmentChange {
         int sourceSlot;

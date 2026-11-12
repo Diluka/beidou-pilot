@@ -4,12 +4,17 @@
 #include "TaskTransport.h"
 #include "EventTransport.h"
 #include "NativeKeyInput.h"
+#include "NativeKeyBindings.h"
+#include "NativeMouseInput.h"
+#include "NativeCare.h"
 #include "NativeItemUse.h"
 #include "NativeSkillUse.h"
 #include "NativeObservation.h"
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <iomanip>
 #include <fstream>
@@ -33,6 +38,9 @@ struct ClientPlayer;
 using ActiveSkill = int(__thiscall*)(ClientPlayer*, int, int, int*);
 struct ClientContext;
 using UseItem = void(__thiscall*)(ClientContext*, int, int);
+using InventoryInputReady = int(__thiscall*)(ClientContext*, int, int);
+using SetNativeCursor = int(__thiscall*)(InputSystem*, int, int);
+using GetNativeCursor = int(__thiscall*)(InputSystem*, POINT*);
 
 auto originalUpdate = reinterpret_cast<ApplicationUpdate>(0x009F84D0);
 auto originalKeyPressed = reinterpret_cast<KeyPressed>(0x0059A25A);
@@ -40,6 +48,9 @@ const auto dispatchInput = reinterpret_cast<InputMessage>(0x009F97B7);
 const auto inputModifiers = reinterpret_cast<InputModifiers>(0x0059B1EB);
 const auto activeSkill = reinterpret_cast<ActiveSkill>(0x00966F7A);
 const auto useItem = reinterpret_cast<UseItem>(0x00A092FB);
+const auto inventoryInputReady = reinterpret_cast<InventoryInputReady>(0x00485BF7);
+const auto setNativeCursor = reinterpret_cast<SetNativeCursor>(0x0059A887);
+const auto getNativeCursor = reinterpret_cast<GetNativeCursor>(0x0059A388);
 
 struct NativeContext {
     std::uint32_t field = 0;
@@ -60,6 +71,12 @@ std::string lastConsumedId;
 std::string pendingStatus;
 std::string pendingReason;
 BeiDouBridge::NativeKeyInput keyInput;
+BeiDouBridge::NativeMouseInput mouseInput;
+BeiDouBridge::NativeCare care;
+bool careResult = false;
+bool careTracking = false;
+bool careKeyDispatched = false;
+unsigned careMenuAction = 0;
 BeiDouBridge::NativeItemUse itemUse;
 BeiDouBridge::NativeSkillUse skillUse;
 bool itemResult = false;
@@ -92,6 +109,9 @@ MapleControl::ActionResult NativeResult();
 bool NativeRawKeys(const std::vector<std::string>& keys, unsigned int duration, std::string& error);
 bool InvokeNativeSkill(std::uint32_t skillId, int& result, std::string& error);
 bool NativeLogs(const std::string& scriptId, const std::vector<std::string>& lines);
+BeiDouBridge::CareView CaptureCareView(const MapleControl::Action* action = nullptr, bool sceneHitTest = false);
+bool SendMouse(BeiDouBridge::NativeMouseInput::Event event, const BeiDouBridge::NativeMouseInput::Target& target,
+               std::uint64_t epoch);
 
 class BeiDouAdapter final : public MapleControl::Adapter {
 public:
@@ -104,8 +124,8 @@ public:
     }
 
     bool Supports(MapleControl::ActionKind kind) const override {
-        return kind != MapleControl::ActionKind::Equip && kind != MapleControl::ActionKind::Unequip
-               && kind != MapleControl::ActionKind::Revive && kind != MapleControl::ActionKind::Activate;
+        return kind != MapleControl::ActionKind::Unequip && kind != MapleControl::ActionKind::Revive
+               && kind != MapleControl::ActionKind::Activate;
     }
 
     bool Begin(const MapleControl::Action& action, std::string& error) override {
@@ -116,9 +136,16 @@ public:
 
     void Release() override { BeginRelease({}, {}); }
 
-    bool Released() const override { return !attackWindow && keyInput.Released() && !itemUse.Pending(); }
+    bool Released() const override {
+        return !attackWindow && keyInput.Released() && mouseInput.Released() && !care.Active() && !care.CleanupPending()
+               && !itemUse.Pending();
+    }
 
-    bool ReleasePending() const override { return keyInput.ReleasePending(); }
+    bool ReleasePending() const override {
+        // Releasing one UI pulse does not release the enclosing workflow.
+        // Runtime must still cancel that workflow when its owner is preempted.
+        return care.ReleasePending(keyInput.ReleasePending(), mouseInput.ReleasePending());
+    }
 
     bool Logs(const std::string& scriptId, const std::vector<std::string>& lines) override {
         return NativeLogs(scriptId, lines);
@@ -149,6 +176,199 @@ template <typename T> bool ReadAt(std::uintptr_t address, T& value) {
     SIZE_T count = 0;
     return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), &value, sizeof(value), &count)
            && count == sizeof(value);
+}
+
+const MapleControl::Value& CareField(const MapleControl::Value& object, const std::string& name) {
+    for (const auto& entry : object.Members())
+        if (entry.first == name) return entry.second;
+    static const MapleControl::Value unknown;
+    return unknown;
+}
+
+int CareNumber(const MapleControl::Value& value) {
+    if (value.Type() != MapleControl::Value::Kind::Number || !std::isfinite(value.Number())
+        || std::floor(value.Number()) != value.Number() || value.Number() < -2147483648.0
+        || value.Number() > 2147483647.0)
+        throw NativeObservation::ReadError("Care numeric fact is unavailable");
+    return static_cast<int>(value.Number());
+}
+
+std::uint32_t CareAddress(const MapleControl::Value& value) {
+    if (value.Type() == MapleControl::Value::Kind::Null) return 0;
+    if (value.Type() != MapleControl::Value::Kind::String)
+        throw NativeObservation::ReadError("Care address is unavailable");
+    std::size_t end = 0;
+    const auto parsed = std::stoull(value.Text(), &end, 16);
+    if (end != value.Text().size() || parsed > 0xffffffffULL)
+        throw NativeObservation::ReadError("Care address is invalid");
+    return static_cast<std::uint32_t>(parsed);
+}
+
+bool CareTrue(const MapleControl::Value& value) {
+    return value.Type() == MapleControl::Value::Kind::Boolean && value.Boolean();
+}
+
+bool CareFalse(const MapleControl::Value& value) {
+    return value.Type() == MapleControl::Value::Kind::Boolean && !value.Boolean();
+}
+
+BeiDouBridge::CareView CaptureCareView(const MapleControl::Action* action, bool sceneHitTest) {
+    using Value = MapleControl::Value;
+    BeiDouBridge::CareView view;
+    view.nativeUser = currentNative.user;
+    view.characterId = previousState.characterKnown ? previousState.character.id : 0;
+    view.sceneGeneration = previousState.sceneGeneration;
+    try {
+        const auto ui = NativeObservation::Ui();
+        const auto& unavailable = CareField(ui, "unavailable");
+        if (unavailable.Type() != Value::Kind::Array || !unavailable.Elements().empty()) return view;
+        const auto& dialog = CareField(ui, "dialog");
+        for (const auto* field : {"script_dialog_open", "focused_talk_dialog_open", "registered_talk_dialog_open"})
+            if (!CareFalse(CareField(dialog, field))) view.blocked = true;
+        const auto& camera = CareField(dialog, "camera_viewport");
+        const auto cameraX = CareNumber(CareField(camera, "left"));
+        const auto cameraY = CareNumber(CareField(camera, "top"));
+        view.width = CareNumber(CareField(camera, "right")) - cameraX;
+        view.height = CareNumber(CareField(camera, "bottom")) - cameraY;
+        view.gameFocused =
+            CareField(CareField(dialog, "keyboard_handler"), "type_name").Text() == "CWndMan::IUIMsgHandler";
+        view.focusedWindow = CareAddress(CareField(CareField(dialog, "focused_window"), "address"));
+        const auto manager = NativeObservation::Read<std::uint32_t>(0x00BEC20C);
+        if (manager == 0 || NativeObservation::Read<std::uint32_t>(manager) != 0x00B3F13C) return view;
+        view.dragObject = NativeObservation::Read<std::uint32_t>(manager + 0x98);
+        if (view.dragObject != 0 && NativeObservation::Read<std::uint32_t>(view.dragObject) == 0xAF34D8) {
+            view.dragInventoryType = NativeObservation::Read<int>(view.dragObject + 0x18);
+            view.dragSlot = NativeObservation::Read<int>(view.dragObject + 0x1C);
+        }
+        const auto& windows = CareField(ui, "windows");
+        if (windows.Type() != Value::Kind::Array) return view;
+        for (const auto& record : windows.Elements()) {
+            BeiDouBridge::CareWindow window;
+            window.address = CareAddress(CareField(record, "address"));
+            window.identity = CareField(record, "instance_ref").Text();
+            window.name = CareField(record, "type_name").Text();
+            window.name = window.name == "CUIItem"    ? "inventory"
+                          : window.name == "CUIStat"  ? "stats"
+                          : window.name == "CUISkill" ? "skills"
+                                                      : "";
+            const auto& tables = CareField(record, "vtables").Elements();
+            if (tables.empty()) return view;
+            const auto table = CareAddress(tables[0]);
+            window.sceneLayer = table == 0xB3F13C || table == 0xB37BBC || table == 0xB3BA80;
+            if (table == 0xAFE110 || table == 0xAF0AF8) view.blocked = true;
+            const auto& rect = CareField(record, "game_rect");
+            window.geometryKnown = rect.Type() == Value::Kind::Object;
+            if (window.geometryKnown) {
+                window.rect.x = CareNumber(CareField(rect, "left"));
+                window.rect.y = CareNumber(CareField(rect, "top"));
+                window.rect.width = CareNumber(CareField(rect, "right")) - window.rect.x;
+                window.rect.height = CareNumber(CareField(rect, "bottom")) - window.rect.y;
+                if (window.rect.width != CareNumber(CareField(record, "width"))
+                    || window.rect.height != CareNumber(CareField(record, "height")))
+                    return view;
+            }
+            for (const auto& control : CareField(record, "buttons").Elements()) {
+                BeiDouBridge::CareButton button;
+                button.id = CareNumber(CareField(control, "control_id"));
+                button.rect = {CareNumber(CareField(control, "layout_x")), CareNumber(CareField(control, "layout_y")),
+                               CareNumber(CareField(control, "width")), CareNumber(CareField(control, "height"))};
+                const auto& enabled = CareField(control, "enabled");
+                button.enabledKnown = enabled.Type() == Value::Kind::Boolean;
+                button.enabled = enabled.Boolean();
+                window.buttons.push_back(button);
+            }
+            const auto& skills = CareField(record, "skills");
+            if (skills.Type() == Value::Kind::Object) {
+                window.firstIndex = CareNumber(CareField(skills, "first_index"));
+                window.selectedTab = CareNumber(CareField(skills, "selected_tab"));
+                window.tabCount = CareNumber(CareField(skills, "tab_count"));
+                const auto& ids = CareField(skills, "ids");
+                window.skillsKnown = ids.Type() == Value::Kind::Array;
+                for (const auto& id : ids.Elements()) window.skills.push_back(CareNumber(id));
+            }
+            const auto& inventory = CareField(record, "inventory");
+            if (inventory.Type() == Value::Kind::Object) {
+                window.inventoryKnown = CareField(inventory, "expanded").Type() == Value::Kind::Boolean;
+                window.expanded = CareTrue(CareField(inventory, "expanded"));
+                window.firstSlot = CareNumber(CareField(inventory, "first_slot"));
+                window.inventoryType = CareNumber(CareField(inventory, "selected_type"));
+            }
+            view.windows.push_back(window);
+        }
+        std::string expectedWindow;
+        if (action != nullptr) {
+            expectedWindow = action->kind == MapleControl::ActionKind::AllocateAp   ? "stats"
+                             : action->kind == MapleControl::ActionKind::AllocateSp ? "skills"
+                             : action->kind == MapleControl::ActionKind::Equip      ? "inventory"
+                                                                                    : action->reference;
+        }
+        const bool windowMissing =
+            std::none_of(view.windows.begin(), view.windows.end(),
+                         [&](const BeiDouBridge::CareWindow& window) { return window.name == expectedWindow; });
+        const bool wantsScene = windowMissing || (action != nullptr && action->direction == "close");
+        // Recheck hit testing at root-click delivery; other UI steps avoid a full scene scan.
+        if (sceneHitTest || (!view.gameFocused && wantsScene)) {
+            const auto scene = NativeObservation::Scene();
+            view.sceneKnown =
+                CareFalse(CareField(scene, "pending_dynamic")) && CareField(scene, "npcs").Type() == Value::Kind::Array;
+            for (const auto& npc : CareField(scene, "npcs").Elements())
+                view.npcs.emplace_back(CareNumber(CareField(npc, "x")) - cameraX,
+                                       CareNumber(CareField(npc, "y")) - cameraY);
+        }
+        if (action != nullptr && action->kind == MapleControl::ActionKind::AllocateSp) {
+            const auto character = NativeObservation::Character();
+            const auto& errors = CareField(character, "unavailable");
+            view.skillsKnown =
+                CareTrue(CareField(character, "skills_complete"))
+                && CareNumber(CareField(character, "character_id")) == static_cast<int>(previousState.character.id)
+                && errors.Type() == Value::Kind::Array && errors.Elements().empty();
+            const auto& skill = CareField(CareField(character, "skills"), std::to_string(action->allocation.skillId));
+            if (skill.Type() != Value::Kind::Null) {
+                const int level = CareNumber(CareField(skill, "level"));
+                if (level < 0) return BeiDouBridge::CareView{};
+                view.skillLevel = static_cast<unsigned>(level);
+                const auto& maximum = CareField(skill, "master_level");
+                if (maximum.Type() != Value::Kind::Null) {
+                    const auto value = CareNumber(maximum);
+                    if (value < 0) return BeiDouBridge::CareView{};
+                    view.skillMaximum = static_cast<unsigned>(value);
+                }
+            }
+        }
+        if (action != nullptr && action->kind == MapleControl::ActionKind::Equip) {
+            // CUIItem's button-down route (0x0081D450) queries this read-only
+            // predicate with (500, 0): request lock, live HP and native game time
+            // since the last request. A released mouse does not imply readiness.
+            const auto context = NativeObservation::Read<std::uint32_t>(0x00BE7918);
+            const auto clock = NativeObservation::Read<std::uint32_t>(0x00BE7B38);
+            if (context != 0 && clock != 0 && NativeObservation::Read<std::uint32_t>(context + 0x20B8) != 0) {
+                view.inventoryInputKnown = true;
+                view.inventoryInputReady = inventoryInputReady(reinterpret_cast<ClientContext*>(context), 500, 0) != 0;
+            }
+            const auto inventory = NativeObservation::Inventory();
+            const auto& errors = CareField(inventory, "unavailable");
+            view.inventoryKnown = CareTrue(CareField(inventory, "checksums_valid"))
+                                  && errors.Type() == Value::Kind::Array && errors.Elements().empty();
+            for (const auto* list : {"items", "equipped"})
+                for (const auto& entry : CareField(inventory, list).Elements()) {
+                    if (CareNumber(CareField(entry, "inventory_type")) != 1) continue;
+                    BeiDouBridge::CareEquipment equipment;
+                    equipment.itemId = CareNumber(CareField(entry, "item_id"));
+                    const auto& properties = CareField(entry, "equipment");
+                    equipment.reference = CareField(properties, "object_ref").Text();
+                    const auto& ordinary = CareField(properties, "ordinary");
+                    equipment.ordinaryKnown = ordinary.Type() == Value::Kind::Boolean;
+                    equipment.ordinary = ordinary.Boolean();
+                    for (const auto& slot : CareField(properties, "body_slots").Elements())
+                        equipment.bodySlots.push_back(CareNumber(slot));
+                    view.inventory.emplace(CareNumber(CareField(entry, "slot")), equipment);
+                }
+        }
+        view.known = true;
+    } catch (const std::exception&) {
+        view.known = false;
+    }
+    return view;
 }
 
 std::string Quote(const std::string& text) {
@@ -340,7 +560,7 @@ std::uint64_t UnixMilliseconds() {
     return (ticks - 116444736000000000ULL) / 10000;
 }
 
-bool BindingKey(std::uint32_t id, unsigned int& key, std::string& error) {
+bool BindingKey(BeiDouBridge::NativeBindingType type, std::uint32_t id, unsigned int& key, std::string& error) {
     std::uint32_t mapped = 0;
     std::uint32_t input = 0;
     std::uint32_t vtable = 0;
@@ -350,18 +570,10 @@ bool BindingKey(std::uint32_t id, unsigned int& key, std::string& error) {
         error = "native_binding_unavailable";
         return false;
     }
-    for (unsigned int index = 0; index < 89; ++index) {
-        std::uint32_t actionId = 0;
-        std::memcpy(&actionId, table.data() + index * 5 + 1, sizeof(actionId));
-        if (table[index * 5] != 5 || actionId != id) continue;
-        // Extended navigation keys share the low seven DIK bits used by CFuncKeyMappedMan.
-        unsigned int scan = index;
-        if (index == 71 || index == 72 || index == 73 || index == 75 || index == 77 || index == 79 || index == 80
-            || index == 81 || index == 82 || index == 83)
-            scan |= 0x80;
-        if (!ReadAt(input + 0x424 + scan * 4, key) || key == 0 || key > 255) continue;
+    if (BeiDouBridge::FindNativeBinding(table, type, id, key, [input](unsigned scan, unsigned int& value) {
+            return ReadAt(input + 0x424 + scan * 4, value);
+        }))
         return true;
-    }
     error = "unsupported: native_action_not_bound";
     return false;
 }
@@ -443,6 +655,7 @@ MapleControl::State CaptureState(NativeContext& native) {
 }
 
 unsigned int __fastcall KeyPressedHook(InputSystem* input, void*, int key) {
+    if (key == VK_LBUTTON && mouseInput.Owned()) return mouseInput.Held() ? 1 : 0;
     const auto& owned = keyInput.Owned();
     const auto& held = keyInput.Held();
     if (key >= 0 && key < 256 && owned[key]) return held[key] ? 1 : 0;
@@ -471,6 +684,14 @@ bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
                                     : key == VK_LMENU || key == VK_RMENU       ? VK_MENU
                                                                                : key;
     if (down && epoch != keyInput.Epoch()) return true;
+    if (down && careResult && care.Active() && inputModifiers(reinterpret_cast<InputSystem*>(input)) != 0) return false;
+    if (down && careResult && care.Active() && careMenuAction != 0) {
+        unsigned int currentKey = 0;
+        std::string error;
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Menu, careMenuAction, currentKey, error) || currentKey != key)
+            return false;
+    }
+    if (down && careResult && care.Active()) careKeyDispatched = true;
     keyInput.MarkDispatched(epoch);
     ++inputEvents;
     dispatchInput(0x100, messageKey, flags);
@@ -478,6 +699,10 @@ bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
 }
 
 void BeginRelease(const std::string& status, const std::string& reason) {
+    if (care.Active())
+        care.Cancel(previousState, CaptureCareView(&care.Request()), GetTickCount64(), "care_cancelled",
+                    mouseInput.Released());
+    if (!mouseInput.Released()) mouseInput.Release();
     attackWindow = false;
     skillUse.Cancel("native_skill_cancelled");
     if (semanticResult.skillRequested) semanticResult.skill = skillUse.Result();
@@ -485,6 +710,75 @@ void BeginRelease(const std::string& status, const std::string& reason) {
     keyInput.Release();
     pendingStatus = status;
     pendingReason = reason;
+}
+
+bool SendMouse(BeiDouBridge::NativeMouseInput::Event event, const BeiDouBridge::NativeMouseInput::Target& target,
+               std::uint64_t epoch) {
+    using Event = BeiDouBridge::NativeMouseInput::Event;
+    std::uint32_t input = 0, manager = 0;
+    if (!ReadAt(0x00BEC33C, input) || input == 0 || !ReadAt(0x00BEC20C, manager) || manager == 0) return false;
+    std::uint32_t managerType = 0;
+    if (!ReadAt(manager, managerType) || managerType != 0x00B3F13C) return false;
+    if (event == Event::Up) {
+        const bool cancel = mouseInput.Cancelled() || !previousState.ready || currentNative.user != target.character
+                            || sceneGeneration != target.scene;
+        if (cancel && target.window != 0) {
+            bool known = false;
+            const bool present = NativeObservation::WindowActive(target.window, known);
+            if (!known) return false;
+            if (present) {
+                const auto view = CaptureCareView(&care.Request());
+                int x = 0, y = 0;
+                if (!BeiDouBridge::NativeCare::CancelPoint(view, target.window, x, y)) return false;
+                auto* nativeInput = reinterpret_cast<InputSystem*>(input);
+                POINT position{};
+                if (!setNativeCursor(nativeInput, x, y)) return false;
+                std::uint32_t currentInput = 0;
+                if (epoch != mouseInput.Epoch() || !ReadAt(0x00BEC33C, currentInput) || currentInput != input)
+                    return false;
+                if (!getNativeCursor(nativeInput, &position) || position.x != x || position.y != y) return false;
+                ++inputEvents;
+                dispatchInput(WM_MOUSEMOVE, 0, 0);
+                if (epoch != mouseInput.Epoch()) return false;
+            }
+        }
+        ++inputEvents;
+        dispatchInput(BeiDouBridge::NativeMouseInput::Message(event), 0, 0);
+        return true;
+    }
+    if (epoch != mouseInput.Epoch() || !previousState.ready || currentNative.user != target.character
+        || sceneGeneration != target.scene)
+        return false;
+    const auto view = CaptureCareView(&care.Request(), target.window == 0);
+    if (!BeiDouBridge::NativeCare::AllowsTarget(view, target)) return false;
+    auto* nativeInput = reinterpret_cast<InputSystem*>(input);
+    if (inputModifiers(nativeInput) != 0 || originalKeyPressed(nativeInput, VK_LBUTTON)
+        || originalKeyPressed(nativeInput, VK_RBUTTON))
+        return false;
+    POINT actual{};
+    if (event == Event::Position) {
+        if (!setNativeCursor(nativeInput, target.x, target.y)) return false;
+        if (epoch != mouseInput.Epoch()) return true;
+        std::uint32_t currentInput = 0;
+        if (!ReadAt(0x00BEC33C, currentInput) || currentInput != input) return false;
+        if (!getNativeCursor(nativeInput, &actual) || actual.x != target.x || actual.y != target.y) return false;
+        ++inputEvents;
+        dispatchInput(WM_MOUSEMOVE, 0, 0);
+        return true;
+    }
+    if (!getNativeCursor(nativeInput, &actual) || actual.x != target.x || actual.y != target.y) return false;
+    if (event == Event::Down && target.point && !care.DispatchPoint(previousState, view, target, GetTickCount64()))
+        return false;
+    if ((event == Event::Down || event == Event::DoubleDown) && target.equipment
+        && !care.DispatchEquipment(previousState, view, target))
+        return false;
+    mouseInput.MarkDispatched(epoch);
+    ++inputEvents;
+    if (event == Event::Wheel)
+        dispatchInput(BeiDouBridge::NativeMouseInput::Message(event), static_cast<unsigned int>(target.wheel) << 16, 0);
+    else
+        dispatchInput(BeiDouBridge::NativeMouseInput::Message(event), MK_LBUTTON, 0);
+    return true;
 }
 
 bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durationMs, std::string& error) {
@@ -582,7 +876,7 @@ bool Publish(const MapleControl::State& state) {
         out << ']';
     } else
         out << "null";
-    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"attack_move\":true,\"pickup\":true,\"use_item\":true,\"equip\":false,\"unequip\":false,\"revive\":false,\"activate\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"monster_hp_percent\":false,\"events\":true},\"event_stream_status\":"
+    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"attack_move\":true,\"pickup\":true,\"use_item\":true,\"equip\":true,\"unequip\":false,\"allocate_ap\":true,\"allocate_sp\":true,\"window\":true,\"revive\":false,\"activate\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"monster_hp_percent\":false,\"events\":true},\"event_stream_status\":"
         << Quote(eventsPublished ? "ok" : "publish_failed") << ",\"inventory\":";
     if (state.inventoryKnown) {
         out << '[';
@@ -637,6 +931,10 @@ bool Publish(const MapleControl::State& state) {
             out << key;
             separator = true;
         }
+    if (mouseInput.Held()) {
+        if (separator) out << ',';
+        out << VK_LBUTTON;
+    }
     out << "],\"command\":{\"id\":" << (commandId.empty() ? "null" : Quote(commandId))
         << ",\"status\":" << Quote(commandStatus)
         << ",\"reason\":" << (commandReason.empty() ? "null" : Quote(commandReason)) << "},\"rejected_command\":";
@@ -696,6 +994,12 @@ bool Publish(const MapleControl::State& state) {
             out << "null";
         out << ",\"skill_reason\":" << Quote(actionResult.skill.reason);
     }
+    if (actionResult.allocation.Type() != MapleControl::Value::Kind::Null)
+        out << ",\"allocation\":" << actionResult.allocation.Dump();
+    if (!actionResult.sessionId.empty()) out << ',' << Quote("session_id") << ':' << Quote(actionResult.sessionId);
+    if (actionResult.equipment.Type() != MapleControl::Value::Kind::Null)
+        out << ',' << Quote("equipment") << ':' << actionResult.equipment.Dump();
+    if (actionResult.ui.Type() != MapleControl::Value::Kind::Null) out << ",\"ui\":" << actionResult.ui.Dump();
     out << '}';
     out << ",\"input_events\":" << inputEvents << "}\n";
     const std::string bytes = out.str();
@@ -805,11 +1109,25 @@ void Tick() {
     previousState = std::move(state);
     currentState = &previousState;
     haveScene = true;
+    NativeObservation::BindEquipmentContext(instanceId, previousState.characterKnown ? previousState.character.id : 0,
+                                            sceneGeneration);
+    if (careTracking) {
+        const auto view = CaptureCareView(&care.Request());
+        care.ObserveCleanup(previousState, view);
+        care.ConvergeCancellation(previousState, view, now, keyInput.Released() && mouseInput.Released());
+        if (!care.Active() && !care.CleanupPending() && keyInput.Released() && mouseInput.Released()) {
+            care.FinishScope();
+            careTracking = false;
+        }
+    }
 
     // CallUpdate may return without advancing its 30ms character step. Confirm the actual consumer.
     const bool oldCharacterExited =
         native.loginStage || (native.field == 0 && native.stats == 0 && native.user == 0)
         || (previousState.characterKnown && previousState.positionKnown && native.user != keyInput.ReleaseCharacter());
+    const bool oldMouseContextExited = native.loginStage || native.user == 0 || native.user != mouseInput.Character()
+                                       || sceneGeneration != mouseInput.Scene();
+    mouseInput.ConfirmRelease(updatedCharacter, characterUpdates, oldMouseContextExited);
     if (keyInput.ConfirmRelease(updatedCharacter, characterUpdates, oldCharacterExited)) {
         if (!pendingStatus.empty()) {
             commandStatus = pendingStatus;
@@ -823,13 +1141,43 @@ void Tick() {
         skillUse.Cancel(now >= attackWindowUntil ? "native_skill_expired" : "native_skill_context_changed");
         BeginRelease({}, {});
     }
-    if (keyInput.Active()
-        && (changed || !ready || previousState.character.values[6] == 0 || now >= keyInput.Deadline()))
+    if (keyInput.Active() && (changed || !ready || previousState.character.values[6] == 0))
         BeginRelease({}, {});
+    else if (keyInput.Active() && now >= keyInput.Deadline()) {
+        if (careResult && care.Active())
+            keyInput.Release();
+        else
+            BeginRelease({}, {});
+    }
+    if (!mouseInput.Released() && (changed || !ready || native.user != mouseInput.Character())) BeginRelease({}, {});
 
     ReadCommand();
     runtime.Tick(changed);
     if (!taskTransport->Tick(runtime, previousState)) runtime.Cancel("task_result_write_failed");
+    if (care.Active()) {
+        const auto view = CaptureCareView(&care.Request());
+        care.Tick(
+            previousState, view, now, keyInput.Released() && mouseInput.Released(),
+            [now](const BeiDouBridge::NativeMouseInput::Target& target) { return mouseInput.Request(target, now); },
+            [](unsigned intent) {
+                std::string error;
+                unsigned int key = 0;
+                // Resolve V17 window menu actions through the current key map.
+                careMenuAction = intent == 'S' ? 2 : intent == 'K' ? 3 : 1;
+                return BindingKey(BeiDouBridge::NativeBindingType::Menu, careMenuAction, key, error)
+                       && ApplyDesiredKeys({key}, 60, error);
+            });
+        if (!care.Active() && !keyInput.Released()) keyInput.Release();
+        if ((!care.Active() || care.StopMouse()) && !mouseInput.Released()) mouseInput.Release();
+    }
+    if (careTracking && care.CleanupPending() && keyInput.Released() && !mouseInput.Held()) {
+        const auto view = CaptureCareView(&care.Request());
+        if (care.CanEscape(view)) {
+            std::string error;
+            care.EscapeSent();
+            ApplyDesiredKeys({VK_ESCAPE}, 60, error);
+        }
+    }
     if (scriptCommand && !runtime.Running()) {
         const auto* script = runtime.CurrentStatus();
         commandStatus = script->status;
@@ -872,6 +1220,13 @@ void Tick() {
         commandReason = "native_input_failed";
         pendingReason = "native_input_failed";
         BeginRelease(pendingStatus, pendingReason);
+        return;
+    }
+    if (!mouseInput.Flush(now, SendMouse, [] { return characterUpdates; })) {
+        if (care.Active())
+            care.Cancel(previousState, CaptureCareView(&care.Request()), now, "care_mouse_delivery_failed", false);
+        runtime.Cancel("native_mouse_failed");
+        BeginRelease({}, {});
         return;
     }
     if (skillUse.Pending() && attackWindow) {
@@ -931,7 +1286,9 @@ bool AgentBridge::Install() {
 namespace {
 bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
     semanticResult = MapleControl::ActionResult{};
+    semanticResult.sessionId = action.sessionId;
     if (action.kind == MapleControl::ActionKind::Stop) {
+        careResult = false;
         semanticResult.reason = "stop_requested";
         BeginRelease({}, {});
         return true;
@@ -945,6 +1302,8 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         error = "action_in_progress";
         return false;
     }
+    careResult = false;
+    careTracking = false;
     unsigned int key = 0;
     unsigned int duration = action.durationMs == 0 ? 60 : action.durationMs;
     switch (action.kind) {
@@ -972,14 +1331,14 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         }
         break;
     case MapleControl::ActionKind::Jump:
-        if (!BindingKey(53, key, error)) return false;
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 53, key, error)) return false;
         break;
     case MapleControl::ActionKind::Attack:
         if (action.skillId != 0) break;
-        if (!BindingKey(52, key, error)) return false;
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 52, key, error)) return false;
         break;
     case MapleControl::ActionKind::Pickup:
-        if (!BindingKey(50, key, error)) return false;
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 50, key, error)) return false;
         break;
     case MapleControl::ActionKind::UseItem: {
         if (action.itemId / 10000 != 200) {
@@ -1017,13 +1376,35 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         semanticResult.reason = "item_use_requested";
         return true;
     }
-    case MapleControl::ActionKind::Equip:
     case MapleControl::ActionKind::Unequip:
-        error = action.kind == MapleControl::ActionKind::Equip ? "unsupported: equip" : "unsupported: unequip";
+        error = "unsupported: unequip";
         return false;
     case MapleControl::ActionKind::Activate:
         error = "unsupported: activate";
         return false;
+    case MapleControl::ActionKind::AllocateAp:
+    case MapleControl::ActionKind::AllocateSp:
+    case MapleControl::ActionKind::Equip:
+    case MapleControl::ActionKind::Window: {
+        std::uint32_t input = 0;
+        if (!ReadAt(0x00BEC33C, input) || input == 0) {
+            error = "input_route_unavailable";
+            return false;
+        }
+        auto* nativeInput = reinterpret_cast<InputSystem*>(input);
+        if (inputModifiers(nativeInput) != 0 || originalKeyPressed(nativeInput, VK_LBUTTON)
+            || originalKeyPressed(nativeInput, VK_RBUTTON)) {
+            error = "care_external_input_active";
+            return false;
+        }
+        mouseInput.ResetReport();
+        careKeyDispatched = false;
+        careMenuAction = 0;
+        careResult = care.Begin(action, previousState, CaptureCareView(&action), GetTickCount64());
+        careTracking = careResult;
+        if (!careResult) error = "care_action_in_progress";
+        return careResult;
+    }
     case MapleControl::ActionKind::Revive:
         error = "unsupported: revive";
         return false;
@@ -1055,6 +1436,15 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
 }
 
 MapleControl::ActionResult NativeResult() {
+    if (careResult) {
+        auto result = care.Result();
+        result.dispatched = care.Request().kind == MapleControl::ActionKind::Window
+                                ? mouseInput.Dispatched() || careKeyDispatched
+                            : care.Request().kind == MapleControl::ActionKind::Equip ? mouseInput.EquipmentDispatched()
+                                                                                     : mouseInput.PointDispatched();
+        result.controlReleased = adapter.Released();
+        return result;
+    }
     auto result = semanticResult;
     result.dispatched = itemResult ? itemUse.Dispatched()
                                    : (keyInput.Dispatched() && result.reason != "already_facing")
@@ -1128,6 +1518,8 @@ bool NativeRawKeys(const std::vector<std::string>& names, unsigned int duration,
         keys.push_back(key);
     }
     if (!ApplyDesiredKeys(keys, duration, error)) return false;
+    careResult = false;
+    careTracking = false;
     itemResult = false;
     semanticResult = MapleControl::ActionResult{};
     semanticResult.reason = "native_keys_requested";

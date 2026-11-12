@@ -162,10 +162,10 @@ def parser() -> Parser:
     q.add_argument("--until-hp", type=int)
     q.add_argument("--until-mp", type=int)
     q.add_argument("--seconds", type=float)
-    q = command("stats", "正常UI分配AP")
+    q = command("stats", "向明确基础属性分配AP，逐点核对目标与剩余点数")
     q.add_argument("stat", choices=["str", "dex", "int", "luk"])
     q.add_argument("count", type=int)
-    q = command("skills", "正常UI给指定技能加点")
+    q = command("skills", "向明确技能分配SP，逐点核对技能等级与剩余点数")
     q.add_argument("skill", type=int)
     q.add_argument("count", type=int, nargs="?", default=1)
     command("hotkeys", "读取客户端当前键位及快捷栏映射")
@@ -331,6 +331,8 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "use",
         "equip",
         "unequip",
+        "stats",
+        "skills",
     }:
         raise ClientError("unsupported_capability", "该客户端尚未提供这个窗口、原始按键或玩法接口。", {"command": cmd})
     if (
@@ -696,12 +698,12 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             return travel.climb(backend, args.x, args.to_y, seconds=args.seconds)
         return travel.portal(backend, args.name, seconds=args.seconds)
     if cmd == "ui":
-        from . import ui
+        from .control_scripts import window
 
         if args.action == "read":
             return backend.read("ui")
         if args.action == "focus":
-            return ui.focus_game(backend)
+            return window(backend, "game")
         if args.window is None:
             raise ClientError("usage", "ui open/close需要窗口名。")
         if args.window == "all":
@@ -712,7 +714,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             closed_shop = close_shop(backend)
             return {
                 "shop": closed_shop,
-                "windows": [ui.close_window(backend, w) for w in ("skills", "stats", "inventory")],
+                "windows": [window(backend, w, False) for w in ("skills", "stats", "inventory")],
             }
         if args.window == "shop":
             if args.action != "close":
@@ -720,7 +722,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             from .shop import close_shop
 
             return close_shop(backend)
-        return (ui.open_window if args.action == "open" else ui.close_window)(backend, args.window)
+        return window(backend, args.window, args.action == "open")
     if cmd == "unequip" or cmd == "equip" and backend.name == "headless":
         from .control_scripts import change_equipment
 
@@ -755,16 +757,12 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             backend, item, count=args.count, until_hp=args.until_hp, until_mp=args.until_mp, seconds=args.seconds
         )
     if cmd in ("stats", "skills"):
-        from . import stats
+        from .control_scripts import allocate
 
         if args.count < 1:
             raise ClientError("usage", "点数必须为正整数。")
         attributes = {"str": "strength", "dex": "dexterity", "int": "intelligence", "luk": "luck"}
-        return (
-            stats.allocate_ap(backend, attributes[args.stat], args.count)
-            if cmd == "stats"
-            else stats.allocate_sp(backend, args.skill, args.count)
-        )
+        return allocate(backend, attributes[args.stat] if cmd == "stats" else args.skill, args.count)
     if cmd in ("hotkeys", "bind", "press"):
         from . import hotkeys
 

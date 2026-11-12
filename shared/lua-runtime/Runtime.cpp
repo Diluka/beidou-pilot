@@ -72,17 +72,38 @@ const char* ActionName(ActionKind kind) {
         return "revive";
     case ActionKind::Activate:
         return "activate";
+    case ActionKind::AllocateAp:
+        return "allocate_ap";
+    case ActionKind::AllocateSp:
+        return "allocate_sp";
+    case ActionKind::Window:
+        return "window";
     }
     return "unsupported";
 }
 
+void PushValue(lua_State* lua, const Value& value);
+
 void PushResult(lua_State* lua, const ActionResult& result) {
     lua_createtable(lua, 0, 5);
+    if (!result.sessionId.empty()) String(lua, "session_id", result.sessionId);
     Boolean(lua, "dispatched", result.dispatched);
     Boolean(lua, "control_released", result.controlReleased);
     ObservedFact(lua, "settled", result.settled);
     String(lua, "effect", result.effect);
     if (!result.reason.empty()) String(lua, "reason", result.reason);
+    if (result.allocation.Type() != Value::Kind::Null) {
+        PushValue(lua, result.allocation);
+        lua_setfield(lua, -2, "allocation");
+    }
+    if (result.ui.Type() != Value::Kind::Null) {
+        PushValue(lua, result.ui);
+        lua_setfield(lua, -2, "ui");
+    }
+    if (result.equipment.Type() != Value::Kind::Null) {
+        PushValue(lua, result.equipment);
+        lua_setfield(lua, -2, "equipment");
+    }
     if (result.skillRequested) {
         Boolean(lua, "skill_dispatched", result.skill.dispatched);
         if (result.skill.nativeResultKnown) Integer(lua, "skill_native_result", result.skill.nativeResult);
@@ -486,9 +507,10 @@ struct Runtime::Impl {
         const auto& adapter = Self(lua).adapter;
         lua_newtable(lua);
         String(lua, "backend", adapter.Backend());
-        for (ActionKind kind : {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack,
-                                ActionKind::Pickup, ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip,
-                                ActionKind::Unequip, ActionKind::Revive, ActionKind::Activate})
+        for (ActionKind kind :
+             {ActionKind::Move, ActionKind::Face, ActionKind::Jump, ActionKind::Attack, ActionKind::Pickup,
+              ActionKind::UseItem, ActionKind::Stop, ActionKind::Equip, ActionKind::Unequip, ActionKind::Revive,
+              ActionKind::Activate, ActionKind::AllocateAp, ActionKind::AllocateSp, ActionKind::Window})
             Boolean(lua, ActionName(kind), adapter.Supports(kind));
         Boolean(lua, "raw_keys", adapter.SupportsRawKeys());
         Boolean(lua, "skill", adapter.SupportsSkill());
@@ -511,7 +533,9 @@ struct Runtime::Impl {
     bool Begin(const Action& action, lua_State* lua) {
         CaptureResult();
         std::string error;
-        if (!adapter.Begin(action, error)) {
+        Action bound = action;
+        bound.sessionId = report.id;
+        if (!adapter.Begin(bound, error)) {
             lua_pushlstring(lua, error.data(), error.size());
             return false;
         }
@@ -618,6 +642,8 @@ struct Runtime::Impl {
     }
 
     static int ChangeEquipment(lua_State* lua, ActionKind kind) {
+        if (lua_gettop(lua) < 2 || lua_gettop(lua) > 4)
+            return luaL_error(lua, "equipment requires two slots, optional timeout and optional object reference");
         const auto sourceSlot = luaL_checkinteger(lua, 1);
         const auto destinationSlot = luaL_checkinteger(lua, 2);
         if (sourceSlot < std::numeric_limits<int>::min() || sourceSlot > std::numeric_limits<int>::max()
@@ -628,13 +654,105 @@ struct Runtime::Impl {
                 return luaL_error(lua, "equip requires a positive backpack slot and a negative equipped slot");
         } else if (sourceSlot >= 0 || destinationSlot <= 0)
             return luaL_error(lua, "unequip requires a negative equipped slot and a positive backpack slot");
-        return BeginSemantic(lua, kind, "", Duration(lua, 3, 3, false), 0, static_cast<int>(sourceSlot),
-                             static_cast<int>(destinationSlot));
+        const auto duration = Duration(lua, 3, 3, false);
+        std::size_t referenceLength = 0;
+        const char* reference = "";
+        if (!lua_isnoneornil(lua, 4)) {
+            reference = luaL_checklstring(lua, 4, &referenceLength);
+            if (referenceLength == 0 || referenceLength > 128 || std::memchr(reference, 0, referenceLength) != nullptr)
+                return luaL_error(lua, "equipment reference must contain 1..128 bytes without NUL");
+        }
+        RequireAction(lua, kind);
+        bool accepted;
+        {
+            Action action;
+            action.kind = kind;
+            action.durationMs = duration;
+            action.sourceSlot = static_cast<int>(sourceSlot);
+            action.destinationSlot = static_cast<int>(destinationSlot);
+            action.reference.assign(reference, referenceLength);
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
     }
 
     static int Equip(lua_State* lua) { return ChangeEquipment(lua, ActionKind::Equip); }
 
     static int Unequip(lua_State* lua) { return ChangeEquipment(lua, ActionKind::Unequip); }
+
+    static int Allocate(lua_State* lua, bool skill) {
+        if (lua_gettop(lua) < 2 || lua_gettop(lua) > 3)
+            return luaL_error(lua, "allocation requires a target, count and optional per-point timeout");
+        const auto count = luaL_checkinteger(lua, 2);
+        if (count < 1 || count > 100) return luaL_error(lua, "allocation count must be 1..100");
+        const char* stat = "";
+        lua_Integer skillId = 0;
+        if (skill) {
+            skillId = luaL_checkinteger(lua, 1);
+            if (skillId < 1 || skillId > 2147483647) return luaL_error(lua, "skill id must be a positive int32");
+        } else {
+            stat = luaL_checkstring(lua, 1);
+            if (std::strcmp(stat, "strength") != 0 && std::strcmp(stat, "dexterity") != 0
+                && std::strcmp(stat, "intelligence") != 0 && std::strcmp(stat, "luck") != 0)
+                return luaL_error(lua, "allocation requires a basic attribute");
+        }
+        const auto timeout = Duration(lua, 3, 1.2, false);
+        RequireAction(lua, skill ? ActionKind::AllocateSp : ActionKind::AllocateAp);
+        bool accepted;
+        {
+            Action action;
+            action.kind = skill ? ActionKind::AllocateSp : ActionKind::AllocateAp;
+            action.allocation.skill = skill;
+            action.allocation.stat = stat;
+            action.allocation.skillId = static_cast<std::uint32_t>(skillId);
+            action.allocation.count = static_cast<unsigned>(count);
+            action.allocation.timeoutMs = timeout;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
+    }
+
+    static int AllocateAp(lua_State* lua) { return Allocate(lua, false); }
+
+    static int AllocateSp(lua_State* lua) { return Allocate(lua, true); }
+
+    static int Window(lua_State* lua) {
+        if (lua_gettop(lua) < 2 || lua_gettop(lua) > 3)
+            return luaL_error(lua, "window requires a name, open boolean and optional timeout");
+        const char* name = luaL_checkstring(lua, 1);
+        if (std::strcmp(name, "inventory") != 0 && std::strcmp(name, "stats") != 0 && std::strcmp(name, "skills") != 0)
+            return luaL_error(lua, "window must be inventory, stats or skills");
+        luaL_checktype(lua, 2, LUA_TBOOLEAN);
+        const bool opened = lua_toboolean(lua, 2) != 0;
+        const auto duration = Duration(lua, 3, 3, false);
+        RequireAction(lua, ActionKind::Window);
+        bool accepted;
+        {
+            Action action;
+            action.kind = ActionKind::Window;
+            action.reference = name;
+            action.direction = opened ? "open" : "close";
+            action.durationMs = duration;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
+    }
+
+    static int Focus(lua_State* lua) {
+        if (lua_gettop(lua) > 1) return luaL_error(lua, "focus accepts only an optional timeout");
+        const auto duration = Duration(lua, 1, 3, false);
+        RequireAction(lua, ActionKind::Window);
+        bool accepted;
+        {
+            Action action;
+            action.kind = ActionKind::Window;
+            action.reference = "game";
+            action.direction = "focus";
+            action.durationMs = duration;
+            accepted = Self(lua).Begin(action, lua);
+        }
+        return FinishAction(lua, accepted);
+    }
 
     static int Sleep(lua_State* lua) {
         RequireRunning(lua);
@@ -948,6 +1066,10 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source, std:
                                       {"use_item", Impl::UseItem},
                                       {"equip", Impl::Equip},
                                       {"unequip", Impl::Unequip},
+                                      {"allocate_ap", Impl::AllocateAp},
+                                      {"allocate_sp", Impl::AllocateSp},
+                                      {"window", Impl::Window},
+                                      {"focus", Impl::Focus},
                                       {"revive", Impl::Revive},
                                       {"activate", Impl::Activate},
                                       {"stop", Impl::Stop},

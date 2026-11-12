@@ -4,7 +4,10 @@
 #include "LoginState.h"
 
 #include "Character/Player.h"
+#include "Character/SkillId.h"
 #include "Data/EquipData.h"
+#include "Data/JobData.h"
+#include "Data/SkillData.h"
 #include "Gameplay/Stage.h"
 #include "Gameplay/MapleMap/Mob.h"
 #include "Gameplay/MapleMap/Npc.h"
@@ -13,6 +16,7 @@
 #include "IO/KeyType.h"
 #include "Net/Session.h"
 #include "Net/Packets/InventoryPackets.h"
+#include "Net/Packets/PlayerPackets.h"
 #include "Net/Packets/GameplayPackets.h"
 #include "Net/Packets/NpcInteractionPackets.h"
 
@@ -122,8 +126,8 @@ MapleControl::Observation SharedLuaAdapter::ObserveDomain(const std::string& dom
     return observation;
 }
 
-bool SharedLuaAdapter::Supports(MapleControl::ActionKind) const {
-    return true;
+bool SharedLuaAdapter::Supports(MapleControl::ActionKind kind) const {
+    return kind != MapleControl::ActionKind::Window;
 }
 
 bool SharedLuaAdapter::SupportsSkill() const {
@@ -477,10 +481,94 @@ bool SharedLuaAdapter::RespondNpc(std::uint64_t revision, std::int8_t response, 
     return true;
 }
 
+MapleControl::AllocationFacts SharedLuaAdapter::AllocationFacts() const {
+    MapleControl::AllocationFacts facts;
+    facts.instanceId = state.instanceId;
+    facts.characterId = state.character.id;
+    facts.sceneGeneration = state.sceneGeneration;
+    facts.job = state.character.values[1];
+    if (!state.ready || !state.characterKnown || state.character.values[6] == 0 || !allocationRequest) return facts;
+    facts.known = true;
+    const auto& request = *allocationRequest;
+    auto& player = ms::Stage::get().get_player();
+    const auto& stats = player.get_stats();
+    for (unsigned index = 0; index < 4; ++index) facts.attributes[index] = state.character.values[2 + index];
+    if (!request.skill) {
+        facts.points = state.character.values[10];
+        facts.value = facts.attributes[MapleControl::Allocation::AttributeIndex(request.stat)];
+        return facts;
+    }
+    facts.points = state.character.values[11];
+    const auto& skills = player.get_skills();
+    const auto learnedLevel = skills.get_level(request.skillId);
+    if (learnedLevel < 0) {
+        facts.known = false;
+        return facts;
+    }
+    facts.value = learnedLevel;
+    const auto& job = stats.get_job();
+    // Beginner skills use derived SP; other job families may use separate books.
+    // Only the original adventurer SP pool is established by these native facts.
+    if (facts.job < 100 || facts.job >= 600 || request.skillId / 10000 == 0) {
+        facts.refusal = "unsupported: allocation_sp_pool";
+        return facts;
+    }
+    if (!job.can_use(request.skillId)) {
+        facts.refusal = "skill_job_mismatch";
+        return facts;
+    }
+    const auto& listed = ms::JobData::get(request.skillId / 10000).get_skills();
+    if (std::find(listed.begin(), listed.end(), request.skillId) == listed.end()) {
+        facts.refusal = "skill_not_in_job_data";
+        return facts;
+    }
+    const auto& data = ms::SkillData::get(request.skillId);
+    const auto nativeMaximum = data.get_masterlevel();
+    const auto learnedMaximum = skills.get_masterlevel(request.skillId);
+    if (nativeMaximum <= 0 || learnedMaximum < 0) {
+        facts.refusal = "skill_limit_unavailable";
+        return facts;
+    }
+    facts.maximum = learnedMaximum > 0 ? std::min(nativeMaximum, learnedMaximum) : nativeMaximum;
+    if (data.is_invisible() && learnedMaximum == 0) facts.refusal = "skill_not_unlocked";
+    if (request.skillId == ms::SkillId::ANGEL_BLESSING) facts.refusal = "skill_not_allocatable";
+    for (const auto& required : data.get_reqskills()) {
+        if (required.first <= 0 || required.second <= 0) {
+            facts.refusal = "skill_requirements_unavailable";
+            break;
+        }
+        if (skills.get_level(required.first) < required.second) {
+            facts.refusal = "skill_prerequisite_not_met";
+            break;
+        }
+    }
+    return facts;
+}
+
+void SharedLuaAdapter::CaptureAllocation() {
+    result.allocation = allocation.Report();
+    result.dispatched = allocation.Dispatched();
+    result.effect = allocation.Confirmed() ? "confirmed" : "unknown";
+    result.reason = allocation.Reason();
+}
+
+std::string SharedLuaAdapter::EquipmentReference(const ms::Equip* item) const {
+    if (item == nullptr) return {};
+    std::ostringstream out;
+    out << state.instanceId << ':' << state.character.id << ':' << state.sceneGeneration << ':' << std::hex
+        << reinterpret_cast<std::uintptr_t>(item);
+    return out.str();
+}
+
 bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& error) {
     using Kind = MapleControl::ActionKind;
+    if (!Supports(action.kind)) {
+        error = "unsupported: window";
+        return false;
+    }
     if (action.kind == Kind::Stop) {
         Release();
+        result.sessionId = action.sessionId;
         return true;
     }
     if (!state.ready || (action.kind != Kind::Revive && state.character.values[6] == 0)) {
@@ -494,8 +582,18 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
     auto& stage = ms::Stage::get();
     auto& player = stage.get_player();
     result = {};
+    result.sessionId = action.sessionId;
     result.reason = "native_action_dispatched";
-    if (action.kind == Kind::Activate) {
+    if (action.kind == Kind::AllocateAp || action.kind == Kind::AllocateSp) {
+        allocationRequest = action.allocation;
+        allocation.Start(*allocationRequest, AllocationFacts());
+        CaptureAllocation();
+        active = allocation.Active();
+        // Dispatch follows command/task cancellation and another current-facts check.
+        result.controlReleased = !active;
+        if (!active) allocationRequest.reset();
+        return true;
+    } else if (action.kind == Kind::Activate) {
         if (!interaction.Activate(action.reference, {state.instanceId, state.character.id, state.sceneGeneration},
                                   error))
             return false;
@@ -546,6 +644,10 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
                                                      equipping ? equippedSlot : backpackSlot);
         if (!source) {
             error = "equipment_source_missing";
+            return false;
+        }
+        if (!action.reference.empty() && action.reference != EquipmentReference(source.get())) {
+            error = "equipment_reference_expired";
             return false;
         }
         if (!equipping && destination) {
@@ -662,6 +764,11 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
 }
 
 void SharedLuaAdapter::ApplyRelease() {
+    if (allocationRequest) {
+        allocation.Cancel(AllocationFacts(), MonotonicMs());
+        CaptureAllocation();
+        allocationRequest.reset();
+    }
     for (const auto held : heldActions) {
         ms::Stage::get().send_key(ms::KeyType::ACTION, held, false);
         ++inputEvents;
@@ -807,11 +914,29 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
                 ApplyRelease();
             }
         }
-    } else if (active && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs))
+    } else if (active && !allocationRequest
+               && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs))
         ApplyRelease();
     ReadCommand(externalActionBusy);
     runtime.Tick(changed);
     if (!taskTransport.Tick(runtime, state)) runtime.Cancel("task_result_write_failed");
+    if (active && allocationRequest) {
+        if (allocation.Tick(AllocationFacts(), MonotonicMs())) {
+            const auto request = *allocationRequest;
+            if (request.skill)
+                ms::SpendSpPacket(request.skillId).dispatch();
+            else {
+                const auto stat = request.stat == "strength"       ? ms::MapleStat::STR
+                                  : request.stat == "dexterity"    ? ms::MapleStat::DEX
+                                  : request.stat == "intelligence" ? ms::MapleStat::INT
+                                                                   : ms::MapleStat::LUK;
+                ms::SpendApPacket(stat).dispatch();
+            }
+            ++inputEvents;
+        }
+        CaptureAllocation();
+        if (!allocation.Active()) ApplyRelease();
+    }
     if (scriptCommand && !runtime.Running()) {
         const auto* script = runtime.CurrentStatus();
         commandStatus = script->status;
@@ -912,16 +1037,24 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
     }
     if (domain == "inventory") {
         Json items = Json::array();
-        for (const auto& item : state.inventory)
+        for (const auto& item : state.inventory) {
             items.push_back({{"inventory_type", item.inventoryType},
                              {"slot", item.slot},
                              {"item_id", item.itemId},
                              {"quantity", item.quantityKnown ? Json(item.quantity) : Json(nullptr)}});
+            if (item.inventoryType == 1) {
+                const auto source = inventory.get_equip(ms::InventoryType::EQUIP, item.slot);
+                if (source) items.back()["equipment"] = {{"object_ref", EquipmentReference(source.get())}};
+            }
+        }
         Json equipped = Json::array();
         for (int slot = 1; slot <= 51; ++slot) {
             const auto itemId = inventory.get_item_id(ms::InventoryType::EQUIPPED, slot);
-            if (itemId)
+            if (itemId) {
                 equipped.push_back({{"inventory_type", 1}, {"slot", -slot}, {"item_id", itemId}, {"quantity", 1}});
+                const auto source = inventory.get_equip(ms::InventoryType::EQUIPPED, slot);
+                if (source) equipped.back()["equipment"] = {{"object_ref", EquipmentReference(source.get())}};
+            }
         }
         Json capacities = Json::object();
         for (int type = 1; type <= 5; ++type)
@@ -1131,6 +1264,9 @@ Json SharedLuaAdapter::StateDocument() const {
           {"unequip", true},
           {"revive", true},
           {"activate", true},
+          {"allocate_ap", true},
+          {"allocate_sp", true},
+          {"window", false},
           {"stop", true},
           {"raw_keys", false},
           {"skill", true},
@@ -1141,6 +1277,9 @@ Json SharedLuaAdapter::StateDocument() const {
           {"settled", FactValue(result.settled)},
           {"effect", result.effect},
           {"reason", result.reason}}}};
+    if (result.allocation.Type() != MapleControl::Value::Kind::Null)
+        document["action_result"]["allocation"] = Json::parse(result.allocation.Dump());
+    if (!result.sessionId.empty()) document["action_result"]["session_id"] = result.sessionId;
     if (lastSkill)
         document["last_skill"] = {{"skill_id", lastSkill->id},
                                   {"native_result", lastSkill->result.nativeResult},

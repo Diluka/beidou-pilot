@@ -59,6 +59,12 @@ class LuaRuntimeContract(unittest.TestCase):
     def test_equipment_slots_wait_for_native_results_without_resending(self) -> None:
         subprocess.run([str(self.executable), "equipment-requests"], check=True, timeout=10)
 
+    def test_allocation_requests_results_validation_cancellation_and_following_action(self) -> None:
+        subprocess.run([str(self.executable), "allocation-requests"], check=True, timeout=10)
+
+    def test_windows_focus_and_equipment_references_preserve_one_runtime_contract(self) -> None:
+        subprocess.run([str(self.executable), "window-requests"], check=True, timeout=10)
+
     def test_equipment_cancel_and_rejections_preserve_unknown_effects(self) -> None:
         subprocess.run([str(self.executable), "equipment-cancellation"], check=True, timeout=10)
 

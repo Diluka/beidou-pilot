@@ -320,6 +320,23 @@ Value Scene() {
     return output;
 }
 
+Value EquipmentProperties(Address character, Address item, std::uint32_t identifier) {
+    if (identifier == 0 || identifier > 2147483647) throw ReadError("Equipment item identifier is unavailable");
+    // The native equip path 0x4f29f9 uses this serial to select ordinary/cash layers.
+    const bool ordinary = Read<std::uint64_t>(item + 0x18) == 0;
+    const auto gender = Read<unsigned char>(character + 0x11);
+    if (gender > 1) throw ReadError("Equipment character gender is unavailable");
+    auto slots = Value::Array();
+    if (ordinary) {
+        // Original equip/drop paths (0x4f1a6f, 0x4f1b43) use this pure
+        // item/body/gender predicate before the normal native equip workflow.
+        const auto accepts = reinterpret_cast<int(__cdecl*)(int, int, int)>(0x00460358);
+        for (int body = 1; body <= 51; ++body) if (accepts(identifier, body, gender)) slots.Add(-body);
+    }
+    const auto reference = EquipmentReference(item, Read<std::uint32_t>(character));
+    return Value::Object({{"object_ref", reference.empty() ? Value() : Value(reference)}, {"ordinary", ordinary}, {"body_slots", slots}});
+}
+
 Value Inventory() {
     auto output = Value::Object({
         {"source", "client-native-api"}, {"readonly", true}, {"items", Value::Array()},
@@ -342,7 +359,9 @@ Value Inventory() {
             if (Read<Address>(item) != 0x00AF310C) throw ReadError("An equipped item type is not covered by the V17 layout.");
             const auto identifier = SecureValue(item + 0x0C);
             if (Read<Address>(pointer) != item) throw ReadError("An equipped slot reference changed during observation.");
-            output["equipped"].Add(Value::Object({{"inventory_type", 1}, {"slot", slot}, {"item_id", identifier}, {"quantity", 1}}));
+            auto entry = Value::Object({{"inventory_type", 1}, {"slot", slot}, {"item_id", identifier}, {"quantity", 1}});
+            if (slot >= -19) entry["equipment"] = EquipmentProperties(character, item, identifier);
+            output["equipped"].Add(std::move(entry));
         }
         catch (const ReadError& error) {
             output["checksums_valid"] = false;
@@ -374,8 +393,10 @@ Value Inventory() {
                 Value quantity;
                 if (table == 0x00AF310C) quantity = 1;
                 else if (table == 0x00AF318C) quantity = StackQuantity(item + 0x28);
-                current.push_back(Value::Object({{"inventory_type", type}, {"slot", slot},
-                    {"item_id", identifier}, {"quantity", quantity}}));
+                auto entry = Value::Object({{"inventory_type", type}, {"slot", slot},
+                    {"item_id", identifier}, {"quantity", quantity}});
+                if (type == 1 && table == 0x00AF310C) entry["equipment"] = EquipmentProperties(character, item, identifier);
+                current.push_back(std::move(entry));
             }
             catch (const ReadError& error) {
                 output["checksums_valid"] = false;
