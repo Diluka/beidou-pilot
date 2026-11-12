@@ -19,13 +19,17 @@ nodes:
   - id: script-execution.run
     kind: scenario
     name: 在现有实例运行 Lua
-    summary: 从 UTF-8 文件或直接源码创建一个会话，限时或显式持续执行；全部任务结束并释放输入后返回，客户端实例继续存在。
-    aliases: [script run, 连续脚本, 脚本装载]
+    summary: 从文件或直接源码创建同一受信 Lua 会话；script run 同步等待终态，script start 仅等待原生受理后返回；等待方中断不自动取消，Runtime 始终拥有会话生命周期，客户端实例继续存在。策略文件和原始 Lua chunk 使用各自既定入口。
+    aliases: [script run, script start, 连续脚本, 脚本装载]
     anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/cli.py
+        value: main
+        description: 分派 script run/start，并保留同步等待终态与异步等待受理的区别。
       - kind: symbol
         file: cli/beidou_pilot/bridge.py
         value: BridgeClient.run_script
-        description: 核对当前实例、准备源码并提交脚本，等待对应脚本身份的终态。
+        description: 核对当前实例并提交源码；script run 等待结果，script start 仅等待原生受理。
       - kind: symbol
         file: shared/lua-runtime/Runtime.cpp
         value: Runtime::Start
@@ -55,8 +59,8 @@ nodes:
   - id: script-execution.cancel
     kind: operation
     name: 取消脚本会话并释放输入
-    summary: 原控制 CLI 的取消、期限、角色变化、离开游戏或脚本错误停止全部任务；原生输入释放确认后发布会话终态，不关闭客户端容器。
-    aliases: [取消脚本, Ctrl+C, SIGTERM, time_limit]
+    summary: 调用方可按精确 script.id 显式取消；原生期限、角色变化、离开游戏或脚本错误也会停止全部任务。确认所属输入释放后发布会话终态，不关闭客户端容器。
+    aliases: ["script cancel --session", 精确脚本ID, 原生期限]
     anchors:
       - kind: symbol
         file: shared/lua-runtime/Runtime.cpp
@@ -65,7 +69,11 @@ nodes:
       - kind: symbol
         file: cli/beidou_pilot/bridge.py
         value: BridgeClient._wait
-        description: 接收调用方取消并核对原生停止、所属实例身份与释放确认。
+        description: 接收同步等待方的明确取消，并核对原生停止、所属实例身份与释放确认。
+      - kind: symbol
+        file: cli/beidou_pilot/bridge.py
+        value: BridgeClient.cancel_script
+        description: 按当前 script.id 执行显式会话取消，拒绝不匹配的旧脚本并等待输入释放。
   - id: script-execution.control
     kind: capability
     name: 任务协作与输入控制权
@@ -129,6 +137,27 @@ nodes:
         file: shared/lua-runtime/Runtime.cpp
         value: Runtime::Start
         description: 注册唯一一份公共 game 函数及允许的标准库。
+  - id: script-execution.strategy-entry
+    kind: interface
+    name: main(context) 策略入口与参数合同
+    summary: 策略文件以唯一 main(context) 声明入口，并通过 @option 声明类型、默认值与约束；入口收到 context.options 与 context.scene。CLI 按声明校验动态参数并在发布前拒绝非法元数据或参数。未声明 default 的 boolean 省略时为 true，显式 default=false 时省略为 false；--no-flag 是无值负向开关，直接传入 false，不按 choices 拒绝。策略 budget_seconds 与通用 --seconds/--continuous 运行期限分离；普通 Lua chunk、--code 和辅助库/示例保留各自用途。
+    aliases: [main(context), "@option", 策略参数, script describe]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/strategies.py
+        value: parse_strategy
+        description: 识别唯一策略入口并校验文件级 @option 声明。
+      - kind: symbol
+        file: cli/beidou_pilot/strategies.py
+        value: parse_options
+        description: 校验动态参数、默认值、范围与 choices，并解析 boolean flag。
+      - kind: symbol
+        file: cli/beidou_pilot/strategies.py
+        value: compile_strategy
+        description: 将 options/scene 注入 context，并在调用 main 前核对当前身份与场景代次。
+      - kind: document
+        value: docs/LUA_API.md
+        description: 面向策略作者说明入口、参数、默认值和场景上下文。
   - id: script-execution.effect-boundary
     kind: invariant
     name: 执行终态与游戏效果分别确认
@@ -165,9 +194,12 @@ relations:
   - {from: script-execution.lua-api, type: part_of, to: script-execution, summary: 公共 Lua 接口由共享运行时统一定义。}
   - {from: script-execution.effect-boundary, type: part_of, to: script-execution, summary: 执行领域限定终态与效果的解释。}
   - {from: script-execution.trusted-source, type: part_of, to: script-execution, summary: 执行领域拥有脚本环境和预算边界。}
+  - {from: script-execution.strategy-entry, type: part_of, to: script-execution, summary: 声明式策略参数和 main(context) 输入由统一脚本入口校验。}
   - {from: script-execution.run, type: consumes, to: client-session.cli, summary: 调用方通过固定实例的统一 CLI 提交脚本。}
   - {from: script-execution.run, type: publishes, to: script-execution.lua-api, summary: 为本会话中的 Lua 源码开放统一 game 接口。}
+  - {from: script-execution.run, type: consumes, to: script-execution.strategy-entry, summary: 策略文件经统一运行入口消费 main(context)/@option 调用方合同。}
   - {from: script-execution.run, type: reads, to: game-observation.facts, summary: 依据当前原生角色与场景事实调度和停止会话。}
+  - {from: script-execution.run, type: reads, to: game-resources.catalog, summary: 仅策略文件场景预检读取本地静态地形；普通 Lua chunk 与 --code 不依赖该资料。地形所有权仍属资源域。}
   - {from: script-execution.run, type: writes, to: script-execution.session, summary: 创建会话和 main 任务并更新其执行终态。}
   - {from: script-execution.run, type: invokes, to: script-execution.cancel, summary: 期限或外部取消等停止原因进入整会话释放路径。}
   - {from: script-execution.run, type: constrained_by, to: client-session.identity, summary: 会话和取消均绑定当前原生实例与运行身份。}
@@ -185,16 +217,24 @@ relations:
   - {from: script-execution.status, type: reads, to: script-execution.task-result, summary: 查询已发布管理请求的保留反馈。}
 flows:
   - id: script-execution.run.flow
-    name: 从提交脚本到确认停止
-    summary: 文件和源码共用同一执行链；保留拒绝、正常完成、取消或错误，以及释放未确认的不同结果。
+    name: 从提交 Lua 到等待或显式停止
+    summary: 同一 Runtime 管理会话；`script run` 同步等待终态，`script start` 原生受理后返回。等待中断不等于脚本取消，且所有结束路径仍须核对身份、终态与输入释放。
     scenario: script-execution.run
     startsAt: submit
     steps:
-      - {id: submit, kind: action, name: 向当前实例提交受信 Lua, summary: 核对实例身份和脚本能力，准备源码并请求创建会话。, concept: script-execution.run}
-      - {id: admitted, kind: decision, name: 能否开始会话, summary: 当前实例、控制权、脚本编译与能力共同决定是否接受。}
+      - {id: submit, kind: action, name: 向当前实例提交受信 Lua, summary: 核对当前实例和脚本能力，准备受信源码并请求创建会话。, concept: script-execution.run}
+      - {id: admitted, kind: decision, name: Runtime 能否接受会话, summary: 当前身份、控制权、脚本能力与源码决定是否受理。}
       - {id: refused, kind: outcome, name: 拒绝并保留原因, summary: 忙碌、身份不符、能力缺失或源码错误不构成脚本成功。}
-      - {id: execute, kind: action, name: 调度任务与所属动作, summary: 任务按优先级和等待状态协作，主任务返回后子任务可继续。, concept: script-execution.control}
-      - {id: ending, kind: decision, name: 会话因何结束, summary: 全部任务正常返回，或取消、期限、角色变化、离开游戏与错误触发停止。}
+      - {id: execute, kind: action, name: Runtime 调度任务与所属动作, summary: Runtime 拥有会话；任务按优先级和等待状态协作，主任务返回后子任务可继续。, concept: script-execution.control}
+      - {id: wait-mode, kind: decision, name: 调用方选择何种等待模式, summary: 两种命令复用同一原生会话，但 CLI 等待边界不同。}
+      - {id: wait-result, kind: decision, name: 同步等待如何结束, summary: run 等原生终态；明确 cancel_file 触发停止，CLI 超时或中断只终止等待。}
+      - {id: wait-interrupted, kind: action, name: 重新观察当前会话, summary: CLI 等待结束后查询 script status，并核对相同实例和 script.id；不自动取消也不重放。, concept: script-execution.status}
+      - {id: post-wait, kind: decision, name: 当前会话状态是否可确认, summary: 区分匹配脚本仍运行、已达终态或身份/新鲜度不足。}
+      - {id: wait-unknown, kind: outcome, name: 保留未确认的等待结果, summary: 状态身份或新鲜度无法确认时不发送旧取消、不重放脚本，并报告结果未确认。, concept: script-execution.status}
+      - {id: async-return, kind: action, name: 异步受理后返回, summary: start 不等待最终终态，返回脚本身份与当前状态；如果仍在运行，Runtime 继续持有。}
+      - {id: async-control, kind: decision, name: 调用方后续如何控制活动会话, summary: 可观察并保留运行中的任务，或按精确 script.id 发出明确取消。}
+      - {id: async-active, kind: outcome, name: 脚本继续由 Runtime 持有, summary: 调用方离开或继续观察不停止任务；任务后续仍可通过状态查询和明确取消核对。}
+      - {id: ending, kind: decision, name: 会话因何结束, summary: 全部任务正常返回，或期限、身份变化、离开游戏、明确取消与错误触发停止。}
       - {id: cancel, kind: action, name: 停止全部任务, summary: 不再派发旧动作，开始释放该会话仍拥有的输入。, concept: script-execution.cancel}
       - {id: release, kind: action, name: 等待所属输入释放, summary: 正常结束和停止均须完成原生释放，容器继续运行。}
       - {id: confirmed, kind: decision, name: 是否确认对应终态和释放, summary: CLI 核验请求身份与新鲜状态，不以空按键列表单独断言成功。}
@@ -204,9 +244,21 @@ flows:
       - {from: submit, to: admitted}
       - {from: admitted, to: refused, when: 前提或编译不满足}
       - {from: admitted, to: execute, when: 会话已接受}
-      - {from: execute, to: ending}
+      - {from: execute, to: wait-mode}
+      - {from: wait-mode, to: wait-result, when: script run 同步等待终态}
+      - {from: wait-mode, to: async-return, when: script start 等原生受理后返回}
+      - {from: async-return, to: async-control}
+      - {from: async-control, to: async-active, when: 调用方继续观察或保留脚本运行}
+      - {from: async-control, to: cancel, when: 调用方按精确 script.id 执行 script cancel --session}
+      - {from: wait-result, to: ending, when: 原生 Runtime 已发布终态}
+      - {from: wait-result, to: wait-interrupted, when: CLI 等待超时或中断且未明确取消}
+      - {from: wait-interrupted, to: post-wait}
+      - {from: post-wait, to: ending, when: 同一脚本已达原生终态}
+      - {from: post-wait, to: async-control, when: 同一脚本仍由 Runtime 持有}
+      - {from: post-wait, to: wait-unknown, when: 状态身份或新鲜度不足以确认}
+      - {from: wait-result, to: cancel, when: 调用方通过 cancel_file 明确请求取消}
       - {from: ending, to: release, when: 全部任务正常结束}
-      - {from: ending, to: cancel, when: 取消或异常要求停止}
+      - {from: ending, to: cancel, when: 期限或原生身份、场景、错误要求停止}
       - {from: cancel, to: release}
       - {from: release, to: confirmed}
       - {from: confirmed, to: returned, when: 身份终态与释放已确认}
