@@ -174,6 +174,8 @@ end
 | `dead` | boolean | 无头已就绪角色的原生 HP 为零时为 `true`，HP 为正时为 `false`；读数不可用或后端未提供该事实时为 `nil` |
 | `revive_requestable` | boolean | 无头已知死亡且当前原生控制已释放，可提交一次普通复活请求；服务器或事件脚本许可由实际请求结果确认，未知为 `nil` |
 | `monsters` | array | 当前客户端已知怪物，元素结构见下文 |
+| `players` | array | 当前客户端已知的同图其他玩家，元素结构见下文 |
+| `players_complete` | boolean | 已知时表示本端能否完整解释当前场景的玩家封包；`nil` 表示未知 |
 | `inventory` | array | 五类背包的已占用正槽；不含身上装备负槽 |
 | `drops` | array | 当前客户端已知掉落，元素结构见下文 |
 
@@ -216,6 +218,16 @@ end
 
 原版可能提供金币金额；headless 当前没有金额数据，`money` 保持未知。金币掉落以 `money` 字段判断，`landed == nil` 表示落地状态未知。掉落 OID 与物品模板 ID 分别使用。
 
+### players 的元素
+
+`reference: string`、`x/y: number`；已知时有 `character_id: integer`、`name: string`、`level: integer`、`facing: "Left"/"Right"`。
+
+- `reference` 是本端本场景内的稳定引用，换图或重新进入场景（`scene_generation` 变化）后失效，不能与旧场景的玩家对应。
+- `character_id` 是角色 CID；`reference` 和它分别表达本端引用与已知角色标识，未收到时为 `nil`。
+- 列表只描述本端已经知道的同图其他角色，不承诺屏幕可见范围、全服玩家目录或对方真实位置；位置与朝向是当前原生采样。
+- `players_complete` 只在能完整解释当前场景玩家封包时为 `true`；观察到相关封包解析失败后为 `false`，此时列表可能缺少角色，空数组不能当作“没有其他玩家”。
+- 等级、朝向等字段按本端能力提供，未知时省略；HP、装备、队伍与好友关系不在此观察范围。
+
 ## 按需领域观察
 
 `game.observe(domain)` 在当前原生更新线程同步读取指定领域，调用无需动作控制权，结果在进程内直接返回。只有调用时才采集该领域；`game.state()` 的每帧轻量采样保持精简。按业务决策需要查询，长循环仍通过 `sleep` 或动作函数让出执行权。
@@ -225,7 +237,7 @@ end
 | 领域 | 两端支持与主要原生字段 |
 | --- | --- |
 | `stage` | 两端；阶段、频道与角色摘要，具体已知范围随后端和当前阶段变化 |
-| `scene` | 两端；`map_id`、`player`、`player_facing`、`monsters`、`npcs`、`drops`。NPC 提供 `object_id/template_id/name/x/y`；保留本端已知字段及限制 |
+| `scene` | 两端；`map_id`、`player`、`player_facing`、`monsters`、`npcs`、`drops`、`players`。NPC 提供 `object_id/template_id/name/x/y`；`players` 由无头端从原生角色对象提供，GUI 端原生用户池观察待交付；保留本端已知字段及限制 |
 | `inventory` | 两端；`items` 为已占用正槽，`equipped` 为身上负槽，元素含 `inventory_type/slot/item_id/quantity`；`capacities` 以字符串背包类型为键 |
 | `character` | 两端；`character_id`、`mesos`、`skills`、`skills_complete` 及本端校验说明。`skills` 以字符串技能 ID 为键，记录含 `level/master_level`；名称、需求和效果的覆盖情况见本端校验说明 |
 | `quests` | 两端；`quests` 元素含 `quest_id/state/progress`，状态为 `started/completed`，进度保留原始文本。无头从完整角色包和本端正常增量维护记录；未核实的 `linked_progress` 为 nil |

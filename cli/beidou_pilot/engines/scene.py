@@ -33,6 +33,16 @@ class Facing(TypedDict):
     pending_dynamic: bool
 
 
+class Player(TypedDict):
+    reference: str | None
+    character_id: int | None
+    name: str | None
+    level: int | None
+    x: int | float
+    y: int | float
+    facing: Literal["Left", "Right"] | None
+
+
 class Npc(TypedDict):
     name: str | None
     address: str | None

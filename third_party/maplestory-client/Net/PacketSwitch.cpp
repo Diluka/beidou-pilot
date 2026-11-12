@@ -254,6 +254,8 @@ namespace ms
 					// A known handler failed to parse its server packet.
 #ifdef HEADLESS
 					++state.packet_parse_errors;
+					if (opcode == SPAWN_CHAR || opcode == REMOVE_CHAR || opcode == CHAR_MOVED)
+						++state.player_packet_parse_errors;
 					state.last_packet_error = std::to_string(opcode) + ": " + err.what();
 #endif
 					warn(err.what(), opcode);

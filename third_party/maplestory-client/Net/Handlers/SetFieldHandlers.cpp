@@ -31,6 +31,7 @@
 #include "../../IO/UITypes/UICharSelect.h"
 #ifdef HEADLESS
 #include "HeadlessState.h"
+#include "LoginState.h"
 #endif
 
 namespace ms
@@ -45,6 +46,8 @@ namespace ms
 		auto& session = headless_state();
 		session.in_game = true;
 		++session.map_generation;
+		// Only player packets parsed after this point belong to the new scene.
+		session.player_parse_errors_at_map_entry = login_state().player_packet_parse_errors;
 #else
 		float fadestep = 0.025f;
 

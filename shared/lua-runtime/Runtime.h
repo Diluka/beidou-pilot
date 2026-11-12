@@ -70,6 +70,22 @@ struct Drop {
     Fact landed = Fact::Unknown;
 };
 
+// Another character this client already knows in the current scene. The
+// reference is opaque per backend and only meaningful within one scene
+// generation; fields the backend cannot expose stay unknown.
+struct OtherPlayer {
+    std::string reference;
+    std::uint32_t characterId = 0;
+    bool characterIdKnown = false;
+    std::string name;
+    std::uint16_t level = 0;
+    bool levelKnown = false;
+    double x = 0;
+    double y = 0;
+    bool facingKnown = false;
+    bool facingLeft = false;
+};
+
 struct State {
     std::string instanceId;
     std::uint64_t sequence = 0;
@@ -92,6 +108,10 @@ struct State {
     std::vector<Item> inventory;
     bool dropsKnown = false;
     std::vector<Drop> drops;
+    bool playersKnown = false;
+    std::vector<OtherPlayer> players;
+    // True only when the backend can account for every player packet in this scene.
+    Fact playersComplete = Fact::Unknown;
     Fact settled = Fact::Unknown;
     Fact dead = Fact::Unknown;
     Fact reviveRequestable = Fact::Unknown;

@@ -9,6 +9,7 @@
 #include "Data/JobData.h"
 #include "Data/SkillData.h"
 #include "Gameplay/Stage.h"
+#include "Gameplay/MapleMap/MapChars.h"
 #include "Gameplay/MapleMap/Mob.h"
 #include "Gameplay/MapleMap/Npc.h"
 #include "Gameplay/MapleMap/ItemDrop.h"
@@ -231,10 +232,12 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.inGame = ms::headless_state().in_game && ms::Session::get().is_connected();
     state.ready = state.inGame && ms::Stage::get().is_active();
     state.mapKnown = state.characterKnown = state.positionKnown = state.facingKnown = state.ready;
-    state.monstersKnown = state.inventoryKnown = state.dropsKnown = state.ready;
+    state.monstersKnown = state.inventoryKnown = state.dropsKnown = state.playersKnown = state.ready;
     state.monsters.clear();
     state.inventory.clear();
     state.drops.clear();
+    state.players.clear();
+    state.playersComplete = Fact::Unknown;
     auto& dialogue = ms::headless_state().dialogue;
     if (dialogue.scene_generation != state.sceneGeneration) {
         const auto revision = dialogue.revision + 1;
@@ -329,6 +332,30 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
         drop.landed = nativeDrop.is_landed() ? Fact::True : Fact::False;
         state.drops.push_back(drop);
     }
+    for (const auto& entry : *stage.get_chars().get_chars()) {
+        const auto& character = static_cast<const ms::Char&>(*entry.second);
+        const auto p = character.get_position();
+        MapleControl::OtherPlayer projected;
+        projected.reference = std::to_string(character.get_oid());
+        projected.characterId = static_cast<std::uint32_t>(character.get_oid());
+        projected.characterIdKnown = true;
+        projected.name = character.get_name();
+        projected.level = character.get_level();
+        projected.levelKnown = true;
+        projected.x = p.x();
+        projected.y = p.y();
+        projected.facingKnown = true;
+        projected.facingLeft = !character.getflip();
+        state.players.push_back(std::move(projected));
+    }
+    std::sort(state.players.begin(), state.players.end(),
+              [](const MapleControl::OtherPlayer& left, const MapleControl::OtherPlayer& right) {
+                  return left.characterId < right.characterId;
+              });
+    state.playersComplete =
+        ms::login_state().player_packet_parse_errors == ms::headless_state().player_parse_errors_at_map_entry
+            ? Fact::True
+            : Fact::False;
     CaptureInteraction();
 }
 
@@ -1024,16 +1051,31 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                                               : "unknown"},
                              {"landed", drop.is_landed()}});
         }
+        Json players = Json::array();
+        for (const auto& other : state.players) {
+            players.push_back(
+                {{"reference", other.reference},
+                 {"character_id", other.characterIdKnown ? Json(other.characterId) : Json(nullptr)},
+                 {"name", other.name.empty() ? Json(nullptr) : Json(other.name)},
+                 {"level", other.levelKnown ? Json(other.level) : Json(nullptr)},
+                 {"x", other.x},
+                 {"y", other.y},
+                 {"facing", other.facingKnown ? Json(other.facingLeft ? "Left" : "Right") : Json(nullptr)}});
+        }
         return {{"map_id", state.mapId},
                 {"player", {{"x", state.x}, {"y", state.y}}},
                 {"monsters", std::move(monsters)},
                 {"npcs", std::move(npcs)},
                 {"drops", std::move(drops)},
+                {"players", std::move(players)},
+                {"players_complete",
+                 state.playersComplete == Fact::Unknown ? Json(nullptr) : Json(state.playersComplete == Fact::True)},
                 {"player_facing", state.facingKnown ? Json(state.facingLeft ? "Left" : "Right") : Json(nullptr)},
                 {"raw_flags", nullptr},
                 {"pending_dynamic", false},
                 {"unavailable", Json::array()},
-                {"not_covered", Json::array({"drop_money_amount", "original_client_raw_flags"})}};
+                {"not_covered", Json::array({"drop_money_amount", "original_client_raw_flags", "other_player_hp",
+                                             "other_player_equipment", "other_player_party_relation"})}};
     }
     if (domain == "inventory") {
         Json items = Json::array();
@@ -1354,6 +1396,17 @@ Json SharedLuaAdapter::StateDocument() const {
                                      {"item_id", drop.itemKnown ? Json(drop.itemId) : Json(nullptr)},
                                      {"money", drop.moneyKnown ? Json(drop.money) : Json(nullptr)},
                                      {"landed", FactValue(drop.landed)}});
+    document["players"] = state.playersKnown ? Json::array() : Json(nullptr);
+    for (const auto& other : state.players)
+        document["players"].push_back(
+            {{"reference", other.reference},
+             {"character_id", other.characterIdKnown ? Json(other.characterId) : Json(nullptr)},
+             {"name", other.name.empty() ? Json(nullptr) : Json(other.name)},
+             {"level", other.levelKnown ? Json(other.level) : Json(nullptr)},
+             {"x", other.x},
+             {"y", other.y},
+             {"facing", other.facingKnown ? Json(other.facingLeft ? "Left" : "Right") : Json(nullptr)}});
+    document["players_complete"] = FactValue(state.playersComplete);
     return document;
 }
 

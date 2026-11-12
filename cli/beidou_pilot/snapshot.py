@@ -58,7 +58,11 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
         return value
 
     entities: dict[str, list[JsonObject]] = {"npcs": [], "monsters": [], "drops": []}
-    for group, prefix in (("npcs", "n"), ("monsters", "m"), ("drops", "d")):
+    groups = [("npcs", "n"), ("monsters", "m"), ("drops", "d")]
+    if "players" in scene:
+        entities["players"] = []
+        groups.append(("players", "p"))
+    for group, prefix in groups:
         for original in cast(list[JsonObject], scene.get(group, [])):
             x, y = cast(int | float, original["x"]), cast(int | float, original["y"])
             visible = None if viewport is None else (
@@ -74,14 +78,21 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
             elif group == "monsters":
                 entity["name"] = original.get("name") or (
                     catalog.monster_name(cast(int, template)) or str(template) if template is not None else None)
+            elif group == "players":
+                pass
             else:
                 item_id = original.get("item_id")
                 entity["name"] = catalog.item_name(cast(int, item_id)) if item_id else ("金币" if original.get("money") else None)
             entity["visible"] = visible
             entity["dx"] = x - cast(int | float, player["x"])
             entity["dy"] = y - cast(int | float, player["y"])
-            entity["ref"] = (original.get("ref") if group == "npcs" and backend.name == "headless"
-                             else reference(prefix, original["object_id"], {"kind": group, **entity}))
+            if group == "npcs" and backend.name == "headless":
+                entity["ref"] = original.get("ref")
+            else:
+                identity = (original.get("character_id") if group == "players" else original["object_id"])
+                if group == "players" and identity is None:
+                    identity = original.get("reference") or original.get("name")
+                entity["ref"] = reference(prefix, identity, {"kind": group, **entity})
             entities[group].append(entity)
         entities[group].sort(key=lambda item: abs(cast(int | float, item["dx"])) + abs(cast(int | float, item["dy"])))
 
@@ -109,6 +120,7 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
         item["name"] = catalog.item_name(cast(int, item["item_id"]))
     result.update(observed_at=observation["observed_at"], map={"id": map_id, "name": catalog.map_name(map_id)},
                   character=character, position=player, facing=scene["player_facing"],
+                  players_complete=scene.get("players_complete"),
                   advancement=advancement(character), viewport=viewport, **entities, inventory=items,
                   equipped=equipped, quests=quests["quests"],
                   quest_observation={key: quests[key] for key in ("data_source", "live_updates", "live_update_kinds", "not_covered") if key in quests},
@@ -160,11 +172,16 @@ def format_snapshot(value: JsonObject, *, interactive_only: bool = False) -> str
             lines += [str(line) for line in cast(list[JsonValue], dialog["lines"])]
             lines += [f"  {a['ref']} {a['text']}" for a in cast(list[JsonObject], dialog["choices"])]
             lines += [f"  {a['ref']} [{a['action']}]" for a in cast(list[JsonObject], dialog["buttons"])]
-    for group, label in (("npcs", "NPC"), ("monsters", "怪物"), ("drops", "掉落")):
+    for group, label in (("npcs", "NPC"), ("monsters", "怪物"), ("drops", "掉落"), ("players", "玩家")):
         if interactive_only and group == "monsters":
             continue
-        for a in cast(list[JsonObject], value[group]):
+        for a in cast(list[JsonObject], value.get(group) or []):
             suffix = " (可见性未知)" if a["visible"] is None else (" (画外)" if a["visible"] is False else "")
             target = a["ref"] if a["ref"] is not None else "引用未知"
-            lines.append(f"  {target} {label} {a['name']} ({a['x']},{a['y']}){suffix}")
+            if group == "players":
+                level = a.get("level")
+                lines.append(f"  {target} {label} {a.get('name') or '未知'} Lv{level if level is not None else '?'} "
+                             f"({a['x']},{a['y']}){suffix}")
+            else:
+                lines.append(f"  {target} {label} {a['name']} ({a['x']},{a['y']}){suffix}")
     return "\n".join(lines)

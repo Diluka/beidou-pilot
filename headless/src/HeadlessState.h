@@ -40,6 +40,7 @@ namespace ms
 		std::optional<CharEntry> selected_character;
 		bool in_game = false;
 		uint64_t map_generation = 0;
+		uint64_t player_parse_errors_at_map_entry = 0;
 		NpcDialogue dialogue;
 	};
 
