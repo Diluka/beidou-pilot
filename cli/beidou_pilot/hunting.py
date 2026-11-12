@@ -81,7 +81,9 @@ def hunt(
         if capabilities.get("skill") is not True:
             raise ClientError("unsupported_capability", "当前原生客户端未声明支持技能调用，未开始狩猎。")
     stop_level, stop_level_source, milestone = combat_stop_level(
-        cast(JsonObject, character), first_job=first_job, until_level=stop_level,
+        cast(JsonObject, character),
+        first_job=first_job,
+        until_level=stop_level,
     )
 
     mob_id = None
