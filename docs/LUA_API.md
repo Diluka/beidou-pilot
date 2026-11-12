@@ -225,8 +225,9 @@ end
 - `reference` 是本端本场景内的稳定引用，换图或重新进入场景（`scene_generation` 变化）后失效，不能与旧场景的玩家对应。
 - `character_id` 是角色 CID；`reference` 和它分别表达本端引用与已知角色标识，未收到时为 `nil`。
 - 列表只描述本端已经知道的同图其他角色，不承诺屏幕可见范围、全服玩家目录或对方真实位置；位置与朝向是当前原生采样。
-- `players_complete` 只在能完整解释当前场景玩家封包时为 `true`；观察到相关封包解析失败后为 `false`，此时列表可能缺少角色，空数组不能当作“没有其他玩家”。
-- 等级、朝向等字段按本端能力提供，未知时省略；HP、装备、队伍与好友关系不在此观察范围。
+- `players_complete` 只在能完整解释当前场景玩家封包（无头）或完整校验当前用户池快照（GUI）时为 `true`；不完整时为 `false`，此时列表可能缺少角色，空数组不能当作“没有其他玩家”。
+- 无头端从已解析的原生角色对象读取，GUI 端从原版客户端用户池读取；两端字段口径一致，等级、朝向等字段按本端能力提供，未知时省略。
+- HP、装备、队伍与好友关系不在此观察范围；GUI 用户池是否包含隐身等不可见状态尚未确认，读数只代表本端已知对象。
 
 ## 按需领域观察
 
@@ -237,7 +238,7 @@ end
 | 领域 | 两端支持与主要原生字段 |
 | --- | --- |
 | `stage` | 两端；阶段、频道与角色摘要，具体已知范围随后端和当前阶段变化 |
-| `scene` | 两端；`map_id`、`player`、`player_facing`、`monsters`、`npcs`、`drops`、`players`。NPC 提供 `object_id/template_id/name/x/y`；`players` 由无头端从原生角色对象提供，GUI 端原生用户池观察待交付；保留本端已知字段及限制 |
+| `scene` | 两端；`map_id`、`player`、`player_facing`、`monsters`、`npcs`、`drops`、`players`。NPC 提供 `object_id/template_id/name/x/y`；`players` 两端分别从本端原生角色对象/原生用户池读取；保留本端已知字段及限制 |
 | `inventory` | 两端；`items` 为已占用正槽，`equipped` 为身上负槽，元素含 `inventory_type/slot/item_id/quantity`；`capacities` 以字符串背包类型为键 |
 | `character` | 两端；`character_id`、`mesos`、`skills`、`skills_complete` 及本端校验说明。`skills` 以字符串技能 ID 为键，记录含 `level/master_level`；名称、需求和效果的覆盖情况见本端校验说明 |
 | `quests` | 两端；`quests` 元素含 `quest_id/state/progress`，状态为 `started/completed`，进度保留原始文本。无头从完整角色包和本端正常增量维护记录；未核实的 `linked_progress` 为 nil |

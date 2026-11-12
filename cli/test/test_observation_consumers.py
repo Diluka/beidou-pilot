@@ -177,6 +177,26 @@ class SnapshotConsumerContract(unittest.TestCase):
         self.domains["scene"]["players_complete"] = False
         self.assertIs(collect(self.backend)["players_complete"], False)
 
+    def test_beidou_players_use_native_identity_completeness_and_viewport(self) -> None:
+        self.backend.name = "beidou"
+        self.domains["dialog"] = {"camera_viewport": {"left": 0, "right": 100, "top": -10, "bottom": 10},
+                                  "dialog_open": False, "npc_id": None, "dialog_type": None,
+                                  "lines": [], "choices": [], "buttons": []}
+        self.domains["scene"]["players"] = [
+            {"reference": "7", "character_id": 7, "name": "同伴", "level": 10,
+             "x": 50.0, "y": 0.0, "facing": "Right"}]
+        self.domains["scene"]["players_complete"] = True
+        report = collect(self.backend)
+        self.assertIs(report["players_complete"], True)
+        player = report["players"][0]
+        self.assertIs(player["visible"], True)
+        self.assertEqual(49.5, player["dx"])
+        self.assertIn(player["ref"], report["refs"])
+        self.assertIn("玩家 同伴 Lv10", format_snapshot(report))
+        self.domains["scene"]["players"] = None
+        failed = collect(self.backend)
+        self.assertNotIn("players", failed)
+
     def test_beginner_snapshot_lists_candidates_without_inventing_a_route(self) -> None:
         self.domains["dialog"] = {"camera_viewport": None, "dialog_open": False, "npc_id": None,
                                   "dialog_type": None, "lines": [], "choices": [], "buttons": []}

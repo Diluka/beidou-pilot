@@ -59,7 +59,7 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
 
     entities: dict[str, list[JsonObject]] = {"npcs": [], "monsters": [], "drops": []}
     groups = [("npcs", "n"), ("monsters", "m"), ("drops", "d")]
-    if "players" in scene:
+    if isinstance(scene.get("players"), list):
         entities["players"] = []
         groups.append(("players", "p"))
     for group, prefix in groups:
