@@ -76,7 +76,7 @@ namespace ms
 		if (Stage::get().is_player(cid))
 			return;
 
-		uint16_t level = recv.read_short();
+		uint16_t level = recv.read_byte();
 		std::string name = recv.read_string();
 
 		recv.read_string();	// guildname
@@ -116,32 +116,32 @@ namespace ms
 
 		for (size_t i = 0; i < 3; i++)
 		{
-			int8_t available = recv.read_byte();
-
-			if (available == 1)
-			{
-				recv.read_byte();	// 'byte2'
-				recv.read_int();	// petid
-				recv.read_string();	// name
-				recv.read_int();	// unique id
-				recv.read_int();
-				recv.read_point();	// pos
-				recv.read_byte();	// stance
-				recv.read_int();	// fhid
-			}
-			else
-			{
+			if (recv.read_byte() != 1)
 				break;
-			}
+
+			recv.read_int();	// 'itemid'
+			recv.read_string();	// name
+			recv.read_long();	// unique id
+			recv.read_point();	// 'pos'
+			recv.read_byte();	// 'stance'
+			recv.read_short();	// 'fhid'
+			recv.read_bool();	// 'name tag'
+			recv.read_bool();	// 'chat balloon'
 		}
 
 		recv.read_int(); // mountlevel
 		recv.read_int(); // mountexp
 		recv.read_int(); // mounttiredness
 
-		// TODO: Shop stuff
-		recv.read_byte();
-		// TODO: Shop stuff end
+		// Announce box: player shop (4) or minigame (1/2); absent otherwise.
+		int8_t announce = recv.read_byte();
+
+		if (announce == 1 || announce == 2 || announce == 4)
+		{
+			recv.read_int();	// 'objectid'
+			recv.read_string();	// description
+			recv.skip(5);		// shop/minigame announce box details
+		}
 
 		bool chalkboard = recv.read_bool();
 		std::string chalktext = chalkboard ? recv.read_string() : "";

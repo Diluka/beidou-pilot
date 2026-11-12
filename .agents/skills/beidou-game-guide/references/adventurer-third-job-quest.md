@@ -145,7 +145,7 @@
 - 三转长老脚本：[泰勒斯2020008][elder-warrior]、[鲁碧2020009][elder-mage]、[蕾妮2020010][elder-bow]、[艾瑞克2020011][elder-thief]、[费德罗2020013][elder-pirate]。检查 `start`、`Mental`、`Physical` 与 `JB3/JBQ` 分支。
 - 金银岛导师位于[中文NPC脚本目录][npcs]：`1022000、1032001、1012100、1052001、1090000.js`，三转入口／交黑符见 `3thJobI`、`3thJobC`；`2020000.js` 为伯坚的水晶配方。
 - [异界之门1061009][door]规定五系入口地图及资格；[闪耀的水晶1061010][exit]规定各分身房退出去向。[三转事件目录][events]中的 `3rdJob_warrior、magician、bowman、thief、pirate.js` 规定20分钟限时、超时和断线退出。
-- [圣石2030006][stone]的 `questionTree`、`action`、`instantiateQuestionPool`、`generateSelectionMenu` 决定题目、五题流程、水晶消耗与选项随机。本文答案依据该文件，而非 `2030006_old.js`。
+- [圣石2030006][stone]的 `questionTree`、`action`、`instantiateQuestionPool`、`generateSelectionMenu` 决定题目、五题流程、水晶消耗与选项随机。本文答案依据该文件，`2030006_old.js` 为历史版本。
 - [基础地图目录][maps]：公馆位于 `Map2/211000001.img.xml`；五系门在 `Map1` 下的表列地图；圣地路线在 `Map2/211040200、211040300、211040400、211040401.img.xml`。读取 `life`、`portal`、`info/decHP`；地图名称与道具名见[中文String资源][strings]的 `Map.img.xml`、`Npc.img.xml`、`Etc.img.xml`。
 - [快速转职脚本][quick]和[脚本中心9900001][center]；[拍卖入口处理器][mts]中的 `use_mts`、`openCenterScript` 决定入口是否替换。[Character.changeJob][character]决定转职点数与属性增益；[脚本加载规则][loader]说明中文覆盖优先级。
 

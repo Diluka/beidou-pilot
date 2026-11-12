@@ -651,6 +651,18 @@ MapleControl::State CaptureState(NativeContext& native) {
         state.dropsKnown = CaptureDrops(state.drops);
         if (!state.dropsKnown) state.drops.clear();
     }
+    state.playersKnown = state.ready;
+    state.players.clear();
+    state.playersComplete = MapleControl::Fact::Unknown;
+    if (state.ready) {
+        try {
+            NativeObservation::Players(state.players);
+            state.playersComplete = MapleControl::Fact::True;
+        } catch (const NativeObservation::ReadError&) {
+            state.players.clear();
+            state.playersComplete = MapleControl::Fact::False;
+        }
+    }
     return state;
 }
 
@@ -922,6 +934,38 @@ bool Publish(const MapleControl::State& state) {
         out << ']';
     } else
         out << "null";
+    out << ",\"players\":";
+    if (state.playersKnown) {
+        out << '[';
+        bool separator = false;
+        for (const auto& player : state.players) {
+            if (separator) out << ',';
+            separator = true;
+            out << "{\"reference\":" << Quote(player.reference) << ",\"character_id\":";
+            if (player.characterIdKnown)
+                out << player.characterId;
+            else
+                out << "null";
+            out << ",\"name\":" << (player.name.empty() ? "null" : Quote(player.name)) << ",\"level\":";
+            if (player.levelKnown)
+                out << player.level;
+            else
+                out << "null";
+            out << ",\"x\":" << player.x << ",\"y\":" << player.y << ",\"facing\":";
+            if (player.facingKnown)
+                out << Quote(player.facingLeft ? "Left" : "Right");
+            else
+                out << "null";
+            out << '}';
+        }
+        out << ']';
+    } else
+        out << "null";
+    out << ",\"players_complete\":";
+    if (state.playersComplete == MapleControl::Fact::Unknown)
+        out << "null";
+    else
+        out << (state.playersComplete == MapleControl::Fact::True ? "true" : "false");
     out << ",\"held_keys\":[";
     bool separator = false;
     const auto& held = keyInput.Held();

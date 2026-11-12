@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #pragma once
 
-#include "Observation.h"
+#include "Runtime.h"
 
 #include <cstdint>
 #include <cstddef>
@@ -39,6 +39,9 @@ std::uint32_t SecureValue(std::uintptr_t address);
 
 Value Stage();
 Value Scene();
+// Reads the current scene's remote users; throws ReadError when the pool layout
+// or a membership snapshot cannot be validated.
+void Players(std::vector<MapleControl::OtherPlayer>& output);
 Value Inventory();
 void BindEquipmentContext(const std::string& instance, std::uint32_t character, std::uint64_t generation);
 std::string EquipmentReference(std::uintptr_t item, std::uint32_t character);

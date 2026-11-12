@@ -17,7 +17,7 @@ beidou-pilot --json script status
 beidou-pilot --json snapshot
 ```
 
-`status` 用于核对当前阶段、实际后端、角色和版本。`instances` 只报告当前实例；`--root/--backend/--instance` 用于核对既有身份，不能切换连接或接管其他实例。请求、结果和取消继续核对原生 `instance_id/run_id`。
+`status` 用于核对当前阶段、实际后端、角色和版本。`instances` 只报告当前实例；`--root/--backend/--instance` 用于核对既有身份，连接与其他实例保持原状。请求、结果和取消继续核对原生 `instance_id/run_id`。
 
 每次重新接入先读取 `status`、`script status` 和 `snapshot`，确认现有角色、任务与原生身份。已有正确角色且已入图时，直接接续观察；已有活动任务时沿用它的 `script.id`，不重复 `open/start`、不抢占输入。其他操作者持有控制权时，先完成交接。
 
@@ -43,7 +43,7 @@ GUI 自动登录仅支持世界 0 和第 1 至 20 频道。`open` 不自动注�
 
 可选的 `open --server SERVER_PATH` 读取服务器 JSON，仅核对当前实例的服务器，不更换连接。必填非空字符串 `project/service/expected_image`，可选非空字符串 `network`；提供的字段必须与本实例登记一致。
 
-成功需核对新鲜状态 `ready=true`、目标角色 CID/名称、频道、地图、位置与原生身份。账号认证成功不足以证明入图。失败先读 `status` 和诊断；身份不符、`character_not_unique` 或未知首次阶段时保留现场，按实际结果处理。
+成功需核对新鲜状态 `ready=true`、目标角色 CID/名称、频道、地图、位置与原生身份。账号认证成功是入图前置，入图以新鲜状态的完整核对为准。失败先读 `status` 和诊断；身份不符、`character_not_unique` 或未知首次阶段时保留现场，按实际结果处理。
 
 ## 按问题读取事实
 
@@ -70,15 +70,15 @@ beidou-pilot --json bridge status
 ```
 
 - 有界执行使用 `--seconds N`；操作者明确选择长期持续任务时使用 `script start LUA_PATH --continuous`。原生受理后 CLI 返回，任务继续执行；LLM 暂停、停止、退出和结束事件监听均不隐式取消。
-- 取消只针对匹配的当前 `script.id`。核对同一 `instance_id/run_id` 的终态与 `held_keys=[]`；旧会话 ID 不能取消新脚本。活动 Lua 占有本实例输入，其他动作遇到 `input_busy` 时先确认控制者。
-- `script run` 同步等待结果。`run/start` 等待期间收到 Ctrl+C/SIGINT/SIGTERM 只结束 CLI 等待；已发布任务继续由原生执行，两端语义相同。等待超时或陈旧观察错误也不代表任务未受理或已经停止。先用 `script status` 核对当前任务与身份，不重放 `start`；主动取消使用 `script cancel --session`，再核对终态和放键。
+- 取消只针对匹配的当前 `script.id`。核对同一 `instance_id/run_id` 的终态与 `held_keys=[]`；旧会话 ID 只对应历史脚本。活动 Lua 占有本实例输入，其他动作遇到 `input_busy` 时先确认控制者。
+- `script run` 同步等待结果。`run/start` 等待期间收到 Ctrl+C/SIGINT/SIGTERM 只结束 CLI 等待；已发布任务继续由原生执行，两端语义相同。等待超时或陈旧观察错误时，任务是否受理与停止以当前状态为准。先用 `script status` 核对当前任务与身份，不重放 `start`；主动取消使用 `script cancel --session`，再核对终态和放键。
 - Lua 可直接通过 `--code` 提供，与文件输入互斥。例如：
 
 ```bash
 beidou-pilot --json script run --code 'game.log("观察开始"); game.sleep(0.1)' --seconds 5
 ```
 
-脚本受理、完成、放键和真实游戏效果分别核对，依据实际位置、HP/MP、库存或任务等事实判断。结果不明先观察，尤其不重放消费、奖励、加点和交易。脚本结束或取消会保留客户端。客户端关闭是另一项明确操作：`close` 返回 `host_lifecycle_required`，交由实例生命周期管理方关闭并核对退出，不能用 LLM 退出代替。危险区域的有界任务结束后，先核对角色安全状态；需要移动至安全位置或关闭时，分别明确执行。
+脚本受理、完成、放键和真实游戏效果分别核对，依据实际位置、HP/MP、库存或任务等事实判断。结果不明先观察，尤其不重放消费、奖励、加点和交易。脚本结束或取消会保留客户端。客户端关闭是另一项明确操作：`close` 返回 `host_lifecycle_required`，交由实例生命周期管理方关闭并核对退出；LLM 退出与客户端关闭分别执行。危险区域的有界任务结束后，先核对角色安全状态；需要移动至安全位置或关闭时，分别明确执行。
 
 客户端 Python 只承担参数、脚本装载/取消和结果投影，角色控制策略使用 Lua。汇报分别说明准备、入图和实际动作结果；凭据和运行数据不写进源码、技能或项目记忆。
 

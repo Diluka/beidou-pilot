@@ -192,6 +192,23 @@ void PushState(lua_State* lua, const State& state) {
         }
         lua_setfield(lua, -2, "drops");
     }
+    if (state.playersKnown) {
+        ObservedFact(lua, "players_complete", state.playersComplete);
+        lua_createtable(lua, static_cast<int>(state.players.size()), 0);
+        lua_Integer index = 1;
+        for (const auto& player : state.players) {
+            lua_newtable(lua);
+            if (!player.reference.empty()) String(lua, "reference", player.reference);
+            if (player.characterIdKnown) Integer(lua, "character_id", player.characterId);
+            if (!player.name.empty()) String(lua, "name", player.name);
+            if (player.levelKnown) Integer(lua, "level", player.level);
+            Number(lua, "x", player.x);
+            Number(lua, "y", player.y);
+            if (player.facingKnown) String(lua, "facing", player.facingLeft ? "Left" : "Right");
+            lua_rawseti(lua, -2, index++);
+        }
+        lua_setfield(lua, -2, "players");
+    }
 }
 
 void PushValue(lua_State* lua, const Value& value) {

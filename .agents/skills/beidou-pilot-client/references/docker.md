@@ -19,14 +19,14 @@ docker exec CONTAINER beidou-pilot --json script status
 docker exec CONTAINER beidou-pilot --json snapshot
 ```
 
-账号和 Lua 文件参数按容器内路径解释。CLI 的 `--root/--backend/--instance` 核对本容器身份，不能用来切换连接。容器创建、服务器镜像与网络核验、正常关闭均由仓库生命周期入口负责，具体用法见 [CLI](../../../../docs/CLI.md)。容器内 `close` 返回 `host_lifecycle_required`，不能据此宣称已经下线。
+账号和 Lua 文件参数按容器内路径解释。CLI 的 `--root/--backend/--instance` 核对本容器身份，连接保持原状。容器创建、服务器镜像与网络核验、正常关闭均由仓库生命周期入口负责，具体用法见 [CLI](../../../../docs/CLI.md)。容器内 `close` 返回 `host_lifecycle_required`，下线状态以宿主入口的退出核对为准。
 
 ## LLM 接入与任务生命周期
 
-LLM 是可选旁路，与客户端进程和原生脚本独立。暂停、停止或退出 LLM 接入不执行 `docker stop`，不终止原生脚本，也不清理执行任务的 shell。重新接入先读取 `status`、`script status` 和 `snapshot`，核对已有任务的身份，不重复启动或接管。关闭客户端容器属于明确的客户端生命周期操作，不能由 LLM 会话结束隐式触发。
+LLM 是可选旁路，与客户端进程和原生脚本独立。暂停、停止或退出 LLM 接入时，容器、原生脚本与执行任务的 shell 保持运行。重新接入先读取 `status`、`script status` 和 `snapshot`，核对已有任务的身份，不重复启动或接管。关闭客户端容器属于明确的客户端生命周期操作，由宿主入口单独发起。
 
 ## 信号与取消
 
 `script start` 成功后由原生客户端独立执行；停止宿主终端、模型回合或事件监听不会取消 Lua。使用 `script cancel --session SCRIPT_ID` 显式取消，并核对原生身份、终态和 `held_keys=[]`。
 
-`script run` 同步等待结果，`run/start` 等待期间收到 Ctrl+C/SIGINT/SIGTERM 只结束 CLI 等待，已发布的原生任务继续执行。宿主入口转发信号也沿用这一语义，不隐式取消任务。等待超时、陈旧观察或 `docker exec` 调用结束都不能证明任务未受理或已经停止；先查询 `script status`，核对已有任务，不重放 `start`。长期任务使用原生 `script start`，主动取消始终明确执行 `script cancel --session SCRIPT_ID` 并确认终态和放键。客户端下线另走明确的关闭操作，并确认所属容器退出。
+`script run` 同步等待结果，`run/start` 等待期间收到 Ctrl+C/SIGINT/SIGTERM 只结束 CLI 等待，已发布的原生任务继续执行。宿主入口转发信号也沿用这一语义，不隐式取消任务。等待超时、陈旧观察或 `docker exec` 调用结束时，任务受理与停止状态以 `script status` 为准；先查询 `script status`，核对已有任务，不重放 `start`。长期任务使用原生 `script start`，主动取消始终明确执行 `script cancel --session SCRIPT_ID` 并确认终态和放键。客户端下线另走明确的关闭操作，并确认所属容器退出。

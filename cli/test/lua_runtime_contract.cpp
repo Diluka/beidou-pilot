@@ -116,7 +116,15 @@ public:
             return {"ok",
                     Value::Object({{"map_id", state.mapId},
                                    {"npcs", Value::Array({Value::Object(
-                                                {{"object_id", 3}, {"name", npcName}, {"x", 12.5}, {"y", -4}})})}}),
+                                                {{"object_id", 3}, {"name", npcName}, {"x", 12.5}, {"y", -4}})})},
+                                   {"players", Value::Array({Value::Object({{"reference", "native-7"},
+                                                                            {"character_id", 7},
+                                                                            {"name", "同伴"},
+                                                                            {"level", 10},
+                                                                            {"x", 30.5},
+                                                                            {"y", -2.0},
+                                                                            {"facing", "Left"}})})},
+                                   {"players_complete", true}}),
                     {}};
         if (domain == "character")
             return {"ok",
@@ -652,10 +660,29 @@ end)
 void DomainObservations() {
     ObservationBoundary native;
     native.state.observedAtMs = 1000;
+    MapleControl::OtherPlayer other;
+    other.reference = "native-7";
+    other.characterId = 7;
+    other.characterIdKnown = true;
+    other.name = "同伴";
+    other.level = 10;
+    other.levelKnown = true;
+    other.x = 30.5;
+    other.y = -2.0;
+    other.facingKnown = true;
+    other.facingLeft = true;
+    native.state.playersKnown = true;
+    native.state.playersComplete = MapleControl::Fact::True;
+    native.state.players.push_back(other);
     MapleControl::Runtime runtime(native);
     std::string error;
     Check(runtime.Start("domain-observations", R"lua(
 assert(game.state().in_game)
+local start = game.state()
+assert(start.players_complete == true and #start.players == 1)
+assert(start.players[1].reference == "native-7" and start.players[1].character_id == 7)
+assert(start.players[1].name == "同伴" and start.players[1].level == 10)
+assert(start.players[1].facing == "Left" and math.type(start.players[1].x) == "float")
 game.sleep(0)
 local character = game.observe("character")
 assert(character.status == "ok" and character.source == "client-native-api" and character.readonly)
@@ -670,6 +697,7 @@ assert(quests.data.quests[1].quest_id == 1037 and quests.data.quests[1].progress
 assert(quests.data.source_updated_at_ms == nil)
 local old = game.observe("scene")
 assert(old.data.npcs[1].name == "向导" and old.data.npcs[1].x == 12.5 and old.data.npcs[1].y == -4)
+assert(old.data.players[1].name == "同伴" and old.data.players[1].x == 30.5 and old.data.players_complete == true)
 assert(tostring(old.data.npcs[1].object_id) == "3" and math.type(old.data.npcs[1].x) == "float")
 old.data.npcs[1].name = "仅修改脚本副本"
 assert(game.observe("scene").data.npcs[1].name == "向导")
