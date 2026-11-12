@@ -349,15 +349,21 @@ def fight(
     bounds: tuple[int, int],
     retreat_x: int,
     loot: bool,
+    hp_item: int | None = None,
     context_state: BridgeSnapshot | None = None,
 ) -> JsonObject:
-    if (
-        not math.isfinite(seconds)
-        or not 5 <= seconds <= 300
-        or bounds[0] >= bounds[1]
-        or not bounds[0] <= retreat_x <= bounds[1]
-    ):
-        raise ClientError("invalid_fight_options", "战斗预算5至300秒，范围须递增且含撤退点。")
+    if not math.isfinite(seconds) or not 5 <= seconds <= 300:
+        raise ClientError("invalid_fight_options", "战斗预算须为5至300秒。")
+    if bounds[0] >= bounds[1]:
+        raise ClientError("invalid_fight_options", "战斗范围须递增。", {"bounds": list(bounds)})
+    if not bounds[0] <= retreat_x <= bounds[1]:
+        raise ClientError(
+            "invalid_fight_options",
+            "撤退点必须落在战斗范围内；角色被击退到范围外时请先移动或用--bounds覆盖。",
+            {"bounds": list(bounds), "retreat_x": retreat_x},
+        )
+    if hp_item is not None and not 1 <= hp_item <= 0x7FFFFFFF:
+        raise ClientError("invalid_fight_options", "药品ID须为正 int32。", {"hp_item": hp_item})
     report = run_strategy(
         backend,
         "combat/fight",
@@ -370,6 +376,7 @@ def fight(
             "max_x": bounds[1],
             "retreat_x": retreat_x,
             "loot": loot,
+            **({"hp_item": hp_item} if hp_item is not None else {}),
         },
         seconds + 1,
         context_state=context_state,

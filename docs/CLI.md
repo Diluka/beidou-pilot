@@ -181,7 +181,7 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `unequip --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头卸下普通装备；明确身上负槽和空背包正槽 |
 | `stats STAT COUNT`、`skills SKILL [COUNT]` | 明确属性/技能与点数；两端 Lua 原生逐点双确认，GUI 复用本端必要窗口；未知或部分结果保留现状，按最新状态继续 |
 | `move X`、`move X --to-y Y`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单地图跨平台寻路、单根绳梯或单个门户；`move --to-y` 用静态平台图（走、跳台上升、落层、绳梯）行进，不支持跨地图自动选路 |
-| `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点及近距拾取尝试 |
+| `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点、近距拾取尝试，以及 `--hp-item` 指定或按库存自动挑选 HP 药 |
 | `hunt [MOB\|all]` | 单场景自主找怪、可达跨平台和连续战斗；支持 `--skill ID`、`--range N`、限时或 `--continuous` |
 | `script run/start --library travel\|island-supply` | 显式装载旅行函数；Lua消费者在一次会话内调用已知路线并核对目的地 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
