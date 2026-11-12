@@ -44,7 +44,7 @@ docker run --rm --entrypoint beidou-pilot "$image" --help
 
 网络需能下载子模块、基础镜像及 Debian 构建包。确认网络权限并按项目网络规则选择代理后，可在启动构建前导出 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`；统一入口按 Docker标准build args 透传这些变量。代理地址须能从构建网络访问，文档不固定本机地址。
 
-GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，开发版本放在 `ref`，然后执行 `private/workbenches/workbench /external/gui-workbench build`。默认由 `gh` 获取所选提交成功的Windows桥CI工件；开发时可在 `bridge_artifact` 配置原生输入匹配的现成工件目录，省去该路径的 `gh` 依赖。镜像安装该工件，原始游戏客户端、NX 与工作台仍只在运行时挂载。GUI 装配仅使用 `docker/compose.yaml`；账号、自动生成的服务器快照和用户Lua随整个工作目录进入 `/work`，不再分别挂载。GUI 与无头的打包检查都应确认容器内 CLI 可执行，不能用宿主 Python 的帮助输出代替。
+GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，开发版本放在 `ref`，然后执行 `private/workbenches/workbench /external/gui-workbench build`。默认由 `gh` 获取所选提交成功的Windows桥CI工件；开发时可在 `bridge_artifact` 配置原生输入匹配的现成工件目录，省去该路径的 `gh` 依赖。镜像安装该工件，原始游戏客户端和只读 `Data/` 与工作台仍只在运行时挂载。GUI 装配仅使用 `docker/compose.yaml`；账号、自动生成的服务器快照和用户Lua随整个工作目录进入 `/work`，不再分别挂载。GUI 与无头的打包检查都应确认容器内 CLI 可执行，不能用宿主 Python 的帮助输出代替。
 
 日常 harness 构建在新建设置中启用 `harness=true` 后继续使用同一 `build` 入口。复现 CI 时，在对应提交的干净检出中以根构建上下文派生镜像；以下 `image` 为前面已构建的无头客户端镜像：
 

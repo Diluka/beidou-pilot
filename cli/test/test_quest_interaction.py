@@ -1,45 +1,11 @@
 """真实本地任务页、资源和控件合同；请求边界替身不代替实际接交。"""
 
 from pathlib import Path
-import struct
 import subprocess
 import tempfile
 import unittest
 
-
-def _write_nx(path, tree):
-    nodes = [("", tree)]
-    entries = []
-    strings = []
-    ids = {}
-
-    def string(value):
-        if value not in ids:
-            ids[value] = len(strings)
-            strings.append(value)
-        return ids[value]
-
-    for name, value in nodes:
-        name_id = string(name)
-        child = len(nodes)
-        if isinstance(value, dict):
-            nodes.extend(sorted(value.items()))
-            entries.append((name_id, child, len(value), 0, 0))
-        elif isinstance(value, str):
-            entries.append((name_id, child, 0, 3, string(value)))
-        else:
-            entries.append((name_id, child, 0, 1, value))
-    node_table = b"".join(struct.pack("<IIHHq", *entry) for entry in entries)
-    offsets = []
-    content = bytearray()
-    content_offset = 64 + len(node_table) + 8 * len(strings)
-    for value in strings:
-        encoded = value.encode()
-        offsets.append(content_offset + len(content))
-        content.extend(struct.pack("<H", len(encoded)) + encoded)
-    end = content_offset + len(content)
-    header = struct.pack("<IIQIQIQIQ", 0x34474B50, len(nodes), 64, len(strings), 64 + len(node_table), 0, end, 0, end)
-    path.write_bytes(header.ljust(64, b"\0") + node_table + b"".join(struct.pack("<Q", n) for n in offsets) + content)
+from test.img_fixture import write_img
 
 
 QUEST_RESOURCE = {
@@ -85,14 +51,34 @@ class QuestInteractionContract(unittest.TestCase):
         engine = root / "third_party/maplestory-client"
         nx = engine / "includes/NoLifeNx/nlnx"
         with tempfile.TemporaryDirectory() as directory:
-            resource = Path(directory) / "Quest.nx"
-            _write_nx(resource, QUEST_RESOURCE)
+            parser_library = Path(directory) / "libbeidou-img.so"
+            data = Path(directory) / "Data"
+            for category in ("Character", "Effect", "Etc", "Item", "Map", "Mob", "Npc", "Reactor", "Skill", "String"):
+                (data / category).mkdir(parents=True)
+            for filename, properties in QUEST_RESOURCE.items():
+                write_img(data / "Quest" / filename, properties)
+            subprocess.run(
+                [
+                    "g++",
+                    "-std=c++17",
+                    "-O2",
+                    "-fPIC",
+                    "-shared",
+                    str(root / "headless/src/ImgResources.cpp"),
+                    str(root / "third_party/nolifewztonx/Keys.cpp"),
+                    "-o",
+                    str(parser_library),
+                ],
+                check=True,
+                cwd=directory,
+            )
             executable = Path(directory) / "quest-interaction-contract"
             subprocess.run(
                 [
                     "g++",
                     "-std=c++20",
                     "-DHEADLESS",
+                    "-DUSE_NX",
                     "-D_DEBUG",
                     "-DGLFW_INCLUDE_NONE",
                     "-ffunction-sections",
@@ -104,19 +90,26 @@ class QuestInteractionContract(unittest.TestCase):
                     f"-I{engine / 'includes/NoLifeNx'}",
                     f"-I{root / 'headless/src'}",
                     f"-I{root / 'shared/lua-runtime'}",
+                    str(root / "headless/src/ImgResourceFile.cpp"),
                     str(root / "headless/src/QuestInteraction.cpp"),
                     str(root / "headless/src/Interaction.cpp"),
+                    str(engine / "Util/NxFiles.cpp"),
                     str(engine / "Character/QuestLog.cpp"),
+                    str(engine / "includes/NoLifeNx/nlnx/nx.cpp"),
                     str(nx / "file.cpp"),
                     str(nx / "node.cpp"),
                     str(root / "cli/test/quest_interaction_contract.cpp"),
+                    "-L",
+                    directory,
+                    "-Wl,-rpath,$ORIGIN",
+                    "-lbeidou-img",
                     "-o",
                     str(executable),
                 ],
                 check=True,
                 cwd=directory,
             )
-            subprocess.run([str(executable), str(resource)], check=True, cwd=directory, timeout=10)
+            subprocess.run([str(executable), str(data)], check=True, cwd=directory, timeout=10)
 
 
 if __name__ == "__main__":

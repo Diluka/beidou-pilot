@@ -9,6 +9,7 @@ COPY headless/Makefile headless/Makefile
 COPY headless/src/ headless/src/
 COPY shared/lua-runtime/ shared/lua-runtime/
 COPY third_party/maplestory-client/ third_party/maplestory-client/
+COPY third_party/nolifewztonx/ third_party/nolifewztonx/
 COPY third_party/json/single_include/nlohmann/json.hpp third_party/json/single_include/nlohmann/json.hpp
 COPY third_party/lua/ third_party/lua/
 COPY LICENSE NOTICE /licenses/
@@ -26,8 +27,9 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libstdc++6 liblz4-1 python3 \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /data /bridge
+    && mkdir -p /data /bridge /opt/beidou-pilot/lib
 COPY --from=build /source/headless/build/beidou-headless /bin/beidou-headless
+COPY --from=build /source/headless/build/libbeidou-img.so /opt/beidou-pilot/lib/libbeidou-img.so
 COPY --from=build /licenses/ /usr/share/licenses/beidou-pilot/
 COPY cli/beidou-pilot cli/runtime-ui.py /opt/beidou-pilot/cli/
 COPY cli/beidou_pilot/ /opt/beidou-pilot/cli/beidou_pilot/
@@ -45,6 +47,7 @@ LABEL org.opencontainers.image.title="beidou-pilot" \
       beidou.backend=headless
 ENV LANG=C.UTF-8 CLIENT_ROOT=/work MAPLE_BACKEND=headless \
     MAPLE_RESOURCES_CONFIG=/work/config/resources.json \
+    LD_LIBRARY_PATH=/opt/beidou-pilot/lib \
     PYTHONPATH=/opt/beidou-pilot/cli PYTHONDONTWRITEBYTECODE=1
 USER 65532:65532
 WORKDIR /work

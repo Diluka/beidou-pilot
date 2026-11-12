@@ -51,34 +51,29 @@ GUI DLL 仍由 Windows/MSVC、SDK 和匹配 Detours 库构建。完整 GUI 镜�
 
 ## 外部资源与配置
 
-游戏资源不随源码或镜像分发。无头端当前读取由外部北斗 `Data/` 转换的 metadata-only NX；保留玩法所需属性、帧时序和几何数据，没有可绘制像素或可播放音频。
+游戏资源不随源码或镜像分发。无头客户端、Quest、GUI 静态查询与 Python Catalog 共用原版 `Data/**/*.img`。无头端通过 `nl::node` 内存视图消费属性和几何元数据，不保留像素或音频内容。
 
-转换时显式指定外部客户端，输出必须位于原资源目录之外：
+宿主从主检出目录的 `private/workbenches/resources.json` 读取外部路径；开发 worktree 共用该配置，相对路径按配置文件目录解析。配置只保留必要的原版数据目录与 GUI 客户端目录：
 
 ```bash
-python3 headless/tools/prepare_resources.py \
-  --client-root /external/BeiDou-Client \
-  --output /external/headless-nx
+cat private/workbenches/resources.json
 private/workbenches/workbench /external/workbench resources-check
 ```
 
-转换工具需要本机 C++17 编译器；已有 NX 时无需转换。统一的 `resources-check` 根据外部配置找到 NX，使用所选提交的无头镜像和无网络短时容器离线检查，不需要服务器或账号配置。
-
-宿主统一从主检出目录的 `private/workbenches/resources.json` 读取外部路径；各工作目录及开发 worktree 共用同一份，相对路径按该公共文件目录解析。仅入口脚本纳入Git，资源配置与其他private内容保持忽略，不复制资源进镜像。字段如下：
+`resources-check` 将配置的原版 `Data/` 以只读方式挂入无网络短时容器，解析现有资源，不需要服务器或账号。资源原件不复制或修改；仅 `private/workbenches/workbench` 纳入 Git，共享资源配置与其他 `private/` 内容保持忽略。
 
 | 字段 | 用途 |
 | --- | --- |
-| `headless_resources` | 同源外部 NX 目录，两端只读挂到 `/data`，用于原生无头运行、静态查询和策略装载 |
-| `metadata_root` | 可选 WZ XML，只读挂到 `/metadata`；对应资料不存在时使用同源 NX 或保留未知 |
+| `game_data` | 原版 `Data/` 目录，两端只读挂到 `/data`，供运行时节点视图与静态查询共用 |
 | `gui_client` | 匹配 V17 的外部原客户端目录，只读挂到 GUI 容器 `/client` |
 
 工作目录整体读写挂载到 `/work`，根目录维护 `account.json` 和可选新建设置。常驻服务器定义固定在入口；开发隔离目标来自 `workbench.json.server`。本次账号和完整服务器快照保存在 `/work/runtime/default/RUN_ID/`，`CLIENT_ROOT` 指向该目录。容器入口在其 `config/resources.json` 生成资源映射，`MAPLE_RESOURCES_CONFIG` 指向该文件；内部 `gui_dll` 固定为镜像内 `/opt/beidou-pilot/native/ijl15.dll`，清单登记在该运行根的 `state/agent-bridge-build.json`。配置、角色计划和运行数据均不进入镜像。字段与入口见 [CLI](CLI.md)。
 
-原版 `/client`、NX `/data` 的来源、格式和只读挂载保持不变。原始 IMG 直读尚未实现，本次装配更改不合并、复制或迁移资源。GUI 未配置 WZ XML 时，唯一 Compose 使用本次运行目录中的空目录作为 `/metadata` 的挂载源；空目录不提供资料，仍按现有 Catalog 规则使用同源 NX 或保留未知。
+GUI 保留 `/client` 只读挂载用于启动原版客户端；原版 `Data/` 另以 `/data` 只读挂载，Python Catalog 与无头客户端从同一配置读取。客户端运行副本的 `Data/` 仍映射到原件，不写入资源目录。
 
 用户 Lua 是工作台中的明确输入，直接位于 `/work/scripts`，无需独立挂载。内置 `shared/scripts/` 随镜像固定，用户 Lua 文件与 `--code` 可在运行中提交，不要求重建镜像；它们不改变模型、养成或生命周期职责。
 
-名称、物品恢复属性、NPC范围和地图门户/绳梯/地形由同一个 `Catalog` 投影，现有 `inspect`、旅行、恢复与 `hunt` 共用。NX只读取属性与几何元数据，像素和音频不进入CLI或镜像。结果列出实际资料文件、SHA256及可用转换清单；`resource_version=null` 表示没有可证明的游戏版本，指纹相同不代表已经核实与运行客户端同版。地图来源遵循原生的 `Map002.nx` 优先选择，链接图没有自身地形时明确拒绝，不静默套用别图。
+名称、物品恢复属性、NPC范围和地图门户/绳梯/地形由同一个 `Catalog` 投影，现有 `inspect`、旅行、恢复与 `hunt` 共用。Catalog 通过无头镜像和 GUI 镜像共同打包的原生 IMG 解析库查询属性、Canvas 尺寸、origin、帧时序和几何，不读取像素或音频。结果列出实际消费的 IMG 路径及 SHA256；`resource_version=null` 表示没有可证明的游戏版本，文件指纹不推断客户端版本。Map 类别按资源目录中的 `Map002/`、`Map/` 顺序选择；缺少文件或链接目标时保留未知。
 
 原版 GUI 在本次 `$CLIENT_ROOT/client` 组装运行副本：复制原客户端的运行文件，`Data/` 链接到只读 `/client/Data`，再用镜像内已核验的桥替换运行副本中的 `ijl15.dll`。原客户端目录保持只读，不能用硬链接或可写链接替代独立运行文件。图片库 `2ijl15.dll` 仍是桥接 DLL 的运行依赖，必须保留。
 
@@ -94,7 +89,7 @@ GUI 准备和统一入口见 [CLI](CLI.md#原版-gui)。
 | 阶段、角色、场景、背包、装备、金币与技能记录 | 原生观察 | 原生对象观察；读取技能不代表可执行技能 |
 | 任务观察 | 当前原生任务对象 | 完整角色包与同会话正常增量；原始进度与未核实关联不推断 |
 | 移动、朝向、跳跃、普攻、近距拾取、停止 | 共同 Lua 语义 | 共同 Lua 语义 |
-| 用药与食品 | 普通200类按ID直接原生调用，无需绑定；其他已支持物品保留GUI工作流 | 200 类药剂与 201 类食品；食品明确单次消费可不依赖 XML，消耗与恢复分别确认 |
+| 用药与食品 | 普通200类按ID直接原生调用，无需绑定；其他已支持物品保留GUI工作流 | 200 类药剂与 201 类食品；食品明确单次消费不要求恢复资料，消耗与恢复分别确认 |
 | 同层移动、爬绳、单个门户、基础战斗 | 内置 Lua | 内置 Lua；受自身物理及资源支持范围约束 |
 | 原始按键 | 原版扩展 | 不支持 |
 | 直接技能与移动攻击同窗 | 原生技能入口；语义攻击窗可同时保持方向 | 首批战士1001004/1001005；普攻或支持技能可同时保持方向，原生规则决定实际移动 |

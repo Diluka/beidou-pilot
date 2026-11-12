@@ -17,7 +17,7 @@
 - 原生脚本生命周期由客户端 Runtime 持有。`script run` 同步等结果，`script start` 等受理；中断或观察等待失败只结束等待，不自动取消已发布任务。先观察当前脚本与任务，不重放启动；脚本取消须明确 `script cancel --session` 并核对终态/放键，客户端关闭另行 `close`。
 
 - headless 与 GUI 客户端 base 安装同一份 CLI、辅助引擎和 Lua，分别提供对应原生运行环境；可选 harness 镜像继承所选 base，不复制第二套客户端。新实例默认从 main 的已提交版本构建或复用镜像，已有实例通过 docker exec 使用启动时的代码，不挂载宿主开发源码。`private/workbenches/workbench` 只做工作目录选择、Git构建输入和Docker生命周期；日常客户端运行不在宿主加载 Python 客户端、harness、策略或游戏进程；开发离线测试仍按下文入口执行。
-- Docker 定义统一放在 `docker/`：`docker/headless/Dockerfile` 是无头镜像唯一构建定义，`docker/gui/Dockerfile` 与唯一的 `docker/compose.yaml` 交付并装配 GUI；两端使用根构建上下文，不为资源或工作台子目录增加 Compose 覆盖文件。GUI 桥默认取得所选提交成功 CI 的 Windows 工件并随镜像固定；显式复用工件也须匹配原生输入。原版 `/client` 与 NX `/data` 继续按各自现有格式和来源只读挂载；资源读取格式和来源的改动需单独核实与验收，不能随装配调整合并、复制或迁移资源。游戏资源、账号、可变配置、角色计划、桥目录和运行数据外置，不进入镜像或构建上下文；用户 Lua 是明确的运行输入。
+- Docker 定义统一放在 `docker/`：`docker/headless/Dockerfile` 是无头镜像唯一构建定义，`docker/gui/Dockerfile` 与唯一的 `docker/compose.yaml` 交付并装配 GUI；两端使用根构建上下文，不为资源或工作台子目录增加 Compose 覆盖文件。GUI 桥默认取得所选提交成功 CI 的 Windows 工件并随镜像固定；显式复用工件也须匹配原生输入。原版客户端 `/client` 与配置的 `Data/` `/data` 均只读挂载；无头资源入口和静态查询经共享原生 IMG 解析器读取。资源读取格式和来源的改动需单独核实与验收，不能随装配调整合并、复制或迁移资源。游戏资源、账号、可变配置、角色计划、桥目录和运行数据外置，不进入镜像或构建上下文；用户 Lua 是明确的运行输入。
 - Docker 负责进程和资源生命周期，宿主 close 正常发信号并核对所属容器退出；容器内 CLI 直接使用本容器进程、桥和显示环境，不挂 Docker socket。桥仍负责单次 Lua 取消、放键与游戏效果确认；不维护宿主游戏 PID 查杀或进程期限兼容。
 - 仅在 harness 客户端配置了非空 `model_proxy` 时，另接 Docker 默认 `bridge` 到达模型代理，GUI 防火墙也只额外放行该代理 IP/端口；游戏服务器仍只在 internal 目标网络。镜像只打包 `/game/.agents/skills` 中的专用客户端技能及其公共文档，不复制仓库 AGENTS、宿主技能或开发配置。技能正文直接讲 CLI，Docker 用法下沉参考。
 

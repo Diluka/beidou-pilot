@@ -16,7 +16,7 @@
 
 未配置 `harness` 时默认为 `false`；GUI 目录另设 `backend="beidou"`。统一入口先从选定提交构建或复用对应客户端 base，再用同一提交的 `docker/harness/Dockerfile` 派生 harness 镜像。继承只用于打包复用：Node/Codex、Python harness 和专用客户端技能随镜像固定，客户端原有 ENTRYPOINT、CMD 与 PID1 保留，运行不依赖 LLM 启动。根上下文的离线构建方式见 [CI](CI.md#本地复现) 和[镜像说明](../docker/harness/README.md)。
 
-可选的 `model_proxy` 以 `http://IPv4:端口` 指定 HTTP/HTTPS 出口代理，模型 API 地址由 provider 配置提供。只有 harness 客户端配置了非空代理，才额外连接 Docker 默认 `bridge`；GUI 防火墙只额外放行该代理 IP/端口。游戏服务器继续只使用原有 internal 目标网络，资源 `/client`、NX `/data` 的格式和只读挂载不变。
+可选的 `model_proxy` 以 `http://IPv4:端口` 指定 HTTP/HTTPS 出口代理，模型 API 地址由 provider 配置提供。只有 harness 客户端配置了非空代理，才额外连接 Docker 默认 `bridge`；GUI 防火墙只额外放行该代理 IP/端口。游戏服务器继续只使用原有 internal 目标网络，原版客户端 `/client` 与只读 `Data/` `/data` 挂载保持隔离。
 
 先启动客户端，再在所属容器内运行 harness：
 

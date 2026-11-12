@@ -9,6 +9,7 @@ from beidou_pilot.backend import Backend
 from beidou_pilot.errors import ClientError
 from beidou_pilot.instances import InstancePaths
 from beidou_pilot.items import use
+from test.img_fixture import write_img
 
 
 class ItemUseContract(unittest.TestCase):
@@ -32,12 +33,9 @@ class ItemUseContract(unittest.TestCase):
         self.focus = self.enterContext(patch("beidou_pilot.items.focus_game"))
         self.bridge = self.enterContext(patch("beidou_pilot.control_scripts.BridgeClient")).return_value
 
-    def metadata(self, item_id: int, properties: str) -> None:
-        directory = self.root / "resources/wz/Item.wz/Consume"
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"{item_id // 10000:04d}.img.xml").write_text(
-            f'<imgdir name="consume"><imgdir name="{item_id:08d}"><imgdir name="spec">'
-            + properties + '</imgdir></imgdir></imgdir>')
+    def metadata(self, item_id: int, properties: dict[str, int]) -> None:
+        write_img(self.root / "Data/Item/Consume" / f"{item_id // 10000:04d}.img",
+                  {f"{item_id:08d}": {"spec": properties}})
 
     def complete(self, item_id: int, quantity: int, *, hp: int) -> None:
         self.bridge.run_script.return_value = {"status": "completed", "reason": "script_returned",
@@ -45,7 +43,7 @@ class ItemUseContract(unittest.TestCase):
                            "inventory": [{"item_id": item_id, "quantity": quantity}]}}
 
     def test_gui_potion_uses_native_strategy_without_binding_lookup(self) -> None:
-        self.metadata(2000000, '<int name="hp" value="50"/>')
+        self.metadata(2000000, {"hp": 50})
         self.complete(2000000, 3, hp=100)
         result = use(self.backend, 2000000, count=2, until_hp=100)
         self.assertEqual("recovery/recover", result["strategy"])
@@ -108,7 +106,7 @@ class ItemUseContract(unittest.TestCase):
         self.bridge.run_script.assert_not_called()
 
     def test_bound_food_remains_a_gui_consumable(self) -> None:
-        self.metadata(2010001, '<int name="hp" value="50"/>')
+        self.metadata(2010001, {"hp": 50})
         before = {**self.inventory, "items": [{"slot": 1, "item_id": 2010001, "quantity": 2}]}
         after = {**before, "items": [{"slot": 1, "item_id": 2010001, "quantity": 1}]}
         inventories = iter([before, after])
@@ -126,7 +124,7 @@ class ItemUseContract(unittest.TestCase):
         self.bridge.run_script.assert_not_called()
 
     def test_teleport_scroll_retains_single_gui_use_and_map_confirmation(self) -> None:
-        self.metadata(2030000, '<int name="moveTo" value="200"/>')
+        self.metadata(2030000, {"moveTo": 200})
         before = {**self.inventory, "items": [{"slot": 1, "item_id": 2030000, "quantity": 1}]}
         after = {**before, "items": []}
         inventories = iter([before, after])

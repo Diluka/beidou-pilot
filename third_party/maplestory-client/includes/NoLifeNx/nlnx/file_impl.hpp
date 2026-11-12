@@ -19,6 +19,9 @@
 #pragma once
 #include "file.hpp"
 #include "node_impl.hpp"
+#include <memory>
+#include <string_view>
+#include <vector>
 
 namespace nl {
 #pragma pack(push, 1)
@@ -41,6 +44,14 @@ namespace nl {
         uint64_t const * bitmap_table = nullptr;
         uint64_t const * audio_table = nullptr;
         file::header const * header = nullptr;
+        bool memory_backed = false;
+        uint32_t node_count = 0;
+        uint32_t string_count = 0;
+        uint32_t bitmap_count = 0;
+        uint32_t audio_count = 0;
+        std::vector<node::data> owned_nodes;
+        std::vector<std::string_view> owned_strings;
+        std::shared_ptr<void> owner;
 #ifdef _WIN32
         void * file_handle = nullptr;
         void * map = nullptr;
@@ -48,5 +59,6 @@ namespace nl {
         int file_handle = 0;
         size_t size = 0;
 #endif
+        std::string_view get_string_view(uint32_t index) const;
     };
 }

@@ -12,7 +12,7 @@ usage() {
   open             创建实例并确认入图；已有实例沿用原版本
   status           查询本工作台，省略命令时默认执行
   close            正常关闭并核对所属容器退出
-  resources-check  用无头镜像离线检查共享 NX，不登录
+  resources-check  用无头镜像离线检查原版 Data/IMG，不登录
   ai               在所属客户端容器中运行 harness
   notes            读取本工作台 README、PLAN、HANDOFF 和脚本说明
   其他命令         交给所属容器内的 beidou-pilot
@@ -507,24 +507,19 @@ if [ "$command" = build ]; then
 fi
 
 if [ "$command" = resources-check ]; then
-    [ "$backend" = headless ] || fail unsupported_capability 'NX 离线检查使用 headless 镜像。'
-    nx=$(resource_path headless_resources)
+    [ "$backend" = headless ] || fail unsupported_capability 'IMG 离线检查使用 headless 镜像。'
+    data=$(resource_path game_data)
     exec docker run --rm --network none --read-only --cpus 2 --memory 1g --pids-limit 128 \
         --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
-        --mount "type=bind,src=$nx,dst=/data,readonly" --entrypoint /bin/beidou-headless "$image" --check-resources /data
+        --mount "type=bind,src=$data,dst=/data,readonly" --entrypoint /bin/beidou-headless "$image" --check-resources /data
 fi
 
 [ -f "$account" ] && [ "$(stat -Lc %a "$account")" = 600 ] || fail private_file_permissions 'account.json 须存在且权限为 0600。'
 [ -f "$resources" ] || fail resources_required '须提供共享 private/workbenches/resources.json 资源配置。'
 account=$(realpath "$account")
 resources=$(realpath "$resources")
-nx=$(resource_path headless_resources)
-[ -d "$nx" ] || fail resources_missing 'NX 资源目录不可用。'
-metadata=$(jq -r '.metadata_root // empty' "$resources")
-if [ -n "$metadata" ]; then
-    case "$metadata" in /*) ;; *) metadata="$(dirname "$resources")/$metadata" ;; esac
-    if [ -d "$metadata" ]; then metadata=$(realpath "$metadata"); else metadata=; fi
-fi
+data=$(resource_path game_data)
+[ -d "$data" ] || fail resources_missing '原版 Data/IMG 资源目录不可用。'
 if [ "$backend" = beidou ]; then
     gui=$(resource_path gui_client)
     [ -d "$gui" ] && [ -c /dev/dri/renderD128 ] || fail gui_unavailable '原客户端资源或 GUI 渲染设备不可用。'
@@ -589,21 +584,18 @@ if [ "$backend" = headless ]; then
         --env "CLIENT_ROOT=$container_root" --env "MAPLE_RESOURCES_CONFIG=$container_root/config/resources.json" \
         --env "TARGET_IP=$target_ip" --env "TARGET_CONTAINER_ID=$server_id" \
         --env "BEIDOU_WORKBENCH_ID=$workbench_id" \
-        --mount "type=bind,src=$workbench,dst=/work" --mount "type=bind,src=$nx,dst=/data,readonly"
+        --mount "type=bind,src=$workbench,dst=/work" --mount "type=bind,src=$data,dst=/data,readonly"
     if "$harness"; then
         set -- "$@" --env "HTTP_PROXY=$model_proxy" --env "HTTPS_PROXY=$model_proxy" \
             --env "NO_PROXY=localhost,127.0.0.1,$target_ip"
     fi
-    if [ -n "$metadata" ]; then set -- "$@" --mount "type=bind,src=$metadata,dst=/metadata,readonly"; fi
     "$@" "$image" >/dev/null
 else
     export CLIENT_IMAGE="$image" CLIENT_IMAGE_ID="$image" CLIENT_CONTAINER_NAME="$name" WORKBENCH_ROOT="$workbench"
     export CLIENT_ROOT="$run_root" CLIENT_RUNTIME_ROOT="$container_root"
-    export BEIDOU_CLIENT_DIR="$gui" HEADLESS_RESOURCES_DIR="$nx" TARGET_IP="$target_ip" TARGET_NETWORK="$network"
+    export BEIDOU_CLIENT_DIR="$gui" GAME_DATA_DIR="$data" TARGET_IP="$target_ip" TARGET_NETWORK="$network"
     export TARGET_CONTAINER_ID="$server_id" RUN_ID="$run_id" MAPLE_INSTANCE="$instance" CHARACTER_ID="$character_id" WORLD_ID="$world"
     export RENDER_GID="$(stat -c %g /dev/dri/renderD128)"
-    if [ -z "$metadata" ]; then metadata="$run_root/metadata"; mkdir -p "$metadata"; fi
-    export METADATA_ROOT="$metadata"
     export BEIDOU_WORKBENCH_ID="$workbench_id"
     export MODEL_PROXY="$model_proxy" MODEL_PROXY_IP="$model_proxy_ip" MODEL_PROXY_PORT="$model_proxy_port"
     set -- docker compose --project-name "$name" -f "$context/docker/compose.yaml"

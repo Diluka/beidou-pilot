@@ -1,4 +1,4 @@
-"""本地官方 WZ XML 或同源 NX 的静态资料；不读取服务端状态。"""
+"""本地原版 IMG 的静态资料；不读取服务端状态。"""
 
 from functools import cache
 import hashlib
@@ -6,7 +6,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .backend import ClientError, JsonObject, JsonValue
-from .nx import read_nx
+from .img_resources import ImgDirectory
 from .resources import load_resources
 
 
@@ -27,34 +27,31 @@ def _properties(node: ET.Element | None) -> JsonObject:
 
 
 class Catalog:
-    def __init__(self, client_root: Path, wz_root: Path | None = None) -> None:
+    def __init__(self, client_root: Path) -> None:
         resources = load_resources(client_root)
-        if wz_root is None:
-            wz_root = resources.metadata_root
-        self.root = wz_root.resolve()
-        self.nx_root = resources.headless_resources
-        self._loaded_sources: dict[str, Path] = {}
+        self.root = resources.game_data.resolve()
+        self._image_directories: dict[Path, ImgDirectory] = {}
+        self._loaded_sources: dict[str, tuple[Path, ...]] = {}
 
     @cache
     def _tree(self, relative_path: str) -> ET.Element | None:
-        path = self.root / relative_path
+        package, filename = relative_path.split("/", 1)
+        category = package.removesuffix(".wz")
+        directory = self.root / (
+            "Map002" if category == "Map" and (self.root / "Map002").is_dir() else category
+        )
+        parts = tuple(filename.removesuffix(".xml").split("/"))
+        path = directory.joinpath(*parts)
         if not path.is_file():
-            package, filename = relative_path.split("/", 1)
-            category = package.removesuffix(".wz")
-            nx_path = self.nx_root / (category + ".nx")
-            if category == "Map" and (self.nx_root / "Map002.nx").is_file():
-                nx_path = self.nx_root / "Map002.nx"
-            if not nx_path.is_file():
-                return None
-            self._loaded_sources[relative_path] = nx_path
-            parts = tuple(None if part == "*" else part for part in filename.removesuffix(".xml").split("/"))
-            return read_nx(nx_path, parts)
-        self._loaded_sources[relative_path] = path
-        try:
-            return ET.parse(path).getroot()
-        except (ET.ParseError, OSError) as error:
-            raise ClientError("metadata_unreadable", "本地 WZ XML 无法读取。",
-                              {"path": str(path), "reason": str(error)}) from error
+            return None
+        parser = self._image_directories.get(directory)
+        if parser is None:
+            parser = ImgDirectory(directory)
+            self._image_directories[directory] = parser
+        tree, sources = parser.read_tree(parts)
+        if tree is not None:
+            self._loaded_sources[relative_path] = sources
+        return tree
 
     @cache
     def _fingerprint(self, path: Path) -> str:
@@ -66,17 +63,18 @@ class Catalog:
                               {"path": str(path), "reason": str(error)}) from error
 
     def _sources(self, *relative_paths: str) -> JsonObject:
-        paths = list(dict.fromkeys(self._loaded_sources[name] for name in relative_paths if name in self._loaded_sources))
+        paths = list(dict.fromkeys(
+            path for name in relative_paths if name in self._loaded_sources for path in self._loaded_sources[name]
+        ))
         kinds = {path.suffix for path in paths}
         return {
             "metadata_source": [str(path) for path in paths],
             "metadata_sources": [{"path": str(path), "sha256": self._fingerprint(path)} for path in paths],
-            "source_kind": "local-official-nx" if kinds == {".nx"} else "local-official-wz-xml" if kinds == {".xml"}
+            "source_kind": "local-original-img" if kinds == {".img"}
                            else "mixed-local-client-resources" if kinds else "unavailable",
             "runtime_authority": False,
             "resource_version": None,
-            "resource_manifest": str(self.nx_root / "manifest.json") if ".nx" in kinds
-                                 and (self.nx_root / "manifest.json").is_file() else None,
+            "resource_manifest": None,
         }
 
     @cache
@@ -210,8 +208,8 @@ class Catalog:
             sources.append("String.wz/Npc.img.xml")
         if result["monsters"]:
             sources.append("String.wz/Mob.img.xml")
-        return {**result, "geometry_source": str(self._loaded_sources[relative_path])
-                if relative_path in self._loaded_sources else None,
+        return {**result, "geometry_source": str(self._loaded_sources[relative_path][0])
+                if relative_path in self._loaded_sources and self._loaded_sources[relative_path] else None,
                 **self._sources(*sources)}
 
     @cache
@@ -221,8 +219,9 @@ class Catalog:
         node: ET.Element | None = None
         category = item_id // 1000000
         if category == 1:
-            source = next(self.root.joinpath("Character.wz").glob(f"*/{item_id:08d}.img.xml"), None)
-            relative_path = (str(source.relative_to(self.root)) if source is not None
+            character_root = self.root / "Character"
+            source = next(character_root.glob(f"*/{item_id:08d}.img"), None)
+            relative_path = ("Character.wz/" + str(source.relative_to(character_root)) + ".xml" if source is not None
                              else f"Character.wz/*/{item_id:08d}.img.xml")
             node = self._tree(relative_path)
         else:
