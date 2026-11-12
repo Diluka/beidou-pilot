@@ -5,11 +5,13 @@ ignore_all_files_in_gitignore: true
 ignored_paths:
 - tmp/**
 - .worktrees/**
+- .agents/**
 - third_party/**
 - cli/runtime/**
 - cli/state/**
 - headless/build/**
 - headless/resources/**
+- private/**
 initial_prompt: 这是beidou-pilot项目。开始工作先读mem:core并遵守AGENTS.md；稳定项目记忆仅写入本项目，不写global/或其他项目。游戏资产、账号和运行数据不写入记忆；当前只启用记忆，不启动语言服务。
 default_modes: null
 added_modes: null

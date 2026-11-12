@@ -24,4 +24,5 @@ server.json
 /LOCAL.md
 /tmp/
 /.worktrees/
+.agents/worktrees/
 .agent_context/
