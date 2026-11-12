@@ -129,19 +129,44 @@ class LuaStrategyContract(unittest.TestCase):
                 parse_options(metadata, list(arguments))
             self.assertEqual("invalid_strategy_option", raised.exception.code)
 
-    def test_required_boolean_help_matches_supported_flag_forms(self) -> None:
+    def test_boolean_without_default_is_optional_and_defaults_true(self) -> None:
         self.path.write_text(
-            "-- @option[type=boolean] enabled 启用策略\nlocal function main(context)\nend\n", encoding="utf-8"
+            "-- @option[type=boolean] enabled 启用策略\n"
+            "-- @option[type=boolean,opt,default=false] disabled 默认关闭\n"
+            "local function main(context)\nend\n",
+            encoding="utf-8",
         )
         code, output = self.cli("script", "describe", str(self.path))
         self.assertEqual(0, code, output)
         data = json.loads(output)["data"]
-        self.assertIn("--enabled|--no-enabled", data["usage"])
+        self.assertIn("[--enabled|--no-enabled]", data["usage"])
+        self.assertFalse(data["options"][0]["required"])
+        self.assertIs(data["options"][0]["default"], True)
+        self.assertIs(data["options"][1]["default"], False)
         metadata = parse_strategy(self.path.read_text(encoding="utf-8"))
         self.assertIsNotNone(metadata)
         assert metadata is not None
-        self.assertEqual({"enabled": True}, parse_options(metadata, ["--enabled"]))
-        self.assertEqual({"enabled": False}, parse_options(metadata, ["--no-enabled"]))
+        self.assertEqual({"enabled": True, "disabled": False}, parse_options(metadata, []))
+        self.assertEqual({"enabled": True, "disabled": False}, parse_options(metadata, ["--enabled"]))
+        self.assertEqual({"enabled": False, "disabled": False}, parse_options(metadata, ["--no-enabled"]))
+        self.assertEqual({"enabled": False, "disabled": False}, parse_options(metadata, ["--enabled", "false"]))
+
+    def test_boolean_choices_validate_implicit_default_and_cli_value(self) -> None:
+        with self.assertRaises(ClientError) as raised:
+            parse_strategy(
+                "-- @option[type=boolean,choices=false] enabled 仅允许关闭\nlocal function main(context)\nend\n"
+            )
+        self.assertEqual("invalid_strategy_metadata", raised.exception.code)
+
+        metadata = parse_strategy(
+            "-- @option[type=boolean,choices=true] enabled 仅允许启用\nlocal function main(context)\nend\n"
+        )
+        self.assertIsNotNone(metadata)
+        assert metadata is not None
+        self.assertEqual({"enabled": True}, parse_options(metadata, []))
+        with self.assertRaises(ClientError) as raised:
+            parse_options(metadata, ["--no-enabled"])
+        self.assertEqual("invalid_strategy_option", raised.exception.code)
 
     def test_policy_flag_is_not_abbreviated_as_a_cli_control_flag(self) -> None:
         self.path.write_text(
