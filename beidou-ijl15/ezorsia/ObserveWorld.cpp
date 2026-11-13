@@ -239,9 +239,26 @@ Value Stage() {
                         if (activeKnown && active && RawWorldSelection(stage,
                             [](Address at) { return Read<std::uint32_t>(at); }, count, index)) {
                             bool stillKnown = false;
-                            if (WindowActive(panel, stillKnown) && stillKnown && Read<Address>(0x00BEDA5C) == panel)
-                                login["raw_world_selection"] = Value::Object({{"count", count},
-                                    {"selected_index", index == UINT32_MAX ? -1 : static_cast<int>(index)}});
+                            if (WindowActive(panel, stillKnown) && stillKnown && Read<Address>(0x00BEDA5C) == panel) {
+                                auto selection = Value::Object({{"count", count},
+                                    {"selected_index", index == UINT32_MAX ? -1 : static_cast<int>(index)},
+                                    {"raw_world_id", Value()}});
+                                try {
+                                    std::uint16_t rawId = 0;
+                                    if (RawWorldId(stage, [](Address at) { return Read<std::uint32_t>(at); },
+                                        [](Address at) { return Read<std::uint16_t>(at); }, rawId)) {
+                                        std::uint32_t afterCount = 0, afterIndex = 0;
+                                        bool known = false;
+                                        if (RawWorldSelection(stage, [](Address at) { return Read<std::uint32_t>(at); },
+                                                afterCount, afterIndex) && afterCount == count && afterIndex == index &&
+                                            WindowActive(panel, known) && known && Read<Address>(0x00BEDA5C) == panel)
+                                            selection["raw_world_id"] = rawId;
+                                    }
+                                } catch (const ReadError&) {
+                                    // Keep the selection even when the optional world-array read fails.
+                                }
+                                login["raw_world_selection"] = selection;
+                            }
                         }
                     } catch (const ReadError&) {
                         // Preserve the rest of the stage snapshot on optional read failure.

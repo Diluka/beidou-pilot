@@ -17,6 +17,20 @@ inline const char* ObservedLoginPage(bool loginStage, const std::array<std::uint
     return nullptr;
 }
 
+// Project only dimension-matched layer bounds using checked signed arithmetic.
+inline bool ProjectStageLayer(const std::array<std::int32_t, 4>& layer,
+    const std::array<std::int32_t, 4>& camera, std::int32_t width, std::int32_t height,
+    std::array<std::int32_t, 4>& result) {
+    if (width <= 0 || height <= 0 || static_cast<std::int64_t>(layer[2]) - layer[0] != width ||
+        static_cast<std::int64_t>(layer[3]) - layer[1] != height) return false;
+    for (int i = 0; i < 4; ++i) {
+        const auto value = static_cast<std::int64_t>(layer[i]) - camera[i % 2];
+        if (value < INT32_MIN || value > INT32_MAX) return false;
+        result[i] = static_cast<std::int32_t>(value);
+    }
+    return true;
+}
+
 // Only classify focus identity; never read edit text or length.
 template <class Read32>
 const char* LoginEditFocus(std::uint32_t stage, std::uint32_t window, Read32 read32) {
@@ -110,6 +124,31 @@ bool RawWorldSelection(std::uint32_t stage, Read32 read32, std::uint32_t& count,
         read32(panel + 8) != 0x00AF7A40 || read32(panel + 0x80) != stage) return false;
     count = counts[0];
     index = indices[0];
+    return true;
+}
+
+// Raw WORD at the selected world-array slot; this is not a verified world ID mapping.
+template <class Read32, class Read16>
+bool RawWorldId(std::uint32_t stage, Read32 read32, Read16 read16, std::uint16_t& result) {
+    if (!stage || stage > UINT32_MAX - 0x18F) return false;
+    std::uint32_t pointers[2]{}, lengths[2]{}, counts[2]{}, indices[2]{};
+    std::uint16_t values[2]{};
+    for (int i = 0; i < 2; ++i) {
+        if (!RawWorldSelection(stage, read32, counts[i], indices[i]) || indices[i] == UINT32_MAX) return false;
+        pointers[i] = read32(stage + 0x18C);
+        if (pointers[i] < 4) return false;
+        lengths[i] = read32(pointers[i] - 4);
+        if (lengths[i] < counts[i] || indices[i] >= lengths[i]) return false;
+        const std::uint64_t address = static_cast<std::uint64_t>(pointers[i]) + 32ull * indices[i];
+        if (address > UINT32_MAX - 1) return false;
+        values[i] = read16(static_cast<std::uint32_t>(address));
+    }
+    std::uint32_t count = 0, index = 0;
+    if (pointers[0] != pointers[1] || lengths[0] != lengths[1] || counts[0] != counts[1] ||
+        indices[0] != indices[1] || values[0] != values[1] || read32(stage + 0x18C) != pointers[1] ||
+        read32(pointers[1] - 4) != lengths[1] || !RawWorldSelection(stage, read32, count, index) ||
+        count != counts[1] || index != indices[1]) return false;
+    result = values[0];
     return true;
 }
 

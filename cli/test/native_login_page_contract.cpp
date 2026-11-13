@@ -6,6 +6,12 @@
 #include <stdexcept>
 
 int main() {
+    std::array<std::int32_t, 4> projection{};
+    using NativeObservation::ProjectStageLayer;
+    assert(ProjectStageLayer({10, 20, 110, 70}, {-10, -20, 790, 580}, 100, 50, projection));
+    assert((projection == std::array<std::int32_t, 4>{20, 40, 120, 90}));
+    assert(!ProjectStageLayer({10, 20, 111, 70}, {-10, -20, 790, 580}, 100, 50, projection));
+    assert(!ProjectStageLayer({INT32_MAX - 1, 0, INT32_MAX, 1}, {-2, 0, 0, 0}, 1, 1, projection));
     using NativeObservation::ObservedLoginPage;
     const std::array<std::uint32_t, 3> terms{0x00AF79C8, 0x00AF797C, 0x00AF7978};
     const std::array<std::uint32_t, 3> gender{0x00AF7298, 0x00AF724C, 0x00AF7248};
@@ -107,6 +113,30 @@ int main() {
     assert(!RawWorldSelection(stage, changingWorld, count, index));
     memory[0x00BEDA5C] = UINT32_MAX - 0x8A;
     assert(!RawWorldSelection(stage, read32, count, index));
+    memory[0x00BEDA5C] = world;
+    memory[world + 0x88] = 1;
+    memory[stage + 0x18C] = 0x90004;
+    memory[0x90000] = 3;
+    memory[0x90024] = 17;
+    auto read16 = [&](std::uint32_t at) { return static_cast<std::uint16_t>(memory.at(at)); };
+    std::uint16_t rawId = 0;
+    using NativeObservation::RawWorldId;
+    assert(RawWorldId(stage, read32, read16, rawId) && rawId == 17);
+    memory[0x90000] = 1;
+    assert(!RawWorldId(stage, read32, read16, rawId));
+    memory[0x90000] = 3;
+    memory[stage + 0x18C] = UINT32_MAX - 15;
+    memory[UINT32_MAX - 19] = 3;
+    assert(!RawWorldId(stage, read32, read16, rawId));
+    memory[stage + 0x18C] = 0x90004;
+    int idReads = 0;
+    auto changingId = [&](std::uint32_t at) {
+        auto value = read16(at);
+        return static_cast<std::uint16_t>(value + (++idReads == 2 ? 1 : 0));
+    };
+    assert(!RawWorldId(stage, read32, changingId, rawId));
+    memory[world + 0x88] = UINT32_MAX;
+    assert(!RawWorldId(stage, read32, read16, rawId));
 
     const std::uint32_t manager = 0x50000, account = 0x60000, password = 0x70000;
     memory[stage + 0x168] = 0;

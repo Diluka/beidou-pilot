@@ -96,7 +96,7 @@ class NativeObservationContract(unittest.TestCase):
         (self.directory / "state.json").write_text(json.dumps(self.state))
         domain = {
             "stage": "UNKNOWN",
-            "login": {"raw_step": 7, "raw_world_selection": {"count": 3, "selected_index": -1}},
+            "login": {"raw_step": 7, "raw_world_selection": {"count": 3, "selected_index": 0, "raw_world_id": 0}},
             "windows": [
                 {
                     "address": "0x1234",
@@ -107,6 +107,9 @@ class NativeObservationContract(unittest.TestCase):
                     "account_empty": False,
                     "password_empty": True,
                     "raw_gender_selection": 0,
+                    "layer_rect": None,
+                    "game_rect": None,
+                    "window_position_source": None,
                     "raw_appearance_candidates": [1, 2, 3, 4, 5, 6, 7, 8],
                     "buttons": [{"control_id": 3, "layout_x": None, "layout_y": None, "enabled": None}],
                 },

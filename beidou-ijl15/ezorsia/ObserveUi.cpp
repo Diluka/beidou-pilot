@@ -66,8 +66,10 @@ OptionalRect Camera() {
     const int height = At<int>(bytes, 0x24);
     const int centerX = At<int>(bytes, 0xC4);
     const int centerY = At<int>(bytes, 0xC8);
-    if (bounds.right - bounds.left != width || bounds.bottom - bounds.top != height ||
-        bounds.left != centerX - width / 2 || bounds.top != centerY - height / 2) return {};
+    if (static_cast<std::int64_t>(bounds.right) - bounds.left != width ||
+        static_cast<std::int64_t>(bounds.bottom) - bounds.top != height ||
+        bounds.left != static_cast<std::int64_t>(centerX) - width / 2 ||
+        bounds.top != static_cast<std::int64_t>(centerY) - height / 2) return {};
     return {true, bounds};
 }
 
@@ -100,7 +102,8 @@ WindowLayout ReadWindowLayout(Address address, const std::vector<unsigned char>&
     if (layer != 0 && Read<Address>(layer) == 0x5042E3F0) {
         const auto values = Read<std::array<int, 4>>(layer + 0x54);
         layout.layer = {true, {values[0], values[1], values[2], values[3]}};
-        if (values[2] - values[0] == width && values[3] - values[1] == height) {
+        if (static_cast<std::int64_t>(values[2]) - values[0] == width &&
+            static_cast<std::int64_t>(values[3]) - values[1] == height) {
             layout.vector = layout.layer;
             layout.positionSource = "Gr2D cached layer bounds matched CWnd dimensions";
             if (camera.known) layout.game = {true,
@@ -140,11 +143,15 @@ WindowLayout ReadWindowLayout(Address address, const std::vector<unsigned char>&
                         if (At<Address>(motion, 0x1C) == layer) {
                             const int parentX = At<int>(motion, 0x60);
                             const int parentY = At<int>(motion, 0x64);
-                            layout.vector = {true, {parentX, parentY, parentX + width, parentY + height}};
-                            layout.positionSource = "Shape2D button parent snapshot";
-                            if (camera.known) layout.game = {true,
-                                Translate(layout.vector.value, -camera.value.left, -camera.value.top)};
-                            button.uiEligible = true;
+                            const auto right = static_cast<std::int64_t>(parentX) + width;
+                            const auto bottom = static_cast<std::int64_t>(parentY) + height;
+                            if (right >= INT32_MIN && right <= INT32_MAX && bottom >= INT32_MIN && bottom <= INT32_MAX) {
+                                layout.vector = {true, {parentX, parentY, static_cast<int>(right), static_cast<int>(bottom)}};
+                                layout.positionSource = "Shape2D button parent snapshot";
+                                if (camera.known) layout.game = {true,
+                                    Translate(layout.vector.value, -camera.value.left, -camera.value.top)};
+                                button.uiEligible = true;
+                            }
                         }
                     }
                 }
@@ -535,6 +542,7 @@ Value Window(std::uintptr_t address) { return CaptureWindow(static_cast<Address>
 // Raw pre-game window snapshot. Unlike Ui(), this does not require a camera
 // or imply that a projected position is safe to click.
 Value StageWindows(std::uintptr_t loginStage) {
+    const auto renderer = Read<Address>(0x00BF14EC);
     const auto camera = Camera();
     const auto before = Read<std::array<Address, 3>>(0x00BF1650);
     if (before[0] > 256) throw ReadError("Active CWnd count exceeds the supported range");
@@ -545,7 +553,29 @@ Value StageWindows(std::uintptr_t loginStage) {
         const auto address = Read<Address>(node);
         const auto header = Bytes(address, 0x64);
         const auto tables = At<std::array<Address, 3>>(header, 0);
-        const auto layout = ReadWindowLayout(address, header, camera);
+        const auto layout = ReadWindowLayout(address, header, {});
+        OptionalRect stageGame;
+        try {
+            const auto layer = At<Address>(header, 0x18);
+            if (camera.known && layer != 0 && layer <= UINT32_MAX - 0x63 &&
+                Read<Address>(layer) == 0x5042E3F0) {
+                const auto first = Read<std::array<std::int32_t, 4>>(layer + 0x54);
+                const auto again = Bytes(address, 0x64);
+                const auto second = Read<std::array<std::int32_t, 4>>(layer + 0x54);
+                const auto cameraAfter = Camera();
+                const std::array<std::int32_t, 4> cameraValues{camera.value.left, camera.value.top,
+                    camera.value.right, camera.value.bottom};
+                std::array<std::int32_t, 4> projected{};
+                if (header == again && first == second && Read<Address>(layer) == 0x5042E3F0 &&
+                    renderer != 0 && Read<Address>(0x00BF14EC) == renderer && cameraAfter.known && cameraAfter.value.left == camera.value.left &&
+                    cameraAfter.value.top == camera.value.top && cameraAfter.value.right == camera.value.right &&
+                    cameraAfter.value.bottom == camera.value.bottom &&
+                    ProjectStageLayer(first, cameraValues, At<int>(header, 0x24), At<int>(header, 0x28), projected))
+                    stageGame = {true, {projected[0], projected[1], projected[2], projected[3]}};
+            }
+        } catch (const ReadError&) {
+            // Geometry is optional and does not invalidate the window snapshot.
+        }
         for (const auto& problem : layout.problems)
             if (problem == "CWnd child list changed while collecting the observation") throw ReadError(problem);
         auto buttons = Value::Array();
@@ -614,6 +644,8 @@ Value StageWindows(std::uintptr_t loginStage) {
             {"login_page_candidate", candidate == nullptr ? Value() : Value(candidate)},
             {"login_edit_focus", loginEditFocus}, {"account_empty", accountEmpty}, {"password_empty", passwordEmpty},
             {"raw_gender_selection", rawGenderSelection}, {"raw_appearance_candidates", rawAppearance},
+            {"layer_rect", Rectangle(layout.layer)}, {"game_rect", Rectangle(stageGame)},
+            {"window_position_source", stageGame.known ? Value("stable Gr2D layer bounds and camera") : Value()},
             {"width", At<int>(header, 0x24)}, {"height", At<int>(header, 0x28)},
             {"buttons", buttons}}));
         const auto next = Read<Address>(node - 12);
