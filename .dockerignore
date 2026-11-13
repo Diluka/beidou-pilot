@@ -39,6 +39,9 @@
 !docs/
 !docs/CLI.md
 !docs/LUA_API.md
+!docs/LUA_COROUTINE_API.md
+!docs/LUA_TICK_API.md
+!docs/TICK_FREQUENCY.md
 !docs/PLAY_GUIDE.md
 !docs/HARNESS.md
 !docs/CONTROL.md

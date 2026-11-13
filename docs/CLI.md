@@ -248,7 +248,7 @@ private/workbenches/workbench /external/workbench script status --session SCRIPT
 private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
 ```
 
-mode/config 只读取文件级前导单行注释，Lua 长注释内部及正文中的伪声明不生效。未知/重复 mode 或 tick 配置、非法值、coroutine 中的 tick 配置均在发布前拒绝。`@tick.gear` 接受 `1/2/3/4`，分别为10Hz、20Hz、30Hz和本端原生更新不节流，默认第3档；不接受前导零或任意tick倍率。首次稳定回调立即执行，之后按绝对相位跳过过期周期，不突发补跑。频率仅限制Lua判断和无消费者core刷新，取消、期限、原生消费、后继槽及放键每宿主更新继续；调用时领域是该帧新事实。固定频率是目标而非严格最大延迟。默认单次预算 **100ms / abort / abort_commit=true**；预算接受正有限十进制毫秒数（可为小数），不接受符号、指数或非有限数。`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用，下一次 `context.tick.overrun=true`。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。完整字段、动作槽和领域说明见 [tick API](LUA_API.md#tick-环境)。
+mode/config 只读取文件级前导单行注释，Lua 长注释内部及正文中的伪声明不生效。未知/重复 mode 或 tick 配置、非法值、coroutine 中的 tick 配置均在发布前拒绝。`@tick.gear` 接受 `1/2/3/4`，分别为10Hz、20Hz、30Hz和本端原生更新不节流，默认第3档；不接受前导零或任意tick倍率。首次稳定回调立即执行，之后按绝对相位跳过过期周期，不突发补跑。频率仅限制Lua判断和无消费者core刷新，取消、期限、原生消费、后继槽及放键每宿主更新继续；调用时领域是该帧新事实。固定频率是目标而非严格最大延迟。默认单次预算 **100ms / abort / abort_commit=true**；预算接受正有限十进制毫秒数（可为小数），不接受符号、指数或非有限数。`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用，下一次 `context.tick.overrun=true`。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。完整字段、动作槽和领域说明见 [tick API](LUA_TICK_API.md#tick-环境)。
 
 CLI tick 编译只注入既有 `options/scene/route`，返回入口及上下文，不执行 main，也不调用旧 `game.state()`；初始静态 scene 身份由原生核对。直接 `--code` 的 tick 脚本自行定义全局 main 或返回入口表，不自动注入策略参数。buff 按本端可读能力；首版两端 `buffs` 为未知、`buffs_status=unsupported`，不伪造空列表。
 
@@ -319,7 +319,7 @@ private/workbenches/workbench /external/workbench hunt all --first-job magician 
 
 狩猎结果的 `requested_level` 是实际装载的停级，`advancement` 保留当前节点或未知候选，`stop_level_source` 区分 `advancement`、`first_job_checkpoint`、`until_level`。无适用节点且未明确停级时，`hunt` 不附加等级上限（`none`）。停级在Lua观察到等级达到或超过边界时生效；转职条件与加点由独立命令处理。
 
-已知路线可在一个有界 Lua 内复用，接口与适用起点见 [Lua 旅行函数库](LUA_API.md#可选旅行函数库)。例如从50000东上层行进至相邻安全城镇：
+已知路线可在一个有界 Lua 内复用，接口与适用起点见 [Lua 旅行函数库](LUA_COROUTINE_API.md#可选旅行函数库)。例如从50000东上层行进至相邻安全城镇：
 
 ```bash
 private/workbenches/workbench /external/workbench script run --library island-supply --code 'local result = island_supply.to_town({seconds=30}); assert(result.arrived)' --seconds 35
@@ -345,7 +345,7 @@ CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed
 
 `skill` 保留 `native_result`、`dispatched/skill_reason` 和未知效果，顶层 `reason` 继续表达脚本终态。原生数值含义随后端不同：无头枚举0表示准入，GUI保留原返回值，命中以实际战斗结果为准。需要停止活动脚本时，先读取当前 `script.id`，显式 `script cancel --session` 并等待终态和放键；其他动作命令在控制权释放后执行。脚本能力及效果判断见 [CONTROL](CONTROL.md)。
 
-无头 `snapshot` 与 `bridge status` 提供 `dead/revive_requestable`：死亡来自已就绪角色的原生 HP=0；读数不可用时保持未知。`revive_requestable` 表示客户端请求前置已满足，服务端许可由实际请求结果确认。无头 `revive` 通过共享 Lua 默认等待至多6秒，只有同角色 HP>0 且地图、位置有效才返回 `revived`；存活返回 `already_alive`，请求按一次执行。未确认返回 `revive_not_confirmed`，取消/断线保留实际结果；死亡观察只报告状态。参数化等待及脚本用法见 [Lua API](LUA_API.md#无头正常复活)。
+无头 `snapshot` 与 `bridge status` 提供 `dead/revive_requestable`：死亡来自已就绪角色的原生 HP=0；读数不可用时保持未知。`revive_requestable` 表示客户端请求前置已满足，服务端许可由实际请求结果确认。无头 `revive` 通过共享 Lua 默认等待至多6秒，只有同角色 HP>0 且地图、位置有效才返回 `revived`；存活返回 `already_alive`，请求按一次执行。未确认返回 `revive_not_confirmed`，取消/断线保留实际结果；死亡观察只报告状态。参数化等待及脚本用法见 [Lua API](LUA_COROUTINE_API.md#无头正常复活)。
 
 ## 无头控件交互
 

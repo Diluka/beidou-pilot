@@ -12,7 +12,7 @@
 | [climb_to.lua](travel/climb_to.lua) | 靠近并对齐单根绳梯，向目标 Y 攀爬，检查最终位置。 | CLI `climb X --to-y Y`；单次局部攀爬，确认失败时停止。 |
 | [enter_portal.lua](travel/enter_portal.lua) | 接近单个门户，只发送一次进入动作，再观察换图或同图传送结果。 | CLI `portal NAME`；门户需在当前可接近层。 |
 | [walk_to.lua](travel/walk_to.lua) | 按静态地形图把角色移动到当前地图的目标坐标：走、跳台、落层、绳底跳抓；竖直墙把平台切成不同区间。 | CLI `move X --to-y Y`；每段执行后重新采样再规划，执行失败的边本次会话禁用；失败信息带地图、坐标、阶段与原因。 |
-| [_route.lua](travel/_route.lua) | 普通 Lua 函数在同一预算内组合已知同层移动、落层和相邻地图门户，按阶段核对身份与到达。 | `script run/start --library travel`；接口见 [Lua API](../../docs/LUA_API.md#可选旅行函数库)。 |
+| [_route.lua](travel/_route.lua) | 普通 Lua 函数在同一预算内组合已知同层移动、落层和相邻地图门户，按阶段核对身份与到达。 | `script run/start --library travel`；接口见 [Lua API](../../docs/LUA_COROUTINE_API.md#可选旅行函数库)。 |
 | [_common.lua](travel/_common.lua) | 旅行脚本共用的身份、场景、生命值检查，以及横向反馈对齐。 | 内部辅助文件，由装载器自动拼接到旅行脚本前。 |
 | [navigate.lua](travel/navigate.lua) | 按 CLI 打包的静态路线逐段换图：场景内寻路到门户、按上进门、核对落点与地图。 | CLI `navigate MAP_ID`；跨图路线由 Python 侧从本地门户资料计算，本策略不选路。 |
 | [_move.lua](travel/_move.lua) | `walk_to` 与 `navigate` 共用的单地图执行器：逐边执行走、跳台、落层、绳梯，失败边禁用并重规划。 | 内部辅助文件，由装载器拼接到两者之前。 |
@@ -73,11 +73,11 @@ private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
 
 阅读时关注四点：`@mode tick` 选择新引擎；`main` 每次只做短判断，返回 `nil` 后下次继续；`context.state.phase` 保存“助跑 → 等待空中 → 等待落地 → 停下”的阶段，避免每次重新跳或重复攻击；`player.move` 只需设置一次，跳跃和攻击都保留持续方向，只在确认落地后 `move(nil)`，速度接近零后返回 `"done"`。
 
-`character.velocity` 是角色自己的当前运动向量，`character.movement` 是按当前有效属性及本端物理模型推断的静止平地参考能力，两者不混用。自己、其他玩家、怪物、NPC、投射物和掉落物共享可移动物体的观察基类，每个实体各自拥有向量，世界不是运动主体。向量保留原生或原生更新区间差分的来源，未知不填零。沿目标方向达到参考移速的99%后才提交 jump：无头速度渐近稳态，不能严格比较相等，也不用固定助跑时长/距离或仅凭速度平台。完整运动参考及最大跳高的适用条件见 [运动观察](../../docs/LUA_API.md#运动观察与静止参考)。
+`character.velocity` 是角色自己的当前运动向量，`character.movement` 是按当前有效属性及本端物理模型推断的静止平地参考能力，两者不混用。自己、其他玩家、怪物、NPC、投射物和掉落物共享可移动物体的观察基类，每个实体各自拥有向量，世界不是运动主体。向量保留原生或原生更新区间差分的来源，未知不填零。沿目标方向达到参考移速的99%后才提交 jump：无头速度渐近稳态，不能严格比较相等，也不用固定助跑时长/距离或仅凭速度平台。完整运动参考及最大跳高的适用条件见 [运动观察](../../docs/LUA_TICK_API.md#运动观察与静止参考)。
 
 空中阶段要求真实 `character.on_ground=false` 且 `character.y` 小于原平地Y；jump 槽空闲仅表示输入已消费和释放，不表示已经落地。两端均使用本端原生地面标志确认落地，未知时不靠重复坐标推断。速度/能力参考只阻断依赖它们的助跑或停止确认，不阻断已经具备离地事实的空中攻击。`settled` 包含停止移动等条件，不能用于全程移动的落地判断。受理与输入释放也不等于真实空中出手或命中；实际效果需原生事实或画面另行核对。
 
-可以从这个结构扩展更多阶段，不要加入阻塞等待或混用 coroutine 的 `game.sleep()/game.state()`。tick 多会话共享 player，同客户端其他会话可能覆盖方向；初学试用只运行这一份动作示例。完整契约见 [tick API](../../docs/LUA_API.md#tick-环境)。
+可以从这个结构扩展更多阶段，不要加入阻塞等待或混用 coroutine 的 `game.sleep()/game.state()`。tick 多会话共享 player，同客户端其他会话可能覆盖方向；初学试用只运行这一份动作示例。完整契约见 [tick API](../../docs/LUA_TICK_API.md#tick-环境)。
 
 ## 调用与维护
 

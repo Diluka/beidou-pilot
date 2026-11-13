@@ -20,7 +20,7 @@ private/workbenches/workbench /external/workbench script status
 
 省略 mode 或 `-- @mode coroutine` 进入现有 Runtime，其 API 和调度冻结保留；`-- @mode tick` 进入独立 TickRuntime。两者不共享上层状态、动作槽、控制权和输入生命周期，只共享适配器所需的原生 I/O；任一引擎的取消、错误和期限不结束另一引擎的会话。两端按共同的公开契约提供各自原生实现，不建立旧 API 的兼容包装。
 
-客户端 tick 引擎只有一份角色状态机，接纳的全部 tick 会话共享持续移动和单个一次性动作槽，按接纳顺序调用、后写覆盖。宿主每次更新推进原生消费、期限、取消和放键；各会话按 `@tick.gear` 到期调用入口，调用前使用当帧新鲜事实，有到期消费者的宿主帧只刷新一次共享核心领域，结束时统一提交差异；动作忙时不同输入写入单个后继槽，同时返回 `false,"busy"`，当前动作完成后执行；后写覆盖排队项。字段与完整预算语义见 [tick API](LUA_API.md#tick-环境)。
+客户端 tick 引擎只有一份角色状态机，接纳的全部 tick 会话共享持续移动和单个一次性动作槽，按接纳顺序调用、后写覆盖。宿主每次更新推进原生消费、期限、取消和放键；各会话按 `@tick.gear` 到期调用入口，调用前使用当帧新鲜事实，有到期消费者的宿主帧只刷新一次共享核心领域，结束时统一提交差异；动作忙时不同输入写入单个后继槽，同时返回 `false,"busy"`，当前动作完成后执行；后写覆盖排队项。字段与完整预算语义见 [tick API](LUA_TICK_API.md#tick-环境)。
 
 以下基础动作、任务控制和内置策略描述均为 coroutine 环境。以 headless 当前面向脚本的 `State`、`Action`、`ActionResult` 为共同标准，绑定与调度位于 `shared/lua-runtime/`；原版 DLL 提供同一模型。内置策略不在本次迁移范围，选择性验证用 tick 文件不替换内置脚本。
 
@@ -40,13 +40,13 @@ GUI普通200类用药按物品ID与实际消费槽直接调用原生入口，与
 
 ## 脚本 API 入口
 
-编写脚本先阅读 [Lua API 参考](LUA_API.md)。该文档集中维护完整状态结构、能力字段、函数签名、默认参数、返回值、错误和标准库限制，本篇只说明执行与控制协议。
+编写脚本先按 [Lua API 导航](LUA_API.md) 选择 [coroutine API](LUA_COROUTINE_API.md) 或 [tick API](LUA_TICK_API.md)。两份参考分别维护各自的状态结构、能力字段、函数签名、默认参数、返回值、错误和标准库限制，本篇只说明执行与控制协议。
 
 公共接口变更时，运行时实现和 API 参考在同一改动中更新；策略不通过重复实现基础操作来补出未声明的接口。共享策略仍按其局部维护约定迭代，已有参数属于脚手架阶段。
 
 ## 控制权、期限与取消
 
-coroutine 引擎仍只允许一个活动会话，其内部任务共享一份动作控制；tick 引擎允许多个会话，也可与 coroutine 同时存在。`script run` 同步等待结果，`script start` 在原生受理后返回；两者的脚本会话均由客户端 Runtime 持有，CLI 等待不拥有脚本生命周期。一个 coroutine 脚本会话内可通过 `game.spawn/acquire/cancel/tasks` 协作运行多个 Lua 任务；它们共享 Lua 状态，由公共 Runtime 串行派发原生动作。任务等待动作或控制权时，其他任务继续观察和判断。主任务返回后子任务继续，全部任务结束且放键确认后会话结束。公共接口与示例见 [Lua API 的任务与控制权](LUA_API.md#任务与控制权)。
+coroutine 引擎仍只允许一个活动会话，其内部任务共享一份动作控制；tick 引擎允许多个会话，也可与 coroutine 同时存在。`script run` 同步等待结果，`script start` 在原生受理后返回；两者的脚本会话均由客户端 Runtime 持有，CLI 等待不拥有脚本生命周期。一个 coroutine 脚本会话内可通过 `game.spawn/acquire/cancel/tasks` 协作运行多个 Lua 任务；它们共享 Lua 状态，由公共 Runtime 串行派发原生动作。任务等待动作或控制权时，其他任务继续观察和判断。主任务返回后子任务继续，全部任务结束且放键确认后会话结束。公共接口与示例见 [Lua API 的任务与控制权](LUA_COROUTINE_API.md#任务与控制权)。
 
 动作控制按任务归属。高优先级任务可请求接管，旧任务立即失去派发资格，原生确认释放后新任务取得控制；相同优先级保持当前控制者。被接管动作返回标准结果并标记 `reason=control_preempted`，游戏效果保持未知。旧任务重新取得控制后读取新状态并规划，运行时不保留待重放动作。指定任务取消、正常返回或 `game.stop()` 只释放该任务仍拥有的输入；停止原任务只释放其自身输入，后续控制者的输入保持。`keys/press/skill` 同样受任务归属约束。
 
@@ -76,7 +76,7 @@ Lua 期限控制整个脚本会话，容器没有进程自退期限。脚本结�
 
 CLI 通过原生观察 API 消费 `stage/scene/inventory/character/quests/hotkeys/dialog/ui/shop/notifications`。前五域两端共用，其余为原版 UI 观察扩展。原版在游戏线程读取 V17 对象，DLL 内部仍依赖版本布局；无头端读取自己的游戏对象，外部 Python 不读取游戏进程内存。
 
-coroutine Lua 通过 `game.observe(domain)` 按需调用相同原生采集函数，共享值类型和 Lua 投影由 `shared/lua-runtime/` 维护，进程内直接传递。查询只占用当前原生采集路径，响应附带当前实例、角色、地图、场景代次及采样时间。轻量 `game.state()` 按需采集基础字段；调用者在等待或动作后重新读取。无头任务仍是登录快照，GUI 桌面几何增强不属于原生 Lua 数据，完整字段与未知语义见 [Lua API](LUA_API.md#按需领域观察)。tick 使用独立只读领域属性，核心域每 tick 刷新，其他域按需读取，同一 tick 内复用；不向旧 `game.observe` API 转发。
+coroutine Lua 通过 `game.observe(domain)` 按需调用相同原生采集函数，共享值类型和 Lua 投影由 `shared/lua-runtime/` 维护，进程内直接传递。查询只占用当前原生采集路径，响应附带当前实例、角色、地图、场景代次及采样时间。轻量 `game.state()` 按需采集基础字段；调用者在等待或动作后重新读取。无头任务仍是登录快照，GUI 桌面几何增强不属于原生 Lua 数据，完整字段与未知语义见 [Lua API](LUA_COROUTINE_API.md#按需领域观察)。tick 使用独立只读领域属性，有到期消费者的宿主帧刷新一次共享核心域，其他域按需读取，同一宿主帧内复用；不向旧 `game.observe` API 转发。
 
 只读 `observation-request.txt/observation.json` 与动作/Lua的 `command.txt/state.json` 使用独立通道。响应核对请求ID、原生 `instance_id/run_id`、序号和采样年龄；实例名只选择工具会话，进程身份以 `instance_id/run_id` 为准。请求派发不覆盖活动 Lua。
 
