@@ -412,7 +412,7 @@ class GuiLoginStateTests(unittest.TestCase):
 
     @patch("beidou_pilot.gui_login.load_runtime")
     @patch("beidou_pilot.gui_login.time.sleep")
-    @patch("beidou_pilot.gui_login.time.monotonic", side_effect=[0, 0, 1])
+    @patch("beidou_pilot.gui_login.time.monotonic", side_effect=[0, 0, 0, 1])
     @patch("beidou_pilot.gui_login._step", return_value={"credentials_submitted": True})
     def test_loop_does_not_replay_credentials(self, submit, clock, sleep, load):
         load.return_value = self.backend.runtime
@@ -1028,6 +1028,37 @@ class GuiLoginStateTests(unittest.TestCase):
             "gui-channel-submitted",
         ):
             self.assertTrue((self.backend.runtime.run_dir / marker).exists(), marker)
+
+    @patch("beidou_pilot.gui_login.time.monotonic", return_value=1)
+    @patch("beidou_pilot.gui_login.load_runtime")
+    @patch("beidou_pilot.gui_login._execute_locked", return_value={"phase": "character_list"})
+    def test_external_deadline_is_forwarded_without_reset(self, locked, load, clock):
+        from beidou_pilot.gui_login import execute as run
+        load.return_value = self.backend.runtime
+        run(self.backend, self.profile, instance_id="i", run_id="r", accept_terms=True, gender="female", deadline=8)
+        self.assertEqual(locked.call_args.kwargs["deadline"], 8)
+
+    @patch("beidou_pilot.gui_login.time.monotonic", return_value=2)
+    @patch("beidou_pilot.gui_login.load_runtime")
+    def test_external_deadline_elapsed_in_preparation(self, load, clock):
+        from beidou_pilot.gui_login import execute as run
+        load.return_value = self.backend.runtime
+        with self.assertRaises(ClientError) as error:
+            run(self.backend, self.profile, instance_id="i", run_id="r", accept_terms=True, gender="female", deadline=1)
+        self.assertEqual(error.exception.code, "gui_login_timeout")
+        self.backend.read.assert_not_called()
+        self.backend.desktop.assert_not_called()
+        self.assertFalse((self.backend.runtime.run_dir / "gui-login.lock").exists())
+
+    @patch("beidou_pilot.gui_login.time.monotonic", side_effect=[0, 2])
+    @patch("beidou_pilot.gui_login.load_runtime")
+    def test_timeout_includes_runtime_preparation(self, load, clock):
+        from beidou_pilot.gui_login import execute as run
+        load.return_value = self.backend.runtime
+        with self.assertRaises(ClientError) as error:
+            run(self.backend, self.profile, instance_id="i", run_id="r", accept_terms=True, gender="female", timeout=1)
+        self.assertEqual(error.exception.code, "gui_login_timeout")
+        self.backend.desktop.assert_not_called()
 
     def test_character_list(self):
         self.stage.update(stage="CHARACTER_SELECT", world_id=0, channel=1)

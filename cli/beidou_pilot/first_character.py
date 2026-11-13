@@ -107,28 +107,53 @@ def execute(backend: Backend, args: argparse.Namespace) -> JsonObject:
             )
         if not math.isfinite(timeout) or timeout < 0:
             raise ClientError("usage", "等待时间必须为非负有限数。")
+        action = accept_terms or gender is not None
+        if action and gender is None:
+            raise ClientError("usage", "GUI 登录动作必须明确指定性别。")
+        if action and not 0 < timeout <= 180:
+            raise ClientError("invalid_login_options", "GUI 登录动作等待时间须大于零且不超过 180 秒。")
+        deadline = time.monotonic() + timeout
         runtime = load_runtime(backend.root, backend.name, backend.instance)
         if not runtime.running:
             raise ClientError("bridge_session_unavailable", "本容器的客户端进程已退出。")
-        native = BridgeClient(backend.root, backend.name, backend.instance).snapshot()
-        if native.get("run_id") != runtime.run_id or not native.get("instance_id"):
-            raise ClientError("gui_login_identity_unconfirmed", "原生桥身份不匹配。")
-        if accept_terms or gender is not None:
-            if gender is None:
-                raise ClientError("usage", "GUI 登录动作必须明确指定性别。")
+        bridge = BridgeClient(backend.root, backend.name, backend.instance)
+        while True:
+            current = load_runtime(backend.root, backend.name, backend.instance)
+            if not current.running or current.run_id != runtime.run_id:
+                raise ClientError("gui_login_identity_unconfirmed", "运行实例已改变。")
+            try:
+                native = bridge.snapshot()
+            except ClientError as error:
+                if error.code != "bridge_unavailable":
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    if timeout == 0:
+                        raise
+                    raise ClientError("login_timeout", "等待原生桥就绪超时；未发送输入。") from error
+                time.sleep(min(0.1, remaining))
+                continue
+            if native.get("run_id") != runtime.run_id or not native.get("instance_id"):
+                raise ClientError("gui_login_identity_unconfirmed", "原生桥身份不匹配。")
+            break
+        if action:
             from .gui_login import execute as gui_execute
             from .profile import load_account_profile
 
+            profile = load_account_profile(backend.root / "account.json")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ClientError("login_timeout", "等待登录准备超时；未发送输入。")
             return gui_execute(
                 backend,
-                load_account_profile(backend.root / "account.json"),
+                profile,
                 instance_id=native["instance_id"],
                 run_id=runtime.run_id,
                 accept_terms=accept_terms,
                 gender=gender,
-                timeout=timeout,
+                timeout=remaining,
+                deadline=deadline,
             )
-        deadline = time.monotonic() + timeout
         while True:
             stage = backend.read("stage")
             client = stage.get("client")

@@ -1,6 +1,7 @@
 """GUI 账号登录的保守入口：无法确认页面或动作结果时保留现场。"""
 
 import fcntl
+import math
 import os
 import time
 
@@ -631,12 +632,9 @@ def _execute_locked(
     run_id: str,
     accept_terms: bool,
     gender: str,
-    timeout: float = 30,
+    deadline: float,
 ) -> JsonObject:
     """有界观察并等待已发出的一次性动作，不重复输入。"""
-    if not 0 < timeout <= 180:
-        raise ClientError("invalid_login_options", "等待时间须大于零且不超过 180 秒。")
-    deadline = time.monotonic() + timeout
     last_action = None
     attempted: set[str] = set()
     while True:
@@ -747,11 +745,19 @@ def execute(
     accept_terms: bool,
     gender: str,
     timeout: float = 30,
+    deadline: float | None = None,
 ) -> JsonObject:
     """排他控制单个运行实例，其他 login 不接管输入。"""
+    if not 0 < timeout <= 180:
+        raise ClientError("invalid_login_options", "等待时间须大于零且不超过 180 秒。")
+    if deadline is None:
+        deadline = time.monotonic() + timeout
+    elif isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline):
+        raise ClientError("invalid_login_options", "绝对期限须为有限单调时钟值。")
     runtime = load_runtime(backend.root, backend.name, backend.instance)
     if not runtime.running or runtime.run_id != run_id:
         raise ClientError("gui_login_identity_unconfirmed", "运行实例已改变，未开始登录。")
+    _check_deadline(deadline)
     descriptor = os.open(runtime.run_dir / "gui-login.lock", os.O_CREAT | os.O_RDWR, 0o600)
     with os.fdopen(descriptor, "r+") as lock:
         try:
@@ -765,5 +771,5 @@ def execute(
             run_id=run_id,
             accept_terms=accept_terms,
             gender=gender,
-            timeout=timeout,
+            deadline=deadline,
         )
