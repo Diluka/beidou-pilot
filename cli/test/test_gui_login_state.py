@@ -343,15 +343,15 @@ class GuiLoginExecuteTests(unittest.TestCase):
 
     def login_sequence(self):
         return [
-            terms_stage(), terms_stage(),
             credentials_stage(), credentials_stage(),
+            terms_stage(), terms_stage(),
             gender_stage(), gender_stage(),
             world_stage(), world_stage(),
             channel_stage(), channel_stage(),
             characters_stage(), characters_stage(),
         ]
 
-    def test_terms_credentials_gender_world_channel_reach_character_list(self):
+    def test_credentials_terms_gender_world_channel_reach_character_list(self):
         for gender, encoded in (("male", "0"), ("female", "1")):
             with self.subTest(gender=gender):
                 self.reset_run()
@@ -364,12 +364,12 @@ class GuiLoginExecuteTests(unittest.TestCase):
                 calls = self.bridge.login_action.call_args_list
                 self.assertEqual(
                     [call.args[0] for call in calls],
-                    ["accept_terms", "submit_login", "select_gender", "select_world", "select_channel"],
-                    "登录动作须按协议、账号、性别、世界、频道顺序各发一次",
+                    ["submit_login", "accept_terms", "select_gender", "select_world", "select_channel"],
+                    "登录动作须按账号、协议、性别、世界、频道顺序各发一次",
                 )
-                self.assertEqual(calls[0].args[1:], ("terms",), "协议动作只带协议窗口原生地址")
-                self.assertEqual(calls[1].args[1:], ("login", "测试".encode("cp936"), b"secret"),
+                self.assertEqual(calls[0].args[1:], ("login", "测试".encode("cp936"), b"secret"),
                                  "账号动作按客户端字符集传用户名密码字节")
+                self.assertEqual(calls[1].args[1:], ("terms",), "协议动作只带协议窗口原生地址")
                 self.assertEqual(calls[2].args[1:], ("gender", encoded), "性别动作使用 0/1 原生选择值")
                 self.assertEqual(calls[3].args[1:], ("world", "0"), "世界动作带世界窗口地址与 0 基世界索引")
                 self.assertEqual(calls[4].args[1:], ("0", "channel"),

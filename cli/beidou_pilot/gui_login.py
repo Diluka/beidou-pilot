@@ -214,7 +214,7 @@ def _execute_locked(
     deadline: float,
 ) -> JsonObject:
     """有界观察并等待已发出的一次性原生动作，不重复调用。"""
-    order = ["terms", "credentials", "gender", "world", "channel"]
+    order = ["credentials", "terms", "gender", "world", "channel"]
     sent_page: str | None = None
     while True:
         _check_deadline(deadline)
