@@ -25,7 +25,7 @@ class HuntLuaContract(unittest.TestCase):
         cls.strategy_context_contract = root / "cli/test/strategy_context_contract.lua"
         cls.strategy = root / "shared/scripts/combat/hunt.lua"
 
-    def test_stale_entry_context_stops_fight_and_recovery_before_actions(self) -> None:
+    def test_stale_entry_context_stops_recovery_before_actions(self) -> None:
         root = Path(__file__).resolve().parents[2]
         scene = {
             "instance_id": "current-instance",
@@ -35,16 +35,6 @@ class HuntLuaContract(unittest.TestCase):
             "terrain": {"status": "unavailable", "error": "hunt_terrain_unavailable"},
         }
         options_by_strategy = {
-            "combat/fight.lua": {
-                "mob_id": 100100,
-                "budget_seconds": 60,
-                "stop_level": 10,
-                "floor_y": 20,
-                "min_x": 0,
-                "max_x": 100,
-                "retreat_x": 10,
-                "loot": False,
-            },
             "recovery/recover.lua": {
                 "item_id": 2000000,
                 "count": 1,

@@ -215,7 +215,7 @@ class SnapshotConsumerContract(unittest.TestCase):
                     text = format_snapshot(report)
                     self.assertIn("首转路线未知", text)
                     self.assertIn("魔法师8级", text)
-                    self.assertIn("fight/hunt", text)
+                    self.assertIn("hunt", text)
 
 
 if __name__ == "__main__":
