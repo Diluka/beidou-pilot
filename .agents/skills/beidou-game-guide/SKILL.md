@@ -25,7 +25,7 @@ description: "查阅和维护北斗冒险岛玩法攻略。覆盖主题地图任
 
 - [骑士团终态加点](references/cygnus-skills.md)：五职业一至三转共15张终态表，贵族6点、61／121／151 SP预算及100／110级技能训练；魂骑士解锁上限差异另列，全部方案尚未实测。
 
-- [世界地图](references/world-map.md)：本地原版地图全部场景按区域归组的传送门 graph，每条边带入口与落点门户坐标；换场景线路用 `tools/world_route.py <起点地图> <终点地图>` 查，只覆盖普通门户，乘船、地铁和任务脚本不在其中。
+- [世界地图](references/world-map.md)：按区域分册的有向传送门 graph 与门户坐标；使用 `python3 /game/.agents/skills/beidou-game-guide/tools/world_route.py <起点地图> <终点地图>` 比较静态门户与已收录出租车、飞艇候选。票价和路线按固定版本资料估计，需现场核对 NPC、票券与条件；结果不保证可达，找不到路线也不代表不可达。
 
 ## 查阅与维护
 

@@ -24,6 +24,8 @@ pause、stop、退出和重连只影响 LLM 调度，不取消脚本、关闭客
 TOOL_SURFACE = "cli-v1"
 SKILL_NAME = "beidou-pilot-client"
 SKILL_PATH = "/game/.agents/skills/beidou-pilot-client/SKILL.md"
+GUIDE_NAME = "beidou-game-guide"
+GUIDE_PATH = "/game/.agents/skills/beidou-game-guide/SKILL.md"
 OBSERVATION_TOOLS: list[JsonObject] = [
     {
         "type": "function",
@@ -131,14 +133,14 @@ class Controller:
             for error in cast(list[JsonValue], cast(JsonObject, item).get("errors", []))
         ]
         if (
-            len(loaded_skills) != 1
-            or loaded_skills[0]["name"] != SKILL_NAME
-            or loaded_skills[0]["path"] != SKILL_PATH
-            or loaded_skills[0].get("enabled", True) is not True
+            len(loaded_skills) != 2
+            or {(skill["name"], skill["path"]) for skill in loaded_skills}
+            != {(SKILL_NAME, SKILL_PATH), (GUIDE_NAME, GUIDE_PATH)}
+            or any(skill.get("enabled", True) is not True for skill in loaded_skills)
             or skill_errors
             or mcps["data"]
         ):
-            raise AppServerError("context_not_isolated", "游戏 AI 只允许装载本镜像的 beidou-pilot-client 技能。")
+            raise AppServerError("context_not_isolated", "游戏 AI 只允许装载本镜像的客户端和攻略技能。")
         features = cast(JsonObject, config.get("features", {}))
         unwanted = (
             "apps",
@@ -327,7 +329,8 @@ class Controller:
                                 "input": (
                                     []
                                     if self.read_only
-                                    else [{"type": "skill", "name": SKILL_NAME, "path": SKILL_PATH}]
+                                    else [{"type": "skill", "name": SKILL_NAME, "path": SKILL_PATH},
+                                          {"type": "skill", "name": GUIDE_NAME, "path": GUIDE_PATH}]
                                 )
                                 + [{"type": "text", "text": text}],
                             },

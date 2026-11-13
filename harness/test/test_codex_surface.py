@@ -267,9 +267,13 @@ supports_websockets = false
                 for item in cast(list[JsonValue], skills["data"])
                 for skill in cast(list[JsonValue], cast(JsonObject, item)["skills"])
             ]
-            self.assertEqual(["beidou-pilot-client"], [skill["name"] for skill in found_skills])
-            skill_path = cast(str, found_skills[0]["path"])
-            self.assertEqual("/game/.agents/skills/beidou-pilot-client/SKILL.md", skill_path)
+            self.assertEqual(
+                {"beidou-pilot-client": "/game/.agents/skills/beidou-pilot-client/SKILL.md",
+                 "beidou-game-guide": "/game/.agents/skills/beidou-game-guide/SKILL.md"},
+                {skill["name"]: skill["path"] for skill in found_skills},
+            )
+            self.assertEqual(2, len(found_skills))
+            skill_path = "/game/.agents/skills/beidou-pilot-client/SKILL.md"
             mcps = cast(JsonObject, await server.call("mcpServerStatus/list", {"limit": 100}))
             self.assertEqual([], mcps["data"])
             base_instructions = "GAME_BASE_113：只按游戏事实作决策。"
@@ -297,6 +301,7 @@ supports_websockets = false
                     "threadId": thread_id,
                     "input": [
                         {"type": "skill", "name": "beidou-pilot-client", "path": skill_path},
+                        {"type": "skill", "name": "beidou-game-guide", "path": "/game/.agents/skills/beidou-game-guide/SKILL.md"},
                         {"type": "text", "text": "用本容器 CLI 验证帮助和协作问答，不登录或操作游戏。"},
                     ],
                 },

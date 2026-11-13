@@ -17,7 +17,7 @@ docker build --file docker/harness/Dockerfile \
 
 LLM 暂停、停止或退出时，客户端与已经启动的原生任务继续运行；harness 不清理 shell、不取消 Lua、不关闭客户端。持续任务使用原生 `script start`，重接模型先观察当前任务与新鲜状态，不重复启动或抢占。取消原生任务、确认放键和关闭客户端分别由显式操作负责。
 
-专用技能位于 `/game/.agents/skills/beidou-pilot-client`，对应公共 CLI、Lua 和操作参考位于 `/game/docs`。这份技能只有仓库能力和 CLI 用法，不包含部署环境或角色状态。harness 从 `/game` 发现并核对这份技能；其他技能、MCP 和插件不随镜像提供。
+专用技能位于 `/game/.agents/skills/beidou-pilot-client` 和 `/game/.agents/skills/beidou-game-guide`，对应公共 CLI、Lua 和操作参考位于 `/game/docs`。攻略线路工具使用容器继承的 `PYTHONPATH` 和 `MAPLE_RESOURCES_CONFIG`（默认 `/work/config/resources.json`），资源仍由运行时只读挂载，不打包进镜像。其他技能、MCP 和插件不随镜像提供。
 
 `/opt/beidou-game-ai/entrypoint.sh` 是容器内 Codex 的独立启动入口。调用方必须设置本实例专用 `CODEX_HOME`，并提供适当的 `HOME`；状态、provider 和认证文件均放在运行时私密目录。`BEIDOU_GAME_AI_PROVIDER_CONFIG` 可指定专用 provider TOML，`BEIDOU_GAME_AI_AUTH_FILE` 仅在状态内尚无认证时初始化副本；API key 通过显式运行时环境变量提供。不要提供开发配置目录，不把代理或认证写入镜像。实际连接模型时再配置所需网络出口；代理是可选运行配置，不影响客户端和脚本启动。
 
