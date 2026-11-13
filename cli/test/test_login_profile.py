@@ -5,12 +5,23 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import call, patch
 
 from beidou_pilot.backend import Backend
 from beidou_pilot.cli import main
+from beidou_pilot.errors import ClientError
+from beidou_pilot.profile import (
+    CharacterCreation,
+    LoginRequest,
+    load_account_profile,
+    load_profile,
+    validate_character_creation,
+    validate_login_request,
+)
 from .test_bridge import BridgeFiles
 
 
@@ -32,6 +43,77 @@ class LoginProfileContract(unittest.TestCase):
             '{"username":"fixture-user","password":"fixture-password","character_id":7,"channel":1}'
         )
         self.account.chmod(0o600)
+
+    def test_account_identity_does_not_change_existing_cid_contract(self) -> None:
+        self.account.write_text('{"username":"fixture","password":"secret"}')
+        account = load_account_profile(self.account)
+        self.assertEqual("fixture", account.username)
+        self.assertNotIn("secret", repr(account))
+        with self.assertRaises(ClientError):
+            load_profile(self.account)
+        self.account.chmod(0o644)
+        with self.assertRaises(ClientError) as error:
+            load_account_profile(self.account)
+        self.assertEqual("private_file_permissions", error.exception.code)
+
+    def test_account_world_and_channel_match_existing_profile_contract(self) -> None:
+        self.account.write_text('{"username":"fixture","password":"secret"}')
+        account = load_account_profile(self.account)
+        self.assertEqual((0, 0), (account.world, account.channel))
+        for field in ("world", "channel"):
+            for value in (0, 255):
+                with self.subTest(field=field, value=value):
+                    self.account.write_text(json.dumps({"username": "fixture", "password": "secret", field: value}))
+                    self.assertEqual(value, getattr(load_account_profile(self.account), field))
+            for value in (-1, 256, True, None, "1"):
+                with self.subTest(field=field, value=value), self.assertRaises(ClientError):
+                    self.account.write_text(json.dumps({"username": "fixture", "password": "secret", field: value}))
+                    load_account_profile(self.account)
+
+    def test_profile_module_account_mode_and_default(self) -> None:
+        command = [sys.executable, "-m", "beidou_pilot.profile"]
+        result = subprocess.run([*command, str(self.account)], capture_output=True, text=True, check=True)
+        self.assertEqual({"character_id": 7, "world": 0, "channel": 1}, json.loads(result.stdout))
+        self.account.write_text('{"username":"fixture-user","password":"fixture-password","channel":1}')
+        result = subprocess.run(
+            [*command, "--mode", "account", str(self.account)], capture_output=True, text=True, check=True
+        )
+        self.assertEqual({"mode": "account", "world": 0, "channel": 1}, json.loads(result.stdout))
+        self.assertNotIn("fixture", result.stdout + result.stderr)
+        result = subprocess.run([*command, str(self.account)], capture_output=True, text=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("fixture", result.stdout + result.stderr)
+
+    def test_login_modes_and_creation_are_separate(self) -> None:
+        validate_login_request(LoginRequest("account", accept_terms=True, female=False))
+        validate_login_request(LoginRequest("character", character_id=7))
+        for request in (
+            LoginRequest("account", character_id=7),
+            LoginRequest("character"),
+            LoginRequest("unknown"),
+            LoginRequest("account", accept_terms=1),
+            LoginRequest("account", female=0),
+        ):
+            with self.subTest(request=request), self.assertRaises(ClientError):
+                validate_login_request(request)
+        creation = CharacterCreation("name", 0, 1, 2, 3, 4, 5, 6, 7, 8, False)
+        validate_character_creation(creation)
+        with self.assertRaises(ClientError):
+            validate_character_creation(CharacterCreation("", 0, 1, 2, 3, 4, 5, 6, 7, 8, False))
+        with self.assertRaises(ClientError):
+            validate_character_creation(CharacterCreation("name", True, 1, 2, 3, 4, 5, 6, 7, 8, False))
+
+    def test_creation_int32_protocol_boundaries(self) -> None:
+        from dataclasses import replace
+
+        creation = CharacterCreation("name", 0, 1, 2, 3, 4, 5, 6, 7, 8, False)
+        for field_name in ("job", "face", "hair", "hair_color", "skin", "top", "bottom", "shoes", "weapon"):
+            for value in (-(2**31), 2**31 - 1):
+                with self.subTest(field=field_name, value=value):
+                    validate_character_creation(replace(creation, **{field_name: value}))
+            for value in (-(2**31) - 1, 2**31):
+                with self.subTest(field=field_name, value=value), self.assertRaises(ClientError):
+                    validate_character_creation(replace(creation, **{field_name: value}))
 
     def test_open_requires_account_and_rejects_retired_login_options(self) -> None:
         for backend in ("beidou", "headless"):

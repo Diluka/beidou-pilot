@@ -71,7 +71,7 @@ GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，与无头端一
 docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop scroll down --ticks 1
 ```
 
-原语直接操作该容器的显示环境。首次声明、性别选择和角色列表是建角的起点，需要正常 GUI 首次流程时先确认账号和选择意图。无头首次登录与建角由 [#72](https://github.com/Diluka/beidou-pilot/issues/72) 跟踪，未知选择按当前记录处理。
+原语直接操作该容器的显示环境，仅用于没有原生入口的界面操作。首次登录与建角走独立命令，由原生桥调用原版客户端内部动作；手工键鼠只在原生入口无法操作时作为兜底，并须先确认账号、身份与选择意图。未知选择按当前记录处理。
 
 当前统一 `open` 要求真实已有角色 CID，无角色账号的启动模式作为独立能力跟踪。已有且归属正确的 GUI 会话可以接续正常首次流程；全新账号需先建立可接续会话，再按该流程继续。
 

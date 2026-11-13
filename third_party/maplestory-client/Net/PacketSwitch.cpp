@@ -254,6 +254,13 @@ namespace ms
 					// A known handler failed to parse its server packet.
 #ifdef HEADLESS
 					++state.packet_parse_errors;
+					if (!state.pending_request_id.empty() && state.creation_status == "accepted" &&
+						(opcode == CHARNAME_RESPONSE || opcode == ADD_NEWCHAR_ENTRY || opcode == DELCHAR_RESPONSE))
+					{
+						state.creation_status = "unknown";
+						state.creation_error = "invalid_server_packet";
+						state.phase = "failed";
+					}
 					if (opcode == SPAWN_CHAR || opcode == REMOVE_CHAR || opcode == CHAR_MOVED)
 						++state.player_packet_parse_errors;
 					state.last_packet_error = std::to_string(opcode) + ": " + err.what();

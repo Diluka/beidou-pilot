@@ -187,6 +187,8 @@
     <ClInclude Include="NativeKeyUnion.h" />
     <ClInclude Include="NativeTickInput.h" />
     <ClInclude Include="NativeItemUse.h" />
+    <ClInclude Include="LoginAction.h" />
+    <ClInclude Include="LoginActionProtocol.h" />
     <ClInclude Include="NativeObservation.h" />
     <ClInclude Include="..\..\shared\lua-runtime\Runtime.h" />
     <ClInclude Include="..\..\shared\lua-runtime\TickRuntime.h" />
@@ -234,6 +236,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AgentBridge.cpp" />
+    <ClCompile Include="LoginAction.cpp" />
     <ClCompile Include="NativeObservation.cpp" />
     <ClCompile Include="ObserveWorld.cpp" />
     <ClCompile Include="ObserveCharacter.cpp" />

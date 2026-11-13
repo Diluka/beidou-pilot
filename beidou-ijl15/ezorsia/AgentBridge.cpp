@@ -13,6 +13,7 @@
 #include "NativeItemUse.h"
 #include "NativeSkillUse.h"
 #include "NativeObservation.h"
+#include "LoginAction.h"
 
 #include <array>
 #include <algorithm>
@@ -1558,6 +1559,7 @@ void Tick() {
         stopCommand = false;
     }
     NativeObservation::Tick(directory, instanceId, runId, sceneGeneration, sequence);
+    BeiDouBridge::LoginAction::Tick(directory, instanceId, runId);
     if (now - lastPublishedAt >= 25) {
         NativeObservation::PollNotifications(*eventTransport, previousState);
         eventsPublished = eventTransport->Flush(previousState);

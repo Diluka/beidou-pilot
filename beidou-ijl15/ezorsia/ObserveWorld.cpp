@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "stdafx.h"
 #include "NativeObservation.h"
+#include "LoginPageObservation.h"
 
 #include <algorithm>
 #include <array>
@@ -206,7 +207,7 @@ Value Stage() {
     auto output = Value::Object({
         {"stage", "STARTING"}, {"stage_pointer", {}}, {"stage_vtable", {}},
         {"channel", {}}, {"world_id", {}}, {"character", {}},
-        {"login", {}}, {"channel_panel", {}}, {"unavailable", Value::Array()}
+        {"login", {}}, {"channel_panel", {}}, {"windows", {}}, {"unavailable", Value::Array()}
     });
     std::string stageName = "STARTING";
     try {
@@ -226,8 +227,43 @@ Value Stage() {
                     {"selected_index", Read<std::int32_t>(stage + 0x190)},
                     {"character_array", characters != 0 ? Value(Hex(characters)) : Value()},
                     {"character_slots", {}}, {"characters", Value::Array()},
-                    {"characters_available", false}, {"character_errors", Value::Array()}
+                    {"characters_available", false}, {"character_errors", Value::Array()},
+                    {"raw_world_selection", Value()}
                 });
+                if (step == 1 && transition == 0 && pending == 0) {
+                    try {
+                        const auto panel = Read<Address>(0x00BEDA5C);
+                        bool activeKnown = false;
+                        const auto active = WindowActive(panel, activeKnown);
+                        std::uint32_t count = 0, index = 0;
+                        if (activeKnown && active && RawWorldSelection(stage,
+                            [](Address at) { return Read<std::uint32_t>(at); }, count, index)) {
+                            bool stillKnown = false;
+                            if (WindowActive(panel, stillKnown) && stillKnown && Read<Address>(0x00BEDA5C) == panel) {
+                                auto selection = Value::Object({{"count", count},
+                                    {"selected_index", index == UINT32_MAX ? -1 : static_cast<int>(index)},
+                                    {"raw_world_id", Value()}});
+                                try {
+                                    std::uint16_t rawId = 0;
+                                    if (RawWorldId(stage, [](Address at) { return Read<std::uint32_t>(at); },
+                                        [](Address at) { return Read<std::uint16_t>(at); }, rawId)) {
+                                        std::uint32_t afterCount = 0, afterIndex = 0;
+                                        bool known = false;
+                                        if (RawWorldSelection(stage, [](Address at) { return Read<std::uint32_t>(at); },
+                                                afterCount, afterIndex) && afterCount == count && afterIndex == index &&
+                                            WindowActive(panel, known) && known && Read<Address>(0x00BEDA5C) == panel)
+                                            selection["raw_world_id"] = rawId;
+                                    }
+                                } catch (const ReadError&) {
+                                    // Keep the selection even when the optional world-array read fails.
+                                }
+                                login["raw_world_selection"] = selection;
+                            }
+                        }
+                    } catch (const ReadError&) {
+                        // Preserve the rest of the stage snapshot on optional read failure.
+                    }
+                }
                 stageName = step == 0 ? "LOGIN" : step == 1 ? "WORLD_SELECT" : step == 2 ? "CHARACTER_SELECT" : "UNKNOWN";
                 if (step == 2 && transition == 0 && pending == 0) {
                     try {
@@ -325,14 +361,21 @@ Value Stage() {
                 if (stageName == "IN_GAME" && stats != 0)
                     output["character"] = Value::Object({{"id", Read<std::uint32_t>(stats)}, {"name", FixedName(stats)}});
             }
+            try {
+                output["windows"] = StageWindows(table == 0x00AF6B24 ? stage : 0);
+            } catch (const ReadError& error) {
+                output["unavailable"].Add(std::string("Window observation unavailable: ") + error.what());
+            }
             if (Read<Address>(0x00BEDED4) != stage) {
                 stageName = "TRANSITION";
+                output["windows"] = {};
                 output["login"] = {};
                 output["character"] = {};
                 output["channel_panel"] = {};
                 output["unavailable"].Add("The current stage changed during observation.");
             }
         }
+        else output["unavailable"].Add("Window observation unavailable: current stage is not available.");
     }
     catch (const ReadError& error) {
         stageName = "UNKNOWN";

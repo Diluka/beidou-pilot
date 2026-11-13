@@ -29,6 +29,7 @@ services:
       RENDER_GID: ${RENDER_GID:?需要渲染设备的宿主组 ID}
       RUN_ID: ${RUN_ID:?请通过 beidou-pilot 创建运行会话}
       MAPLE_INSTANCE: ${MAPLE_INSTANCE:-default}
+      MAPLE_LOGIN_MODE: ${MAPLE_LOGIN_MODE:-character}
       CLIENT_ROOT: ${CLIENT_RUNTIME_ROOT:?需要容器内实例目录}
       MAPLE_RESOURCES_CONFIG: ${CLIENT_RUNTIME_ROOT:?需要容器内实例目录}/config/resources.json
       WINEPREFIX: ${CLIENT_RUNTIME_ROOT:?需要容器内实例目录}/runtime/prefix
@@ -45,7 +46,7 @@ services:
       beidou.client.instance: ${MAPLE_INSTANCE:-default}
       beidou.workbench: ${WORKBENCH_ROOT:?需要工作台绝对路径}
       beidou.target.id: ${TARGET_CONTAINER_ID:?需要已核验的目标容器身份}
-      beidou.character.id: ${CHARACTER_ID:?需要角色 CID}
+      beidou.character.id: ${CHARACTER_ID:-}
       beidou.world: ${WORLD_ID:?需要角色大区索引}
     networks:
       - target
