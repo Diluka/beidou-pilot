@@ -279,4 +279,33 @@ int main() {
         return at == edit + 4 && ++editReads == 3 ? 0u : value;
     };
     assert(!CreationNameCandidate(stage, window, changingEdit, read8, name));
+    using NativeObservation::CreationNameFocus;
+    bool focused = false;
+    memory[manager + 0x80] = window;
+    memory[manager + 0x88] = edit + 4;
+    assert(CreationNameFocus(stage, window, read32, focused) && focused);
+    memory[manager + 0x88] = 0;
+    assert(CreationNameFocus(stage, window, read32, focused) && !focused);
+    memory[manager + 0x80] = 0;
+    assert(!CreationNameFocus(stage, window, read32, focused));
+    memory[manager + 0x80] = window;
+    memory[manager + 0x88] = edit + 4;
+    int handlerReads = 0;
+    auto changingHandler = [&](std::uint32_t at) {
+        auto value = read32(at);
+        return at == manager + 0x88 && ++handlerReads == 2 ? 0u : value;
+    };
+    assert(!CreationNameFocus(stage, window, changingHandler, focused));
+    memory[edit + 0x14] = 0;
+    assert(!CreationNameFocus(stage, window, read32, focused));
+    memory[edit + 0x14] = 1002;
+    memory[manager + 0x80] = window;
+    memory.erase(manager + 0x88);
+    bool focusError = false;
+    try {
+        CreationNameFocus(stage, window, read32, focused);
+    } catch (const std::out_of_range&) {
+        focusError = true;
+    }
+    assert(focusError);
 }

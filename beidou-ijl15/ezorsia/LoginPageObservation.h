@@ -98,6 +98,33 @@ bool LoginEditEmpty(std::uint32_t stage, std::uint32_t window, Read32 read32, bo
     return true;
 }
 
+// CWndMan relation only; it does not guarantee operating-system focus.
+template <class Read32>
+bool CreationNameFocus(std::uint32_t stage, std::uint32_t window, Read32 read32, bool& focused) {
+    if (!stage || stage > UINT32_MAX - 0x173 || !window || window > UINT32_MAX - 0x87) return false;
+    std::array<std::uint32_t, 3> previous{};
+    for (int sample = 0; sample < 3; ++sample) {
+        if (read32(0x00BEDED4) != stage || read32(stage) != 0x00AF6B24 ||
+            read32(stage + 0x168) != 4 || read32(stage + 0x16C) != 0 || read32(stage + 0x170) != 0 ||
+            read32(0x00BEDA44) != window || read32(window) != 0x00AF7564 ||
+            read32(window + 4) != 0x00AF7518 || read32(window + 8) != 0x00AF7514 ||
+            read32(window + 0x24) != 201 || read32(window + 0x28) != 224 || read32(window + 0x6C) != stage)
+            return false;
+        const auto edit = read32(window + 0x84);
+        if (!edit || edit > UINT32_MAX - 0x27 || read32(edit) != 0x00AF2BA8 ||
+            read32(edit + 4) != 0x00AF2B5C || read32(edit + 8) != 0x00AF2B58 ||
+            read32(edit + 0x14) != 1002 || read32(edit + 0x24) != window) return false;
+        const auto manager = read32(0x00BEC20C);
+        if (!manager || manager > UINT32_MAX - 0x8B || read32(manager) != 0x00B3F13C ||
+            read32(manager + 0x80) != window) return false;
+        const std::array<std::uint32_t, 3> current{edit, manager, read32(manager + 0x88)};
+        if (sample && current != previous) return false;
+        previous = current;
+    }
+    focused = previous[2] == previous[0] + 4;
+    return true;
+}
+
 // ASCII only: never inspect any edit other than the verified creation-name control.
 template <class Read32, class Read8>
 bool CreationNameCandidate(std::uint32_t stage, std::uint32_t window, Read32 read32, Read8 read8, std::string& result) {

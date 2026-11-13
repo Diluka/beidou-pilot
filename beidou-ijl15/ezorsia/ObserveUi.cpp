@@ -624,7 +624,7 @@ Value StageWindows(std::uintptr_t loginStage) {
                 // The optional field remains unknown; preserve the rest of the window snapshot.
             }
         }
-        Value creationName;
+        Value creationName, creationNameFocused;
         if (loginStage != 0 && tables == std::array<Address, 3>{0x00AF7564, 0x00AF7518, 0x00AF7514} &&
             At<int>(header, 0x24) == 201 && At<int>(header, 0x28) == 224) {
             try {
@@ -638,6 +638,15 @@ Value StageWindows(std::uintptr_t loginStage) {
                     creationName = text;
             } catch (const ReadError&) {
                 // Leave the name unknown on any failed optional read.
+            }
+            try {
+                bool before = false, after = false, focused = false;
+                if (WindowActive(address, before) && before &&
+                    CreationNameFocus(static_cast<Address>(loginStage), address,
+                        [](Address at) { return Read<std::uint32_t>(at); }, focused) &&
+                    WindowActive(address, after) && after) creationNameFocused = focused;
+            } catch (const ReadError&) {
+                // Focus remains unknown on any failed optional read.
             }
         }
         Value rawAppearance, rawAppearanceSelector, rawJob;
@@ -665,7 +674,7 @@ Value StageWindows(std::uintptr_t loginStage) {
         windows.Add(Value::Object({{"address", Hex(address)}, {"vtables", Tables(tables)},
             {"type_name", name == nullptr ? Value() : Value(name)},
             {"login_page_candidate", candidate == nullptr ? Value() : Value(candidate)},
-            {"creation_name_candidate", creationName},
+            {"creation_name_candidate", creationName}, {"creation_name_focused", creationNameFocused},
             {"login_edit_focus", loginEditFocus}, {"account_empty", accountEmpty}, {"password_empty", passwordEmpty},
             {"raw_gender_selection", rawGenderSelection}, {"raw_appearance_candidates", rawAppearance},
             {"raw_appearance_selector", rawAppearanceSelector}, {"raw_job_candidate", rawJob},
