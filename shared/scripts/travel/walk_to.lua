@@ -265,7 +265,7 @@ local function main(context)
         return platform ~= nil and platform.index == edge.to
     end
 
-    local attempts, stalled = 0, 0
+    local attempts, stalled, edge_attempts, best_path, idle_rounds = 0, 0, {}, math.huge, 0
     while game.time() < deadline do
         local s = check_state()
         local current = platform_of(s)
@@ -301,11 +301,20 @@ local function main(context)
         else
             local next_path = plan_path(current)
             if not next_path then fail("no_viable_path_from_current") end
+            -- 路径长度长期不下降说明在平台图里绕圈，按无进展停止而不是耗尽预算。
+            if #next_path < best_path then
+                best_path, idle_rounds = #next_path, 0
+            else
+                idle_rounds = idle_rounds + 1
+                if idle_rounds > 15 then fail("no_progress") end
+            end
             local edge = next_path[1]
             stage = edge.kind
             attempts = attempts + 1
             if attempts > 60 then fail("attempt_limit") end
             local before_x, before_y = s.position.x, s.position.y
+            local edge_key = edge.from .. ":" .. edge.to .. ":" .. edge.kind
+            edge_attempts[edge_key] = (edge_attempts[edge_key] or 0) + 1
             game.log(
                 string.format(
                     "walk_to_exec attempt=%d kind=%s from=%d to=%d x=%.1f y=%.1f",
@@ -325,7 +334,7 @@ local function main(context)
                 if not after_platform then fail("platform_unknown_after_" .. edge.kind) end
             end
             if after_platform.index == edge.to then
-                stalled = 0
+                edge_attempts[edge_key], stalled = nil, 0
             elseif math.abs(after.position.x - before_x) < 4 and math.abs(after.position.y - before_y) < 4 then
                 -- 本端实际尝试后没有前进：本次会话禁用该边并重新规划，不重试同一条。
                 edge.blocked = true
@@ -341,6 +350,20 @@ local function main(context)
                     )
                 )
                 if stalled > 8 then fail("no_progress") end
+            elseif (edge_attempts[edge_key] or 0) >= 3 then
+                -- 位置在变但始终到不了这条边的目标平台，说明该边在本端不可执行。
+                edge.blocked = true
+                game.log(
+                    string.format(
+                        "walk_to_edge_blocked kind=%s from=%d to=%d attempts=%d x=%.1f y=%.1f",
+                        edge.kind,
+                        edge.from,
+                        edge.to,
+                        edge_attempts[edge_key],
+                        after.position.x,
+                        after.position.y
+                    )
+                )
             else
                 stalled = 0
             end

@@ -280,18 +280,21 @@ local function terrain_connect(graph, ropes)
                         connect(i, j, "walk", from_x, to_x, rise, nil, 1)
                     end
                 elseif gap >= 0 and gap <= 20 and rise > 6 and rise <= TERRAIN_JUMP_RISE then
-                    -- 相邻窄台阶链：客户端没有空中横向控制，只能靠反复起跳逐级落上，
-                    -- 规划把它放在最低优先级，执行失败后禁用。
-                    connect(
-                        i,
-                        j,
-                        "step",
-                        terrain_inside(a, ax - direction * 12),
-                        terrain_inside(b, bx + direction * 24),
-                        rise,
-                        nil,
-                        8
-                    )
+                    -- 相邻窄台阶链：客户端没有空中横向控制，只能靠反复起跳逐级落上。
+                    -- 规划把它放在最低优先级；跨越竖直墙的台阶链不生成。
+                    local from_x, to_x = terrain_inside(a, ax - direction * 12), terrain_inside(b, bx + direction * 24)
+                    local from_y, to_y = terrain_height(a, from_x), terrain_height(b, to_x)
+                    if
+                        not terrain_crosses_wall(
+                            walls,
+                            ax,
+                            bx,
+                            math.min(from_y, to_y) - TERRAIN_BODY_HEIGHT,
+                            math.max(from_y, to_y)
+                        )
+                    then
+                        connect(i, j, "step", from_x, to_x, rise, nil, 8)
+                    end
                 end
             end
         end
@@ -454,7 +457,8 @@ end
 local function terrain_platform_at(graph, x, y, tolerance)
     local selected, nearest = nil, tolerance
     for _, platform in ipairs(graph.platforms) do
-        if x >= platform.left - 3 and x <= platform.right + 3 then
+        -- 角色可以站在平台边缘，身体半宽允许超出端点；墙切分留下的边界也在此范围。
+        if x >= platform.left - TERRAIN_WALL_MARGIN and x <= platform.right + TERRAIN_WALL_MARGIN then
             local distance = math.abs(terrain_height(platform, x) - y)
             if distance <= nearest then
                 selected, nearest = platform, distance
