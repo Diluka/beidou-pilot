@@ -12,7 +12,7 @@
 ./beidou-pilot --workbench /external/gui-workbench --json close
 ```
 
-GUI 默认通过 GitHub CLI `gh` 获取所选提交成功的 `agent-bridge` CI 工件，核对原生输入后将 DLL 与清单装入 GUI 镜像。开发时可用 `--bridge-artifact DIR` 显式复用匹配的现成工件，此时无需 `gh`。工作台资源配置只提供原客户端、同源 NX 和可选 XML 路径，具体字段和授权要求见 [CLI](../docs/CLI.md#原版-gui)。
+GUI 默认通过 GitHub CLI `gh` 获取所选提交成功的 `agent-bridge` CI 工件，核对原生输入后将 DLL 与清单装入 GUI 镜像。开发时可用 `--bridge-artifact DIR` 显式复用匹配的现成工件，此时无需 `gh`。工作台资源配置提供原客户端及其原版 `Data/` 路径，不读取 NX 或导出 XML。Python 静态查询在自身进程内使用独立 IMG 解码库直接读取同一份只读资源，不经桥 DLL，也不要求启动游戏；桥仅承担运行时观察与控制。具体字段和授权要求见 [CLI](../docs/CLI.md#原版-gui)。
 
 原始客户端目录只读挂载；容器在自己的运行副本中装配镜像内的桥，并保留原图片库 `2ijl15.dll`。原资源文件保持原样，账号、Wine prefix、桥目录和日志外置到所属工作台。
 

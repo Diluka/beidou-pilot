@@ -29,17 +29,8 @@
 #include <unistd.h>
 #endif
 
-#ifndef NL_METADATA_ONLY
-#include <zlib.h>
-#include <lz4.h>
-#include <lz4hc.h>
-
-#include <squish.h>
-#endif
-
 #include <algorithm>
 #include <array>
-#include <chrono>
 #ifndef NL_NO_CODECVT
 #include <codecvt>
 #endif
@@ -52,13 +43,8 @@ namespace sys = std::filesystem;
 #include <boost/filesystem.hpp>
 namespace sys = boost::filesystem;
 #endif
-#include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <locale>
-#include <map>
-#include <numeric>
-#include <regex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -76,7 +62,6 @@ std::string u8string(const sys::path & path) {
 }
 
 using namespace std::string_literals;
-using namespace std::chrono_literals;
 
 namespace nl {
 extern uint8_t key_bms[65536];
@@ -95,17 +80,6 @@ using ::nl::key_bms;
 using ::nl::key_gms;
 using ::nl::key_kms;
 key_t const * keys[3] = {key_bms, key_gms, key_kms};
-// Tables for color lookups
-uint8_t const table4[0x10] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
-0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
-uint8_t const table5[0x20] = {0x00, 0x08, 0x10, 0x19, 0x21, 0x29, 0x31, 0x3A, 0x42, 0x4A, 0x52,
-0x5A, 0x63, 0x6B, 0x73, 0x7B, 0x84, 0x8C, 0x94, 0x9C, 0xA5, 0xAD,
-0xB5, 0xBD, 0xC5, 0xCE, 0xD6, 0xDE, 0xE6, 0xEF, 0xF7, 0xFF};
-uint8_t const table6[0x40] = {
-    0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2D, 0x31, 0x35, 0x39, 0x3D,
-    0x41, 0x45, 0x49, 0x4D, 0x51, 0x55, 0x59, 0x5D, 0x61, 0x65, 0x69, 0x6D, 0x71, 0x75, 0x79, 0x7D,
-    0x82, 0x86, 0x8A, 0x8E, 0x92, 0x96, 0x9A, 0x9E, 0xA2, 0xA6, 0xAA, 0xAE, 0xB2, 0xB6, 0xBA, 0xBE,
-    0xC2, 0xC6, 0xCA, 0xCE, 0xD2, 0xD7, 0xDB, 0xDF, 0xE3, 0xE7, 0xEB, 0xEF, 0xF3, 0xF7, 0xFB, 0xFF};
 // cp1252 table
 char16_t const cp1252[0x100] = {
     0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009, 0x000A, 0x000B,
@@ -130,28 +104,6 @@ char16_t const cp1252[0x100] = {
     0x00E4, 0x00E5, 0x00E6, 0x00E7, 0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF,
     0x00F0, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, 0x00F8, 0x00F9, 0x00FA, 0x00FB,
     0x00FC, 0x00FD, 0x00FE, 0x00FF};
-// Identity operation because C++ doesn't have such a template. Surprising, I know.
-template <typename T>
-struct identity {
-    T const & operator()(T const & v) const { return v; }
-};
-
-template <int N> void scale(std::vector<uint8_t> const & input, std::vector<uint8_t> & output, int width, int height) {
-    auto in = reinterpret_cast<uint32_t const *>(input.data());
-    auto out = reinterpret_cast<uint32_t *>(output.data());
-    auto w = width / N;
-    auto h = height / N;
-    for (auto y = 0; y < h; ++y) {
-        for (auto x = 0; x < w; ++x) {
-            auto p = in[y * w + x];
-            for (auto yy = y * N; yy < (y + 1) * N; ++yy) {
-                for (auto xx = x * N; xx < (x + 1) * N; ++xx) {
-                    out[yy * width + xx] = p;
-                }
-            }
-        }
-    }
-}
 // Input memory mapped file
 struct imapfile {
     char const * base = nullptr;
@@ -217,68 +169,6 @@ struct imapfile {
         return a != -128 ? a : read<int32_t>();
     }
 };
-// Output memory mapped file
-struct omapfile {
-    char * base = nullptr;
-    char * offset = nullptr;
-#ifdef _WIN32
-    void * file_handle = nullptr;
-    void * map_handle = nullptr;
-    void open(std::string p, size_t size) {
-        file_handle
-            = ::CreateFileA(p.c_str(), GENERIC_READ | GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, CREATE_ALWAYS, 0, nullptr);
-        if (file_handle == INVALID_HANDLE_VALUE)
-            throw std::runtime_error("Failed to open file " + p);
-        map_handle = ::CreateFileMappingA(file_handle, nullptr, PAGE_READWRITE, size >> 32,
-            size & 0xffffffff, nullptr);
-        if (map_handle == nullptr)
-            throw std::runtime_error("Failed to create file mapping of file " + p);
-        base = reinterpret_cast<char *>(::MapViewOfFile(map_handle, FILE_MAP_ALL_ACCESS, 0, 0, 0));
-        if (base == nullptr) throw std::runtime_error("Failed to map view of file " + p);
-        offset = base;
-    }
-    ~omapfile() {
-        ::UnmapViewOfFile(base);
-        ::CloseHandle(map_handle);
-        ::CloseHandle(file_handle);
-    }
-#else
-    int file_handle = 0;
-    size_t file_size = 0;
-    void open(std::string p, uint64_t size) {
-        file_handle
-            = ::open(p.c_str(), O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-        if (file_handle == -1) throw std::runtime_error("Failed to open file " + p);
-        file_size = size;
-        if (::lseek(file_handle, file_size - 1, SEEK_SET) == -1)
-            throw std::runtime_error("Error calling lseek() to 'stretch' file " + p);
-        if (::write(file_handle, "", 1) != 1)
-            throw std::runtime_error("Error writing last byte of file " + p);
-        base = reinterpret_cast<char *>(
-            ::mmap(nullptr, file_size, PROT_READ | PROT_WRITE, MAP_SHARED, file_handle, 0));
-        if (reinterpret_cast<intptr_t>(base) == -1)
-            throw std::runtime_error("Failed to create memory mapping of file " + p);
-        offset = base;
-    }
-    void close() {
-        ::munmap(const_cast<char *>(base), file_size);
-        ::close(file_handle);
-    }
-#endif
-    size_t tell() { return static_cast<size_t>(offset - base); }
-    void seek(size_t n) { offset = base + n; }
-    void skip(size_t n) { offset += n; }
-    template <typename T>
-    void write(T const & v) {
-        *reinterpret_cast<T *>(offset) = v;
-        offset += sizeof(T);
-    }
-    void write(void const * buf, size_t size) {
-        std::memcpy(offset, buf, size);
-        offset += size;
-    }
-};
 // Node stuff
 #pragma pack(push, 1)
 struct node {
@@ -323,26 +213,10 @@ struct bitmap {
     uint64_t data;
     uint8_t const * key;
 };
-// WZ version hash helpers
-static uint32_t compute_version_hash(int version) {
-    uint32_t hash = 0;
-    auto s = std::to_string(version);
-    for (char c : s)
-        hash = hash * 32 + static_cast<uint8_t>(c) + 1;
-    return hash;
-}
-static uint8_t derive_header_byte(uint32_t hash) {
-    return static_cast<uint8_t>(~(
-        ((hash >> 24) & 0xFF) ^
-        ((hash >> 16) & 0xFF) ^
-        ((hash >> 8) & 0xFF) ^
-        (hash & 0xFF)));
-}
 // The main class itself
-struct wztonx {
+struct ImgDecoder {
     // Variables
     imapfile in;
-    omapfile out;
     std::vector<node> nodes = std::vector<node>{{node{}}};
     std::vector<std::pair<id_t, id_t>> nodes_to_sort;
     std::unordered_map<std::string, id_t> string_map;
@@ -354,19 +228,14 @@ struct wztonx {
 #endif
     char8_t const * u8key = nullptr;
     char16_t const * u16key = nullptr;
-    std::vector<std::pair<id_t, int32_t>> imgs;
-    size_t file_start = 0;
-    bool new_wz_format = false;
     std::vector<id_t> uol_path;
     std::vector<std::vector<id_t>> uols;
     std::vector<id_t> link_path;
     std::vector<std::vector<id_t>> links;
     std::vector<bitmap> bitmaps;
     std::vector<audio> audios;
-    size_t offset, node_offset, string_offset, string_table_offset, bitmap_offset,
-        bitmap_table_offset, audio_offset, audio_table_offset;
-    bool client, hc;
-    std::string wzfilename, nxfilename;
+    std::string source_filename;
+    explicit ImgDecoder(sys::path filename) : source_filename(u8string(filename)) {}
     // Methods
     std::string convert_str(std::u16string const & p_str) {
 #ifndef NL_NO_CODECVT
@@ -565,7 +434,7 @@ struct wztonx {
         std::string segment;
         while (std::getline(stream, segment, '/'))
             parts.push_back(segment);
-        if (!parts.empty() && parts.front() == sys::path(wzfilename).filename().string())
+        if (!parts.empty() && parts.front() == sys::path(source_filename).filename().string())
             parts.erase(parts.begin());
         id_t r = 0;
         for (auto const & part : parts) {
@@ -589,7 +458,7 @@ struct wztonx {
         std::string segment;
         while (std::getline(stream, segment, '/'))
             parts.push_back(segment);
-        if (!parts.empty() && parts.front() == sys::path(wzfilename).filename().string())
+        if (!parts.empty() && parts.front() == sys::path(source_filename).filename().string())
             parts.erase(parts.begin());
         id_t r = 0;
         for (auto const & part : parts) {
@@ -660,48 +529,6 @@ struct wztonx {
             parent.data_type = node::type::none;
             parent.source_file_id = UINT32_MAX;
         }
-    }
-    void directory(id_t dir_node) {
-        std::vector<id_t> directories;
-        auto & n = nodes[dir_node];
-        auto count = static_cast<id_t>(in.read_cint());
-        auto ni = static_cast<id_t>(nodes.size());
-        n.num = static_cast<uint16_t>(count);
-        n.children = ni;
-        nodes.resize(ni + count);
-        for (auto i = 0u; i < count; ++i) {
-            auto & nn = nodes[ni + i];
-            nn.source_order = static_cast<uint16_t>(i);
-            auto type = in.read<uint8_t>();
-            switch (type) {
-            case 1: throw std::runtime_error("Found the elusive type 1 directory");
-            case 2:
-            {
-                auto s = in.read<int32_t>();
-                auto p = in.tell();
-                in.seek(file_start + s + (new_wz_format ? 1 : 0));
-                type = in.read<uint8_t>();
-                nn.name = read_enc_string();
-                in.seek(p);
-                break;
-            }
-            case 3:
-            case 4: nn.name = read_enc_string(); break;
-            default: throw std::runtime_error("Unknown directory type");
-            }
-            auto size = in.read_cint();
-            if (size < 0) throw std::runtime_error("Directory/img has invalid size!");
-            in.read_cint(); // Offset that nobody cares about
-            in.skip(4);     // Checksum that nobody cares about
-            if (type == 3)
-                directories.push_back(ni + i);
-            else if (type == 4)
-                imgs.emplace_back(ni + i, size);
-            else
-                throw std::runtime_error("Unknown type 2 directory");
-        }
-        for (auto it : directories) directory(it);
-        nodes_to_sort.emplace_back(ni, count);
     }
     void extended_property(id_t prop_node, size_t p_offset) {
         auto & n = nodes[prop_node];
@@ -849,104 +676,6 @@ struct wztonx {
         n.data_type = node::type::string;
         n.data.string = string;
     }
-    void detect_version() {
-        auto log = [](std::string const & s) {
-            std::cout << s;
-            std::cerr << s;
-        };
-        in.open(wzfilename);
-        auto magic = in.read<uint32_t>();
-        if (magic != 0x31474B50) throw std::runtime_error("Not a valid WZ file");
-        in.skip(8);
-        file_start = in.read<uint32_t>();
-        // Read description string (from byte 16 up to file_start)
-        std::string description;
-        if (file_start > 16) {
-            auto desc_len = file_start - 16;
-            auto desc_ptr = in.base + 16;
-            for (size_t i = 0; i < desc_len && desc_ptr[i] != '\0'; ++i)
-                description += desc_ptr[i];
-        }
-        std::ostringstream oss;
-        oss << "File: " << wzfilename << "\n";
-        oss << "Description: " << (description.empty() ? "(none)" : description) << "\n";
-        oss << "Data offset: 0x" << std::hex << file_start << std::dec << "\n";
-        // Detect new vs legacy format
-        in.seek(file_start);
-        auto first_bytes = in.read<uint16_t>();
-        in.seek(file_start);
-        auto count = in.read_cint();
-        auto type_byte = in.read<uint8_t>();
-        if (count > 0 && type_byte >= 1 && type_byte <= 4) {
-            oss << "Format: New (64-bit, no version hash)\n";
-            oss << "Version: Cannot be determined from file\n";
-            oss << "         (New format WZ files do not store the patch version.)\n";
-            oss << "         Likely v170+ / v200+ era client.\n";
-        } else {
-            auto stored_header = first_bytes;
-            auto header_byte = static_cast<uint8_t>(stored_header & 0xFF);
-            oss << "Format: Legacy (with version hash)\n";
-            oss << "Version hash: 0x" << std::hex << stored_header << std::dec << "\n";
-            std::vector<int> candidates;
-            for (int v = 0; v < 1000; ++v) {
-                auto hash = compute_version_hash(v);
-                if (derive_header_byte(hash) == header_byte)
-                    candidates.push_back(v);
-            }
-            if (candidates.empty()) {
-                oss << "Version: Unknown (no matching version found)\n";
-            } else if (candidates.size() == 1) {
-                oss << "Version: v" << candidates[0] << "\n";
-            } else {
-                oss << "Version candidates: ";
-                for (size_t i = 0; i < candidates.size(); ++i) {
-                    if (i > 0) oss << ", ";
-                    oss << "v" << candidates[i];
-                }
-                oss << "\n";
-                oss << "         (Multiple versions produce the same hash.\n";
-                oss << "          Use your client version to identify the correct one.)\n";
-            }
-        }
-        oss << "\n";
-        log(oss.str());
-    }
-    virtual void parse_file() {
-        std::cerr << "Working on " << wzfilename << std::endl;
-        std::cout << "Parsing input.......";
-        in.open(wzfilename);
-        auto magic = in.read<uint32_t>();
-        if (magic != 0x31474B50) throw std::runtime_error("Not a valid WZ file");
-        in.skip(8);
-        file_start = in.read<uint32_t>();
-        // Detect new format (no version hash) vs legacy (2-byte version hash at file_start).
-        // New format used by modern clients (GMS ~v170+): directory data starts at file_start.
-        // Legacy format: 2-byte version hash at file_start, directory at file_start + 2.
-        // Detection: at file_start, if the first compressed-int is a valid positive count
-        // and the next byte is a valid entry type (1-4), it's the new format.
-        size_t dir_start = file_start;
-        in.seek(file_start);
-        {
-            auto count = in.read_cint();
-            auto type_byte = in.read<uint8_t>();
-            if (count <= 0 || type_byte < 1 || type_byte > 4) {
-                dir_start = file_start + 2;
-                new_wz_format = false;
-            } else {
-                new_wz_format = true;
-            }
-        }
-        in.seek(dir_start);
-        in.read_cint();
-        in.skip(1);
-        deduce_key();
-        in.seek(dir_start);
-        add_string({});
-        directory(0);
-        for (auto & it : imgs) img(it.first, it.second);
-        std::cout << "Done!" << std::endl;
-        finish_parse();
-    }
     void finish_parse() {
         for (auto const & n : nodes_to_sort) sort_nodes(n.first, n.second);
 #ifndef NL_NO_PROGRESS_OUTPUT
@@ -988,412 +717,9 @@ struct wztonx {
         for (auto & path : inlinks) source_fail(path, "_inlink");
         progress("Done!\n");
     }
-    void calculate_offsets() {
-        offset = 0;
-        offset += 52;
-        offset += 0x10 - (offset & 0xf);
-        node_offset = offset;
-        offset += nodes.size() * 20;
-        offset += 0x10 - (offset & 0xf);
-        string_table_offset = offset;
-        offset += strings.size() * 8;
-        offset += 0x10 - (offset & 0xf);
-        string_offset = offset;
-        offset += std::accumulate(strings.begin(), strings.end(), 0ull,
-            [](size_t n, std::string const & s) {
-            return n + s.size() + 2 + (s.size() & 1 ? 1 : 0);
-        });
-        offset += 0x10 - (offset & 0xf);
-        audio_table_offset = offset;
-        if (client) {
-            offset += audios.size() * 8;
-            offset += 0x10 - (offset & 0xf);
-        }
-        bitmap_table_offset = offset;
-        if (client) {
-            offset += bitmaps.size() * 8;
-            offset += 0x10 - (offset & 0xf);
-        }
-        audio_offset = offset;
-        if (client) {
-#ifndef NL_METADATA_ONLY
-            offset += std::accumulate(audios.begin(), audios.end(), 0ull,
-                [](size_t n, audio const & a) { return n + a.length; });
-#else
-            offset += 4;
-#endif
-            offset += 0x10 - (offset & 0xf);
-        }
-        bitmap_offset = offset;
-#ifdef NL_METADATA_ONLY
-        offset += 4;
-#endif
-    }
-    void open_output() {
-        std::cout << "Opening output......";
-        calculate_offsets();
-        out.open(nxfilename, offset);
-        out.seek(0);
-        out.write<uint32_t>(0x34474B50);
-        out.write<uint32_t>(static_cast<uint32_t>(nodes.size()));
-        out.write<uint64_t>(node_offset);
-        out.write<uint32_t>(static_cast<uint32_t>(strings.size()));
-        out.write<uint64_t>(string_table_offset);
-        if (client) {
-            out.write<uint32_t>(static_cast<uint32_t>(bitmaps.size()));
-            out.write<uint64_t>(bitmap_table_offset);
-            out.write<uint32_t>(static_cast<uint32_t>(audios.size()));
-            out.write<uint64_t>(audio_table_offset);
-        } else {
-            out.write<uint32_t>(0);
-            out.write<uint64_t>(0);
-            out.write<uint32_t>(0);
-            out.write<uint64_t>(0);
-        }
-        std::cout << "Done!" << std::endl;
-    }
-    void write_nodes() {
-        std::cout << "Writing nodes.......";
-        out.seek(node_offset);
-        for (auto const & n : nodes) {
-            out.write(n.name);
-            out.write(n.children);
-            out.write(n.num);
-            out.write(static_cast<uint16_t>(n.data_type));
-            out.write(&n.data, sizeof(n.data));
-        }
-        std::cout << "Done!" << std::endl;
-    }
-    void write_strings() {
-        std::cout << "Writing strings.....";
-        out.seek(string_table_offset);
-        auto next_str = string_offset;
-        for (auto const & s : strings) {
-            out.write<uint64_t>(next_str);
-            next_str += s.size() + 2;
-            if (s.size() & 1) ++next_str;
-        }
-        out.seek(string_offset);
-        for (auto const & s : strings) {
-            out.write<uint16_t>(static_cast<uint16_t>(s.size()));
-            out.write(s.data(), s.size());
-            if (s.size() & 1) out.skip(1);
-        }
-        std::cout << "Done!" << std::endl;
-    }
-    void write_audio() {
-        std::cout << "Writing audio.......";
-        out.seek(audio_table_offset);
-        auto audio_off = audio_offset;
-        for (auto & a : audios) {
-            out.write<uint64_t>(audio_off);
-#ifndef NL_METADATA_ONLY
-            audio_off += a.length;
-#endif
-        }
-        out.seek(audio_offset);
-#ifndef NL_METADATA_ONLY
-        for (auto & a : audios) out.write(in.base + a.data, a.length);
-#else
-        out.write<uint32_t>(0);
-#endif
-        std::cout << "Done!" << std::endl;
-    }
-    void write_bitmaps() {
-        std::cout << "Writing bitmaps.....";
-        out.seek(bitmap_table_offset);
-#ifdef NL_METADATA_ONLY
-        for (size_t index = 0; index < bitmaps.size(); ++index)
-            out.write<uint64_t>(bitmap_offset);
-        out.seek(bitmap_offset);
-        out.write<uint32_t>(0);
-#else
-        std::ofstream file(nxfilename, std::ios::app | std::ios::binary);
-        std::vector<uint8_t> input;
-        std::vector<uint8_t> output;
-        for (auto index = 0u; index < bitmaps.size(); ++index) {
-            auto & b = bitmaps[index];
-            out.write<uint64_t>(bitmap_offset);
-            in.seek(b.data);
-            auto width = in.read_cint();
-            auto height = in.read_cint();
-            if (width < 0 || height < 0) {
-                std::cerr << "Invalid image size: " << std::dec << width << ", " << height << std::endl;
-                throw std::runtime_error{"fak"};
-            }
-            auto f1 = in.read_cint();
-            auto f2 = static_cast<unsigned>(in.read<uint8_t>()); // Cast away from char to preserve sanity
-            auto n1 = in.read<uint32_t>();
-            if (n1) {
-                std::cerr << "non-zero n1: "
-                    << "0x" << std::setfill('0') << std::setw(8) << std::hex << n1
-                    << " at bitmap " << std::dec << index << std::endl;
-                throw std::runtime_error("non-zero n1 in bitmap " + std::to_string(index));
-            }
-            auto length = in.read<uint32_t>();
-            auto n2 = static_cast<unsigned>(in.read<uint8_t>());
-            if (n2) {
-                std::cerr << "non-zero n2: "
-                    << " 0x" << std::setfill('0') << std::setw(2) << std::hex
-                    << n2 << " at bitmap " << std::dec << index << std::endl;
-                throw std::runtime_error("non-zero n2 in bitmap " + std::to_string(index));
-            }
-            auto size = width * height * 4;
-            auto biggest = std::max(static_cast<uint32_t>(size), length);
-            input.resize(biggest);
-            output.resize(biggest);
-            auto original = reinterpret_cast<uint8_t const *>(in.offset);
-            auto key = b.key;
-            auto decompressed = 0;
-            auto decompress = [&] {
-                z_stream strm = {};
-                strm.next_in = input.data();
-                strm.avail_in = length;
-                inflateInit(&strm);
-                strm.next_out = output.data();
-                strm.avail_out = static_cast<unsigned>(output.size());
-                auto err = inflate(&strm, Z_FINISH);
-                if (err != Z_BUF_ERROR && err != Z_STREAM_END) {
-                    if (err != Z_DATA_ERROR) { std::cerr << "zlib error of " << std::dec << err << std::endl; }
-                    inflateEnd(&strm);
-                    return false;
-                }
-                decompressed = static_cast<int>(strm.total_out);
-                inflateEnd(&strm);
-                return true;
-            };
-            auto decrypt = [&] {
-                auto p = 0u;
-                for (auto i = 0u; i <= length - 4;) {
-                    auto blen = *reinterpret_cast<uint32_t const *>(original + i);
-                    i += 4;
-                    if (i + blen > length) return false;
-                    for (auto j = 0u; j < blen; ++j)
-                        input[p + j] = static_cast<uint8_t>(original[i + j] ^ key[j]);
-                    i += blen;
-                    p += blen;
-                }
-                length = p;
-                return true;
-            };
-            std::copy(original, original + length, input.begin());
-            if (!decompress() && (!decrypt() || !decompress())) {
-                std::cerr << "Unable to inflate: 0x" << std::setfill('0') << std::setw(2)
-                    << std::hex << (unsigned)original[0] << " 0x" << std::setfill('0')
-                    << std::setw(2) << std::hex << static_cast<unsigned>(original[1])
-                    << std::endl;
-                // Just fill the image with blank data so nothing breaks
-                f1 = 2;
-                f2 = 0;
-                decompressed = size;
-                std::fill(output.begin(), output.begin() + size, '\0');
-            }
-            input.swap(output);
-            struct color4444 {
-                uint8_t b : 4;
-                uint8_t g : 4;
-                uint8_t r : 4;
-                uint8_t a : 4;
-            };
-            static_assert(sizeof(color4444) == 2, "Your bitpacking sucks");
-            struct color8888 {
-                uint8_t b;
-                uint8_t g;
-                uint8_t r;
-                uint8_t a;
-            };
-            static_assert(sizeof(color8888) == 4, "Your bitpacking sucks");
-            struct color565 {
-                uint16_t b : 5;
-                uint16_t g : 6;
-                uint16_t r : 5;
-            };
-            static_assert(sizeof(color565) == 2, "Your bitpacking sucks");
-            auto pixels4444 = reinterpret_cast<color4444 *>(input.data());
-            auto pixels565 = reinterpret_cast<color565 *>(input.data());
-            auto pixelsout = reinterpret_cast<color8888 *>(output.data());
-            //Sanity check the sizes
-            auto check = decompressed;
-            switch (f1) {
-            case 1: check *= 2; break;
-            case 2: break;
-            case 257: check *= 2; break; // Not sure if this is accurate
-            case 513: check *= 2; break;
-            case 1026: check *= 4; break;
-            case 2050: check *= 4; break;
-            default:
-                std::cerr << "Unknown image format1 of" << std::dec << f1 << std::endl;
-                throw std::runtime_error("Unknown image type!");
-            }
-            auto pixels = width * height;
-            switch (f2) {
-            case 0: break;
-            case 4: pixels /= 256; break;
-            default:
-                std::cerr << "Unknown image format2 of" << std::dec << static_cast<unsigned>(f2) << std::endl;
-                throw std::runtime_error("Unknown image type!");
-            }
-            if (check != pixels * 4) {
-                std::cerr << "Size mismatch: " << std::dec << width << "," << height << "," << decompressed << "," << f1 << "," << f2 << std::endl;
-                throw std::runtime_error("halp!");
-            }
-            switch (f1) {
-            case 1:
-                for (auto i = 0; i < pixels; ++i) {
-                    auto p = pixels4444[i];
-                    pixelsout[i] = {table4[p.b], table4[p.g], table4[p.r], table4[p.a]};
-                }
-                input.swap(output);
-                break;
-            case 2:
-                // Do nothing
-                break;
-            case 513:
-                for (auto i = 0; i < pixels; ++i) {
-                    auto p = pixels565[i];
-                    pixelsout[i] = {table5[p.b], table6[p.g], table5[p.r], 255};
-                }
-                input.swap(output);
-                break;
-            case 1026:
-                squish::DecompressImage(output.data(), width, height, input.data(), squish::kDxt3);
-                input.swap(output);
-                break;
-            case 2050:
-                squish::DecompressImage(output.data(), width, height, input.data(), squish::kDxt5);
-                input.swap(output);
-                break;
-            }
-            switch (f2) {
-            case 0:
-                // Do nothing
-                break;
-            case 4:
-                std::cerr << "Format2 of 4 at " << std::dec << index << std::endl;
-                scale<16>(input, output, width, height);
-                input.swap(output);
-                break;
-            }
-            output.resize(static_cast<size_t>(LZ4_compressBound(size)));
-            uint32_t final_size;
-            if (hc) {
-                final_size = static_cast<uint32_t>(
-                    LZ4_compressHC(reinterpret_cast<char const *>(input.data()),
-                        reinterpret_cast<char *>(output.data()), size));
-            } else {
-                final_size = static_cast<uint32_t>(
-                    LZ4_compress(reinterpret_cast<char const *>(input.data()),
-                        reinterpret_cast<char *>(output.data()), size));
-            }
-            bitmap_offset += final_size + 4;
-            file.write(reinterpret_cast<char const *>(&final_size), 4);
-            file.write(reinterpret_cast<char const *>(output.data()), final_size);
-        }
-#endif
-        std::cout << "Done!" << std::endl;
-    }
-    wztonx(sys::path filename, bool client, bool hc) : client(client), hc(hc) {
-        wzfilename = u8string(filename);
-        nxfilename = u8string(filename.replace_extension(".nx"));
-    }
-    void convert_file() {
-        if (!std::ifstream{wzfilename}.is_open()) { return; }
-        std::cout << wzfilename << " -> " << nxfilename << std::endl;
-        parse_file();
-        open_output();
-        write_nodes();
-        write_strings();
-        if (client) {
-            write_audio();
-            write_bitmaps();
-        }
-    }
-};
-struct imgtonx : wztonx {
-    imgtonx(sys::path filename, bool client, bool hc) : wztonx{filename, client, hc} {}
-    void parse_file() override {
-        std::cout << "Parsing input.......";
-        in.open(wzfilename);
-        add_string({});
-        img(0, 0);
-        finish_parse();
-    }
 };
 }
 namespace nl {
 using id_t = wz::id_t;
-using wztonx = wz::wztonx;
-using imgtonx = wz::imgtonx;
+using ImgDecoder = wz::ImgDecoder;
 }
-#ifndef NL_NO_MAIN
-int main(int argc, char ** argv) {
-    auto old = std::cerr.rdbuf();
-    auto log = std::ofstream{"NoLifeWzToNx.log"};
-    std::cerr.rdbuf(log.rdbuf());
-    auto a = std::chrono::high_resolution_clock::now();
-#ifdef NL_NO_CODECVT
-    std::setlocale(LC_ALL, "en_US.utf8");
-#endif
-    std::cout << R"(WzToNx Converter
-Copyright (C) 2014-2020 Peter Atashian, Ryan Payton
-Licensed under GNU Affero General Public License
-Converts WZ files into NX files
-)";
-    std::vector<std::string> args{argv + 1, argv + argc};
-    enum { client, server, none } type{none};
-    bool hc{false};
-    bool info_only{false};
-    std::vector<sys::path> paths;
-    std::regex reg1{"--([a-z]+)"};
-    std::regex reg2{"-([a-z]+)"};
-    for (auto & arg : args) {
-        if (arg[0] != '-') {
-            paths.emplace_back(arg);
-            continue;
-        }
-        for (auto & c : arg) { c = std::tolower(c, std::locale::classic()); }
-        if (arg == "--client" || arg == "-c") {
-            type = client;
-        } else if (arg == "--server" || arg == "-s") {
-            type = server;
-        } else if (arg == "--lz4hc" || arg == "-h") { hc = true; }
-        else if (arg == "--info" || arg == "-i") { info_only = true; }
-    }
-    auto show_info = [&](sys::path const & p) {
-        try {
-            if (u8string(p.extension()) == ".wz") {
-                nl::wztonx{p, false, false}.detect_version();
-            }
-        } catch (std::exception const & e) {
-            std::cerr << "Error reading " << u8string(p) << ": " << e.what() << std::endl;
-            std::cout << "Error reading " << u8string(p) << ": " << e.what() << std::endl;
-        }
-    };
-    auto convert = [&](sys::path const & p) {
-        try {
-            if (u8string(p.extension()) == ".img") {
-                nl::imgtonx{p, type == client, hc}.convert_file();
-            } else if (u8string(p.extension()) == ".wz") {
-                nl::wztonx{p, type == client, hc}.convert_file();
-            }
-        } catch (std::exception const & e) {
-            std::cerr << "Error converting " << u8string(p) << ": " << e.what() << std::endl;
-            std::cout << "\nError converting " << u8string(p) << ": " << e.what() << std::endl;
-        }
-    };
-    for (auto & p : paths) {
-        if (sys::is_regular_file(p)) {
-            if (info_only) show_info(p); else convert(p);
-        } else if (sys::is_directory(p)) {
-            for (sys::recursive_directory_iterator it{p}, end{}; it != end; ++it) {
-                if (info_only) show_info(*it); else convert(*it);
-            }
-        }
-    }
-    auto b = std::chrono::high_resolution_clock::now();
-    std::cout << "Took " << std::dec
-        << std::chrono::duration_cast<std::chrono::seconds>(b - a).count() << " seconds"
-        << std::endl;
-    std::cerr.rdbuf(old);
-}
-#endif

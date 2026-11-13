@@ -6,7 +6,7 @@
 | --- | --- |
 | JSON、Lua、Detours | 固定官方提交的子模块，保持上游源码原样 |
 | MapleStory-Client | 保留含HEADLESS、Linux及北斗接线的派生源码 |
-| NoLifeWzToNx | 保留metadata-only等资源转换适配 |
+| NoLifeWzToNx 派生 IMG 解码核心 | 仅保留原版 IMG 元数据与引用解析；移除 NX 写出、WZ 容器转换及转换器 CLI |
 | BeiDou-ijl15 | 本仓库直接维护的DLL工程及共享控制Runtime |
 
 ## 初始化和更新

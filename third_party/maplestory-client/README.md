@@ -41,9 +41,9 @@ HeavenClient is a custom, made-from-scratch game client for MapleStory. It is a 
 3. Build the solution: **Build** > **Build Solution** (`Ctrl + Shift + B`).
 4. Run the client: **Debug** > **Start Debugging** (`F5`).
 
-### Converting WZ Files to NX
+### BeiDou resource input
 
-All WZ files from the v229.2 official client must be converted to NX format and placed in the parent folder of the executable. See the [NoLifeWzToNx] README for conversion instructions.
+This fork reads original BeiDou `Data/**/*.img` directly. Do not convert WZ files to NX or place NX artifacts beside the executable. The [NoLifeWzToNx] derivative retains only IMG metadata decoding and reference resolution.
 
 ---
 
@@ -57,7 +57,7 @@ Edit **MapleStory.h** to toggle build-time features:
 |--------|-------------|
 | `USE_ASIO` | Use Asio for networking (requires additional dependency) |
 | `USE_CRYPTO` | Enable cryptography for server communication |
-| `USE_NX` | Use NX files instead of WZ files |
+| `USE_NX` | Historical name for the `nl::node` resource view; this fork fills it from original IMG directories, not NX files |
 | `USE_DEBUG` | Suppress generation of the Settings file |
 
 ### Runtime Settings
@@ -68,9 +68,10 @@ Default settings are defined in **Configuration.h**. A **Settings** file is gene
 
 ## Required Files
 
-- All WZ files from the official client must be converted to NX format.
-- See **NxFiles.h** for the full list of required NX files.
-- See **Configuration.h** for the latest tested WZ file version (currently v229.2).
+- This fork reads the BeiDou client's original `Data/**/*.img` read-only; no WZ-to-NX conversion is used.
+- See **ImgFiles.h** and **ImgFiles.cpp** for the IMG category loader.
+- The vendored NoLifeNx code now provides only in-memory node views; its NX disk loader has been removed.
+- Upstream version information in **Configuration.h** does not identify the configured BeiDou resource version.
 
 ---
 

@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#define NL_METADATA_ONLY
-#define NL_NO_MAIN
 #define NL_NO_PROGRESS_OUTPUT
 #define NL_PRESERVE_UNRESOLVED_UOL
 #include "../../third_party/nolifewztonx/NoLifeWzToNx.cpp"
@@ -16,10 +14,10 @@
 #include <vector>
 
 namespace {
-class DirectoryParser final : public nl::wztonx {
+class DirectoryParser final : public nl::ImgDecoder {
 public:
     DirectoryParser(std::filesystem::path source, bool base_only)
-        : nl::wztonx(source, true, false), source(std::move(source)), base_only(base_only) {}
+        : nl::ImgDecoder(source), source(std::move(source)), base_only(base_only) {}
 
     void parse() {
         add_string({});
