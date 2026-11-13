@@ -54,13 +54,19 @@ const std::uint32_t kStepCreate = 4;
 using SubmitLogin = int(__thiscall*)(void*, const char*, const char*);
 using SendGender = void(__thiscall*)(void*, int);
 using SelectChannel = void(__thiscall*)(void*, int, int);
-using CheckName = void(__thiscall*)(void*, const char*);
+// CLogin::CheckName receives the client's reference-counted narrow string, not
+// a raw char pointer; the name page builds one from the edit control first.
+using CheckName = void(__thiscall*)(void*, std::uint32_t*);
+using AssignString = void(__thiscall*)(void*, const char*, int);
+using ReleaseString = void(__thiscall*)(void*);
 using ButtonHandler = void(__thiscall*)(void*, int);
 
 const auto submitLogin = reinterpret_cast<SubmitLogin>(0x005F6952);
 const auto sendGender = reinterpret_cast<SendGender>(0x005FC68C);
 const auto selectChannel = reinterpret_cast<SelectChannel>(0x005F6D6A);
 const auto checkName = reinterpret_cast<CheckName>(0x005F7FE7);
+const auto assignString = reinterpret_cast<AssignString>(0x00414617);
+const auto releaseString = reinterpret_cast<ReleaseString>(0x004062DF);
 
 struct LoginState {
     std::uint32_t login = 0;
@@ -339,7 +345,10 @@ bool Dispatch(const ProtocolRequest& request, std::string& reason) {
             reason = "name_page_not_active";
             return false;
         }
-        checkName(reinterpret_cast<void*>(state.login), name.c_str());
+        std::uint32_t value = 0;
+        assignString(&value, name.c_str(), -1);
+        checkName(reinterpret_cast<void*>(state.login), &value);
+        releaseString(&value);
         return true;
     }
     if (request.action == "ui_button") {
