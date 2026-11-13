@@ -54,7 +54,7 @@ def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_
         raise ClientError("gui_login_already_attempted", "本次运行已有登录尝试，禁止重放。") from error
     with os.fdopen(descriptor, "w") as stream:
         stream.write("attempted\n")
-    def verify_form() -> None:
+    def verify_form(account_empty: bool, password_empty: bool, focus: str | None = None) -> None:
         current = backend.read("stage")
         current_dialog = backend.read("dialog")
         for sample in (current, current_dialog):
@@ -70,9 +70,17 @@ def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_
                 or current_dialog.get("registered_talk_dialog_open") is not False
                 or current_dialog.get("focused_window") != focused):
             raise ClientError("gui_login_form_unconfirmed", "登录表单状态已变化。")
+        windows = current.get("windows")
+        matches = [window for window in windows if isinstance(window, dict)
+                   and window.get("address") == focused.get("address")
+                   and window.get("vtables") == focused.get("vtables")] if isinstance(windows, list) else []
+        if (len(matches) != 1 or matches[0].get("account_empty") is not account_empty
+                or matches[0].get("password_empty") is not password_empty
+                or (focus is not None and matches[0].get("login_edit_focus") != focus)):
+            raise ClientError("gui_login_form_unconfirmed", "登录输入框状态或焦点未确认。")
 
-    def click(px: int, py: int) -> None:
-        verify_form()
+    def click(px: int, py: int, account_empty: bool, password_empty: bool, focus: str | None = None) -> None:
+        verify_form(account_empty, password_empty, focus)
         result = backend.desktop([{"action": "click", "x": px, "y": py}])
         timings = result.get("timings")
         if (result.get("cancelled") is not False or result.get("input_dispatched") is not True
@@ -81,17 +89,15 @@ def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_
             raise ClientError("gui_login_input_unknown", "点击未确认。")
 
     try:
-        click(x + 727, y + 308)
-        verify_form()
-        backend.text("runtime-ui", "key", "ctrl+a")
-        verify_form()
+        click(x + 727, y + 308, True, True)
+        verify_form(True, True, "account")
         backend.text("runtime-ui", "type-private", payload=profile.username)
-        click(x + 727, y + 336)
-        verify_form()
-        backend.text("runtime-ui", "key", "ctrl+a")
-        verify_form()
+        verify_form(False, True, "account")
+        click(x + 727, y + 336, False, True, "account")
+        verify_form(False, True, "password")
         backend.text("runtime-ui", "type-private", payload=profile.password)
-        click(x + 880, y + 306)
+        verify_form(False, False, "password")
+        click(x + 880, y + 306, False, False, "password")
     except Exception:
         raise ClientError("gui_login_input_unknown", "输入结果不明；保留现场，禁止重试。") from None
     return {"status": "unknown", "credentials_submitted": True, "instance_id": instance_id, "run_id": run_id}

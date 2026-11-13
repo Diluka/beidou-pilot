@@ -26,16 +26,28 @@ class GuiFirstLoginTests(unittest.TestCase):
         identity = {"instance_id": "instance", "client": {"run_id": "run"}}
         self.stage = {**identity, "stage": "LOGIN", "renderer": "intel",
                       "login": {"raw_step": 0, "request_pending": False, "transition_pending": False},
-                      "game_geometry": {"x": 10, "y": 20, "width": 1280, "height": 720}}
+                      "game_geometry": {"x": 10, "y": 20, "width": 1280, "height": 720},
+                      "windows": [{"address": "window", "vtables": ["0xaf7940", "0xaf78f4", "0xaf78f0"],
+                                   "login_edit_focus": "account", "account_empty": True, "password_empty": True}]}
         self.dialog = {**identity, "unavailable": [], "script_dialog_open": False,
                        "focused_talk_dialog_open": False, "registered_talk_dialog_open": False,
-                       "focused_window": {"vtables": ["0xaf7940", "0xaf78f4", "0xaf78f0"],
+                       "focused_window": {"address": "window", "vtables": ["0xaf7940", "0xaf78f4", "0xaf78f0"],
                                           "width": 330, "height": 180,
                                           "game_rect": {"left": 622, "top": 288, "right": 952, "bottom": 468},
                                           "root_rect": {"left": 632, "top": 308, "right": 962, "bottom": 488},
                                           "buttons": [{"control_id": i} for i in range(1000, 1007)]}}
         self.backend.read.side_effect = lambda domain: self.stage if domain == "stage" else self.dialog
-        self.backend.desktop.return_value = {"cancelled": False, "input_dispatched": True, "timings": [{"action": "click"}]}
+        def desktop(actions):
+            if actions[0]["y"] == 356:
+                self.stage["windows"][0]["login_edit_focus"] = "password"
+            return {"cancelled": False, "input_dispatched": True, "timings": [{"action": "click"}]}
+        def text(*args, **kwargs):
+            if kwargs.get("payload") == "example":
+                self.stage["windows"][0]["account_empty"] = False
+            elif kwargs.get("payload") == "secret":
+                self.stage["windows"][0]["password_empty"] = False
+        self.backend.desktop.side_effect = desktop
+        self.backend.text.side_effect = text
         self.profile = AccountProfile("example", "secret")
 
     def submit(self):
@@ -90,6 +102,7 @@ class GuiFirstLoginTests(unittest.TestCase):
                        {"cancelled": False, "input_dispatched": True, "timings": []}):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as directory:
                 self.backend.runtime.run_dir = Path(directory)
+                self.backend.desktop.side_effect = None
                 self.backend.desktop.return_value = result
                 self.backend.text.reset_mock()
                 with self.assertRaises(ClientError) as error:
@@ -117,6 +130,27 @@ class GuiFirstLoginTests(unittest.TestCase):
             self.submit()
         self.assertNotIn("secret", [call.kwargs.get("payload") for call in self.backend.text.call_args_list])
         self.assertTrue((Path(self.temp.name) / "gui-login-submitted").exists())
+
+    def test_nonempty_or_unknown_input_never_types(self) -> None:
+        for field, value in (("account_empty", False), ("password_empty", False), ("account_empty", None)):
+            with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as directory:
+                self.backend.runtime.run_dir = Path(directory)
+                self.stage["windows"][0][field] = value
+                self.backend.text.reset_mock()
+                with self.assertRaises(ClientError):
+                    self.submit()
+                self.backend.text.assert_not_called()
+                self.assertTrue((Path(directory) / "gui-login-submitted").exists())
+                self.stage["windows"][0][field] = True
+
+    def test_wrong_focus_stops_before_private_input(self) -> None:
+        self.stage["windows"][0]["login_edit_focus"] = "password"
+        with self.assertRaises(ClientError):
+            self.submit()
+        self.backend.text.assert_not_called()
+        with self.assertRaises(ClientError) as error:
+            self.submit()
+        self.assertEqual("gui_login_already_attempted", error.exception.code)
 
     def test_uncertain_form_never_sends_input(self) -> None:
         self.dialog["focused_window"]["vtables"] = ["unknown"]
