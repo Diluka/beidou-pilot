@@ -3,6 +3,7 @@ import os
 from typing import cast
 
 from .backend import Backend, JsonObject
+from .bridge import BridgeClient
 from .errors import ClientError
 from .profile import AccountProfile
 
@@ -12,6 +13,13 @@ def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_
     if (backend.name != "beidou" or not runtime.running or runtime.run_id != run_id
             or runtime.character_id is not None or (runtime.world, runtime.channel) != (profile.world, profile.channel)):
         raise ClientError("gui_login_identity_unconfirmed", "GUI 账号会话身份不匹配，未输入。")
+    state = BridgeClient(backend.root, backend.name, backend.instance).snapshot()
+    if state["instance_id"] != instance_id or state["run_id"] != run_id:
+        raise ClientError("gui_login_identity_unconfirmed", "原生桥身份不匹配，未输入。")
+    script = state.get("script")
+    if ("script" not in state or (script is not None and script["status"] == "running")
+            or state["command"]["status"] == "running" or state["held_keys"]):
+        raise ClientError("input_busy", "原生脚本或输入状态不空闲，未输入。")
     first = backend.read("stage")
     dialog = backend.read("dialog")
     stage = backend.read("stage")
