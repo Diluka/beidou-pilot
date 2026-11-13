@@ -59,19 +59,28 @@ def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_
     baseline_windows = stage.get("windows")
     if not isinstance(baseline_windows, list) or not baseline_windows:
         raise ClientError("gui_login_form_unconfirmed", "窗口清单不可用，未输入。")
-    signatures = {(window.get("address"), tuple(window.get("vtables", [])), window.get("width"), window.get("height"))
-                  for window in baseline_windows}
+    signatures = {
+        (window.get("address"), tuple(window.get("vtables", [])), window.get("width"), window.get("height"))
+        for window in baseline_windows
+    }
     expected = {
         (("0xb3f13c", "0xb3f0f0", "0xb3f0ec"), 1280, 720),
         (("0xaf7168", "0xaf711c", "0xaf7118"), 125, 352),
         (("0xaf7940", "0xaf78f4", "0xaf78f0"), 330, 180),
     }
     first_windows = first.get("windows")
-    if (len(baseline_windows) != 3 or len(signatures) != 3
-            or {(v, w, h) for _, v, w, h in signatures} != expected
-            or not isinstance(first_windows, list) or len(first_windows) != 3
-            or {(window.get("address"), tuple(window.get("vtables", [])), window.get("width"), window.get("height"))
-                for window in first_windows} != signatures):
+    if (
+        len(baseline_windows) != 3
+        or len(signatures) != 3
+        or {(v, w, h) for _, v, w, h in signatures} != expected
+        or not isinstance(first_windows, list)
+        or len(first_windows) != 3
+        or {
+            (window.get("address"), tuple(window.get("vtables", [])), window.get("width"), window.get("height"))
+            for window in first_windows
+        }
+        != signatures
+    ):
         raise ClientError("gui_login_form_unconfirmed", "登录窗口清单不明确，未输入。")
     geometry = cast(JsonObject, stage["game_geometry"])
     x, y = cast(int, geometry["x"]), cast(int, geometry["y"])
@@ -121,9 +130,15 @@ def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_
         ):
             raise ClientError("gui_login_form_unconfirmed", "登录表单状态已变化。")
         windows = current.get("windows")
-        if (not isinstance(windows, list) or len(windows) != len(baseline_windows)
-                or {(window.get("address"), tuple(window.get("vtables", [])), window.get("width"), window.get("height"))
-                    for window in windows} != signatures):
+        if (
+            not isinstance(windows, list)
+            or len(windows) != len(baseline_windows)
+            or {
+                (window.get("address"), tuple(window.get("vtables", [])), window.get("width"), window.get("height"))
+                for window in windows
+            }
+            != signatures
+        ):
             raise ClientError("gui_login_form_unconfirmed", "窗口清单已变化。")
         matches = (
             [

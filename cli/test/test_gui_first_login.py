@@ -43,7 +43,8 @@ class GuiFirstLoginTests(unittest.TestCase):
                     "login_edit_focus": "account",
                     "account_empty": True,
                     "password_empty": True,
-                    "width": 330, "height": 180,
+                    "width": 330,
+                    "height": 180,
                 },
                 {"address": "manager", "vtables": ["0xb3f13c", "0xb3f0f0", "0xb3f0ec"], "width": 1280, "height": 720},
                 {"address": "sidebar", "vtables": ["0xaf7168", "0xaf711c", "0xaf7118"], "width": 125, "height": 352},
@@ -193,6 +194,7 @@ class GuiFirstLoginTests(unittest.TestCase):
             if kwargs.get("payload") == "example":
                 self.stage["windows"][0]["account_empty"] = False
                 self.stage["windows"].append({"address": "modal", "vtables": ["unknown"], "width": 100, "height": 100})
+
         self.backend.text.side_effect = text
         with self.assertRaises(ClientError):
             self.submit()
