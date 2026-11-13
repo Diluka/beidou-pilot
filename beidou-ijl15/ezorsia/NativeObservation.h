@@ -52,6 +52,7 @@ Value Dialog();
 Value Window(std::uintptr_t address);
 bool WindowActive(std::uintptr_t address, bool& known);
 Value Ui();
+Value StageWindows();
 Value Shop();
 Value Notifications();
 void PollNotifications(MapleControl::EventTransport& events, const MapleControl::State& state);

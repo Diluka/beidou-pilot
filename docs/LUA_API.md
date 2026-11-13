@@ -237,7 +237,7 @@ end
 
 | 领域 | 两端支持与主要原生字段 |
 | --- | --- |
-| `stage` | 两端；阶段、频道与角色摘要，具体已知范围随后端和当前阶段变化 |
+| `stage` | 两端；阶段、频道与角色摘要，具体已知范围随后端和当前阶段变化。GUI 的 `windows` 为同次原生采集的活动窗口原始数组，采集不可用时为 nil 并在 `unavailable` 说明；无头不承诺该字段。窗口含地址、vtable、已验证的 `type_name`、尺寸和已识别按钮的 ID、尺寸、局部位置及启用状态；未知值为 nil，不代表可点击。该数组不是与桌面截图同帧的保证 |
 | `scene` | 两端；`map_id`、`player`、`player_facing`、`monsters`、`npcs`、`drops`、`players`。NPC 提供 `object_id/template_id/name/x/y`；`players` 两端分别从本端原生角色对象/原生用户池读取；保留本端已知字段及限制 |
 | `inventory` | 两端；`items` 为已占用正槽，`equipped` 为身上负槽，元素含 `inventory_type/slot/item_id/quantity`；`capacities` 以字符串背包类型为键 |
 | `character` | 两端；`character_id`、`mesos`、`skills`、`skills_complete` 及本端校验说明。`skills` 以字符串技能 ID 为键，记录含 `level/master_level`；名称、需求和效果的覆盖情况见本端校验说明 |

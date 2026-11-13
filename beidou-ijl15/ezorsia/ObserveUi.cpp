@@ -531,6 +531,43 @@ bool WindowActive(std::uintptr_t address, bool& known) {
 
 Value Window(std::uintptr_t address) { return CaptureWindow(static_cast<Address>(address), Camera()); }
 
+// Raw pre-game window snapshot. Unlike Ui(), this does not require a camera
+// or imply that a projected position is safe to click.
+Value StageWindows() {
+    const auto camera = Camera();
+    const auto before = Read<std::array<Address, 3>>(0x00BF1650);
+    if (before[0] > 256) throw ReadError("Active CWnd count exceeds the supported range");
+    Address node = before[1];
+    auto windows = Value::Array();
+    for (Address index = 0; index < before[0]; ++index) {
+        if (node == 0) throw ReadError("Active CWnd list ended before its recorded count");
+        const auto address = Read<Address>(node);
+        const auto header = Bytes(address, 0x64);
+        const auto tables = At<std::array<Address, 3>>(header, 0);
+        const auto layout = ReadWindowLayout(address, header, camera);
+        for (const auto& problem : layout.problems)
+            if (problem == "CWnd child list changed while collecting the observation") throw ReadError(problem);
+        auto buttons = Value::Array();
+        for (const auto& button : layout.buttons) {
+            buttons.Add(Value::Object({{"control_id", button.id}, {"width", button.width},
+                {"height", button.height}, {"enabled", button.enabled},
+                {"layout_x", button.local.known ? Value(button.local.x) : Value()},
+                {"layout_y", button.local.known ? Value(button.local.y) : Value()},
+                {"position_source", button.source.empty() ? Value() : Value(button.source)}}));
+        }
+        const auto name = WindowName(tables[0]);
+        windows.Add(Value::Object({{"address", Hex(address)}, {"vtables", Tables(tables)},
+            {"type_name", name == nullptr ? Value() : Value(name)},
+            {"width", At<int>(header, 0x24)}, {"height", At<int>(header, 0x28)},
+            {"buttons", buttons}}));
+        const auto next = Read<Address>(node - 12);
+        node = next == 0 ? 0 : next + 16;
+    }
+    if (node != 0 || Read<std::array<Address, 3>>(0x00BF1650) != before)
+        throw ReadError("Active CWnd list changed while collecting the observation");
+    return windows;
+}
+
 Value Ui() {
     auto dialog = CaptureDialog();
     auto result = Value::Object({

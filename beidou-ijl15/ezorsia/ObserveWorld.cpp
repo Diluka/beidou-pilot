@@ -206,7 +206,7 @@ Value Stage() {
     auto output = Value::Object({
         {"stage", "STARTING"}, {"stage_pointer", {}}, {"stage_vtable", {}},
         {"channel", {}}, {"world_id", {}}, {"character", {}},
-        {"login", {}}, {"channel_panel", {}}, {"unavailable", Value::Array()}
+        {"login", {}}, {"channel_panel", {}}, {"windows", {}}, {"unavailable", Value::Array()}
     });
     std::string stageName = "STARTING";
     try {
@@ -325,14 +325,21 @@ Value Stage() {
                 if (stageName == "IN_GAME" && stats != 0)
                     output["character"] = Value::Object({{"id", Read<std::uint32_t>(stats)}, {"name", FixedName(stats)}});
             }
+            try {
+                output["windows"] = StageWindows();
+            } catch (const ReadError& error) {
+                output["unavailable"].Add(std::string("Window observation unavailable: ") + error.what());
+            }
             if (Read<Address>(0x00BEDED4) != stage) {
                 stageName = "TRANSITION";
+                output["windows"] = {};
                 output["login"] = {};
                 output["character"] = {};
                 output["channel_panel"] = {};
                 output["unavailable"].Add("The current stage changed during observation.");
             }
         }
+        else output["unavailable"].Add("Window observation unavailable: current stage is not available.");
     }
     catch (const ReadError& error) {
         stageName = "UNKNOWN";

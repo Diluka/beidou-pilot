@@ -91,6 +91,31 @@ class NativeObservationContract(unittest.TestCase):
         self.assertEqual("running Lua command\n", command.read_text())
         self.assertEqual("running", json.loads((self.directory / "state.json").read_text())["command"]["status"])
 
+    def test_stage_preserves_raw_windows_before_ready(self) -> None:
+        self.state["ready"] = False
+        (self.directory / "state.json").write_text(json.dumps(self.state))
+        domain = {"stage": "UNKNOWN", "login": {"raw_step": 7}, "windows": [
+            {"address": "0x1234", "vtables": ["0x5678"], "type_name": None,
+             "buttons": [{"control_id": 3, "layout_x": None, "layout_y": None, "enabled": None}]}
+        ], "unavailable": []}
+        with patch("beidou_pilot.observations.active_session", return_value=self.session):
+            with self.responder(domain):
+                result = NativeObserver(self.root).observe("stage", timeout=0.2)
+        self.assertEqual(domain["windows"], result["windows"])
+        self.assertEqual(7, result["login"]["raw_step"])
+
+    def test_starting_stage_preserves_unavailable_window_reason(self) -> None:
+        self.state["ready"] = False
+        (self.directory / "state.json").write_text(json.dumps(self.state))
+        reason = "Window observation unavailable: current stage is not available."
+        domain = {"stage": "STARTING", "stage_pointer": None, "windows": None,
+                  "unavailable": [reason]}
+        with patch("beidou_pilot.observations.active_session", return_value=self.session):
+            with self.responder(domain):
+                result = NativeObserver(self.root).observe("stage", timeout=0.2)
+        self.assertIsNone(result["windows"])
+        self.assertIn(reason, result["unavailable"])
+
     def test_headless_preserves_unknown_checksum_and_snapshot_data_source(self) -> None:
         with patch("beidou_pilot.observations.active_session", return_value=self.session):
             observer = NativeObserver(self.root, "headless")
