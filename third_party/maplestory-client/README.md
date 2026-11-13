@@ -43,7 +43,7 @@ HeavenClient is a custom, made-from-scratch game client for MapleStory. It is a 
 
 ### BeiDou resource input
 
-This fork reads original BeiDou `Data/**/*.img` directly. Do not convert WZ files to NX or place NX artifacts beside the executable. The [NoLifeWzToNx] derivative retains only IMG metadata decoding and reference resolution.
+This fork reads original BeiDou `Data/**/*.img` directly. Do not convert WZ files to NX or place NX artifacts beside the executable. IMG metadata decoding and reference resolution derived from [NoLifeWzToNx] are integrated in the resource provider; see the root NOTICE for attribution.
 
 ---
 

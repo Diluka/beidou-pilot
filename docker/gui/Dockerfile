@@ -6,10 +6,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends g++ \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /source
-COPY headless/src/ImgResources.cpp headless/src/ImgResources.h headless/src/
-COPY third_party/nolifewztonx/ third_party/nolifewztonx/
+COPY headless/src/ImgResources.cpp headless/src/ImgResources.h headless/src/ImgKeys.cpp headless/src/
 RUN g++ -std=c++17 -O2 -fPIC -shared headless/src/ImgResources.cpp \
-    third_party/nolifewztonx/Keys.cpp -o /libbeidou-img.so
+    headless/src/ImgKeys.cpp -o /libbeidou-img.so
 
 FROM ${WINE_BASE}
 USER root

@@ -26,7 +26,9 @@ Upstream sources and notices
   https://github.com/ryantpayton/NoLifeWzToNx
   Commit: 73bddde1214445795d0a5cd4c3d431fe15eb49eb
   AGPL-3.0-or-later. Preserve Peter Atashian, Ryan Payton and other upstream
-  notices in third_party/nolifewztonx/.
+  notices in headless/src/ImgResources.cpp and headless/src/ImgKeys.cpp.
+  The IMG decoding core is integrated into the resource provider; the original
+  converter module, WZ conversion and NX serialization are not shipped.
 
 - NoLifeNx:
   AGPL-3.0-or-later, as stated in its source headers.

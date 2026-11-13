@@ -9,7 +9,6 @@ COPY headless/Makefile headless/Makefile
 COPY headless/src/ headless/src/
 COPY shared/lua-runtime/ shared/lua-runtime/
 COPY third_party/maplestory-client/ third_party/maplestory-client/
-COPY third_party/nolifewztonx/ third_party/nolifewztonx/
 COPY third_party/json/single_include/nlohmann/json.hpp third_party/json/single_include/nlohmann/json.hpp
 COPY third_party/lua/ third_party/lua/
 COPY LICENSE NOTICE /licenses/

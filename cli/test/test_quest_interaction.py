@@ -65,7 +65,7 @@ class QuestInteractionContract(unittest.TestCase):
                     "-fPIC",
                     "-shared",
                     str(root / "headless/src/ImgResources.cpp"),
-                    str(root / "third_party/nolifewztonx/Keys.cpp"),
+                    str(root / "headless/src/ImgKeys.cpp"),
                     "-o",
                     str(parser_library),
                 ],
