@@ -23,7 +23,10 @@ class HuntLuaContract(unittest.TestCase):
         )
         cls.contract = root / "cli/test/hunt_contract.lua"
         cls.strategy_context_contract = root / "cli/test/strategy_context_contract.lua"
-        cls.strategy = root / "shared/scripts/combat/hunt.lua"
+        terrain = (root / "shared/scripts/travel/_terrain.lua").read_text(encoding="utf-8")
+        hunt = (root / "shared/scripts/combat/hunt.lua").read_text(encoding="utf-8")
+        cls.strategy = Path(temporary.name) / "hunt-with-terrain.lua"
+        cls.strategy.write_text(terrain + "\n" + hunt, encoding="utf-8")
 
     def test_stale_entry_context_stops_fight_and_recovery_before_actions(self) -> None:
         root = Path(__file__).resolve().parents[2]
