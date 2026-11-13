@@ -33,6 +33,7 @@ COPY docker/harness/instructions.md /opt/beidou-game-ai/instructions.md
 COPY --chmod=755 harness/game-ai /opt/beidou-game-ai/harness/game-ai
 COPY harness/beidou_game_ai/ /opt/beidou-game-ai/harness/beidou_game_ai/
 COPY .agents/skills/beidou-pilot-client/ /game/.agents/skills/beidou-pilot-client/
+COPY .agents/skills/beidou-game-guide/ /game/.agents/skills/beidou-game-guide/
 COPY README.md /game/README.md
 COPY docs/CLI.md docs/LUA_API.md docs/PLAY_GUIDE.md docs/HARNESS.md /game/docs/
 COPY docs/CONTROL.md docs/ARCHITECTURE.md docs/CLIENT_LIMITATIONS.md /game/docs/

@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from beidou_game_ai.cli import commands
 from beidou_game_ai.client import GameClient
-from beidou_game_ai.controller import Controller, SKILL_NAME, SKILL_PATH
+from beidou_game_ai.controller import Controller, GUIDE_NAME, GUIDE_PATH, SKILL_NAME, SKILL_PATH
 from beidou_game_ai.protocol import AppServer, AppServerError, JsonObject, JsonValue
 
 
@@ -31,7 +31,7 @@ class SessionServer(AppServer):
         self.finish_before_interrupt = False
         self.fail_start = False
         self.complete_on_interrupt = True
-        self.skill_names = [SKILL_NAME]
+        self.skill_names = [SKILL_NAME, GUIDE_NAME]
         self.turns = 0
         self.turn_start_entered = asyncio.Event()
         self.turn_start_release = asyncio.Event()
@@ -72,7 +72,10 @@ class SessionServer(AppServer):
                 "data": [
                     {
                         "cwd": "/game",
-                        "skills": [{"name": name, "path": SKILL_PATH, "enabled": True} for name in self.skill_names],
+                        "skills": [
+                            {"name": name, "path": GUIDE_PATH if name == GUIDE_NAME else SKILL_PATH, "enabled": True}
+                            for name in self.skill_names
+                        ],
                     }
                 ]
             }
@@ -215,6 +218,7 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         await self.controller.message("开始")
         turn = next(params for method, params in self.server.calls if method == "turn/start")
         self.assertEqual({"type": "skill", "name": SKILL_NAME, "path": SKILL_PATH}, turn["input"][0])
+        self.assertEqual({"type": "skill", "name": GUIDE_NAME, "path": GUIDE_PATH}, turn["input"][1])
         second_server = SessionServer(["low", "none"])
         second = Controller(second_server, self.game, self.state, "gpt-6-luna", "相同角色", "续接任务", self.binding)
         await second.initialize()
@@ -249,7 +253,7 @@ class ControllerContract(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(AppServerError) as failure:
             await self.controller.initialize()
         self.assertEqual("context_not_isolated", failure.exception.code)
-        self.server.skill_names = [SKILL_NAME]
+        self.server.skill_names = [SKILL_NAME, GUIDE_NAME]
         await self.controller.initialize()
         self.assertEqual("ready", self.controller.mode)
         self.assertEqual({"id": "native-task", "status": "running"}, self.game.script)

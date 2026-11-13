@@ -27,7 +27,9 @@ description: "查阅和维护北斗冒险岛玩法攻略。覆盖商店位置与
 
 - [商店位置](references/shops.md)：按地图列出静态迁移可关联的 NPC 坐标与商品大类，注明未定位商店与覆盖限制；尚未实测。
 
-- [世界地图](references/world-map.md)：本地原版地图全部场景按区域归组的传送门 graph，每条边带入口与落点门户坐标；换场景线路用 `tools/world_route.py <起点地图> <终点地图>` 查，只覆盖普通门户，乘船、地铁和任务脚本不在其中。
+- [世界地图](references/world-map.md)：按区域分册的有向传送门 graph 与门户坐标；使用 `python3 /game/.agents/skills/beidou-game-guide/tools/world_route.py <起点地图> <终点地图>` 比较静态门户与已收录出租车、飞艇候选。票价和路线按固定版本资料估计，需现场核对 NPC、票券与条件；结果不保证可达，找不到路线也不代表不可达。
+
+- [出租车与飞艇](references/transport.md)：金银岛及区域出租车、飞艇的费用和条件，包含一条当前服实测及其地形限制。
 
 ## 查阅与维护
 
@@ -37,6 +39,6 @@ description: "查阅和维护北斗冒险岛玩法攻略。覆盖商店位置与
 
 新增证据时优先更新对应攻略；入口只维护覆盖范围和链接，详细规则集中在参考资料。每篇攻略保留可查阅的来源、适用范围、关键条件与结果核对方法。
 
-世界地图由 `tools/world_map.py` 从本地客户端资源生成，不手工编辑 `references/world-map.md`；数据读取、区域归组和线路查找在 `cli/beidou_pilot/world_map.py`。
+世界地图及 `references/world-graph.json` 由维护者使用 `tools/world_map.py` 从指定客户端资源生成；日常路线查询只读技能内 graph，使用 `tools/world_route.py`，不依赖客户端资源或仓库私有目录。
 
 需要实际进入游戏核验时，按 [客户端操作技能](../beidou-pilot-client/SKILL.md) 找回授权角色、目标与已有实例，再观察并接续；攻略中的路线与收益作为规划参考，当前角色的实际状态以现场观察为准。

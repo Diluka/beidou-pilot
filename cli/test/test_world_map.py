@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from beidou_pilot.world_map import edges_of, regions_of, route_text, world_data
+from beidou_pilot.world_map import display_regions, edges_of, regions_of, route_text, world_data
 from test.img_fixture import write_img
 
 
@@ -19,6 +19,12 @@ class WorldMapGraph(unittest.TestCase):
         (self.root / "config").mkdir()
         (self.root / "config/resources.json").write_text(json.dumps({"game_data": str(self.data)}))
         self.scenes = world_data(self.root)
+
+    def test_display_regions(self) -> None:
+        self.assertEqual(display_regions(self.root), {})
+        write_img(self.data / "Map/WorldMap/WorldMapA.img", {"MapList": {"0": {"mapNo": {"0": 100000000, "1": "5363.0", "2": "bad"}}}})
+        write_img(self.data / "Map/WorldMap/WorldMapB.img", {"MapList": {"0": {"mapNo": {"0": "100000000"}}}})
+        self.assertEqual(display_regions(self.root), {"WorldMapA": {100000000, 5363}, "WorldMapB": {100000000}})
 
     def _map(self, map_id: int, name: str, street: str, portals: dict[str, dict[str, object]]) -> None:
         write_img(
@@ -70,11 +76,11 @@ class WorldMapGraph(unittest.TestCase):
         self.assertNotIn("tp00", edges)
         self.assertNotIn("sp", edges)
 
-    def test_receiver_without_matching_portal_uses_zero_portal(self) -> None:
+    def test_receiver_without_matching_portal_remains_unknown(self) -> None:
         edge = edges_of(self.scenes[200000000], self.scenes)[0]
 
-        self.assertEqual(((int(10), int(20)),), edge.receivers)
-        self.assertEqual("sp", edge.target_name)
+        self.assertEqual((), edge.receivers)
+        self.assertEqual("nowhere", edge.target_name)
 
     def test_regions_group_small_cells_into_large_neighbour(self) -> None:
         regions = {region.entity: region for region in regions_of(self.scenes)}
@@ -89,8 +95,9 @@ class WorldMapGraph(unittest.TestCase):
     def test_route_prefers_fewer_scene_changes(self) -> None:
         report = route_text(self.scenes, 100000000, 100000200)
 
-        self.assertEqual("100000000 射手村 → 100000200 蘑菇谷，换 1 次场景：\n"
-                         "1. 100000000 射手村：走 `shop00` -300,80 → 100000200 蘑菇谷，落点 0,0", report)
+        self.assertIn("100000000 射手村 → 100000200 蘑菇谷，换 1 次场景：", report)
+        self.assertIn("静态候选路线", report)
+        self.assertIn("走 `shop00` -300,80 → 100000200 蘑菇谷，落点 0,0", report)
 
     def test_route_reports_each_portals_coordinates(self) -> None:
         report = route_text(self.scenes, 100000100, 100000200)
@@ -100,7 +107,48 @@ class WorldMapGraph(unittest.TestCase):
     def test_route_explains_ports_and_scripts_outside_graph(self) -> None:
         report = route_text(self.scenes, 100000000, 200000000)
 
-        self.assertIn("没有只用门户的线路", report)
+        self.assertIn("未在已收录的有向门户中找到线路", report)
+
+    def test_one_way_edge_does_not_create_reverse_route(self) -> None:
+        report = route_text(self.scenes, 100000000, 200000000)
+        self.assertIn("未在已收录的有向门户中找到线路", report)
+
+    def test_same_name_different_targets_preserve_receivers(self) -> None:
+        from beidou_pilot.world_map import Scene
+        base = self.scenes[100000000]
+        first = {"index": 1, "name": "same", "type": 2, "target": 100000100,
+                 "target_name": "west00", "script": None, "x": 1, "y": 2}
+        second = {**first, "target_name": "back00", "x": 3}
+        scene = Scene(base.map_id, base.name, base.entity, base.street, (first, second))
+        edges = edges_of(scene, self.scenes)
+        self.assertEqual([(((1, 2),), ((-500, 310),)), (((3, 2),), ((40, 50),))],
+                         [(edge.sources, edge.receivers) for edge in edges])
+
+    def test_touch_portal_is_a_directed_candidate(self) -> None:
+        from beidou_pilot.world_map import Scene
+        base = self.scenes[100000000]
+        touch = {"index": 1, "name": "touch", "type": 3, "target": 200000000,
+                 "target_name": "east00", "script": None, "x": 1, "y": 2}
+        self.scenes[base.map_id] = Scene(base.map_id, base.name, base.entity, base.street, (touch,))
+        self.assertIn("走 `touch` 1,2", route_text(self.scenes, base.map_id, 200000000))
+
+    def test_script_portal_not_used_for_static_route(self) -> None:
+        from beidou_pilot.world_map import Scene
+        base = self.scenes[100000000]
+        scripted = {"index": 1, "name": "script", "type": 2, "target": 200000000,
+                    "target_name": "east00", "script": "conditional", "x": 1, "y": 2}
+        self.scenes[base.map_id] = Scene(base.map_id, base.name, base.entity, base.street, (scripted,))
+        self.assertIn("未在已收录的有向门户中找到线路", route_text(self.scenes, base.map_id, 200000000))
+
+    def test_map_without_portals_remains_a_node_with_link(self) -> None:
+        write_img(self.data / "Map/Map/Map1/100000300.img", {"info": {"link": "100000200"}})
+        scene = world_data(self.root)[100000300]
+        self.assertEqual(100000200, scene.link)
+        self.assertEqual((), scene.portals)
+
+    def test_map002_is_used_when_present(self) -> None:
+        (self.data / "Map").rename(self.data / "Map002")
+        self.assertIn(100000000, world_data(self.root))
 
     def test_route_handles_same_map_and_unknown_map(self) -> None:
         self.assertIn("无需换场景", route_text(self.scenes, 100000000, 100000000))

@@ -24,6 +24,26 @@ class CodexSurfaceContract(unittest.IsolatedAsyncioTestCase):
             if "BEIDOU_GAME_AI_IMAGE" in os.environ or os.environ.get("CI"):
                 self.fail("合同要求的 Codex 镜像不存在；CI 必须先构建镜像。")
             self.skipTest("尚未构建固定 Codex 镜像；仅本地开发可跳过，CI 不允许。")
+        route_result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--entrypoint",
+                "python3",
+                image,
+                "/game/.agents/skills/beidou-game-guide/tools/world_route.py",
+                "103000000",
+                "102000000",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        route_report = json.loads(route_result.stdout)
+        self.assertEqual(route_report["paid_candidates"]["fewest_planning_legs"]["cost"], 1000)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
@@ -267,9 +287,15 @@ supports_websockets = false
                 for item in cast(list[JsonValue], skills["data"])
                 for skill in cast(list[JsonValue], cast(JsonObject, item)["skills"])
             ]
-            self.assertEqual(["beidou-pilot-client"], [skill["name"] for skill in found_skills])
-            skill_path = cast(str, found_skills[0]["path"])
-            self.assertEqual("/game/.agents/skills/beidou-pilot-client/SKILL.md", skill_path)
+            self.assertEqual(
+                {
+                    "beidou-pilot-client": "/game/.agents/skills/beidou-pilot-client/SKILL.md",
+                    "beidou-game-guide": "/game/.agents/skills/beidou-game-guide/SKILL.md",
+                },
+                {skill["name"]: skill["path"] for skill in found_skills},
+            )
+            self.assertEqual(2, len(found_skills))
+            skill_path = "/game/.agents/skills/beidou-pilot-client/SKILL.md"
             mcps = cast(JsonObject, await server.call("mcpServerStatus/list", {"limit": 100}))
             self.assertEqual([], mcps["data"])
             base_instructions = "GAME_BASE_113：只按游戏事实作决策。"
@@ -297,6 +323,11 @@ supports_websockets = false
                     "threadId": thread_id,
                     "input": [
                         {"type": "skill", "name": "beidou-pilot-client", "path": skill_path},
+                        {
+                            "type": "skill",
+                            "name": "beidou-game-guide",
+                            "path": "/game/.agents/skills/beidou-game-guide/SKILL.md",
+                        },
                         {"type": "text", "text": "用本容器 CLI 验证帮助和协作问答，不登录或操作游戏。"},
                     ],
                 },
