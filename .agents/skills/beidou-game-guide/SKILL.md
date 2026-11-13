@@ -11,7 +11,7 @@ description: "查阅和维护北斗冒险岛玩法攻略。覆盖商店位置与
 
 - [彩虹岛新手任务](references/newbie.md)：两套任务的入口、顺序、奖励、返回原版流程、快捷跳过条件和正常乘船路线。回答新手任务问题或继续研究这条路线时，先读此文及其核验范围。
 
-- [冒险家二转任务](references/adventurer-second-job-quest.md)：五系传统试炼、职业选择与快速转职；静态整理，尚未逐职业实测。
+- [冒险家二转任务](references/adventurer-second-job-quest.md)：五系传统试炼与职业选择；静态整理，尚未逐职业实测。
 
 - [冒险家二转加点](references/adventurer-second-job.md)：12条分支的终态方案、121 SP预算、AP主副属性、武器取舍及四转对二转的显式前置。
 
