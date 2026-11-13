@@ -287,6 +287,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     cmd = args.command
     if cmd in {"login", "character"}:
         from .first_character import execute
+
         return execute(backend, args)
     if backend.name == "headless" and cmd not in {
         "status",
