@@ -53,10 +53,10 @@ std::string Encode(const std::string& text) {
 void DecodeBase64AcceptsPaddedAndPlainValues() {
     std::string output;
     assert(DecodeBase64("-", output) && output.empty());
-    assert(DecodeBase64("bmc5OWQxNmQ=", output) && output == "ng99d16d");
+    assert(DecodeBase64("c2FtcGxldXNlcg==", output) && output == "sampleuser");
     assert(DecodeBase64("MHgxYjI5MGFkYw==", output) && output == "0x1b290adc");
     assert(DecodeBase64("YWJj", output) && output == "abc");
-    assert(DecodeBase64("YTI0NGZhMTA4ZjAw", output) && output == "a244fa108f00");
+    assert(DecodeBase64("c2FtcGxlcGFzcw==", output) && output == "samplepass");
 }
 
 void DecodeBase64RejectsMalformedValues() {
@@ -99,8 +99,8 @@ void IntegerParsingIsBounded() {
 void TextArgumentDecodesCredentialsAndNames() {
     std::string text;
     assert(TextArgument("-", text) && text.empty());
-    assert(TextArgument(Encode("ng99d16d"), text) && text == "ng99d16d");
-    assert(TextArgument(Encode("a244fa108f00"), text) && text == "a244fa108f00");
+    assert(TextArgument(Encode("sampleuser"), text) && text == "sampleuser");
+    assert(TextArgument(Encode("samplepass"), text) && text == "samplepass");
     assert(TextArgument(Encode("NativeXY"), text) && text == "NativeXY");
     assert(!TextArgument("not-base64", text));
 }
@@ -108,16 +108,16 @@ void TextArgumentDecodesCredentialsAndNames() {
 void RequestLineRequiresProtocolIdentityAndThreeArguments() {
     ProtocolRequest request;
     std::string instance;
-    assert(ParseRequestLine("1 392-1dd7383-1e4d14a "
+    assert(ParseRequestLine("1 test-instance-1 "
                             "2a06d6274c314252b87a80dc50cd058a submit_login MHgxYjI5MGFkYw== "
-                            "bmc5OWQxNmQ= YTI0NGZhMTA4ZjAw",
+                            "c2FtcGxldXNlcg== c2FtcGxlcGFzcw==",
                             instance, request));
-    assert(instance == "392-1dd7383-1e4d14a");
+    assert(instance == "test-instance-1");
     assert(request.requestId == "2a06d6274c314252b87a80dc50cd058a");
     assert(request.action == "submit_login");
     assert(request.arguments[0] == "MHgxYjI5MGFkYw==");
-    assert(request.arguments[1] == "bmc5OWQxNmQ=");
-    assert(request.arguments[2] == "YTI0NGZhMTA4ZjAw");
+    assert(request.arguments[1] == "c2FtcGxldXNlcg==");
+    assert(request.arguments[2] == "c2FtcGxlcGFzcw==");
 
     assert(
         ParseRequestLine("1 i 00000000000000000000000000000000 accept_terms MHgxYjI5MGFkYw== - -", instance, request));
