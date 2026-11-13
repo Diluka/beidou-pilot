@@ -100,8 +100,12 @@ struct State {
     bool positionKnown = false;
     double x = 0;
     double y = 0;
+    MotionVector velocity;
+    MovementReference movement;
     bool facingKnown = false;
     bool facingLeft = false;
+    bool characterUpdatesKnown = false;
+    std::uint64_t characterUpdates = 0;
     bool monstersKnown = false;
     std::vector<Monster> monsters;
     bool inventoryKnown = false;

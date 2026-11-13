@@ -63,7 +63,7 @@ end
 
 ### 性能观测
 
-原生桥顶层 `tick_profile` 及会话状态的 `tick.profile` 是同一份 **runtime 生命周期聚合**，不是 Lua `context.tick` 的字段，也不表示该会话独占成本。`host_tick_calls` 包含全部宿主调用和空闲早退，`active_frames` 为实际处理帧，`reentrant_tick_calls` 为重入早退。`tick/observe/refresh_core` 各含 `samples/total_us/max_us`：分别计完整 Tick、宿主快照复制、核心领域刷新，单位微秒。子阶段已包含在完整 Tick 中，不能相加。排除 Start 初始化、宿主原有 Capture 及桥状态发布；空闲不会为了计时新增领域采集。
+原生桥顶层 `tick_profile` 及会话状态的 `tick.profile` 是同一份 **runtime 生命周期聚合**，不是 Lua `context.tick` 的字段，也不表示该会话独占成本。`host_tick_calls` 包含全部宿主调用和空闲早退，`active_frames` 为实际处理帧，`reentrant_tick_calls` 为重入早退。`tick/observe/refresh_core/lua` 各含 `samples/total_us/max_us`：分别计完整 Tick、宿主快照复制、核心领域刷新及 `main` 调用，单位微秒。Lua 项含调用过程中绑定与惰性领域读取，不含初始化或回调后的动作提交。子阶段已包含在完整 Tick 中，不能相加。排除 Start 初始化、宿主原有 Capture 及桥状态发布；空闲不会为了计时新增领域采集。
 
 比较测量窗口时用累计计数和 `total_us` 的差分计算均值；`max_us` 是生命周期峰值，不能用差分求区间峰值。这些是墙钟时间，不是独占 CPU 时间，也不等同于总帧耗时或动作延迟。
 
@@ -73,14 +73,31 @@ end
 
 | 属性 | 内容与边界 |
 | --- | --- |
-| `game.character` | `id/name/level/job/hp/max_hp/mp/max_mp`；长字段 `strength/dexterity/intelligence/luck/ability_points/skill_points/experience` 及简写 `str/dex/int/luk/ap/sp/exp`；与本端可读取的角色领域事实合并 |
-| `game.world` | `instance_id/scene_generation/ready/in_game/map_id`；已知位置同时提供 `x/y` 和 `position={x,y}`；`facing` 沿用 `Left/Right`，`on_ground/attacking/settled/dead/revive_requestable` 未知时不提供；无头 `on_ground/attacking` 来自物理地面标志及原生攻击动画，GUI 两项暂未知 |
+| `game.character` | `id/name/level/job/hp/max_hp/mp/max_mp`；长字段 `strength/dexterity/intelligence/luck/ability_points/skill_points/experience` 及简写 `str/dex/int/luk/ap/sp/exp`；`movement` 为按有效属性推断的参考能力；与本端可读取的角色领域事实合并 |
+| `game.world` | `instance_id/scene_generation/ready/in_game/map_id`；已知位置同时提供 `x/y` 和 `position={x,y}`；`facing` 沿用 `Left/Right`，`velocity` 为当前运动向量，`character_updates` 为真实角色更新计数；`on_ground/attacking/settled/dead/revive_requestable` 未知时不提供。地面标志来自本端物理对象，攻击动画目前只在无头已知；GUI `attacking/settled` 保持未知 |
 | `game.scene` | 当前怪物、掉落、其他玩家及按本端能力提供的 NPC 等原生场景事实；列表完整性按实际能力声明 |
 | `game.inventory`、`game.quests` | 本端原生背包/装备和任务领域；任务动态性仍遵循本端来源声明 |
 | `game.chat` | 按本端可读能力；不支持时明确 `status="unsupported"`，不是空聊天记录 |
 | `game.dialog/shop/ui/hotkeys/interaction/notifications` | 按需只读观察；支持范围与原生领域一致，不增加窗口动作 API |
 
 buff 归 `game.character`，不在 `player.status()`。首版两端都没有可靠的完整 buff 效果及剩余时间来源，返回 `buffs=nil`（JSON `null`）、`buffs_status="unsupported"` 和 `buffs_unavailable="native_buff_details_unavailable"`；不把未知列表伪造成 `{}`，不通过服务端查询补齐。
+
+### 运动观察与静止参考
+
+`game.world.velocity={x,y,source}` 是当前运动向量，单位为**地图像素/秒**，右、下为正，因此起跳上升时 `y<0`。`source="native"` 表示本端物理速度的单位转换或已校验解码；本次不提供位置差分估计，也不把重复渲染的整数坐标当成原生速度。未知时整个字段为 `nil`。`world.character_updates` 只随真实角色更新增加，可区分连续渲染是否复用了同一个物理样本；计数不表示输入或服务器效果成功。
+
+`game.character.movement` 与当前速度分开，是**静止平地、正常行走/普通跳跃、无额外外力和障碍**的模型参考。已知时提供：
+
+| 字段 | 含义 |
+| --- | --- |
+| `kind="model"`、`model`、`conditions` | 推算性质、本端模型名、`stationary_flat_ground_normal` 适用条件 |
+| `effective_speed/effective_jump` | 当前本端物理实际使用的有效 SPEED/JUMP 百分比属性，不是配置上限或默认100 |
+| `max_speed` | 正常平地完整方向输入的参考最大移速，地图像素/秒；不是所有状态下的硬速度截断 |
+| `max_jump_height` | 从静止起跳可上升的参考高度，地图像素；不是当前位置相对目标平台的可达保证 |
+
+无头 `headless_normal_v1` 使用当前 `get_walkforce/get_jumpforce` 和同一 `Physics` 实现的摩擦、重力及8ms步长：参考移速由地面递推的稳态求得；跳高按首个地面起跳步不加重力的离散积分推算。GUI `v17_normal_continuous_v1` 使用原版当前属性对象的已校验比例及本端已加载物理系数，以正常场地系数为1、平地坡度为0推算连续参考；实际离散更新及整数位置可造成高度差异。不能互换两端公式。有效属性变化后参考随采样更新；来源或校验不可用时为 `nil`，不用另一后端、静态模板或属性cap补齐。
+
+无头行走渐近趋于稳态，不能用速度严格等于参考值作为起跳条件；示例按目标方向达到参考移速的99%判断，不用固定时长、距离或仅凭速度不再变化。斜坡、墙、绳梯、水下、技能、推力、平台运动、天花板等不符合参考条件，需另行判断。
 
 ### 角色状态机与动作槽
 

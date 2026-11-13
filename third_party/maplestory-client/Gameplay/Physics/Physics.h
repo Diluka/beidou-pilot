@@ -28,6 +28,13 @@ namespace ms
 		Physics(nl::node src);
 		Physics();
 
+		// Reference models for NORMAL motion on stationary flat ground, with
+		// nonnegative effective force magnitudes and no skills, external forces or obstacles.
+		// Walking returns the asymptotic speed in map pixels per physics step, not a hard cap.
+		static double walk_reference_speed(double walkforce);
+		// Jumping starts at rest; returns the discrete maximum rise in map pixels.
+		static double jump_reference_height(double jumpforce);
+
 		// Move the specified object over the specified game-time
 		void move_object(PhysicsObject& tomove) const;
 		// Determine the point on the ground below the specified position

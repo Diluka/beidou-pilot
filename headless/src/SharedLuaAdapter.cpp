@@ -5,6 +5,7 @@
 
 #include "Character/Player.h"
 #include "Character/SkillId.h"
+#include "Constants.h"
 #include "Data/EquipData.h"
 #include "Data/JobData.h"
 #include "Data/SkillData.h"
@@ -249,6 +250,10 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
         dialogue.closed_by = "scene_changed";
     }
     state.dead = state.reviveRequestable = state.onGround = state.attacking = Fact::Unknown;
+    state.characterUpdatesKnown = state.ready;
+    state.characterUpdates = nativeTick;
+    state.velocity = {};
+    state.movement = {};
     if (!state.ready) {
         state.settled = Fact::Unknown;
         questInteraction.Reset();
@@ -288,6 +293,16 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.facingLeft = !player.getflip();
     state.onGround = ph.onground ? Fact::True : Fact::False;
     state.attacking = player.is_attacking() ? Fact::True : Fact::False;
+    const double stepsPerSecond = 1000.0 / ms::Constants::TIMESTEP;
+    state.velocity.source = MapleControl::MotionVector::Source::Native;
+    state.velocity.x = ph.hspeed * stepsPerSecond;
+    state.velocity.y = ph.vspeed * stepsPerSecond;
+    state.movement.known = true;
+    state.movement.model = "headless_normal_v1";
+    state.movement.effectiveSpeed = stats.get_total(ms::EquipStat::Id::SPEED);
+    state.movement.effectiveJump = stats.get_total(ms::EquipStat::Id::JUMP);
+    state.movement.maxSpeed = ms::Physics::walk_reference_speed(player.get_walkforce()) * stepsPerSecond;
+    state.movement.maxJumpHeight = ms::Physics::jump_reference_height(player.get_jumpforce());
     const bool settled =
         !player.is_attacking() && !ph.mobile() && (ph.onground || player.is_climbing() || player.is_underwater());
     state.settled = settled ? Fact::True : Fact::False;
@@ -1206,6 +1221,11 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                 {"validation_source", "native_objects"},
                 {"skills", std::move(knownSkills)},
                 {"skills_complete", true},
+                {"velocity", Json::parse(state.velocity.Document().Dump())},
+                {"movement", Json::parse(state.movement.Document().Dump())},
+                {"on_ground", FactValue(state.onGround)},
+                {"attacking", FactValue(state.attacking)},
+                {"character_updates", state.characterUpdatesKnown ? Json(state.characterUpdates) : Json(nullptr)},
                 {"dead", FactValue(state.dead)},
                 {"revive_requestable", FactValue(state.reviveRequestable)},
                 {"unavailable", Json::array()},
@@ -1365,6 +1385,9 @@ Json SharedLuaAdapter::StateDocument() const {
         {"ready", state.ready},
         {"on_ground", FactValue(state.onGround)},
         {"attacking", FactValue(state.attacking)},
+        {"character_updates", state.characterUpdatesKnown ? Json(state.characterUpdates) : Json(nullptr)},
+        {"velocity", Json::parse(state.velocity.Document().Dump())},
+        {"movement", Json::parse(state.movement.Document().Dump())},
         {"dead", FactValue(state.dead)},
         {"revive_requestable", FactValue(state.reviveRequestable)},
         {"map_id", state.mapKnown ? Json(state.mapId) : Json(nullptr)},

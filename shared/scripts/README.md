@@ -49,7 +49,7 @@
 | [read-state.lua](examples/read-state.lua) | 使用 `game.state()` 做只读分支和短循环，检查角色就绪、地图及存活状态。 | 只读示例。 |
 | [read-domains.lua](examples/read-domains.lua) | 使用 `game.observe()` 按需读取场景、装备、任务和 UI，保留不可用及不支持状态。 | 只读，适合学习分领域观察。 |
 | [common-basic.lua](examples/common-basic.lua) | 顺序调用移动、朝向、跳跃、攻击、拾取，并在低血量时尝试使用固定药品。 | 会实际移动、攻击和消耗物品；只演示动作串联。 |
-| [tick-jump-attack.lua](examples/tick-jump-attack.lua) | tick 入门：全程保持方向，跳起后在空中攻击一次，落地后停止。 | 会实际移动、跳跃和普攻；只在有足够空间的同高平地试用，不寻路、不选怪、不保证命中。 |
+| [tick-jump-attack.lua](examples/tick-jump-attack.lua) | tick 入门：保持方向助跑到接近参考最大移速再起跳，空中攻击一次，落地后停止。 | 会实际移动、跳跃和普攻；只在有足够空间的同高平地试用，不寻路、不选怪、不保证命中。 |
 
 ### tick 动作入门：连续移动跳砍
 
@@ -71,9 +71,11 @@ private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
 
 `--direction` 来自头部 `@option`，默认 `right`，也可为 `left`。`--seconds` 是整个原生会话的期限，不是跳跃时长；例如起跳失败时由这个期限停止等待并释放输入。
 
-阅读时关注四点：`@mode tick` 选择新引擎；`main` 每次只做短判断，返回 `nil` 后下次继续；`context.state.phase` 保存“等待空中 → 等待落地”的阶段，避免每次重新跳或重复攻击；`player.move` 只需设置一次，跳跃和攻击都保留持续方向，只在落地后 `move(nil)` 并返回 `"done"`。
+阅读时关注四点：`@mode tick` 选择新引擎；`main` 每次只做短判断，返回 `nil` 后下次继续；`context.state.phase` 保存“助跑 → 等待空中 → 等待落地 → 停下”的阶段，避免每次重新跳或重复攻击；`player.move` 只需设置一次，跳跃和攻击都保留持续方向，只在确认落地后 `move(nil)`，速度接近零后返回 `"done"`。
 
-起跳由当次 `world.y` 低于原平地高度确认；jump 槽空闲仅表示输入已消费和释放，不表示已经落地。无头使用真实 `world.on_ground` 判断落地；GUI 尚无可靠的物理地面标志，本例限同高平地，以回到起点高度且连续两次高度不变判断。`settled` 包含停止移动等条件，不能用于全程移动的落地判断。受理与输入释放也不等于真实空中出手或命中；实际效果需原生事实或画面另行核对。
+`world.velocity` 是当前原生运动向量，`character.movement` 是按当前有效属性及本端物理模型推断的静止平地参考能力，两者不混用。沿目标方向达到参考移速的99%后才提交 jump：无头速度渐近稳态，不能严格比较相等，也不用固定助跑时长/距离或仅凭速度平台。完整运动参考及最大跳高的适用条件见 [运动观察](../../docs/LUA_API.md#运动观察与静止参考)。
+
+空中阶段要求真实 `world.on_ground=false` 且 `world.y` 低于原平地高度；jump 槽空闲仅表示输入已消费和释放，不表示已经落地。两端均使用本端原生地面标志确认落地；字段未知时不靠重复渲染坐标推断。`settled` 包含停止移动等条件，不能用于全程移动的落地判断。受理与输入释放也不等于真实空中出手或命中；实际效果需原生事实或画面另行核对。
 
 可以从这个结构扩展更多阶段，不要加入阻塞等待或混用 coroutine 的 `game.sleep()/game.state()`。tick 多会话共享 player，同客户端其他会话可能覆盖方向；初学试用只运行这一份动作示例。完整契约见 [tick API](../../docs/LUA_API.md#tick-环境)。
 

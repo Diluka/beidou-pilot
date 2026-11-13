@@ -36,6 +36,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="NativeMotion.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="NativeKeyUnion.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="NativeTickInput.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\shared\lua-runtime\TickRuntime.h"><Filter>Header Files</Filter></ClInclude>
@@ -158,6 +159,7 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="NativeMotion.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\TickRuntime.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="dllmain.cpp">
       <Filter>Source Files</Filter>

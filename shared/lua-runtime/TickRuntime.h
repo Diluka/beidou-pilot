@@ -63,7 +63,8 @@ public:
     // host_tick_calls includes idle/reentrant early returns; active_frames counts
     // calls passing the updating/Running guard, including transition/drain frames.
     // Timings are inclusive steady-clock microseconds: samples/total_us/max_us.
-    // observe includes snapshot copying; refresh_core includes core domain reads.
+    // observe includes snapshot copying; refresh_core includes core domain reads;
+    // lua measures main calls including bindings/lazy reads, excluding initialization.
     // Only Tick is measured, not Start, status serialization or host Capture.
     // Compare count/total deltas for intervals; maxima are lifetime peaks.
     Value Profile() const;

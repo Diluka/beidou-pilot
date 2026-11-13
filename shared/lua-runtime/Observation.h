@@ -54,6 +54,26 @@ private:
     std::vector<std::pair<std::string, Value>> object;
 };
 
+// Dynamic velocity and model-derived mobility remain distinct observations.
+// Coordinates are map pixels: right/down positive; velocity is pixels/second.
+struct MotionVector {
+    enum class Source { Unknown, Native };
+    Source source = Source::Unknown;
+    double x = 0;
+    double y = 0;
+    Value Document() const;
+};
+
+struct MovementReference {
+    bool known = false;
+    std::string model;
+    int effectiveSpeed = 0;
+    int effectiveJump = 0;
+    double maxSpeed = 0;
+    double maxJumpHeight = 0;
+    Value Document() const;
+};
+
 struct Observation {
     std::string status = "ok";
     Value data;

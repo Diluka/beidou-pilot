@@ -188,6 +188,7 @@
     <ClInclude Include="NativeTickInput.h" />
     <ClInclude Include="NativeItemUse.h" />
     <ClInclude Include="NativeObservation.h" />
+    <ClInclude Include="NativeMotion.h" />
     <ClInclude Include="..\..\shared\lua-runtime\Runtime.h" />
     <ClInclude Include="..\..\shared\lua-runtime\TickRuntime.h" />
     <ClInclude Include="..\..\shared\lua-runtime\Observation.h" />
@@ -235,6 +236,7 @@
   <ItemGroup>
     <ClCompile Include="AgentBridge.cpp" />
     <ClCompile Include="NativeObservation.cpp" />
+    <ClCompile Include="NativeMotion.cpp" />
     <ClCompile Include="ObserveWorld.cpp" />
     <ClCompile Include="ObserveCharacter.cpp" />
     <ClCompile Include="ObserveUi.cpp" />

@@ -21,6 +21,12 @@ struct Timing {
     std::uint64_t samples = 0;
     double totalUs = 0, maxUs = 0;
 
+    void Record(double us) {
+        ++samples;
+        totalUs += us;
+        maxUs = (std::max)(maxUs, us);
+    }
+
     Value Status() const { return Value::Object({{"samples", samples}, {"total_us", totalUs}, {"max_us", maxUs}}); }
 };
 
@@ -29,12 +35,7 @@ struct Timing {
 struct ScopedTiming {
     explicit ScopedTiming(Timing& target) : timing(target), started(Clock::now()) {}
 
-    ~ScopedTiming() {
-        const auto us = std::chrono::duration<double, std::micro>(Clock::now() - started).count();
-        ++timing.samples;
-        timing.totalUs += us;
-        timing.maxUs = (std::max)(timing.maxUs, us);
-    }
+    ~ScopedTiming() { timing.Record(std::chrono::duration<double, std::micro>(Clock::now() - started).count()); }
 
     Timing& timing;
     Clock::time_point started;
@@ -343,7 +344,7 @@ struct TickRuntime::Impl {
     ActionResult result;
     Draft draft;
     std::uint64_t hostTickCalls = 0, activeFrames = 0, reentrantTickCalls = 0;
-    Timing tickTiming, observeTiming, refreshCoreTiming;
+    Timing tickTiming, observeTiming, refreshCoreTiming, luaTiming;
 
     Value ProfileValue() const {
         return Value::Object({{"scope", "runtime_lifetime"},
@@ -352,7 +353,8 @@ struct TickRuntime::Impl {
                               {"reentrant_tick_calls", reentrantTickCalls},
                               {"tick", tickTiming.Status()},
                               {"observe", observeTiming.Status()},
-                              {"refresh_core", refreshCoreTiming.Status()}});
+                              {"refresh_core", refreshCoreTiming.Status()},
+                              {"lua", luaTiming.Status()}});
     }
 
     // Native I/O may pump a host frame. Defer cancellation until no Lua or
@@ -551,6 +553,7 @@ struct TickRuntime::Impl {
                     value[shortNames[index]] = observed.character.values[index];
                 }
             }
+            if (observed.movement.known) value["movement"] = observed.movement.Document();
         } else if (name == "world") {
             value["status"] = "ok";
             value["instance_id"] = observed.instanceId;
@@ -563,7 +566,10 @@ struct TickRuntime::Impl {
                 value["y"] = observed.y;
                 value["position"] = Value::Object({{"x", observed.x}, {"y", observed.y}});
             }
+            if (observed.velocity.source != MotionVector::Source::Unknown)
+                value["velocity"] = observed.velocity.Document();
             if (observed.facingKnown) value["facing"] = observed.facingLeft ? "Left" : "Right";
+            if (observed.characterUpdatesKnown) value["character_updates"] = observed.characterUpdates;
             SetFact(value, "settled", observed.settled);
             SetFact(value, "on_ground", observed.onGround);
             SetFact(value, "attacking", observed.attacking);
@@ -1155,6 +1161,7 @@ void TickRuntime::Tick(bool sceneChanged) {
             session.started = Clock::now();
             const int called = lua_pcall(lua, 1, 1, 0);
             session.lastUs = std::chrono::duration<double, std::micro>(Clock::now() - session.started).count();
+            runtime.luaTiming.Record(session.lastUs);
             session.maxUs = (std::max)(session.maxUs, session.lastUs);
             session.overran = session.overran || session.lastUs >= session.config.budgetMs * 1000;
             runtime.current = nullptr;

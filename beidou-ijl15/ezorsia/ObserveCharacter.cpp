@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "stdafx.h"
 #include "NativeObservation.h"
+#include "NativeMotion.h"
 
 #include <algorithm>
 #include <array>
@@ -116,11 +117,21 @@ Value Character() {
         {"source", "client-native-observation"}, {"readonly", true},
         {"mesos", Value{}}, {"mesos_checksum_valid", false}, {"skills", Value::Object()},
         {"skills_complete", false}, {"read_seconds", 0},
+        {"velocity", Value{}}, {"movement", Value{}}, {"on_ground", Value{}},
         {"not_covered", StringArray({"skill_names", "skill_requirements", "skill_effects",
             "skill_expirations", "master_level_when_absent_from_client_records"})}
     });
     const auto character = CurrentCharacter();
     result["character_id"] = U32(character);
+    try {
+        const auto motion = NativeMotion::Capture(U32(0x00BEBF98));
+        result["velocity"] = motion.velocity.Document();
+        result["movement"] = motion.movement.Document();
+        if (motion.onGround != MapleControl::Fact::Unknown)
+            result["on_ground"] = motion.onGround == MapleControl::Fact::True;
+        for (const auto& reason : motion.unavailable) unavailable.Add(reason);
+    }
+    catch (const ReadError& error) { unavailable.Add(error.what()); }
     try {
         result["mesos"] = SecureInt(character + 0xA5);
         result["mesos_checksum_valid"] = true;

@@ -13,6 +13,7 @@
 #include "NativeItemUse.h"
 #include "NativeSkillUse.h"
 #include "NativeObservation.h"
+#include "NativeMotion.h"
 
 #include <array>
 #include <algorithm>
@@ -708,6 +709,14 @@ MapleControl::State CaptureState(NativeContext& native) {
     state.character.known.fill(state.characterKnown);
     state.inGame = !native.loginStage && !(native.field == 0 && native.stats == 0 && native.user == 0);
     state.ready = state.inGame && state.mapKnown && state.characterKnown && state.positionKnown;
+    state.characterUpdatesKnown = state.ready && updatedCharacter == native.user;
+    state.characterUpdates = characterUpdates;
+    if (state.ready) {
+        auto motion = NativeMotion::Capture(native.user);
+        state.velocity = std::move(motion.velocity);
+        state.movement = std::move(motion.movement);
+        state.onGround = motion.onGround;
+    }
     if (state.mapKnown) {
         state.dropsKnown = CaptureDrops(state.drops);
         if (!state.dropsKnown) state.drops.clear();
@@ -1090,6 +1099,17 @@ bool Publish(const MapleControl::State& state) {
         out << "{\"x\":" << state.x << ",\"y\":" << state.y << '}';
     else
         out << "null";
+    out << ",\"velocity\":" << state.velocity.Document().Dump() << ",\"movement\":" << state.movement.Document().Dump()
+        << ",\"character_updates\":";
+    if (state.characterUpdatesKnown)
+        out << state.characterUpdates;
+    else
+        out << "null";
+    out << ",\"on_ground\":";
+    if (state.onGround == MapleControl::Fact::Unknown)
+        out << "null";
+    else
+        out << (state.onGround == MapleControl::Fact::True ? "true" : "false");
     out << ",\"facing\":";
     if (state.facingKnown)
         out << Quote(state.facingLeft ? "Left" : "Right");

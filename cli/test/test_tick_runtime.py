@@ -79,6 +79,9 @@ class TickRuntimeContract(unittest.TestCase):
     def test_profile_counts_idle_active_and_transition_frames_without_sampling_when_idle(self) -> None:
         self.run_contract("profiling")
 
+    def test_motion_facts_and_reference_capabilities_are_fresh_read_only_and_unknown_when_missing(self) -> None:
+        self.run_contract("motion")
+
     def test_moving_jump_attack_example_holds_direction_until_landing(self) -> None:
         path = Path(__file__).resolve().parents[2] / "shared/scripts/examples/tick-jump-attack.lua"
         source, metadata = read_strategy_file(path)

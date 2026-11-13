@@ -35,6 +35,7 @@ public:
         state.instanceId = "tick-contract";
         state.inGame = state.ready = state.mapKnown = state.characterKnown = state.positionKnown = true;
         state.sceneGeneration = 1;
+        state.characterUpdatesKnown = true;
         state.mapId = 50000;
         state.character.id = 1;
         state.character.name = "contract";
@@ -134,6 +135,7 @@ public:
 
     void Advance() {
         ++state.sequence;
+        if (advanceCharacter) ++state.characterUpdates;
         if (actionActive && pendingDelivery) {
             delivered.push_back(requests.back());
             pendingDelivery = false;
@@ -152,7 +154,7 @@ public:
     State state;
     mutable std::map<std::string, int> queries;
     bool supportsItems = true, supportsSkills = true, rejectClear = false;
-    bool actionActive = false, pendingDelivery = false;
+    bool actionActive = false, pendingDelivery = false, advanceCharacter = true;
     int actionReleaseTicks = 0, directionTicks = 0, releases = 0;
     ActionResult result;
     std::vector<Action> requests, delivered;
@@ -701,7 +703,9 @@ void Profiling() {
               && Field(Field(profile, "refresh_core"), "samples").Number() == 1,
           "transition frames copy the host state but must not refresh Lua domains");
     Check(Field(Field(profile, "tick"), "samples").Number() == 3, "whole-tick timing includes the idle early return");
-    for (const char* phase : {"tick", "observe", "refresh_core"}) {
+    Check(Field(Field(profile, "lua"), "samples").Number() == 1,
+          "Lua timing counts main calls, not initialization or transition frames");
+    for (const char* phase : {"tick", "observe", "refresh_core", "lua"}) {
         const auto timing = Field(profile, phase);
         Check(Field(timing, "total_us").Number() >= Field(timing, "max_us").Number()
                   && Field(timing, "max_us").Number() >= 0,
@@ -711,6 +715,58 @@ void Profiling() {
           "session status must identify the same runtime aggregate, not claim exclusive cost");
 }
 
+void MotionObservations() {
+    NativeBoundary native;
+    native.state.velocity.source = MapleControl::MotionVector::Source::Native;
+    native.state.velocity.x = 100;
+    native.state.velocity.y = -200;
+    native.state.movement.known = true;
+    native.state.movement.model = "contract_reference";
+    native.state.movement.maxSpeed = 100;
+    native.state.movement.maxJumpHeight = 75;
+    native.state.movement.effectiveSpeed = 100;
+    native.state.movement.effectiveJump = 100;
+    TickRuntime runtime(native);
+    Start(runtime, "motion", Source(R"lua(
+function main(c)
+  local w=c.game.world; local movement=c.game.character.movement
+  if c.tick.index==1 then
+    assert(w.velocity.source=='native' and w.velocity.x==100 and w.velocity.y==-200)
+    assert(movement.kind=='model' and movement.model=='contract_reference')
+    assert(movement.max_speed==100 and movement.max_jump_height==75)
+    assert(movement.effective_speed==100 and movement.effective_jump==100)
+    assert(movement.conditions=='stationary_flat_ground_normal')
+  elseif c.tick.index==2 then
+    assert(w.velocity.x==-10 and w.velocity.y==0 and movement.max_speed==127.5)
+  elseif c.tick.index==3 then
+    assert(w.velocity==nil and movement==nil)
+    return 'done'
+  end
+end
+)lua"));
+    Step(native, runtime);
+    StatusIs(runtime, "motion", "running");
+    native.state.velocity.x = -10;
+    native.state.velocity.y = 0;
+    native.state.movement.maxSpeed = 127.5;
+    Step(native, runtime);
+    StatusIs(runtime, "motion", "running");
+    native.state.velocity = {};
+    native.state.movement = {};
+    Step(native, runtime);
+    Drain(native, runtime, "motion", "completed");
+    native.state.velocity.source = MapleControl::MotionVector::Source::Native;
+    native.state.movement.known = true;
+    for (const auto& field : {"game.world.velocity.x", "game.character.movement.max_speed"}) {
+        const std::string id = field;
+        Start(runtime, id, Source("function main(c) " + id + "=0 end"));
+        Step(native, runtime);
+        StatusIs(runtime, id, "cancelled", "script_error");
+        Check(Field(runtime.CurrentStatus(id), "error").Text().find("read-only") != std::string::npos,
+              "nested motion data must reject writes, not fail because a field is missing");
+    }
+}
+
 void JumpAttackExample(const std::string& path, const std::string& direction) {
     std::ifstream input(path);
     Check(input.good(), "compiled example required");
@@ -718,12 +774,35 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
     for (bool groundKnown : {true, false}) {
         NativeBoundary native;
         native.state.onGround = groundKnown ? Fact::True : Fact::Unknown;
+        native.state.velocity.source = MapleControl::MotionVector::Source::Native;
+        native.state.movement.known = true;
+        native.state.movement.model = "contract_reference";
+        native.state.movement.maxSpeed = 100;
+        native.state.movement.maxJumpHeight = 75;
         TickRuntime runtime(native);
         Start(runtime, "example", source, 2000);
         Step(native, runtime);
+        if (!groundKnown) {
+            StatusIs(runtime, "example", "cancelled", "script_error");
+            Check(native.requests.empty() && native.changes.empty(),
+                  "unknown ground facts must not be replaced with a positional landing guess");
+            continue;
+        }
         const std::vector<std::string> expected{direction};
+        Check(native.requests.empty() && native.directions == expected,
+              "the example must run up, not jump from rest with its first move");
+        const double sign = direction == "right" ? 1 : -1;
+        native.state.x = sign * 100;
+        native.state.velocity.x = sign * 50;
+        for (int i = 0; i < 4; ++i) Step(native, runtime);
+        Check(native.requests.empty(), "distance or a low-speed plateau must not trigger takeoff");
+        native.state.velocity.x = -sign * 100;
+        Step(native, runtime);
+        Check(native.requests.empty(), "speed in the wrong direction must not satisfy run-up");
+        native.state.velocity.x = sign * 99.5;
+        Step(native, runtime);
         Check(native.requests.size() == 1 && native.requests[0].kind == ActionKind::Jump,
-              "example must jump once with the first directional intent");
+              "the example must jump once its directed speed approaches the current reference");
         Check(native.directions == expected && native.changes.size() == 1,
               "jump must not pause the selected movement direction");
 
@@ -745,8 +824,17 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
               "action-slot idle is not landing and must not repeat the attack");
 
         native.state.y = 0;
-        native.state.onGround = groundKnown ? Fact::True : Fact::Unknown;
-        for (int i = 0; i < 32 && runtime.Running(); ++i) Step(native, runtime);
+        native.state.onGround = Fact::Unknown;
+        native.advanceCharacter = false;
+        for (int i = 0; i < 4; ++i) Step(native, runtime);
+        Check(runtime.Running() && native.directions == expected,
+              "repeated equal-height render samples cannot replace a missing native ground fact");
+        native.advanceCharacter = true;
+        native.state.onGround = Fact::True;
+        for (int i = 0; i < 32 && runtime.Running(); ++i) {
+            Step(native, runtime);
+            if (native.directions.empty()) native.state.velocity.x = 0; // external physics has stopped after key-up
+        }
         StatusIs(runtime, "example", "completed", "script_returned");
         Check(native.changes == std::vector<std::vector<std::string>>{expected, {}},
               "movement must have exactly one keydown and one final landing release");
@@ -782,6 +870,8 @@ int main(int argc, char** argv) {
         Reentrancy();
     else if (scenario == "profiling")
         Profiling();
+    else if (scenario == "motion")
+        MotionObservations();
     else if (scenario == "jump-attack-example") {
         Check(argc == 4, "compiled example path and direction required");
         JumpAttackExample(argv[2], argv[3]);
