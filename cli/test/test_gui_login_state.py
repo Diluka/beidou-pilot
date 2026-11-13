@@ -607,8 +607,11 @@ class GuiLoginStateTests(unittest.TestCase):
             window["raw_gender_selection"] = 0
             window["game_rect"] = {"left": 600, "top": 160, "right": 954, "bottom": 419}
             window["window_position_source"] = "camera"
-            with self.assertRaises(ClientError):
-                _gender(self.backend, "i", "r", "male")
+            with patch("beidou_pilot.gui_login.time.sleep") as sleep:
+                with self.assertRaises(ClientError) as error:
+                    _gender(self.backend, "i", "r", "male")
+            self.assertFalse(error.exception.details["position_source_valid"])
+            sleep.assert_not_called()
             self.backend.desktop.assert_not_called()
             dialog["focused_window"] = None
             with self.assertRaises(ClientError):
@@ -623,6 +626,81 @@ class GuiLoginStateTests(unittest.TestCase):
             window["raw_gender_selection"] = 0
             self.assertEqual(_gender(self.backend, "i", "r", "male")["action"], "gender_input_dispatched")
             self.backend.desktop.assert_called_once()
+        with tempfile.TemporaryDirectory() as directory:
+            self.backend.runtime.run_dir = Path(directory)
+            self.backend.desktop.reset_mock()
+            window.update(game_rect={"left": 595, "top": 160, "right": 949, "bottom": 419},
+                          window_position_source="stable Gr2D layer bounds and camera", raw_gender_selection=0)
+            def projection_lost(actions):
+                window.update(game_rect=None, window_position_source=None)
+                return {"input_dispatched": True, "cancelled": False, "timings": [{"action": "click"}]}
+            self.backend.desktop.side_effect = projection_lost
+            with self.assertRaises(ClientError) as error:
+                _gender(self.backend, "i", "r", "female")
+            self.assertEqual(error.exception.code, "gui_gender_projection_pending")
+            self.assertIn("未发送后续输入", error.exception.message)
+            self.backend.desktop.assert_called_once()
+            self.assertTrue((Path(directory) / "gui-gender-selection").exists())
+            with patch("beidou_pilot.gui_login.time.sleep"):
+                with self.assertRaises(ClientError):
+                    _gender(self.backend, "i", "r", "female")
+            self.backend.desktop.assert_called_once()
+            self.backend.desktop.side_effect = lambda actions: {"input_dispatched": True, "cancelled": False, "timings": [{"action": "click"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            self.backend.runtime.run_dir = Path(directory)
+            self.backend.desktop.reset_mock()
+            window.update(game_rect=None, window_position_source=None, raw_gender_selection=0)
+            with patch("beidou_pilot.gui_login.time.sleep"):
+                with self.assertRaises(ClientError) as error:
+                    _gender(self.backend, "i", "r", "male")
+            self.assertEqual(error.exception.details, {"reason": "projection_null"})
+            self.backend.desktop.assert_not_called()
+            self.assertFalse((Path(directory) / "gui-gender-submitted").exists())
+            with patch("beidou_pilot.gui_login.time.sleep"), patch("beidou_pilot.gui_login.time.monotonic", side_effect=[0, 0, 0, 2]):
+                with self.assertRaises(ClientError) as expired:
+                    _gender(self.backend, "i", "r", "male", deadline=1)
+            self.assertEqual(expired.exception.code, "gui_login_timeout")
+            self.backend.desktop.assert_not_called()
+        with tempfile.TemporaryDirectory() as directory:
+            self.backend.runtime.run_dir = Path(directory)
+            self.backend.desktop.reset_mock()
+            window.update(game_rect=None, window_position_source=None, raw_gender_selection=0)
+            calls = 0
+
+            def projection_becomes_ready(name, *args):
+                nonlocal calls
+                if name == "dialog":
+                    return dialog
+                calls += 1
+                if calls == 2:
+                    self.backend.desktop.assert_not_called()
+                    window.update(game_rect={"left": 595, "top": 160, "right": 949, "bottom": 419},
+                                  window_position_source="stable Gr2D layer bounds and camera")
+                return self.stage
+
+            self.backend.read.side_effect = projection_becomes_ready
+            with patch("beidou_pilot.gui_login.time.sleep"):
+                self.assertEqual(_gender(self.backend, "i", "r", "male")["action"], "gender_input_dispatched")
+            self.backend.desktop.assert_called_once()
+            self.backend.read.side_effect = lambda name, *args: dialog if name == "dialog" else self.stage
+        with tempfile.TemporaryDirectory() as directory:
+            self.backend.runtime.run_dir = Path(directory)
+            self.backend.desktop.reset_mock()
+            calls = 0
+            def second_projection_missing(name, *args):
+                nonlocal calls
+                if name == "dialog":
+                    return dialog
+                calls += 1
+                window.update(game_rect=None if calls == 2 else {"left": 595, "top": 160, "right": 949, "bottom": 419},
+                              window_position_source=None if calls == 2 else "stable Gr2D layer bounds and camera")
+                return self.stage
+            self.backend.read.side_effect = second_projection_missing
+            with patch("beidou_pilot.gui_login.time.sleep"):
+                self.assertEqual(_gender(self.backend, "i", "r", "male")["action"], "gender_input_dispatched")
+            self.assertGreaterEqual(calls, 6)
+            self.backend.desktop.assert_called_once()
+            self.backend.read.side_effect = lambda name, *args: dialog if name == "dialog" else self.stage
         with tempfile.TemporaryDirectory() as directory:
             self.backend.runtime.run_dir = Path(directory)
             self.backend.desktop.reset_mock()

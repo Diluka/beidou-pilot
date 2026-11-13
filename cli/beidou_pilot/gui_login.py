@@ -230,6 +230,11 @@ def _gender(backend: Backend, instance_id: str, run_id: str, gender: str, deadli
         window = matches[0]
         geometry = stage["game_geometry"]
         game_rect = window.get("game_rect")
+        if ("game_rect" in window and "window_position_source" in window
+                and game_rect is None and window["window_position_source"] is None
+                and isinstance(window.get("address"), str) and bool(window["address"])
+                and type(geometry.get("x")) is int and type(geometry.get("y")) is int):
+            raise ClientError("gui_gender_projection_pending", "性别窗口投影暂不可用，未发送后续输入，请保留现场。")
         if (
             not isinstance(window.get("address"), str)
             or not window["address"]
@@ -243,7 +248,12 @@ def _gender(backend: Backend, instance_id: str, run_id: str, gender: str, deadli
             or not 0 <= game_rect["left"] < game_rect["right"] <= 1280
             or not 0 <= game_rect["top"] < game_rect["bottom"] <= 720
         ):
-            raise ClientError("gui_gender_state_unknown", "性别窗口动态投影不可确认。")
+            raise ClientError("gui_gender_state_unknown", "性别窗口动态投影不可确认。", {
+                "address_valid": isinstance(window.get("address"), str) and bool(window["address"]),
+                "position_source_valid": window.get("window_position_source") == "stable Gr2D layer bounds and camera",
+                "geometry_origin_valid": type(geometry.get("x")) is int and type(geometry.get("y")) is int,
+                "game_rect": {k: game_rect[k] for k in ("left", "top", "right", "bottom")} if isinstance(game_rect, dict) and all(type(game_rect.get(k)) is int for k in ("left", "top", "right", "bottom")) else None,
+            })
         rect = {
             k: game_rect[k] + geometry["x" if k in ("left", "right") else "y"]
             for k in ("left", "top", "right", "bottom")
@@ -286,7 +296,19 @@ def _gender(backend: Backend, instance_id: str, run_id: str, gender: str, deadli
             raise ClientError("gui_gender_state_unknown", "性别窗口两次观察不一致，未输入。")
         return second
 
-    runtime, address, rect, raw, geometry, game_rect = stable()
+    for attempt in range(20):
+        _check_deadline(deadline)
+        try:
+            runtime, address, rect, raw, geometry, game_rect = stable()
+            break
+        except ClientError as error:
+            if error.code != "gui_gender_projection_pending":
+                raise
+            if attempt == 19:
+                raise ClientError("gui_gender_state_unknown", "性别窗口投影在有界等待内仍不可用，未输入。",
+                                  {"reason": "projection_null"}) from error
+            _check_deadline(deadline)
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
     target = 0 if gender == "male" else 1
     if raw != target:
         try:
