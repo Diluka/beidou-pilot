@@ -3,6 +3,7 @@
 
 #include "Runtime.h"
 #include "TaskTransport.h"
+#include "TickNativeAdapter.h"
 #include "Interaction.h"
 #include "QuestInteraction.h"
 #include <nlohmann/json.hpp>
@@ -11,6 +12,7 @@
 #include <chrono>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace ms {
@@ -42,6 +44,10 @@ public:
     bool Logs(const std::string& scriptId, const std::vector<std::string>& lines) override;
 
 private:
+    friend class TickNativeAdapter;
+    void SyncKeys();
+    nlohmann::json ScriptState(const std::string& id) const;
+    nlohmann::json ScriptsDocument() const;
     void Capture(std::uint64_t nativeTick);
     void ReadCommand(bool externalActionBusy);
     void ReadObservation();
@@ -62,6 +68,7 @@ private:
     std::filesystem::path directory;
     std::string runId;
     MapleControl::State state;
+    TickNativeAdapter tickAdapter;
     MapleControl::Runtime runtime;
     MapleControl::TaskTransport taskTransport;
     MapleControl::ActionResult result;
@@ -92,6 +99,7 @@ private:
     std::optional<std::uint64_t> shownDialogueRevision;
     std::optional<std::uint32_t> reviveCharacter;
     std::vector<ms::KeyAction::Id> heldActions;
+    std::set<ms::KeyAction::Id> physicalKeys;
 
     struct LastSkill {
         std::uint32_t id;
@@ -107,10 +115,16 @@ private:
     bool active = false;
     bool releasePending = false;
     bool scriptCommand = false;
+    std::string latestScriptId;
+    std::string commandScriptId;
+    std::vector<nlohmann::json> scriptHistory;
     std::string commandId;
     std::string commandStatus = "idle";
     std::string commandReason;
     std::string lastConsumedId;
     std::string rejectedId;
     std::string rejectedReason;
+    // Destroy the runtime before the native input and host bookkeeping it may
+    // release, including when the host unwinds after a native I/O failure.
+    MapleControl::TickRuntime tickRuntime;
 };

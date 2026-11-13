@@ -187,14 +187,16 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `script run/start --library travel\|island-supply` | 显式装载旅行函数；Lua消费者在一次会话内调用已知路线并核对目的地 |
 | `navigate MAP_ID [--x X --to-y Y]` | 按本地门户资料自动计算到目的地图的路线，逐段场景内寻路、按上换图并核对落点；给出坐标时继续走到目的位置；`--plan-only` 只输出静态路线 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
-| `script describe FILE` | 只读本地策略文件，输出 `main(context)` 入口、声明参数和动态 CLI 用法 |
-| `script run/start FILE [策略参数]` | 带 `main(context)` 的文件按注释动态解析参数并接收场景上下文；无入口的文件仍作为原始 chunk 运行 |
+| `script describe FILE` | 只读本地策略文件，输出 `main(context)`、mode、有效 tick 配置、声明参数和动态用法 |
+| `script run/start FILE [策略参数]` | 带 `main(context)` 的文件按注释动态解析参数并接收场景上下文；按前导 mode 进入独立引擎；无入口的旧文件仍作为原始 chunk 运行 |
 | `script run FILE`、`script run --code CODE` | 原生会话同步等待结果；`--code` 始终按原始源码执行，中断等待时脚本继续运行，持续模式显式声明 |
 | `script start FILE`、`script start --code CODE` | 原生受理后返回，脚本由客户端独立执行；返回实例、运行、请求与脚本身份 |
-| `script cancel --session SCRIPT_ID` | 只取消当前匹配脚本，并等待原生停止和放键；旧脚本 ID 作为历史记录 |
-| `task add/replace/stop` | 向指定活动Lua会话管理独立任务，不取得整会话动作锁 |
+| `script status [--session SCRIPT_ID]` | 只读全部会话 `scripts` 与最新 `script`，可按 ID 选择；tick 含调度和 player 状态 |
+| `script cancel --session SCRIPT_ID` | 精确取消指定会话并等待所属输入释放，其他会话保持；旧后端无 `scripts` 时保留单会话 stop 兼容 |
+| `task add/replace/stop` | 向指定活动 coroutine 会话管理独立任务；不支持 tick，不取得整会话动作锁 |
 | `task result REQUEST_ID` | 只读查询已保留的任务管理结果，包括超时后补查的结果 |
-| `stop`、`bridge stop` | 无其他活动动作控制者时清理遗留控制 |
+| `stop` | 无其他活动 coroutine 控制者时走旧动作路径清理遗留控制 |
+| `bridge stop` | 明确停止两个引擎的全部会话并释放输入；不等同于按 ID 取消 |
 | `key KEYS --seconds N` | 原版按键扩展；无头端按自身能力声明返回 |
 | `skill ID` | 原生技能请求；无头首批1001004/1001005，其他类型明确不支持 |
 
@@ -202,7 +204,39 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 
 [跨平台移动](../../shared/scripts/travel/walk_to.lua)只处理当前地图：按静态地形平台图计算最短平台路径，逐段执行走、跳台、落层与绳梯，落地后重新采样再规划。平台图由共用模块 [_terrain.lua](../../shared/scripts/travel/_terrain.lua) 构建：foothold 的竖直段作为墙，把平台切成不同可站立区间；绳索按沿途每层平台连接，绳底高于平台时按跳跃可及范围放宽。目标坐标必须落在平台范围内，`--plan-only` 只输出规划路径不输入；执行失败过的边在本次会话禁用并重新规划，对话窗口打开、身份或地图变化、HP低于安全比例、目标不在平台、平台图不可达或预算耗尽时明确失败，错误信息带地图、坐标、失败阶段和原因，不猜测结果。
 
-`--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。直接源码保持原样执行，不解析策略注释。文件路径按容器内部解析；工作台整体已挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，每次调用读取当前 UTF-8 文件内容。带顶层 `main(context)` 的文件是策略入口，`script run/start FILE` 会按注释校验参数并由原生 Runtime 调用入口；其他 Lua 文件保持原始 chunk 路径。两种方式都可在已运行实例中提交，沿用相同 `game` API、错误、时限和取消规则。`script status` 只接收 `--session`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
+`--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。直接源码保持原样执行，不解析 `@option` 或注入策略上下文，但前导 `@mode/@tick.*` 仍校验并决定原生引擎。文件路径按容器内部解析；工作台整体已挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，每次调用读取当前 UTF-8 文件内容。带顶层 `main(context)` 的文件是策略入口，`script run/start FILE` 按声明校验参数并由所选引擎执行；其他旧 Lua 文件保持原始 chunk 路径。两种方式都可在已运行实例中提交，执行期限和精确取消规则相同，API 则按 mode 相互独立。`script status` 不接收源码或文件，可选 `--session SCRIPT_ID`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
+
+### tick 脚本与并发会话
+
+省略 mode 或声明 `-- @mode coroutine` 使用冻结维护的旧协程环境；声明 `-- @mode tick` 使用独立的新引擎，每个宿主 tick 调用一次 `main(context)`，通过 `context.state` 保留状态，通过 `context.game` 的独立只读领域观察，通过 `context.game.player` 提交即时意图。tick 没有旧 `game.state()/sleep/阻塞动作/任务` API，不混用两套环境。内置旅行、狩猎、恢复脚本未迁移；验证用 tick 文件独立装载，不改变内置脚本。
+
+```lua
+-- @mode tick
+-- @tick.budget_ms 100
+-- @tick.overrun abort     -- 或 skip
+-- @tick.abort_commit true
+-- @option[type=int,default=5,min=1] ticks 观察次数
+local function main(context)
+    context.state.calls = (context.state.calls or 0) + 1
+    if context.state.calls >= context.options.ticks then return "done" end
+end
+```
+
+```bash
+private/workbenches/workbench /external/workbench script describe /work/scripts/tick_observe.lua
+private/workbenches/workbench /external/workbench script start /work/scripts/tick_observe.lua --ticks 120 --continuous
+private/workbenches/workbench /external/workbench script status
+private/workbenches/workbench /external/workbench script status --session SCRIPT_ID
+private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
+```
+
+mode/config 只读取文件级前导单行注释，Lua 长注释内部及正文中的伪声明不生效。未知/重复 mode 或 tick 配置、非法值、coroutine 中的 tick 配置均在发布前拒绝。默认单次预算 **100ms / abort / abort_commit=true**；预算接受正有限十进制毫秒数（可为小数），不接受符号、指数或非有限数。`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用，下一次 `context.tick.overrun=true`。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。完整字段、动作槽和领域说明见 [tick API](LUA_API.md#tick-环境)。
+
+CLI tick 编译只注入既有 `options/scene/route`，返回入口及上下文，不执行 main，也不调用旧 `game.state()`；初始静态 scene 身份由原生核对。直接 `--code` 的 tick 脚本自行定义全局 main 或返回入口表，不自动注入策略参数。buff 按本端可读能力；首版两端 `buffs` 为未知、`buffs_status=unsupported`，不伪造空列表。
+
+旧原生桥没有 `scripts` 能力时，tick 在发布前返回 `bridge_tick_unsupported`，不会回退到 coroutine 产生假成功。同客户端可追加多个 tick 会话，也可与一个 coroutine 会话并存。发布/受理时短暂持锁，`script run` 的终态等待不占整程动作锁；第二个 coroutine 仍返回 `input_busy`。多 tick 共享客户端唯一角色状态机，后写覆盖；动作忙时不同动作写入单个后继槽并返回 `false,"busy"`，后写覆盖排队项，动作完成后才执行，不形成无界队列。
+
+`script status` 保留最新接纳的 `script`，新增包含各会话的 `scripts`；每项保留旧基本状态并新增 `mode` 和会话级 `control_released`。tick 的 `tick` 展示 index/time/delta、场景代次、预算、超限策略及次数，`player` 展示共享角色动作状态；它不是角色 HP/buff。指定 `--session` 后 `script` 选择对应会话，`scripts` 仍保留全部会话。`command` 是最近命令，不能代替会话身份。精确取消只检查目标终态及所属输入释放，其他会话仍持键是正常事实；需要全部停止时显式 `bridge stop`。
 
 策略选项写在入口附近的 Lua 注释中；类型支持 `int`、`number`、`string`、`boolean`。非布尔参数没有 `opt` 或 `default` 时必填，声明默认值后可省略。布尔参数未声明 `default` 时可省略且默认为 `true`；显式 `default=false` 时省略则为 `false`。`min`/`max` 用于数值范围，`choices=a|b` 限定候选值。默认值、正向 flag 和显式值按 `choices` 校验，`--no-flag` 作为无值负向开关直接传入 `false`，不因 `choices` 未列出 `false` 而拒绝。Lua 参数名中的下划线映射为 CLI 连字符：
 
@@ -225,7 +259,7 @@ end
 
 策略自有的时间预算声明为 `budget_seconds`（CLI `--budget-seconds`），与控制整个原生脚本生命周期的 `--seconds` / `--continuous` 分开。仓库内旅行、战斗和恢复策略都使用标准 `main(context)` 与 `@option`；旅行策略装载时自动组合其共用的 `_common.lua`。函数库及普通 chunk 仍保留各自原始用途。
 
-`script run` 同步等待会话结果，`script start` 等待原生受理。两者在等待期间收到 Ctrl+C/SIGINT/SIGTERM 都只结束本次等待，不取消已发布的原生任务；等待超时或观察失败只结束 CLI 等待，任务是否停止以当前状态为准。先用 `script status` 核对当前原生身份、`script.id` 与任务，结果未确认时先观察再决定。取消须明确 `script cancel --session SCRIPT_ID`，并核对终态与放键；客户端关闭另用 `close`。原生执行期限、角色变化、断线和脚本自身错误等停止规则保留。活动 Lua 仍占有本实例控制权，其他脚本和普通窗口输入返回 `input_busy`；`--continuous` 显式给出，持续控制在原生 Runtime 内执行。
+`script run` 同步等待会话结果，`script start` 等待原生受理。两者在等待期间收到 Ctrl+C/SIGINT/SIGTERM 都只结束本次等待，不取消已发布的原生任务；等待超时或观察失败只结束 CLI 等待，任务是否停止以当前状态为准。先用 `script status` 核对当前原生身份、`script.id` 与任务，结果未确认时先观察再决定。取消须明确 `script cancel --session SCRIPT_ID`，并核对终态与放键；客户端关闭另用 `close`。原生执行期限、角色变化、断线和脚本自身错误等停止规则保留。coroutine 仍保留单会话约束，tick 可追加或与 coroutine 并存；任一活动 Lua 会话存在时普通窗口输入返回 `input_busy`；`--continuous` 显式给出，持续控制在原生 Runtime 内执行。
 
 在已有脚本会话中调整一项任务，先用 `script status` 取得 `script.id` 和该任务的 `revision`，再明确传给任务管理入口：
 

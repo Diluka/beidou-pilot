@@ -185,6 +185,28 @@ class TaskManagementContract(unittest.TestCase):
                     result_code, result = self.cli("result", fields[5], backend=backend, instance=instance)
                     self.assertEqual((0, report["data"]), (result_code, result["data"]))
 
+    def test_management_selects_coroutine_by_id_when_latest_session_is_tick(self) -> None:
+        from .test_tick_cli import tick_state
+
+        coroutine = self.files.state["script"]
+        coroutine.update(mode="coroutine", control_released=False)
+        latest = tick_state("b" * 32)
+        self.files.state.update(script=latest, scripts=[coroutine, latest])
+        self.files.publish()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            peer = pool.submit(self.reply)
+            code, report = self.cli(
+                "add", "observer", "--session", self.session, "--priority", "0", "--code", "game.sleep(0)"
+            )
+            fields, _ = peer.result(3)
+        self.assertEqual(0, code, report)
+        self.assertEqual(self.session, fields[3])
+        self.assertEqual(latest["id"], self.files.state["script"]["id"])
+        code, report = self.cli(
+            "add", "observer", "--session", latest["id"], "--priority", "0", "--code", "game.sleep(0)"
+        )
+        self.assertEqual((2, "task_management_unsupported"), (code, report["error"]["code"]))
+
     def test_management_rejects_foreign_result_identity(self) -> None:
         for field, value in (
             ("instance_id", "other-native"),
