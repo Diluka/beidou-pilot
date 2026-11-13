@@ -182,7 +182,7 @@ void TickNativeAdapter::Advance(std::uint64_t nativeTick, bool sceneChanged) {
         if (active || !movement.empty()) Release();
     } else if (active && !pulseReleased && NowMs() >= deadlineMs) {
         // Release the pulse once. A later logic step must consume the key-up;
-        // an attack animation or airborne jump may still own the action slot.
+        // only an attack animation may continue to own the action slot.
         actionKeys.clear();
         pulseReleased = true;
         releasing = true;
@@ -193,9 +193,9 @@ void TickNativeAdapter::Advance(std::uint64_t nativeTick, bool sceneChanged) {
         auto& player = ms::Stage::get().get_player();
         if (actionKind == MapleControl::ActionKind::Attack)
             active = player.is_attacking();
-        else if (actionKind == MapleControl::ActionKind::Jump)
-            active = !player.get_phobj().onground && !player.is_climbing() && !player.is_underwater();
         else
+            // Jump completes its input lifecycle here; flight and landing are
+            // physical facts, not ownership of the one-shot input slot.
             active = false;
     }
 }

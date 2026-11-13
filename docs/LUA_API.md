@@ -61,6 +61,12 @@ end
 
 单次调用用 Lua 指令 hook 周期核对墙钟预算，包括初始化阶段的执行约束。`abort` 默认先提交已写入的确定草稿，停止继续调用入口并清除所属持续方向；已提交的一次性动作经原生消费和释放确认后，以 `cancelled/tick_overrun` 结束。收尾期间总期限或显式取消仍可立即打断；`abort_commit=false` 时丢弃当次草稿。持续方向不会在会话结束后延续，已经派发的一次性动作的实际效果另行观察。`skip` 中断当次入口、保留已写草稿参与本帧提交并保留会话，下一次 `context.tick.overrun=true`，脚本自行分片或降低负载。脚本内存中的 `state` 修改不是事务回滚对象。预算 hook 约束 Lua 指令执行，不能抢占正在阻塞的原生 C 函数；这仍是受信本地脚本环境，不是恶意源码沙箱。
 
+### 性能观测
+
+原生桥顶层 `tick_profile` 及会话状态的 `tick.profile` 是同一份 **runtime 生命周期聚合**，不是 Lua `context.tick` 的字段，也不表示该会话独占成本。`host_tick_calls` 包含全部宿主调用和空闲早退，`active_frames` 为实际处理帧，`reentrant_tick_calls` 为重入早退。`tick/observe/refresh_core` 各含 `samples/total_us/max_us`：分别计完整 Tick、宿主快照复制、核心领域刷新，单位微秒。子阶段已包含在完整 Tick 中，不能相加。排除 Start 初始化、宿主原有 Capture 及桥状态发布；空闲不会为了计时新增领域采集。
+
+比较测量窗口时用累计计数和 `total_us` 的差分计算均值；`max_us` 是生命周期峰值，不能用差分求区间峰值。这些是墙钟时间，不是独占 CPU 时间，也不等同于总帧耗时或动作延迟。
+
 ### 独立只读领域
 
 `context.game`（也作为全局 `game` 提供）不提供 `state()`、`observe(domain)`、阻塞动作、`sleep`、`spawn/tasks/acquire/cancel` 或旧按键接口。`game.log(text)` 接受字符串，单条最多4096字节、单次调用日志合计最多65536字节，写入该会话的原生事件日志；时间使用 `context.tick.time/delta`，不提供旧 `game.time()`。标准库开放基础语言和 `table/string/math/utf8`，不开放 `io/os/package/debug/coroutine`；禁用动态装载、`print/pcall/xpcall/setmetatable/getmetatable/rawset`，不会通过捕获预算异常绕过超限处理。每个领域是独立只读 table，嵌套表也只读；写入报 Lua 错误。核心 `character/world/scene` 每 tick 更新；低频领域每宿主 tick 按需采集一次，同一帧内跨会话复用结果。领域直接展开原生观察的 `data` 字段并附带 `status/error`，不额外嵌套一层 `data`。不支持或暂时不可读通过领域状态和错误说明，未知字段缺失或为 `nil`，不借另一后端补齐。
@@ -68,7 +74,7 @@ end
 | 属性 | 内容与边界 |
 | --- | --- |
 | `game.character` | `id/name/level/job/hp/max_hp/mp/max_mp`；长字段 `strength/dexterity/intelligence/luck/ability_points/skill_points/experience` 及简写 `str/dex/int/luk/ap/sp/exp`；与本端可读取的角色领域事实合并 |
-| `game.world` | `instance_id/scene_generation/ready/in_game/map_id`；已知位置同时提供 `x/y` 和 `position={x,y}`；`facing` 沿用 `Left/Right`，`settled/dead/revive_requestable` 未知时不提供 |
+| `game.world` | `instance_id/scene_generation/ready/in_game/map_id`；已知位置同时提供 `x/y` 和 `position={x,y}`；`facing` 沿用 `Left/Right`，`on_ground/attacking/settled/dead/revive_requestable` 未知时不提供；无头 `on_ground/attacking` 来自物理地面标志及原生攻击动画，GUI 两项暂未知 |
 | `game.scene` | 当前怪物、掉落、其他玩家及按本端能力提供的 NPC 等原生场景事实；列表完整性按实际能力声明 |
 | `game.inventory`、`game.quests` | 本端原生背包/装备和任务领域；任务动态性仍遵循本端来源声明 |
 | `game.chat` | 按本端可读能力；不支持时明确 `status="unsupported"`，不是空聊天记录 |
@@ -91,9 +97,9 @@ buff 归 `game.character`，不在 `player.status()`。首版两端都没有可�
 
 每个动作提交返回 `ok, reason`：受理为 `true`；暂忙为 `false, "busy"`；能力不支持为 `false, "unsupported"`，均不因为暂不可用而结束脚本。参数类型错误、非法方向和越界 ID 报 Lua 错误。幂等重复不产生新动作；同 tick 多次有效提交只保留最后一次，不在中途投放输入。
 
-一次性动作同一时间只有一个活动槽。**忙时提交不同动作会写入单个后继槽，同时返回 `false, "busy"`**；当前动作完成后执行该待执行动作，后写覆盖已排队动作，不累积无界队列。同 tick 多次提交也只保留最后一个有效输入。`attack/skill` 保持移动方向；`jump/pickup/use_item` 执行期间暂停移动，完成后恢复持续意图。`held` 是语义键名数组，`phase` 为 `idle/running/releasing`；`effect="unknown"` 不表示游戏失败或成功。
+一次性动作同一时间只有一个活动槽。**忙时提交不同动作会写入单个后继槽，同时返回 `false, "busy"`**；当前动作完成后执行该待执行动作，后写覆盖已排队动作，不累积无界队列。同 tick 多次提交也只保留最后一个有效输入。`jump/attack/skill` 保持移动方向；`pickup/use_item` 执行期间暂停移动，完成后恢复持续意图。`held` 是语义键名数组，`phase` 为 `idle/running/releasing`；`effect="unknown"` 不表示游戏失败或成功。
 
-“动作完成”仅限本端能够观察的边界：无头 jump 等待已知落地/攀爬/水下收束，attack/skill 等待本地攻击动画结束；用药和拾取确认请求及按键消费/释放，游戏效果仍为 unknown。GUI 仅确认原生输入/请求生命周期，缺失完整动画完成事实时不伪造；一次 60ms 按键脉冲不是完整攻击动画。动作槽空闲或 `control_released=true` 均不能当作命中、拾取、药效或 buff 生效证据。
+“动作完成”仅限本端能够观察的边界：jump 确认起跳按键的消费及释放，不等待落地，允许仍在空中时接续 attack；飞行与落地另看本端物理事实或场景观察。无头 attack/skill 等待本地攻击动画结束；用药和拾取确认请求及按键消费/释放，游戏效果仍为 unknown。GUI 仅确认原生输入/请求生命周期，缺失完整动画完成事实时不伪造；一次 60ms 按键脉冲不是完整攻击动画。动作槽空闲或 `control_released=true` 均不能当作命中、拾取、药效或 buff 生效证据。
 
 取消、期限、角色变化、离开游戏及错误只结束对应会话，不结束另一引擎或其他 tick 会话。会话终态在所属输入已经过原生消费/释放确认后发布；取消某个 tick 会话不清空其他会话仍有效的输入。窗口、对话、商店、AP/SP、装备界面等非即时交互不纳入 tick player，由 CLI 逐步操作。内置旅行/狩猎/恢复脚本仍是 coroutine，未在本需求迁移；验证用 tick 文件是独立输入，不代表内置策略已经迁移。
 

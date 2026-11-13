@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import unittest
 
+from beidou_pilot.strategies import compile_strategy, parse_options, read_strategy_file
+
 
 class TickRuntimeContract(unittest.TestCase):
     @classmethod
@@ -73,3 +75,24 @@ class TickRuntimeContract(unittest.TestCase):
 
     def test_native_callbacks_cannot_reenter_lua_or_invalidate_submission(self) -> None:
         self.run_contract("reentrancy")
+
+    def test_profile_counts_idle_active_and_transition_frames_without_sampling_when_idle(self) -> None:
+        self.run_contract("profiling")
+
+    def test_moving_jump_attack_example_holds_direction_until_landing(self) -> None:
+        path = Path(__file__).resolve().parents[2] / "shared/scripts/examples/tick-jump-attack.lua"
+        source, metadata = read_strategy_file(path)
+        self.assertIsNotNone(metadata)
+        self.assertEqual("tick", metadata.mode)
+        scene = {"instance_id": "tick-contract", "character_id": 1, "map_id": 50000, "scene_generation": 1}
+        for arguments, direction in (([], "right"), (["--direction", "left"], "left")):
+            with self.subTest(arguments=arguments):
+                options = parse_options(metadata, arguments)
+                self.assertEqual({"direction": direction}, options)
+                compiled = self.executable.parent / "tick-jump-attack-compiled.lua"
+                compiled.write_text(compile_strategy(source, options, scene), encoding="utf-8")
+                subprocess.run(
+                    [str(self.executable), "jump-attack-example", str(compiled), direction],
+                    check=True,
+                    timeout=10,
+                )

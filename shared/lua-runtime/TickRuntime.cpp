@@ -17,6 +17,29 @@ namespace MapleControl {
 namespace {
 using Clock = std::chrono::steady_clock;
 
+struct Timing {
+    std::uint64_t samples = 0;
+    double totalUs = 0, maxUs = 0;
+
+    Value Status() const { return Value::Object({{"samples", samples}, {"total_us", totalUs}, {"max_us", maxUs}}); }
+};
+
+// Inclusive wall time, including early returns and exception unwinding. Nested
+// phase timings are subsets of Tick, not additional costs to sum with it.
+struct ScopedTiming {
+    explicit ScopedTiming(Timing& target) : timing(target), started(Clock::now()) {}
+
+    ~ScopedTiming() {
+        const auto us = std::chrono::duration<double, std::micro>(Clock::now() - started).count();
+        ++timing.samples;
+        timing.totalUs += us;
+        timing.maxUs = (std::max)(timing.maxUs, us);
+    }
+
+    Timing& timing;
+    Clock::time_point started;
+};
+
 std::string Trim(const std::string& text) {
     const auto first = text.find_first_not_of(" \t\r\n\f\v");
     if (first == std::string::npos) return {};
@@ -43,7 +66,7 @@ bool SameAction(const Action& left, const Action& right) {
 }
 
 bool PausesMovement(const Action& action) {
-    return action.kind != ActionKind::Attack;
+    return action.kind != ActionKind::Attack && action.kind != ActionKind::Jump;
 }
 
 void PushValue(lua_State* lua, const Value& value) {
@@ -319,6 +342,18 @@ struct TickRuntime::Impl {
     bool actionActive = false, pendingActive = false, releasing = false, updating = false;
     ActionResult result;
     Draft draft;
+    std::uint64_t hostTickCalls = 0, activeFrames = 0, reentrantTickCalls = 0;
+    Timing tickTiming, observeTiming, refreshCoreTiming;
+
+    Value ProfileValue() const {
+        return Value::Object({{"scope", "runtime_lifetime"},
+                              {"host_tick_calls", hostTickCalls},
+                              {"active_frames", activeFrames},
+                              {"reentrant_tick_calls", reentrantTickCalls},
+                              {"tick", tickTiming.Status()},
+                              {"observe", observeTiming.Status()},
+                              {"refresh_core", refreshCoreTiming.Status()}});
+    }
 
     // Native I/O may pump a host frame. Defer cancellation until no Lua or
     // native submission is on the stack, and never recursively invoke main.
@@ -530,6 +565,8 @@ struct TickRuntime::Impl {
             }
             if (observed.facingKnown) value["facing"] = observed.facingLeft ? "Left" : "Right";
             SetFact(value, "settled", observed.settled);
+            SetFact(value, "on_ground", observed.onGround);
+            SetFact(value, "attacking", observed.attacking);
             SetFact(value, "dead", observed.dead);
             SetFact(value, "revive_requestable", observed.reviveRequestable);
         } else if (name == "scene") {
@@ -923,7 +960,8 @@ struct TickRuntime::Impl {
                                                       {"overruns", session.overruns},
                                                       {"budget_ms", session.config.budgetMs},
                                                       {"overrun_policy", session.config.skipOverrun ? "skip" : "abort"},
-                                                      {"abort_commit", session.config.abortCommit}})},
+                                                      {"abort_commit", session.config.abortCommit},
+                                                      {"profile", ProfileValue()}})},
                               {"player", Player()}});
     }
 };
@@ -1023,9 +1061,19 @@ bool TickRuntime::Start(const std::string& scriptId, const std::string& source, 
 
 void TickRuntime::Tick(bool sceneChanged) {
     auto& runtime = *impl;
-    if (runtime.updating || !Running()) return;
+    ScopedTiming tickTiming(runtime.tickTiming);
+    ++runtime.hostTickCalls;
+    if (runtime.updating) {
+        ++runtime.reentrantTickCalls;
+        return;
+    }
+    if (!Running()) return;
+    ++runtime.activeFrames;
     Impl::UpdateScope scope(runtime);
-    runtime.observed = runtime.adapter.Observe();
+    {
+        ScopedTiming observeTiming(runtime.observeTiming);
+        runtime.observed = runtime.adapter.Observe();
+    }
     const bool transition = sceneChanged || !runtime.observed.ready
                             || (runtime.sampled && runtime.lastGeneration != runtime.observed.sceneGeneration);
     runtime.sampled = true;
@@ -1075,7 +1123,10 @@ void TickRuntime::Tick(bool sceneChanged) {
 
     std::vector<Ending> endings;
     if (!transition) {
-        runtime.RefreshCore();
+        {
+            ScopedTiming refreshCoreTiming(runtime.refreshCoreTiming);
+            runtime.RefreshCore();
+        }
         for (auto& owned : runtime.sessions) {
             auto& session = *owned;
             if (!session.Active()) continue;
@@ -1175,6 +1226,10 @@ Value TickRuntime::Statuses() const {
     auto values = Value::Array();
     for (const auto& session : impl->sessions) values.Add(impl->StatusValue(*session));
     return values;
+}
+
+Value TickRuntime::Profile() const {
+    return impl->ProfileValue();
 }
 
 }

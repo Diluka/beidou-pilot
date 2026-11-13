@@ -58,6 +58,16 @@ public:
     Value CurrentStatus(const std::string& scriptId) const;
     Value Statuses() const;
 
+    // Fixed-size, runtime-lifetime aggregates, also exposed as tick.profile in
+    // each session status (shared, not per-session). Available with no scripts.
+    // host_tick_calls includes idle/reentrant early returns; active_frames counts
+    // calls passing the updating/Running guard, including transition/drain frames.
+    // Timings are inclusive steady-clock microseconds: samples/total_us/max_us.
+    // observe includes snapshot copying; refresh_core includes core domain reads.
+    // Only Tick is measured, not Start, status serialization or host Capture.
+    // Compare count/total deltas for intervals; maxima are lifetime peaks.
+    Value Profile() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

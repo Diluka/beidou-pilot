@@ -248,7 +248,7 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
         dialogue.scene_generation = state.sceneGeneration;
         dialogue.closed_by = "scene_changed";
     }
-    state.dead = state.reviveRequestable = Fact::Unknown;
+    state.dead = state.reviveRequestable = state.onGround = state.attacking = Fact::Unknown;
     if (!state.ready) {
         state.settled = Fact::Unknown;
         questInteraction.Reset();
@@ -286,6 +286,8 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.x = pos.x();
     state.y = pos.y();
     state.facingLeft = !player.getflip();
+    state.onGround = ph.onground ? Fact::True : Fact::False;
+    state.attacking = player.is_attacking() ? Fact::True : Fact::False;
     const bool settled =
         !player.is_attacking() && !ph.mobile() && (ph.onground || player.is_climbing() || player.is_underwater());
     state.settled = settled ? Fact::True : Fact::False;
@@ -1361,6 +1363,8 @@ Json SharedLuaAdapter::StateDocument() const {
         {"observed_at_ms", state.observedAtMs},
         {"scene_generation", state.sceneGeneration},
         {"ready", state.ready},
+        {"on_ground", FactValue(state.onGround)},
+        {"attacking", FactValue(state.attacking)},
         {"dead", FactValue(state.dead)},
         {"revive_requestable", FactValue(state.reviveRequestable)},
         {"map_id", state.mapKnown ? Json(state.mapId) : Json(nullptr)},
@@ -1375,6 +1379,7 @@ Json SharedLuaAdapter::StateDocument() const {
                                  : Json{{"id", rejectedId}, {"status", "rejected"}, {"reason", rejectedReason}}},
         {"script", ScriptState(latestScriptId)},
         {"scripts", ScriptsDocument()},
+        {"tick_profile", Json::parse(tickRuntime.Profile().Dump())},
         {"last_skill", nullptr},
         {"input_events", inputEvents},
         {"capabilities",

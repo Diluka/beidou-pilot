@@ -113,6 +113,8 @@ struct State {
     // True only when the backend can account for every player packet in this scene.
     Fact playersComplete = Fact::Unknown;
     Fact settled = Fact::Unknown;
+    Fact onGround = Fact::Unknown;
+    Fact attacking = Fact::Unknown;
     Fact dead = Fact::Unknown;
     Fact reviveRequestable = Fact::Unknown;
 };

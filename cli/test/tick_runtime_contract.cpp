@@ -4,8 +4,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <thread>
@@ -676,10 +678,87 @@ void Reentrancy() {
     Check(Field(runtime.CurrentStatus("reentrant"), "resumes").Number() == 1,
           "native callback never recursively calls Lua");
 }
+
+void Profiling() {
+    NativeBoundary native;
+    TickRuntime runtime(native);
+    Step(native, runtime);
+    auto profile = runtime.Profile();
+    Check(Field(profile, "host_tick_calls").Number() == 1 && Field(profile, "active_frames").Number() == 0,
+          "idle host calls must be visible without becoming active frames");
+    Check(native.queries.empty() && Field(Field(profile, "refresh_core"), "samples").Number() == 0,
+          "idle profiling must not add native observations");
+    Start(runtime, "profile", Source("function main(c) end"));
+    Check(Field(Field(runtime.Profile(), "refresh_core"), "samples").Number() == 0,
+          "session initialization must not be counted as host-tick sampling");
+    Step(native, runtime);
+    Step(native, runtime, true);
+    profile = runtime.Profile();
+    Check(Field(profile, "scope").Text() == "runtime_lifetime" && Field(profile, "host_tick_calls").Number() == 3
+              && Field(profile, "active_frames").Number() == 2,
+          "profile must distinguish all host calls from active processing");
+    Check(Field(Field(profile, "observe"), "samples").Number() == 2
+              && Field(Field(profile, "refresh_core"), "samples").Number() == 1,
+          "transition frames copy the host state but must not refresh Lua domains");
+    Check(Field(Field(profile, "tick"), "samples").Number() == 3, "whole-tick timing includes the idle early return");
+    for (const char* phase : {"tick", "observe", "refresh_core"}) {
+        const auto timing = Field(profile, phase);
+        Check(Field(timing, "total_us").Number() >= Field(timing, "max_us").Number()
+                  && Field(timing, "max_us").Number() >= 0,
+              "inclusive timing aggregates must remain nonnegative and bounded by their total");
+    }
+    Check(Field(Field(runtime.CurrentStatus("profile"), "tick"), "profile").Dump() == profile.Dump(),
+          "session status must identify the same runtime aggregate, not claim exclusive cost");
+}
+
+void JumpAttackExample(const std::string& path, const std::string& direction) {
+    std::ifstream input(path);
+    Check(input.good(), "compiled example required");
+    const std::string source{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    for (bool groundKnown : {true, false}) {
+        NativeBoundary native;
+        native.state.onGround = groundKnown ? Fact::True : Fact::Unknown;
+        TickRuntime runtime(native);
+        Start(runtime, "example", source, 2000);
+        Step(native, runtime);
+        const std::vector<std::string> expected{direction};
+        Check(native.requests.size() == 1 && native.requests[0].kind == ActionKind::Jump,
+              "example must jump once with the first directional intent");
+        Check(native.directions == expected && native.changes.size() == 1,
+              "jump must not pause the selected movement direction");
+
+        // The fixture supplies external native facts, not simulated game success:
+        // jump key-up is consumed while the character is still above the floor.
+        native.state.y = -20;
+        native.state.onGround = groundKnown ? Fact::False : Fact::Unknown;
+        Step(native, runtime);
+        native.Complete();
+        for (int i = 0; i < 16 && native.requests.size() < 2; ++i) Step(native, runtime);
+        Check(native.requests.size() == 2 && native.requests.back().kind == ActionKind::Attack,
+              "example must submit its single attack after liftoff, before landing");
+        Check(native.directions == expected && native.changes.size() == 1,
+              "air attack must preserve uninterrupted movement");
+        Step(native, runtime);
+        native.Complete();
+        for (int i = 0; i < 8; ++i) Step(native, runtime);
+        Check(runtime.Running() && native.directions == expected && native.requests.size() == 2,
+              "action-slot idle is not landing and must not repeat the attack");
+
+        native.state.y = 0;
+        native.state.onGround = groundKnown ? Fact::True : Fact::Unknown;
+        for (int i = 0; i < 32 && runtime.Running(); ++i) Step(native, runtime);
+        StatusIs(runtime, "example", "completed", "script_returned");
+        Check(native.changes == std::vector<std::vector<std::string>>{expected, {}},
+              "movement must have exactly one keydown and one final landing release");
+        Check(Field(runtime.CurrentStatus("example"), "control_released").Boolean(),
+              "example completed before native direction release was consumed");
+        Check(native.delivered.size() == 2, "both one-shot inputs must reach the native consumer");
+    }
+}
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2, "scenario required");
+    Check(argc == 2 || (argc == 4 && std::string(argv[1]) == "jump-attack-example"), "scenario required");
     const std::string scenario = argv[1];
     if (scenario == "declarations")
         Declarations();
@@ -701,6 +780,11 @@ int main(int argc, char** argv) {
         Isolation();
     else if (scenario == "reentrancy")
         Reentrancy();
-    else
+    else if (scenario == "profiling")
+        Profiling();
+    else if (scenario == "jump-attack-example") {
+        Check(argc == 4, "compiled example path and direction required");
+        JumpAttackExample(argv[2], argv[3]);
+    } else
         Check(false, "unknown scenario");
 }

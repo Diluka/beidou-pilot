@@ -1216,6 +1216,7 @@ bool Publish(const MapleControl::State& state) {
     auto scripts = MapleControl::Value::Array();
     for (const auto& session : scriptSessions) scripts.Add(session.status);
     out << ",\"scripts\":" << scripts.Dump();
+    out << ",\"tick_profile\":" << tickRuntime.Profile().Dump();
     out << ",\"last_skill\":";
     if (haveSkillResult)
         out << "{\"skill_id\":" << lastSkillId << ",\"native_result\":" << lastSkillResult
