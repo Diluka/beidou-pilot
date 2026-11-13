@@ -532,6 +532,8 @@ CLI 参数名把 Lua 下划线转为连字符，例如 `mob_id` 使用 `--mob-id
 
 `context.scene` 绑定 CLI 装载前观察到的当前场景，包含只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 与静态 `terrain`。地形可用时，`terrain.status` 为 `available`，并提供来源路径 `source`、`footholds` 和 `ropes`；`footholds` 中 `x1 == x2` 的条目是竖直墙段（`y1`/`y2` 为上下端），其余是水平或倾斜地面，`prev`/`next` 是原始连接；数据不可用或当前地图只引用另一张地图时，状态分别为 `unavailable` 或 `unsupported`，并提供错误代码、说明和来源详情，不提供空地形或借用地图的坐标。策略需要静态地形时，应先检查 `terrain.status`。身份字段由 CLI 创建，不能作为普通 `@option` 覆盖；动态 HP、位置、技能和库存等事实仍从当前 `game.state()` / `game.observe()` 读取。
 
+内置跨图策略另有 CLI 预计算的只读路线数据 `context.route`（起点、终点、每段地图的打包地形与门户坐标）；它只由对应命令注入，普通策略不会收到。
+
 通用入口调用前会重新读取 `game.state()`，并对比就绪状态及上述身份锚点；不匹配时以 `strategy_scene_context_stale` 结束，策略主体不会运行。策略入口内若再采样初始状态，也应在派发动作前与 `context.scene` 再核对一次，以覆盖预检与主体之间发生的场景变化；后续跨地图或可能换角色的操作仍按业务边界核对。静态数据读取或验证失败时，CLI 在发布脚本前报告错误。该上下文不会替代 `game.state()` / `game.observe()` 返回的动态事实。
 
 没有顶层 `main(context)` 声明的 Lua 文件仍按原始 chunk 执行。`--code` 始终保留原始源码语义，不解析策略注释或注入入口上下文。

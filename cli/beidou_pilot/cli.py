@@ -147,6 +147,12 @@ def parser() -> Parser:
     q = command("portal", "按当前地图门户名正常靠近并进入")
     q.add_argument("name")
     q.add_argument("--seconds", type=float, default=20)
+    q = command("navigate", "按目的地图从本地门户资料算路并逐段换图")
+    q.add_argument("map_id", type=int, help="目的地图 ID")
+    q.add_argument("--x", type=int, help="目的地图内目标水平坐标")
+    q.add_argument("--to-y", type=int, help="目的地图内目标世界高度；与--x同时给出时继续走到该坐标")
+    q.add_argument("--seconds", type=float, default=120, help="整体导航时间预算，1至600秒")
+    q.add_argument("--plan-only", action="store_true", help="只输出静态路线，不移动")
     q = command("ui", "读取/打开/关闭已识别窗口，或恢复场景焦点")
     q.add_argument("action", choices=["read", "open", "close", "focus"], default="read", nargs="?")
     q.add_argument("window", nargs="?", choices=["inventory", "stats", "skills", "shop", "all"])
@@ -695,6 +701,12 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .control_scripts import press_keys
 
         return press_keys(backend, args.keys, seconds=args.seconds)
+    if cmd == "navigate":
+        from . import navigation
+
+        return navigation.navigate(
+            backend, args.map_id, x=args.x, y=args.to_y, seconds=args.seconds, plan_only=args.plan_only
+        )
     if cmd in ("move", "climb", "portal"):
         if cmd == "move":
             if args.to_y is None:

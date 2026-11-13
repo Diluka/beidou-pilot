@@ -44,6 +44,8 @@ SOURCES = {
         "cli/test/test_hunt_lua.py",
         "cli/test/test_route_lua.py",
         "cli/test/test_walk_to_lua.py",
+        "cli/beidou_pilot/navigation.py",
+        "cli/test/test_navigate_lua.py",
         "cli/test/test_catalog_resources.py",
     ),
     "clang-format": (
@@ -74,9 +76,12 @@ SOURCES = {
         "cli/test/hunt_contract.lua",
         "shared/scripts/travel/_common.lua",
         "shared/scripts/travel/_terrain.lua",
+        "shared/scripts/travel/_move.lua",
+        "shared/scripts/travel/navigate.lua",
         "shared/scripts/travel/walk_to.lua",
         "cli/test/route_contract.lua",
         "cli/test/walk_to_contract.lua",
+        "cli/test/navigate_contract.lua",
     ),
 }
 

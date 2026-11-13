@@ -185,6 +185,7 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `move X`、`move X --to-y Y`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单地图跨平台寻路、单根绳梯或单个门户；`move --to-y` 用静态平台图（走、跳台上升、落层、绳底跳抓）行进，竖直墙把平台切成不同区间，不支持跨地图自动选路 |
 | `hunt [MOB\|all]` | 单场景自主找怪、可达跨平台和连续战斗；支持 `--skill ID`、`--range N`、限时或 `--continuous` |
 | `script run/start --library travel\|island-supply` | 显式装载旅行函数；Lua消费者在一次会话内调用已知路线并核对目的地 |
+| `navigate MAP_ID [--x X --to-y Y]` | 按本地门户资料自动计算到目的地图的路线，逐段场景内寻路、按上换图并核对落点；给出坐标时继续走到目的位置；`--plan-only` 只输出静态路线 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
 | `script describe FILE` | 只读本地策略文件，输出 `main(context)` 入口、声明参数和动态 CLI 用法 |
 | `script run/start FILE [策略参数]` | 带 `main(context)` 的文件按注释动态解析参数并接收场景上下文；无入口的文件仍作为原始 chunk 运行 |
@@ -196,6 +197,8 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `stop`、`bridge stop` | 无其他活动动作控制者时清理遗留控制 |
 | `key KEYS --seconds N` | 原版按键扩展；无头端按自身能力声明返回 |
 | `skill ID` | 原生技能请求；无头首批1001004/1001005，其他类型明确不支持 |
+
+[跨场景导航](../../shared/scripts/travel/navigate.lua)由 CLI 先在本地只读资料里按有向门户计算路线（`cli/beidou_pilot/world_map.py`），把每张地图的地形与门户坐标打包进调用上下文，再由客户端 Lua 逐段执行场景内寻路、按上换图和落点核对。脚本门户、出租车与飞艇等付费交通不进入静态路线；路线中某张地图没有自身地形时明确失败，不推断链接地图。失败原因区分无路线、路线过长、缺地形、门户坐标未知、换图后地图不符、门户未触发、场景内不可达与预算耗尽，信息带第几段、地图、门户与坐标。
 
 [跨平台移动](../../shared/scripts/travel/walk_to.lua)只处理当前地图：按静态地形平台图计算最短平台路径，逐段执行走、跳台、落层与绳梯，落地后重新采样再规划。平台图由共用模块 [_terrain.lua](../../shared/scripts/travel/_terrain.lua) 构建：foothold 的竖直段作为墙，把平台切成不同可站立区间；绳索按沿途每层平台连接，绳底高于平台时按跳跃可及范围放宽。目标坐标必须落在平台范围内，`--plan-only` 只输出规划路径不输入；执行失败过的边在本次会话禁用并重新规划，对话窗口打开、身份或地图变化、HP低于安全比例、目标不在平台、平台图不可达或预算耗尽时明确失败，错误信息带地图、坐标、失败阶段和原因，不猜测结果。
 

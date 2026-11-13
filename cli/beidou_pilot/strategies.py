@@ -328,8 +328,11 @@ def _lua_literal(value: JsonValue) -> str:
     )
 
 
-def compile_strategy(source: str, options: JsonObject, scene: JsonObject) -> str:
-    context = _lua_literal({"options": options, "scene": scene})
+def compile_strategy(source: str, options: JsonObject, scene: JsonObject, extra: JsonObject | None = None) -> str:
+    values: JsonObject = {"options": options, "scene": scene}
+    if extra:
+        values.update(extra)
+    context = _lua_literal(values)
     return (
         f"local __beidou_context = {context}\n"
         "local __beidou_state = game.state()\n"
@@ -346,25 +349,30 @@ def compile_strategy(source: str, options: JsonObject, scene: JsonObject) -> str
     )
 
 
+# 内置策略按需拼接的辅助文件；顺序即依赖顺序，_move 依赖 _terrain 的图与 _common 的动作检查。
+_TRAVEL_COMMON = {"move_to.lua", "climb_to.lua", "enter_portal.lua", "walk_to.lua", "navigate.lua"}
+_TRAVEL_TERRAIN = {"walk_to.lua", "navigate.lua"}
+_TRAVEL_MOVE = {"walk_to.lua", "navigate.lua"}
+
+
 def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata | None]:
     shared = Path(__file__).resolve().parents[2] / "shared/scripts"
     directory = shared / "travel"
     resolved = path.resolve()
     try:
         source = path.read_bytes().decode("utf-8")
-        if resolved.parent == directory.resolve() and resolved.name in {
-            "move_to.lua",
-            "climb_to.lua",
-            "enter_portal.lua",
-            "walk_to.lua",
-        }:
-            source = (directory / "_common.lua").read_text(encoding="utf-8") + "\n" + source
-        if (
-            resolved.parent == directory.resolve()
-            and resolved.name == "walk_to.lua"
-            or (resolved.parent == (shared / "combat").resolve() and resolved.name == "hunt.lua")
-        ):
-            source = (directory / "_terrain.lua").read_text(encoding="utf-8") + "\n" + source
+        helpers: list[str] = []
+        if resolved.parent == directory.resolve():
+            if resolved.name in _TRAVEL_COMMON:
+                helpers.append("_common.lua")
+            if resolved.name in _TRAVEL_TERRAIN:
+                helpers.append("_terrain.lua")
+            if resolved.name in _TRAVEL_MOVE:
+                helpers.append("_move.lua")
+        elif resolved.parent == (shared / "combat").resolve() and resolved.name == "hunt.lua":
+            helpers.append("_terrain.lua")
+        if helpers:
+            source = "".join((directory / helper).read_text(encoding="utf-8") + "\n" for helper in helpers) + source
     except (OSError, UnicodeError) as error:
         raise ClientError(
             "invalid_script_file",

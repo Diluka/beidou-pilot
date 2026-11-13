@@ -14,6 +14,8 @@
 | [walk_to.lua](travel/walk_to.lua) | 按静态地形图把角色移动到当前地图的目标坐标：走、跳台、落层、绳底跳抓；竖直墙把平台切成不同区间。 | CLI `move X --to-y Y`；每段执行后重新采样再规划，执行失败的边本次会话禁用；失败信息带地图、坐标、阶段与原因。 |
 | [_route.lua](travel/_route.lua) | 普通 Lua 函数在同一预算内组合已知同层移动、落层和相邻地图门户，按阶段核对身份与到达。 | `script run/start --library travel`；接口见 [Lua API](../../docs/LUA_API.md#可选旅行函数库)。 |
 | [_common.lua](travel/_common.lua) | 旅行脚本共用的身份、场景、生命值检查，以及横向反馈对齐。 | 内部辅助文件，由装载器自动拼接到旅行脚本前。 |
+| [navigate.lua](travel/navigate.lua) | 按 CLI 打包的静态路线逐段换图：场景内寻路到门户、按上进门、核对落点与地图。 | CLI `navigate MAP_ID`；跨图路线由 Python 侧从本地门户资料计算，本策略不选路。 |
+| [_move.lua](travel/_move.lua) | `walk_to` 与 `navigate` 共用的单地图执行器：逐边执行走、跳台、落层、绳梯，失败边禁用并重规划。 | 内部辅助文件，由装载器拼接到两者之前。 |
 | [_terrain.lua](travel/_terrain.lua) | 单地图静态地形图：把 footholds/ropes 构建成平台区间、竖直墙与可执行边（走、跳台、落层、绳梯），并提供最短路径搜索。 | 由装载器拼接给 `walk_to.lua` 与 `combat/hunt.lua` 共用；地形规则只在这里维护。 |
 
 ## 战斗：`combat/`
