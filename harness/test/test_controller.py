@@ -72,8 +72,10 @@ class SessionServer(AppServer):
                 "data": [
                     {
                         "cwd": "/game",
-                        "skills": [{"name": name, "path": GUIDE_PATH if name == GUIDE_NAME else SKILL_PATH,
-                                    "enabled": True} for name in self.skill_names],
+                        "skills": [
+                            {"name": name, "path": GUIDE_PATH if name == GUIDE_NAME else SKILL_PATH, "enabled": True}
+                            for name in self.skill_names
+                        ],
                     }
                 ]
             }

@@ -329,8 +329,10 @@ class Controller:
                                 "input": (
                                     []
                                     if self.read_only
-                                    else [{"type": "skill", "name": SKILL_NAME, "path": SKILL_PATH},
-                                          {"type": "skill", "name": GUIDE_NAME, "path": GUIDE_PATH}]
+                                    else [
+                                        {"type": "skill", "name": SKILL_NAME, "path": SKILL_PATH},
+                                        {"type": "skill", "name": GUIDE_NAME, "path": GUIDE_PATH},
+                                    ]
                                 )
                                 + [{"type": "text", "text": text}],
                             },
