@@ -25,11 +25,22 @@ beidou-pilot --json inspect stage
 
 ## 缺少账号或角色
 
-注册、建角由游戏的首次登录界面完成，CLI 提供 `open` 与 GUI 原语配合该流程。`open` 要求真实已有 CID；全新账号先完成注册与建角，再按已有角色登录。
+`open` 要求真实已有 CID。无头首次登录由宿主工作台启动，账号文件可以暂不包含 CID。声明同意与账号性别须经用户明确授权：
 
-据用户说明，常驻服使用不存在的用户名登录时会自动创建账号；这一行为是服务器的登录注册机制，不是 `open` 的无角色引导能力，本流程尚待实测。通过游戏客户端正常登录时核对注册结果；若用户另指定工具及授权，按该工具的独立能力处理。注册成功、创建角色、取得真实 CID 和客户端入图分别确认。
+```bash
+private/workbenches/workbench /external/workbench login --accept-terms --gender female
+private/workbenches/workbench /external/workbench login
+private/workbenches/workbench /external/workbench character create --name NAME --gender female --job JOB --face FACE --hair HAIR --hair-color COLOR --skin SKIN --top TOP --bottom BOTTOM --shoes SHOES --weapon WEAPON
+private/workbenches/workbench /external/workbench character result REQUEST_ID --instance-id INSTANCE_ID --run-id RUN_ID
+```
 
-没有真实 CID 且没有可接续 GUI 会话时，明确说明缺少无角色引导路径。不要编造启动参数、借用其他角色 CID，或反复延长 `open --timeout` 来掩盖能力缺口。
+各项角色数值按用户实际选择填写；`--hair` 是基础发型，`--hair-color` 是独立必填项，不能省略或并入 `--hair`。宿主 `login` 的选项仅用于新启动，运行中只观察、不重放选项；容器内 `beidou-pilot --json login --timeout N` 只观察，不接收启动选项。建角是独立的单次请求，不自动入图。
+
+保留返回的请求与运行身份：`completed` 给出真实 CID，`rejected` 表示拒绝；`accepted`、`unknown` 不是完成，不重发，使用 `character result` 查询。宿主 `character result` 要求原容器仍运行；原实例退出或身份变化时未终结结果可能无法恢复。容器停止后保留已有结果和身份等证据，人工核验，不保证可通过宿主命令查询。宿主仅在账号文件权限正确、与运行快照一致且 CID 无冲突时绑定；`binding` 失败后依据结果及实际名单人工核对恢复，不重发建角。绑定后账号模式进程不支持同进程选角：先以工作台 `close` 并核对所属容器退出，再 `open` 并确认入图。
+
+已有角色账号若仍未设置性别，安全收紧后不再依据 CID 隐式选择性别；CID 不能代替选择授权。经用户确认后关闭所属实例并核对退出，以宿主 `login --gender male|female` 新启动完成选择并核对名单，再关闭该实例、核对退出，最后用真实已有 CID `open`。此迁移路径尚未真实游戏实测。需要接受声明时也须明确授权。GUI 自动首次登录与建角不支持。
+
+据用户说明，常驻服使用不存在的用户名登录时会自动创建账号；这是服务端机制，本流程尚待实测。注册、建角、CID 绑定和入图分别确认，不借用其他角色 CID。
 
 ## 已有 GUI 会话的首次界面
 
@@ -44,7 +55,7 @@ beidou-pilot --json screenshot
 | --- | --- |
 | 首次声明 | 看当次截图，正文滚到底部后再判断确认按钮；是否接受沿用用户已明确的选择 |
 | 性别选择 | 按已明确的选择操作，再重新观察结果 |
-| 空角色列表 | 当前没有自动建角命令；仅可依据真实 GUI 的正常建角界面，按已明确的角色选择使用现有输入原语 |
+| 空角色列表 | GUI 自动建角不支持；仅可依据真实 GUI 的正常建角界面，按已明确的角色选择使用现有输入原语 |
 | `character_not_unique` | 从实际名单核对账号、世界和 CID；角色归属以名单核对结果为准 |
 | GUI 建角成功 | 从新鲜角色列表取得 CID 并核对名称；后续入图再核对角色、频道、地图、位置与原生身份 |
 

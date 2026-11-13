@@ -46,6 +46,20 @@ def parser() -> Parser:
     def command(name: str, help_text: str, *, allow_abbrev: bool = True) -> argparse.ArgumentParser:
         return sub.add_parser(name, help=help_text, parents=[common], allow_abbrev=allow_abbrev)
 
+    q = command("login", "观察容器已启动的账号登录，不发送凭据或同意")
+    q.add_argument("--timeout", type=float, default=0, help="等待角色列表的秒数，默认只观察一次")
+    q = command("character", "创建角色或查询既有建角请求")
+    actions = q.add_subparsers(dest="character_action", required=True, parser_class=Parser)
+    create = actions.add_parser("create", parents=[common], allow_abbrev=False)
+    create.add_argument("--name", required=True)
+    for option in ("job", "face", "hair", "hair-color", "skin", "top", "bottom", "shoes", "weapon"):
+        create.add_argument("--" + option, type=int, required=True)
+    create.add_argument("--gender", choices=["male", "female"], required=True)
+    create.add_argument("--timeout", type=float, default=3)
+    result = actions.add_parser("result", parents=[common])
+    result.add_argument("request_id")
+    result.add_argument("--run-id", required=True, help="提交时的原运行身份")
+    result.add_argument("--instance-id", required=True, help="提交时的原生实例身份")
     command("status", "当前客户端阶段与角色，不启动、不输入")
     command("instances", "列出本目录已登记的无头实例，不启动客户端")
     command("capabilities", "读取原生动作能力与静态观察支持范围，不启动客户端")
@@ -271,6 +285,9 @@ def resolve_item(backend: Backend, selector: str) -> int:
 
 def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     cmd = args.command
+    if cmd in {"login", "character"}:
+        from .first_character import execute
+        return execute(backend, args)
     if backend.name == "headless" and cmd not in {
         "status",
         "instances",
@@ -908,6 +925,8 @@ def main(argv: list[str] | None = None) -> int:
             args.command
             in (
                 "status",
+                "login",
+                "character",
                 "instances",
                 "capabilities",
                 "doctor",

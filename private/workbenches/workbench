@@ -10,6 +10,8 @@ usage() {
   build            从 main 或 workbench.json.ref 构建/复用镜像
   plan             只读核对服务器，不构建或启动
   open             创建实例并确认入图；已有实例沿用原版本
+  login            无 CID 账号登录；GUI 仅启动诊断，须先认领并核验账号在线状态
+  character create 显式提交完整建角参数至运行中的实例
   status           查询本工作台，省略命令时默认执行
   close            正常关闭并核对所属容器退出
   resources-check  用无头镜像离线检查原版 Data/IMG，不登录
@@ -85,6 +87,20 @@ if [ "$command" = build ]; then
             "{ok:false,command:\"build\",error:{code:\$code,message:\$message,stage:\$stage,exit_code:\$result,
             duration_ms:((\$ended-\$started)*1000|floor)},data:{preparation:\$preparation,current_instance:\$current}}"
     fi' EXIT
+fi
+accept_terms=0
+female=
+if [ "$command" = login ]; then
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --accept-terms) accept_terms=1; shift ;;
+            --gender)
+                [ "$#" -ge 2 ] || fail usage '--gender 需要 male 或 female。'
+                case "$2" in male) female=0 ;; female) female=1 ;; *) fail usage '--gender 需要 male 或 female。' ;; esac
+                shift 2 ;;
+            *) fail usage 'login 仅接受 --accept-terms 和 --gender male|female。' ;;
+        esac
+    done
 fi
 case "$command" in
     --help|-h) usage; exit 0 ;;
@@ -247,7 +263,43 @@ case "$command" in
         exec_cli status "$@"
         exit $?
         ;;
-    build|plan|resources-check|open) ;;
+    build|plan|resources-check|open|login) ;;
+    character)
+        if ! "$running"; then
+            if [ "${1-}" = result ]; then
+                fail client_not_running '原容器已停止，不能查询或绑定结果；保留证据并人工核验，勿重发建角。'
+            fi
+            fail client_not_running '该工作台实例没有运行中的客户端。'
+        fi
+        result_code=0
+        result=$(exec_cli character "$@") || result_code=$?
+        if [ "$result_code" -eq 0 ] && [ "${1-}" = create ] || [ "$result_code" -eq 0 ] && [ "${1-}" = result ]; then
+            if jq -e '.ok == true and .data.status == "completed"' <<<"$result" >/dev/null; then
+                root=$(jq -r '.Config.Labels["beidou.client.root"]' <<<"$inspect")
+                cid=$(jq -er '.data.character_id | select(type == "number" and floor == . and . > 0 and . < 2147483648)' <<<"$result") || fail character_result_invalid '建角完成结果缺少有效角色 ID。'
+                if [ ! -f "$record" ] || [ "$(jq -r .run_id "$record")" != "$(jq -r .data.run_id <<<"$result")" ] ||
+                   [ ! -f "$workbench/account.json" ] || [ "$(stat -Lc %a "$workbench/account.json")" != 600 ] ||
+                   [ ! -f "$root/account.json" ] || [ "$(stat -Lc %a "$root/account.json")" != 600 ] ||
+                   ! jq -e -s --argjson cid "$cid" '(.[1] | has("character_id") | not) and
+                       (.[0] | (has("character_id") | not) or .character_id == $cid) and
+                       (.[0] | del(.character_id)) == .[1]' "$workbench/account.json" "$root/account.json" >/dev/null; then
+                    jq -c '. + {binding:{ok:false,code:"account_binding_conflict",message:"建角已完成，但账号文件或运行身份已变化；未修改账号文件，请根据结果身份和角色 ID 人工核对恢复，勿重发建角。"}}' <<<"$result"
+                    exit 2
+                fi
+                if ! jq -e 'has("character_id")' "$workbench/account.json" >/dev/null; then
+                    temporary=$(mktemp "$workbench/.account.json.XXXXXXXX") || temporary=
+                    if [ -z "$temporary" ] || ! jq --argjson cid "$cid" '. + {character_id:$cid}' "$workbench/account.json" >"$temporary" ||
+                       ! mv -f -- "$temporary" "$workbench/account.json"; then
+                        jq -c '. + {binding:{ok:false,code:"account_binding_failed",message:"建角已完成，但账号绑定失败；请依据结果人工恢复，勿重发建角。"}}' <<<"$result"
+                        exit 2
+                    fi
+                fi
+                result=$(jq -c '. + {binding:{ok:true}}' <<<"$result")
+            fi
+        fi
+        printf '%s\n' "$result"
+        exit "$result_code"
+        ;;
     ai)
         "$running" || fail client_not_running '该工作台实例没有运行中的客户端。'
         docker image inspect "$(jq -r .Image <<<"$inspect")" | jq -e '.[0].Config.Labels["beidou.harness"] == "codex"' >/dev/null ||
@@ -293,6 +345,15 @@ fi
 backend=$(jq -r '.backend // "headless"' <<<"$settings")
 source_ref=$(jq -r '.ref // "main"' <<<"$settings")
 timeout=$(jq -r '.timeout // 90' <<<"$settings")
+if [ "$command" = login ] && "$running"; then
+    [ "$accept_terms" = 0 ] && [ -z "$female" ] || fail login_options_require_start '登录选项仅用于新启动；运行中实例不会重新应用。'
+    if [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = beidou ]; then
+        fail unsupported_capability 'GUI 容器保留现场；账号自动登录和建角尚不支持，未确认登录。'
+    fi
+    wait_runtime
+    exec_cli login --timeout "$timeout"
+    exit $?
+fi
 bridge=$(jq -r '.bridge_artifact // empty' <<<"$settings")
 harness=$(jq -r '.harness // false' <<<"$settings")
 model_proxy=$(jq -r '.model_proxy // empty' <<<"$settings")
@@ -305,6 +366,9 @@ if [ -n "$model_proxy" ]; then
 fi
 if [ -n "$bridge" ]; then
     case "$bridge" in /*) ;; *) bridge="$workbench/$bridge" ;; esac
+fi
+if [ "$command" = login ] && [ "$backend" = beidou ]; then
+    [ "$accept_terms" = 0 ] && [ -z "$female" ] || fail unsupported_capability 'GUI 尚不支持自动处理同意或性别选项，未启动容器。'
 fi
 if [ "$command" = resources-check ]; then backend=headless; harness=false; fi
 account="$workbench/account.json"
@@ -531,7 +595,13 @@ locate
 if "$running"; then
     flock -u 8
     wait_runtime
-    exec_open
+    if [ "$command" = login ]; then
+        [ "$accept_terms" = 0 ] && [ -z "$female" ] || fail login_options_require_start '登录选项仅用于新启动；运行中实例不会重新应用。'
+        if [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = beidou ]; then
+            fail unsupported_capability 'GUI 容器保留现场；账号自动登录和建角尚不支持，未确认登录。'
+        fi
+        exec_cli login --timeout "$timeout"
+    else exec_open; fi
     exit $?
 fi
 if [ -n "$id" ]; then
@@ -544,17 +614,22 @@ run_root="$state/$run_id"
 container_root="/work/runtime/$instance/$run_id"
 mkdir -p "$run_root"
 install -m 600 "$account" "$run_root/account.json"
+profile_args=()
+if [ "$command" = login ]; then profile_args=(--mode account); fi
 identity=$(docker run --rm --network none --user "$(id -u):$(id -g)" \
     --mount "type=bind,src=$workbench,dst=/work" --entrypoint python3 "$image" \
-    -m beidou_pilot.profile "$container_root/account.json")
-character_id=$(jq -er .character_id <<<"$identity")
+    -m beidou_pilot.profile "$container_root/account.json" "${profile_args[@]}")
+character_id=
+if [ "$command" = open ]; then character_id=$(jq -er .character_id <<<"$identity"); fi
 world=$(jq -er .world <<<"$identity")
 channel=$(jq -er .channel <<<"$identity")
 mkdir -p "$main_root/private/workbenches"
 exec 7>"$main_root/private/workbenches/.start.lock"
 flock 7
-occupied=$(docker ps -q --filter "label=beidou.target.id=$server_id" --filter "label=beidou.character.id=$character_id" --filter "label=beidou.world=$world")
-[ -z "$occupied" ] || fail character_already_controlled '该目标的角色已由另一个客户端实例控制。'
+if [ "$command" = open ]; then
+    occupied=$(docker ps -q --filter "label=beidou.target.id=$server_id" --filter "label=beidou.character.id=$character_id" --filter "label=beidou.world=$world")
+    [ -z "$occupied" ] || fail character_already_controlled '该目标的角色已由另一个客户端实例控制。'
+fi
 if [ -f "$record" ]; then
     previous_root="$state/$(jq -r .run_id "$record")"
     mkdir -p "$previous_root"
@@ -579,12 +654,18 @@ if [ "$backend" = headless ]; then
         --cpus 2 --memory 1g --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges \
         --user "$(id -u):$(id -g)" --label beidou.task=maple-headless-maintained \
         --label "beidou.workbench=$workbench" --label "beidou.client.root=$run_root" --label "beidou.client.instance=$instance" \
-        --label "beidou.target.id=$server_id" --label "beidou.character.id=$character_id" --label "beidou.world=$world" \
+        --label "beidou.target.id=$server_id" --label "beidou.world=$world" \
         --env "CLIENT_IMAGE_ID=$image" --env "RUN_ID=$run_id" --env "MAPLE_INSTANCE=$instance" \
         --env "CLIENT_ROOT=$container_root" --env "MAPLE_RESOURCES_CONFIG=$container_root/config/resources.json" \
         --env "TARGET_IP=$target_ip" --env "TARGET_CONTAINER_ID=$server_id" \
         --env "BEIDOU_WORKBENCH_ID=$workbench_id" \
         --mount "type=bind,src=$workbench,dst=/work" --mount "type=bind,src=$data,dst=/data,readonly"
+    if [ "$command" = login ]; then
+        set -- "$@" --env MAPLE_LOGIN_MODE=account --env "MAPLE_ACCEPT_TERMS=$accept_terms"
+        if [ -n "$female" ]; then set -- "$@" --env "MAPLE_FEMALE=$female"; fi
+    else
+        set -- "$@" --label "beidou.character.id=$character_id"
+    fi
     if "$harness"; then
         set -- "$@" --env "HTTP_PROXY=$model_proxy" --env "HTTPS_PROXY=$model_proxy" \
             --env "NO_PROXY=localhost,127.0.0.1,$target_ip"
@@ -595,6 +676,8 @@ else
     export CLIENT_ROOT="$run_root" CLIENT_RUNTIME_ROOT="$container_root"
     export BEIDOU_CLIENT_DIR="$gui" GAME_DATA_DIR="$data" TARGET_IP="$target_ip" TARGET_NETWORK="$network"
     export TARGET_CONTAINER_ID="$server_id" RUN_ID="$run_id" MAPLE_INSTANCE="$instance" CHARACTER_ID="$character_id" WORLD_ID="$world"
+    export MAPLE_LOGIN_MODE=character
+    if [ "$command" = login ]; then export MAPLE_LOGIN_MODE=account; fi
     export RENDER_GID="$(stat -c %g /dev/dri/renderD128)"
     export BEIDOU_WORKBENCH_ID="$workbench_id"
     export MODEL_PROXY="$model_proxy" MODEL_PROXY_IP="$model_proxy_ip" MODEL_PROXY_PORT="$model_proxy_port"
@@ -612,4 +695,7 @@ flock -u 7
 flock -u 8
 locate
 wait_runtime
-exec_open
+if [ "$command" = login ] && [ "$backend" = beidou ]; then
+    fail unsupported_capability 'GUI 容器已启动并保留现场；账号自动登录和建角尚不支持，未确认登录。'
+fi
+if [ "$command" = login ]; then exec_cli login --timeout "$timeout"; else exec_open; fi

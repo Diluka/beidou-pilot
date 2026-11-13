@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "HeadlessState.h"
 #include "LoginState.h"
+#include "LoginBridge.h"
 #include "SharedLuaAdapter.h"
 #include <nlohmann/json.hpp>
 #include "Configuration.h"
@@ -30,7 +31,10 @@ namespace
     Json diagnostics(std::uint64_t tick)
     {
         const auto& login = ms::login_state();
-        return {{"tick", tick}, {"phase", login.phase},
+        Json characters = Json::array();
+        for (const auto& character : login.characters)
+            characters.push_back({{"id", character.id}, {"name", character.stats.name}});
+        return {{"tick", tick}, {"run_id", login.run_id}, {"phase", login.phase}, {"characters", login.characters_known ? characters : Json(nullptr)},
             {"connected", ms::Session::get().is_connected()},
             {"rx_packets", login.rx_packets}, {"tx_packets", login.tx_packets},
             {"last_opcode", login.last_opcode}, {"packet_parse_errors", login.packet_parse_errors},
@@ -80,13 +84,20 @@ int main(int argc, char** argv)
         char volume[] = "00000004";
         ms::Configuration::get().set_macs(macs);
         ms::Configuration::get().set_hwid(hwid, volume);
-        ms::configure_login(config.at("character_id").get<std::int32_t>(), config.value("world", 0), config.value("channel", 0));
+        const auto cid = config.value("character_id", 0);
+        if (config.contains("character_id") && cid <= 0) throw std::invalid_argument("character_id must be positive");
+        ms::configure_login(cid, config.value("world", 0), config.value("channel", 0));
+        ms::login_state().run_id = config.value("run_id", std::string{});
+        ms::login_state().accept_tos = config.value("accept_tos", false);
+        if (config.contains("account_female")) ms::login_state().account_female = config.at("account_female").get<bool>();
         if (!ms::Session::get().init(config.at("server_host").get<std::string>().c_str(), std::to_string(config.value("server_port", 8484)).c_str()))
             throw std::runtime_error("login connection failed");
         ms::LoginPacket(config.at("username").get<std::string>(), config.at("password").get<std::string>()).dispatch();
         std::signal(SIGINT, [](int signal) { interrupted = signal; });
         std::signal(SIGTERM, [](int signal) { interrupted = signal; });
         SharedLuaAdapter bridge(bridgeDirectory, config.value("run_id", std::string{}));
+        LoginBridge loginBridge(bridgeDirectory, bridge.Observe().instanceId, config.value("run_id", std::string{}));
+        auto next_login_bridge = Clock::now();
         auto next_tick = Clock::now();
         auto next_diagnostics = next_tick;
         std::uint64_t tick = 0;
@@ -98,8 +109,17 @@ int main(int argc, char** argv)
             const auto now = Clock::now();
             ms::Session::get().read();
             if (ms::headless_state().in_game) ms::login_state().phase = "in_game";
+            if (now >= next_login_bridge) {
+                loginBridge.Tick();
+                next_login_bridge = now + std::chrono::milliseconds(100);
+            }
             if (!ms::Session::get().is_connected())
             {
+                if (!ms::login_state().pending_request_id.empty())
+                    ms::stop_pending_creation("disconnected");
+                if (ms::login_state().error.empty()) ms::login_state().error = "disconnected";
+                ms::login_state().phase = "failed";
+                loginBridge.Tick();
                 exit_reason = "disconnected";
                 exit_code = 2;
                 emit({{"event", "disconnected"}, {"diagnostics", diagnostics(tick)}});
@@ -124,10 +144,18 @@ int main(int argc, char** argv)
                 emit({{"event", "runtime"}, {"diagnostics", diagnostics(tick)}});
                 next_diagnostics = now + std::chrono::seconds(10);
             }
-            if (!ms::login_state().error.empty()) throw std::runtime_error(ms::login_state().error);
+            if (!ms::login_state().error.empty()) {
+                if (!ms::login_state().pending_request_id.empty()) ms::stop_pending_creation("client_failed");
+                loginBridge.Tick();
+                throw std::runtime_error(ms::login_state().error);
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         if (exit_reason.empty()) exit_reason = interrupted == SIGINT ? "sigint" : "sigterm";
+        if (!ms::login_state().pending_request_id.empty()) {
+            ms::stop_pending_creation("client_stopped");
+            loginBridge.Tick();
+        }
         bridge.Shutdown();
         ms::Stage::get().stop_actions();
         emit({{"event", "stopping"}, {"reason", exit_reason}, {"exit_code", exit_code}, {"diagnostics", diagnostics(tick)}});
