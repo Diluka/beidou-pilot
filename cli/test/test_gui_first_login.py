@@ -43,7 +43,10 @@ class GuiFirstLoginTests(unittest.TestCase):
                     "login_edit_focus": "account",
                     "account_empty": True,
                     "password_empty": True,
-                }
+                    "width": 330, "height": 180,
+                },
+                {"address": "manager", "vtables": ["0xb3f13c", "0xb3f0f0", "0xb3f0ec"], "width": 1280, "height": 720},
+                {"address": "sidebar", "vtables": ["0xaf7168", "0xaf711c", "0xaf7118"], "width": 125, "height": 352},
             ],
         }
         self.dialog = {
@@ -184,6 +187,23 @@ class GuiFirstLoginTests(unittest.TestCase):
         with self.assertRaises(ClientError) as error:
             self.submit()
         self.assertEqual("gui_login_already_attempted", error.exception.code)
+
+    def test_unknown_window_after_username_stops_before_password(self) -> None:
+        def text(*args, **kwargs):
+            if kwargs.get("payload") == "example":
+                self.stage["windows"][0]["account_empty"] = False
+                self.stage["windows"].append({"address": "modal", "vtables": ["unknown"], "width": 100, "height": 100})
+        self.backend.text.side_effect = text
+        with self.assertRaises(ClientError):
+            self.submit()
+        self.assertNotIn("secret", [call.kwargs.get("payload") for call in self.backend.text.call_args_list])
+        self.assertTrue((Path(self.temp.name) / "gui-login-submitted").exists())
+
+    def test_unknown_window_initially_never_inputs(self) -> None:
+        self.stage["windows"].append({"address": "modal", "vtables": ["unknown"], "width": 100, "height": 100})
+        with self.assertRaises(ClientError):
+            self.submit()
+        self.backend.text.assert_not_called()
 
     def test_uncertain_form_never_sends_input(self) -> None:
         self.dialog["focused_window"]["vtables"] = ["unknown"]
