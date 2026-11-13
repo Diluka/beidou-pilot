@@ -326,7 +326,7 @@ Value Stage() {
                     output["character"] = Value::Object({{"id", Read<std::uint32_t>(stats)}, {"name", FixedName(stats)}});
             }
             try {
-                output["windows"] = StageWindows();
+                output["windows"] = StageWindows(table == 0x00AF6B24 ? stage : 0);
             } catch (const ReadError& error) {
                 output["unavailable"].Add(std::string("Window observation unavailable: ") + error.what());
             }

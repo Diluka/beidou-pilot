@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "stdafx.h"
 #include "NativeObservation.h"
+#include "LoginPageObservation.h"
 
 #include <algorithm>
 #include <array>
@@ -533,7 +534,7 @@ Value Window(std::uintptr_t address) { return CaptureWindow(static_cast<Address>
 
 // Raw pre-game window snapshot. Unlike Ui(), this does not require a camera
 // or imply that a projected position is safe to click.
-Value StageWindows() {
+Value StageWindows(std::uintptr_t loginStage) {
     const auto camera = Camera();
     const auto before = Read<std::array<Address, 3>>(0x00BF1650);
     if (before[0] > 256) throw ReadError("Active CWnd count exceeds the supported range");
@@ -556,8 +557,37 @@ Value StageWindows() {
                 {"position_source", button.source.empty() ? Value() : Value(button.source)}}));
         }
         const auto name = WindowName(tables[0]);
+        const auto candidate = ObservedLoginPage(loginStage, tables, At<int>(header, 0x24), At<int>(header, 0x28));
+        Value rawGenderSelection;
+        if (candidate != nullptr && std::strcmp(candidate, "gender") == 0) {
+            try {
+                const auto first = Read<std::uint8_t>(address + 0x15C);
+                const auto after = Bytes(address, 0x64);
+                const auto second = Read<std::uint8_t>(address + 0x15C);
+                if (StableRawGenderSelection(first, second, header == after)) rawGenderSelection = first;
+            } catch (const ReadError&) {
+                // The optional field remains unknown; preserve the rest of the window snapshot.
+            }
+        }
+        Value rawAppearance;
+        if (loginStage != 0 && tables == std::array<Address, 3>{0x00AF777C, 0x00AF7730, 0x00AF772C} &&
+            At<int>(header, 0x24) == 225 && At<int>(header, 0x28) == 377) {
+            try {
+                std::array<std::uint32_t, 8> values{};
+                if (RawAppearanceSnapshot(address, static_cast<Address>(loginStage),
+                    [](Address at) { return Read<std::uint32_t>(at); },
+                    [](Address at) { return Read<std::uint8_t>(at); }, values)) {
+                    rawAppearance = Value::Array();
+                    for (const auto value : values) rawAppearance.Add(value);
+                }
+            } catch (const ReadError&) {
+                // Preserve the window when optional appearance sampling is unavailable.
+            }
+        }
         windows.Add(Value::Object({{"address", Hex(address)}, {"vtables", Tables(tables)},
             {"type_name", name == nullptr ? Value() : Value(name)},
+            {"login_page_candidate", candidate == nullptr ? Value() : Value(candidate)},
+            {"raw_gender_selection", rawGenderSelection}, {"raw_appearance_candidates", rawAppearance},
             {"width", At<int>(header, 0x24)}, {"height", At<int>(header, 0x28)},
             {"buttons", buttons}}));
         const auto next = Read<Address>(node - 12);

@@ -102,8 +102,20 @@ class NativeObservationContract(unittest.TestCase):
                     "address": "0x1234",
                     "vtables": ["0x5678"],
                     "type_name": None,
+                    "login_page_candidate": "gender",
+                    "raw_gender_selection": 0,
+                    "raw_appearance_candidates": [1, 2, 3, 4, 5, 6, 7, 8],
                     "buttons": [{"control_id": 3, "layout_x": None, "layout_y": None, "enabled": None}],
-                }
+                },
+                {
+                    "address": "0x5678",
+                    "vtables": [],
+                    "type_name": None,
+                    "login_page_candidate": None,
+                    "raw_gender_selection": None,
+                    "raw_appearance_candidates": None,
+                    "buttons": [],
+                },
             ],
             "unavailable": [],
         }
