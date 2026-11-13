@@ -54,6 +54,41 @@ private:
     std::vector<std::pair<std::string, Value>> object;
 };
 
+// Dynamic velocity and model-derived mobility remain distinct observations.
+// Coordinates are map pixels: right/down positive; velocity is pixels/second.
+struct MotionVector {
+    enum class Source { Unknown, Native, NativeUpdateDelta };
+    Source source = Source::Unknown;
+    double x = 0;
+    double y = 0;
+    double intervalMs = 0; // Known only for an actual native-update displacement sample.
+    Value Document() const;
+};
+
+// Shared observation state for every movable entity, including the local player.
+// Native adapters own sampling; an absent velocity is unknown, never stationary.
+// Kept as a value base: observations are not heap-owned through base pointers.
+struct MovableObject {
+    enum class PositionSource { Native, NativeDropDestination };
+    bool positionKnown = false;
+    PositionSource positionSource = PositionSource::Native;
+    double x = 0;
+    double y = 0;
+    MotionVector velocity;
+    void SetPosition(double currentX, double currentY);
+    Value MotionDocument() const;
+};
+
+struct MovementReference {
+    bool known = false;
+    std::string model;
+    int effectiveSpeed = 0;
+    int effectiveJump = 0;
+    double maxSpeed = 0;
+    double maxJumpHeight = 0;
+    Value Document() const;
+};
+
 struct Observation {
     std::string status = "ok";
     Value data;

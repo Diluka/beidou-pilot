@@ -17,6 +17,30 @@ namespace MapleControl {
 namespace {
 using Clock = std::chrono::steady_clock;
 
+struct Timing {
+    std::uint64_t samples = 0;
+    double totalUs = 0, maxUs = 0;
+
+    void Record(double us) {
+        ++samples;
+        totalUs += us;
+        maxUs = (std::max)(maxUs, us);
+    }
+
+    Value Status() const { return Value::Object({{"samples", samples}, {"total_us", totalUs}, {"max_us", maxUs}}); }
+};
+
+// Inclusive wall time, including early returns and exception unwinding. Nested
+// phase timings are subsets of Tick, not additional costs to sum with it.
+struct ScopedTiming {
+    explicit ScopedTiming(Timing& target) : timing(target), started(Clock::now()) {}
+
+    ~ScopedTiming() { timing.Record(std::chrono::duration<double, std::micro>(Clock::now() - started).count()); }
+
+    Timing& timing;
+    Clock::time_point started;
+};
+
 std::string Trim(const std::string& text) {
     const auto first = text.find_first_not_of(" \t\r\n\f\v");
     if (first == std::string::npos) return {};
@@ -43,7 +67,7 @@ bool SameAction(const Action& left, const Action& right) {
 }
 
 bool PausesMovement(const Action& action) {
-    return action.kind != ActionKind::Attack;
+    return action.kind != ActionKind::Attack && action.kind != ActionKind::Jump;
 }
 
 void PushValue(lua_State* lua, const Value& value) {
@@ -201,6 +225,13 @@ bool ParseTickConfig(const std::string& source, TickConfig& config, std::string&
                 error = "invalid @mode: " + value;
                 return false;
             }
+        } else if (key == "@tick.gear") {
+            if (value.size() != 1 || value[0] < '1' || value[0] > '4') {
+                error = "@tick.gear must be 1, 2, 3 or 4";
+                return false;
+            }
+            config.gear = static_cast<TickGear>(value[0] - '0');
+            hasTick = true;
         } else if (key == "@tick.budget_ms") {
             double number = 0, fraction = 0.1;
             bool dot = false, digit = false, valid = !value.empty();
@@ -279,7 +310,8 @@ struct TickRuntime::Impl {
         std::string instanceId;
         std::uint32_t actorId = 0;
         bool actorKnown = false;
-        Clock::time_point deadline{}, started{}, previous{};
+        Clock::time_point deadline{}, started{}, previous{}, nextDue{};
+        Clock::duration period{};
         bool limited = false, invoked = false, overran = false, previousOverrun = false, directionFence = false;
         bool draining = false;
         std::uint64_t index = 0, overruns = 0;
@@ -289,6 +321,10 @@ struct TickRuntime::Impl {
         std::size_t logBytes = 0;
 
         bool Active() const { return status == "running" && finalStatus.empty(); }
+
+        bool Due(Clock::time_point now) const {
+            return Active() && (!invoked || config.gear == TickGear::Native || now >= nextDue);
+        }
     };
 
     struct Draft {
@@ -300,9 +336,10 @@ struct TickRuntime::Impl {
         Session* actionOwner = nullptr;
     };
 
-    explicit Impl(TickAdapter& native) : adapter(native) {}
+    Impl(TickAdapter& native, Now scheduleNow) : adapter(native), now(std::move(scheduleNow)) {}
 
     TickAdapter& adapter;
+    Now now;
     std::vector<std::unique_ptr<Session>> sessions;
     State observed;
     bool sampled = false;
@@ -319,6 +356,19 @@ struct TickRuntime::Impl {
     bool actionActive = false, pendingActive = false, releasing = false, updating = false;
     ActionResult result;
     Draft draft;
+    std::uint64_t hostTickCalls = 0, activeFrames = 0, reentrantTickCalls = 0;
+    Timing tickTiming, observeTiming, refreshCoreTiming, luaTiming;
+
+    Value ProfileValue() const {
+        return Value::Object({{"scope", "runtime_lifetime"},
+                              {"host_tick_calls", hostTickCalls},
+                              {"active_frames", activeFrames},
+                              {"reentrant_tick_calls", reentrantTickCalls},
+                              {"tick", tickTiming.Status()},
+                              {"observe", observeTiming.Status()},
+                              {"refresh_core", refreshCoreTiming.Status()},
+                              {"lua", luaTiming.Status()}});
+    }
 
     // Native I/O may pump a host frame. Defer cancellation until no Lua or
     // native submission is on the stack, and never recursively invoke main.
@@ -516,6 +566,11 @@ struct TickRuntime::Impl {
                     value[shortNames[index]] = observed.character.values[index];
                 }
             }
+            Merge(value, observed.character.MotionDocument());
+            value["movement"] = observed.character.movement.Document();
+            if (observed.characterUpdatesKnown) value["native_updates"] = observed.characterUpdates;
+            SetFact(value, "on_ground", observed.onGround);
+            SetFact(value, "attacking", observed.attacking);
         } else if (name == "world") {
             value["status"] = "ok";
             value["instance_id"] = observed.instanceId;
@@ -537,10 +592,9 @@ struct TickRuntime::Impl {
             if (observed.monstersKnown) {
                 value["monsters"] = Value::Array();
                 for (const auto& monster : observed.monsters) {
-                    Value item = Value::Object({{"object_id", monster.objectId},
-                                                {"x", monster.x},
-                                                {"y", monster.y},
-                                                {"active", monster.active}});
+                    auto item = monster.MotionDocument();
+                    item["object_id"] = monster.objectId;
+                    item["active"] = monster.active;
                     if (monster.templateKnown) item["template_id"] = monster.templateId;
                     if (!monster.name.empty()) item["name"] = monster.name;
                     if (monster.hpSequence != 0) {
@@ -554,7 +608,8 @@ struct TickRuntime::Impl {
             if (observed.dropsKnown) {
                 value["drops"] = Value::Array();
                 for (const auto& drop : observed.drops) {
-                    Value item = Value::Object({{"object_id", drop.objectId}, {"x", drop.x}, {"y", drop.y}});
+                    auto item = drop.MotionDocument();
+                    item["object_id"] = drop.objectId;
                     if (drop.itemKnown) item["item_id"] = drop.itemId;
                     if (drop.moneyKnown) item["money"] = drop.money;
                     SetFact(item, "landed", drop.landed);
@@ -564,7 +619,8 @@ struct TickRuntime::Impl {
             if (observed.playersKnown) {
                 value["players"] = Value::Array();
                 for (const auto& player : observed.players) {
-                    Value item = Value::Object({{"reference", player.reference}, {"x", player.x}, {"y", player.y}});
+                    auto item = player.MotionDocument();
+                    item["reference"] = player.reference;
                     if (player.characterIdKnown) item["character_id"] = player.characterId;
                     if (!player.name.empty()) item["name"] = player.name;
                     if (player.levelKnown) item["level"] = player.level;
@@ -573,7 +629,28 @@ struct TickRuntime::Impl {
                 }
                 SetFact(value, "players_complete", observed.playersComplete);
             }
-            if (observed.monstersKnown || observed.playersKnown || observed.dropsKnown) value["status"] = "ok";
+            // Native NPC rows also carry interaction references and backend facts.
+            // Both adapters serialize their typed movable objects here; preserve
+            // those complete rows, using the snapshot only as a native-domain fallback.
+            if (observed.npcsKnown && value["npcs"].Type() != Value::Kind::Array) {
+                value["npcs"] = Value::Array();
+                for (const auto& npc : observed.npcs) {
+                    auto item = npc.MotionDocument();
+                    item["object_id"] = npc.objectId;
+                    item["template_id"] = npc.templateId;
+                    if (!npc.name.empty()) item["name"] = npc.name;
+                    value["npcs"].Add(item);
+                }
+            }
+            if (observed.projectilesKnown) {
+                value["projectiles"] = Value::Array();
+                for (const auto& projectile : observed.projectiles)
+                    value["projectiles"].Add(projectile.MotionDocument());
+                SetFact(value, "projectiles_complete", observed.projectilesComplete);
+            }
+            if (observed.monstersKnown || observed.playersKnown || observed.dropsKnown || observed.npcsKnown
+                || observed.projectilesKnown)
+                value["status"] = "ok";
         }
         return value;
     }
@@ -916,6 +993,7 @@ struct TickRuntime::Impl {
                                                          {"reason", ""}})},
                               {"control_released", !owned},
                               {"tick", Value::Object({{"index", session.index},
+                                                      {"gear", static_cast<int>(session.config.gear)},
                                                       {"time", session.time},
                                                       {"delta", session.delta},
                                                       {"scene_generation", session.generation},
@@ -923,12 +1001,13 @@ struct TickRuntime::Impl {
                                                       {"overruns", session.overruns},
                                                       {"budget_ms", session.config.budgetMs},
                                                       {"overrun_policy", session.config.skipOverrun ? "skip" : "abort"},
-                                                      {"abort_commit", session.config.abortCommit}})},
+                                                      {"abort_commit", session.config.abortCommit},
+                                                      {"profile", ProfileValue()}})},
                               {"player", Player()}});
     }
 };
 
-TickRuntime::TickRuntime(TickAdapter& adapter) : impl(new Impl(adapter)) {}
+TickRuntime::TickRuntime(TickAdapter& adapter, Now now) : impl(new Impl(adapter, std::move(now))) {}
 
 TickRuntime::~TickRuntime() {
     CancelAll("runtime_closed");
@@ -984,7 +1063,12 @@ bool TickRuntime::Start(const std::string& scriptId, const std::string& source, 
     session.actorKnown = runtime.observed.characterKnown;
     session.generation = runtime.observed.sceneGeneration;
     session.limited = limitMs != 0;
-    if (session.limited) session.deadline = Clock::now() + std::chrono::milliseconds(limitMs);
+    if (session.limited) session.deadline = runtime.now() + std::chrono::milliseconds(limitMs);
+    if (session.config.gear != TickGear::Native) {
+        static const int rates[]{10, 20, 30};
+        session.period = std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(1.0 / rates[static_cast<int>(session.config.gear) - 1]));
+    }
     session.lua = luaL_newstate();
     if (session.lua == nullptr) {
         error = "lua_state_unavailable";
@@ -1023,15 +1107,25 @@ bool TickRuntime::Start(const std::string& scriptId, const std::string& source, 
 
 void TickRuntime::Tick(bool sceneChanged) {
     auto& runtime = *impl;
-    if (runtime.updating || !Running()) return;
+    ScopedTiming tickTiming(runtime.tickTiming);
+    ++runtime.hostTickCalls;
+    if (runtime.updating) {
+        ++runtime.reentrantTickCalls;
+        return;
+    }
+    if (!Running()) return;
+    ++runtime.activeFrames;
     Impl::UpdateScope scope(runtime);
-    runtime.observed = runtime.adapter.Observe();
+    {
+        ScopedTiming observeTiming(runtime.observeTiming);
+        runtime.observed = runtime.adapter.Observe();
+    }
     const bool transition = sceneChanged || !runtime.observed.ready
                             || (runtime.sampled && runtime.lastGeneration != runtime.observed.sceneGeneration);
     runtime.sampled = true;
     runtime.lastGeneration = runtime.observed.sceneGeneration;
     runtime.Poll();
-    const auto now = Clock::now();
+    const auto now = runtime.now();
     // A scene-transition frame still handles cancellation, deadlines and native
     // completion; only Lua invocation is deferred until the next stable frame.
     for (auto& session : runtime.sessions) {
@@ -1075,21 +1169,30 @@ void TickRuntime::Tick(bool sceneChanged) {
 
     std::vector<Ending> endings;
     if (!transition) {
-        runtime.RefreshCore();
+        const bool hasDue = std::any_of(runtime.sessions.begin(), runtime.sessions.end(),
+                                        [now](const auto& session) { return session->Due(now); });
+        if (hasDue) {
+            ScopedTiming refreshCoreTiming(runtime.refreshCoreTiming);
+            runtime.RefreshCore();
+        }
         for (auto& owned : runtime.sessions) {
             auto& session = *owned;
-            if (!session.Active()) continue;
+            // Keep the due set fixed at frame start, even if another main is slow.
+            if (!session.Due(now)) continue;
             runtime.ClearDomains(session);
-            session.delta = session.invoked ? std::chrono::duration<double>(now - session.previous).count() : 0;
-            session.previous = now;
+            const auto callAt = runtime.now();
+            if (!session.invoked) session.nextDue = callAt;
+            session.delta = session.invoked ? std::chrono::duration<double>(callAt - session.previous).count() : 0;
+            session.previous = callAt;
             session.invoked = true;
-            session.time = std::chrono::duration<double>(now.time_since_epoch()).count();
+            session.time = std::chrono::duration<double>(callAt.time_since_epoch()).count();
             session.generation = runtime.observed.sceneGeneration;
             ++session.index;
             auto* lua = session.lua;
             lua_rawgeti(lua, LUA_REGISTRYINDEX, session.context);
             const int backing = lua_absindex(lua, -1);
             PushValue(lua, Value::Object({{"index", session.index},
+                                          {"gear", static_cast<int>(session.config.gear)},
                                           {"time", session.time},
                                           {"delta", session.delta},
                                           {"scene_generation", session.generation},
@@ -1104,6 +1207,7 @@ void TickRuntime::Tick(bool sceneChanged) {
             session.started = Clock::now();
             const int called = lua_pcall(lua, 1, 1, 0);
             session.lastUs = std::chrono::duration<double, std::micro>(Clock::now() - session.started).count();
+            runtime.luaTiming.Record(session.lastUs);
             session.maxUs = (std::max)(session.maxUs, session.lastUs);
             session.overran = session.overran || session.lastUs >= session.config.budgetMs * 1000;
             runtime.current = nullptr;
@@ -1137,6 +1241,12 @@ void TickRuntime::Tick(bool sceneChanged) {
                 endings.push_back({&session, "cancelled", "script_log_write_failed"});
             session.logs.clear();
             session.logBytes = 0;
+            if (session.config.gear != TickGear::Native) {
+                // Preserve the absolute phase; discard missed intervals, including
+                // time spent inside this main, rather than bursting to catch up.
+                const auto after = runtime.now();
+                session.nextDue += session.period * ((after - session.nextDue) / session.period + 1);
+            }
         }
     }
     runtime.Commit();
@@ -1175,6 +1285,10 @@ Value TickRuntime::Statuses() const {
     auto values = Value::Array();
     for (const auto& session : impl->sessions) values.Add(impl->StatusValue(*session));
     return values;
+}
+
+Value TickRuntime::Profile() const {
+    return impl->ProfileValue();
 }
 
 }

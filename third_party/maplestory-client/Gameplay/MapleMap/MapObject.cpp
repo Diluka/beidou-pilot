@@ -32,6 +32,22 @@ namespace ms
 		return phobj.fhlayer;
 	}
 
+	int8_t MapObject::sampled_update(const Physics& physics)
+	{
+		phobj.begin_motion_sample();
+		int8_t layer = update(physics);
+		if (active && layer != -1)
+			phobj.end_motion_sample();
+		else
+			phobj.reset_motion_sample();
+		return layer;
+	}
+
+	MotionSample MapObject::get_motion() const
+	{
+		return phobj.get_motion();
+	}
+
 	void MapObject::set_position(int16_t x, int16_t y)
 	{
 		phobj.set_x(x);
@@ -47,12 +63,15 @@ namespace ms
 
 	void MapObject::makeactive()
 	{
+		if (!active)
+			phobj.reset_motion_sample();
 		active = true;
 	}
 
 	void MapObject::deactivate()
 	{
 		active = false;
+		phobj.reset_motion_sample();
 	}
 
 	bool MapObject::is_active() const

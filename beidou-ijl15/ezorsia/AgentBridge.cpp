@@ -13,6 +13,7 @@
 #include "NativeItemUse.h"
 #include "NativeSkillUse.h"
 #include "NativeObservation.h"
+#include "NativeMotion.h"
 #include "LoginAction.h"
 
 #include <array>
@@ -511,8 +512,8 @@ bool CaptureMonsters(std::vector<MapleControl::Monster>& monsters) {
             || !ReadAt(object + 0x510, coordinates) || !SecureInteger(object + 0x17C, monster.objectId)
             || !SecureInteger(object + 0x124, activeValue) || !ReadAt(object + 0x188, entry))
             return false;
-        monster.x = coordinates[0];
-        monster.y = coordinates[1];
+        monster.SetPosition(coordinates[0], coordinates[1]);
+        monster.velocity = NativeMotion::CaptureVelocity(NativeMotion::EntityKind::Mob, object);
         monster.active = activeValue != 0;
         if (entry != 0) {
             if (!SecureInteger(entry + 0x0C, monster.templateId)) return false;
@@ -558,8 +559,8 @@ bool CaptureDrops(std::vector<MapleControl::Drop>& drops) {
             || !ReadAt(object + 0x30, money) || !ReadAt(object + 0x34, value) || !ReadAt(object + 0x48, landed)
             || !SecureValue(object + 0x74, x) || !SecureValue(object + 0x68, y))
             return false;
-        drop.x = static_cast<std::int32_t>(x);
-        drop.y = static_cast<std::int32_t>(y);
+        drop.SetPosition(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
+        drop.positionSource = MapleControl::MovableObject::PositionSource::NativeDropDestination;
         drop.itemKnown = money == 0;
         drop.itemId = money == 0 ? value : 0;
         drop.moneyKnown = money != 0;
@@ -709,22 +710,40 @@ MapleControl::State CaptureState(NativeContext& native) {
     state.character.known.fill(state.characterKnown);
     state.inGame = !native.loginStage && !(native.field == 0 && native.stats == 0 && native.user == 0);
     state.ready = state.inGame && state.mapKnown && state.characterKnown && state.positionKnown;
+    if (state.positionKnown) state.character.SetPosition(state.x, state.y);
+    state.characterUpdatesKnown = state.ready && updatedCharacter == native.user;
+    state.characterUpdates = characterUpdates;
+    if (state.ready) {
+        auto motion = NativeMotion::Capture(native.user);
+        state.character.velocity = std::move(motion.velocity);
+        state.character.movement = std::move(motion.movement);
+        state.onGround = motion.onGround;
+    }
     if (state.mapKnown) {
         state.dropsKnown = CaptureDrops(state.drops);
         if (!state.dropsKnown) state.drops.clear();
     }
-    state.playersKnown = state.ready;
+    state.playersKnown = false;
     state.players.clear();
     state.playersComplete = MapleControl::Fact::Unknown;
     if (state.ready) {
         try {
             NativeObservation::Players(state.players);
+            state.playersKnown = true;
             state.playersComplete = MapleControl::Fact::True;
         } catch (const NativeObservation::ReadError&) {
             state.players.clear();
             state.playersComplete = MapleControl::Fact::False;
         }
+        try {
+            NativeObservation::Npcs(state.npcs);
+            state.npcsKnown = true;
+        } catch (const NativeObservation::ReadError&) {
+            state.npcs.clear();
+        }
     }
+    // The ordinary bullet display list is not a proved complete Projectile
+    // motion collection. Leave projectilesKnown/Complete unknown, not empty.
     return state;
 }
 
@@ -1072,18 +1091,18 @@ bool Publish(const MapleControl::State& state) {
         out << "null";
     out << ",\"character\":";
     if (state.characterKnown) {
-        out << "{\"id\":" << state.character.id << ",\"name\":" << Quote(state.character.name);
+        auto character = state.character.MotionDocument();
+        character["id"] = state.character.id;
+        character["name"] = state.character.name;
+        character["movement"] = state.character.movement.Document();
         const std::array<const char*, 13> names{
             "level",  "job", "strength", "dexterity",      "intelligence", "luck",      "hp",
             "max_hp", "mp",  "max_mp",   "ability_points", "skill_points", "experience"};
         for (unsigned int index = 0; index < names.size(); ++index) {
-            out << ',' << Quote(names[index]) << ':';
-            if (state.character.known[index])
-                out << state.character.values[index];
-            else
-                out << "null";
+            character[names[index]] = state.character.known[index] ? MapleControl::Value(state.character.values[index])
+                                                                   : MapleControl::Value{};
         }
-        out << '}';
+        out << character.Dump();
     } else
         out << "null";
     out << ",\"position\":";
@@ -1091,6 +1110,16 @@ bool Publish(const MapleControl::State& state) {
         out << "{\"x\":" << state.x << ",\"y\":" << state.y << '}';
     else
         out << "null";
+    out << ",\"character_updates\":";
+    if (state.characterUpdatesKnown)
+        out << state.characterUpdates;
+    else
+        out << "null";
+    out << ",\"on_ground\":";
+    if (state.onGround == MapleControl::Fact::Unknown)
+        out << "null";
+    else
+        out << (state.onGround == MapleControl::Fact::True ? "true" : "false");
     out << ",\"facing\":";
     if (state.facingKnown)
         out << Quote(state.facingLeft ? "Left" : "Right");
@@ -1103,18 +1132,18 @@ bool Publish(const MapleControl::State& state) {
         for (const auto& monster : state.monsters) {
             if (separator) out << ',';
             separator = true;
-            out << "{\"object_id\":" << monster.objectId << ",\"template_id\":";
-            if (monster.templateKnown)
-                out << monster.templateId;
-            else
-                out << "null";
-            out << ",\"name\":" << (monster.name.empty() ? "null" : Quote(monster.name)) << ",\"x\":" << monster.x
-                << ",\"y\":" << monster.y << ",\"active\":" << (monster.active ? "true" : "false") << '}';
+            auto document = monster.MotionDocument();
+            document["object_id"] = monster.objectId;
+            document["template_id"] =
+                monster.templateKnown ? MapleControl::Value(monster.templateId) : MapleControl::Value{};
+            document["name"] = monster.name.empty() ? MapleControl::Value{} : MapleControl::Value(monster.name);
+            document["active"] = monster.active;
+            out << document.Dump();
         }
         out << ']';
     } else
         out << "null";
-    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"attack_move\":true,\"pickup\":true,\"use_item\":true,\"equip\":true,\"unequip\":false,\"allocate_ap\":true,\"allocate_sp\":true,\"window\":true,\"revive\":false,\"activate\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"monster_hp_percent\":false,\"events\":true},\"event_stream_status\":"
+    out << ",\"backend\":\"beidou\",\"capabilities\":{\"move\":true,\"face\":true,\"jump\":true,\"attack\":true,\"attack_move\":true,\"pickup\":true,\"use_item\":true,\"equip\":true,\"unequip\":false,\"allocate_ap\":true,\"allocate_sp\":true,\"window\":true,\"revive\":false,\"activate\":false,\"stop\":true,\"raw_keys\":true,\"skill\":true,\"monster_hp_percent\":false,\"events\":true,\"projectiles\":false},\"event_stream_status\":"
         << Quote(eventsPublished ? "ok" : "publish_failed") << ",\"inventory\":";
     if (state.inventoryKnown) {
         out << '[';
@@ -1140,22 +1169,14 @@ bool Publish(const MapleControl::State& state) {
         for (const auto& drop : state.drops) {
             if (separator) out << ',';
             separator = true;
-            out << "{\"object_id\":" << drop.objectId << ",\"x\":" << drop.x << ",\"y\":" << drop.y << ",\"item_id\":";
-            if (drop.itemKnown)
-                out << drop.itemId;
-            else
-                out << "null";
-            out << ",\"money\":";
-            if (drop.moneyKnown)
-                out << drop.money;
-            else
-                out << "null";
-            out << ",\"landed\":";
-            if (drop.landed == MapleControl::Fact::Unknown)
-                out << "null";
-            else
-                out << (drop.landed == MapleControl::Fact::True ? "true" : "false");
-            out << '}';
+            auto document = drop.MotionDocument();
+            document["object_id"] = drop.objectId;
+            document["item_id"] = drop.itemKnown ? MapleControl::Value(drop.itemId) : MapleControl::Value{};
+            document["money"] = drop.moneyKnown ? MapleControl::Value(drop.money) : MapleControl::Value{};
+            document["landed"] = drop.landed == MapleControl::Fact::Unknown
+                                     ? MapleControl::Value{}
+                                     : MapleControl::Value(drop.landed == MapleControl::Fact::True);
+            out << document.Dump();
         }
         out << ']';
     } else
@@ -1167,22 +1188,15 @@ bool Publish(const MapleControl::State& state) {
         for (const auto& player : state.players) {
             if (separator) out << ',';
             separator = true;
-            out << "{\"reference\":" << Quote(player.reference) << ",\"character_id\":";
-            if (player.characterIdKnown)
-                out << player.characterId;
-            else
-                out << "null";
-            out << ",\"name\":" << (player.name.empty() ? "null" : Quote(player.name)) << ",\"level\":";
-            if (player.levelKnown)
-                out << player.level;
-            else
-                out << "null";
-            out << ",\"x\":" << player.x << ",\"y\":" << player.y << ",\"facing\":";
-            if (player.facingKnown)
-                out << Quote(player.facingLeft ? "Left" : "Right");
-            else
-                out << "null";
-            out << '}';
+            auto document = player.MotionDocument();
+            document["reference"] = player.reference;
+            document["character_id"] =
+                player.characterIdKnown ? MapleControl::Value(player.characterId) : MapleControl::Value{};
+            document["name"] = player.name.empty() ? MapleControl::Value{} : MapleControl::Value(player.name);
+            document["level"] = player.levelKnown ? MapleControl::Value(player.level) : MapleControl::Value{};
+            document["facing"] =
+                player.facingKnown ? MapleControl::Value(player.facingLeft ? "Left" : "Right") : MapleControl::Value{};
+            out << document.Dump();
         }
         out << ']';
     } else
@@ -1192,6 +1206,20 @@ bool Publish(const MapleControl::State& state) {
         out << "null";
     else
         out << (state.playersComplete == MapleControl::Fact::True ? "true" : "false");
+    out << ",\"npcs\":";
+    if (state.npcsKnown) {
+        auto npcs = MapleControl::Value::Array();
+        for (const auto& npc : state.npcs) {
+            auto document = npc.MotionDocument();
+            document["object_id"] = npc.objectId;
+            document["template_id"] = npc.templateId;
+            document["name"] = npc.name.empty() ? MapleControl::Value{} : MapleControl::Value(npc.name);
+            npcs.Add(std::move(document));
+        }
+        out << npcs.Dump();
+    } else
+        out << "null";
+    out << ",\"projectiles\":null,\"projectiles_complete\":null";
     out << ",\"held_keys\":[";
     bool separator = false;
     for (unsigned int key = 0; key < 256; ++key)
@@ -1217,6 +1245,7 @@ bool Publish(const MapleControl::State& state) {
     auto scripts = MapleControl::Value::Array();
     for (const auto& session : scriptSessions) scripts.Add(session.status);
     out << ",\"scripts\":" << scripts.Dump();
+    out << ",\"tick_profile\":" << tickRuntime.Profile().Dump();
     out << ",\"last_skill\":";
     if (haveSkillResult)
         out << "{\"skill_id\":" << lastSkillId << ",\"native_result\":" << lastSkillResult

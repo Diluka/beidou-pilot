@@ -372,11 +372,12 @@ void ActionOwnerCancellation() {
     MapleControl::TickRuntime runtime(native);
     std::string error;
     Check(runtime.Start("attacker",
-                        "-- @mode tick\nfunction main(c) if not c.state.sent then "
+                        "-- @mode tick\n-- @tick.gear 4\nfunction main(c) if not c.state.sent then "
                         "c.game.player.attack(); c.state.sent=true end end",
                         1000, error),
           error.c_str());
-    Check(runtime.Start("mover", "-- @mode tick\nfunction main(c) c.game.player.move('right') end", 1000, error),
+    Check(runtime.Start("mover", "-- @mode tick\n-- @tick.gear 4\nfunction main(c) c.game.player.move('right') end",
+                        1000, error),
           error.c_str());
     native.Advance(runtime);
     Check(native.input.action.Held()[Attack] && native.input.movement.Held()[Right],
@@ -403,7 +404,7 @@ void DeferredFinish(bool overrun) {
             DeferredNativeAdapter native;
             MapleControl::TickRuntime runtime(native);
             std::string error;
-            const std::string source = "-- @mode tick\n-- @tick.budget_ms 1\n-- @tick.abort_commit "
+            const std::string source = "-- @mode tick\n-- @tick.gear 4\n-- @tick.budget_ms 1\n-- @tick.abort_commit "
                                        + std::string(commit ? "true" : "false") + "\nfunction main(c) c.game.player."
                                        + action + (overrun ? "; while true do end end" : "; return 'done' end");
             Check(runtime.Start("deferred", source, 1000, error), error.c_str());

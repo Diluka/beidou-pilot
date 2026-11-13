@@ -66,10 +66,17 @@ namespace ms
 		return false;
 	}
 
+	MotionSample Bullet::get_motion() const
+	{
+		return moveobj.get_motion();
+	}
+
 	bool Bullet::update(Point<int16_t> target)
 	{
+		moveobj.begin_motion_sample();
 		animation.update();
 		moveobj.move();
+		moveobj.end_motion_sample();
 
 		int16_t xdelta = target.x() - moveobj.get_x();
 		return moveobj.hspeed > 0.0 ? xdelta < 10 : xdelta > 10;

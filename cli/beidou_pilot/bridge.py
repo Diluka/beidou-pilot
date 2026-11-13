@@ -13,7 +13,7 @@ import uuid
 
 from .errors import ClientError, JsonObject
 from .runtime import load_runtime
-from .strategies import parse_script_execution
+from .strategies import TickGear, parse_script_execution
 
 
 # 脚本可持续执行，原更新停止采样仍须有界发现并进入停止收尾。
@@ -76,6 +76,7 @@ BridgeControl = TypedDict("BridgeControl", {
 
 class BridgeTick(TypedDict):
     index: int
+    gear: TickGear
     time: float
     delta: float
     scene_generation: int
@@ -204,6 +205,7 @@ def _validate_script(script: object, *, require_mode: bool = False) -> None:
     if script.get("mode") == "tick":
         tick, player = script.get("tick"), script.get("player")
         if (not isinstance(tick, dict)
+                or type(tick.get("gear")) is not int or tick["gear"] not in (1, 2, 3, 4)
                 or any(type(tick.get(field)) is not int or tick[field] < 0
                        for field in ("index", "scene_generation", "overruns"))
                 or any(type(tick.get(field)) not in (int, float) or not math.isfinite(tick[field])

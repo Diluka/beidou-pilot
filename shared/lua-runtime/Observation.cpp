@@ -24,6 +24,41 @@ std::string Quote(const std::string& value) {
 }
 }
 
+Value MotionVector::Document() const {
+    if (source == Source::Unknown) return {};
+    auto value =
+        Value::Object({{"x", x}, {"y", y}, {"source", source == Source::Native ? "native" : "native_update_delta"}});
+    if (source == Source::NativeUpdateDelta) value["interval_ms"] = intervalMs;
+    return value;
+}
+
+void MovableObject::SetPosition(double currentX, double currentY) {
+    positionKnown = true;
+    x = currentX;
+    y = currentY;
+}
+
+Value MovableObject::MotionDocument() const {
+    return Value::Object(
+        {{"x", positionKnown ? Value(x) : Value{}},
+         {"y", positionKnown ? Value(y) : Value{}},
+         {"position_source",
+          positionKnown ? Value(positionSource == PositionSource::Native ? "native" : "native_drop_destination")
+                        : Value{}},
+         {"velocity", velocity.Document()}});
+}
+
+Value MovementReference::Document() const {
+    if (!known) return {};
+    return Value::Object({{"kind", "model"},
+                          {"model", model},
+                          {"conditions", "stationary_flat_ground_normal"},
+                          {"effective_speed", effectiveSpeed},
+                          {"effective_jump", effectiveJump},
+                          {"max_speed", maxSpeed},
+                          {"max_jump_height", maxJumpHeight}});
+}
+
 Value Value::Object(std::initializer_list<std::pair<std::string, Value>> values) {
     Value result;
     result.kind = Kind::Object;

@@ -32,6 +32,7 @@ namespace ms
 		void draw(double viewx, double viewy, float alpha) const;
 		bool settarget(Point<int16_t> target);
 		bool update(Point<int16_t> target);
+		MotionSample get_motion() const;
 
 	private:
 		Animation animation;

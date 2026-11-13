@@ -49,6 +49,35 @@
 | [read-state.lua](examples/read-state.lua) | 使用 `game.state()` 做只读分支和短循环，检查角色就绪、地图及存活状态。 | 只读示例。 |
 | [read-domains.lua](examples/read-domains.lua) | 使用 `game.observe()` 按需读取场景、装备、任务和 UI，保留不可用及不支持状态。 | 只读，适合学习分领域观察。 |
 | [common-basic.lua](examples/common-basic.lua) | 顺序调用移动、朝向、跳跃、攻击、拾取，并在低血量时尝试使用固定药品。 | 会实际移动、攻击和消耗物品；只演示动作串联。 |
+| [tick-jump-attack.lua](examples/tick-jump-attack.lua) | tick 入门：保持方向助跑到接近参考最大移速再起跳，空中攻击一次，落地后停止。 | 会实际移动、跳跃和普攻；只在有足够空间的同高平地试用，不寻路、不选怪、不保证命中。 |
+
+### tick 动作入门：连续移动跳砍
+
+先读 [tick-jump-attack.lua](examples/tick-jump-attack.lua)，再从已登录的工作台显式运行。装备可普攻的武器，选择有足够空间的安全同高平地，确认没有其他脚本控制角色；本例不处理斜坡、台阶、绳梯、落层、怪物或传送门。已有容器须使用包含此示例及对应 tick 行为的镜像；内置文件不会随宿主源码编辑自动更新。
+
+```bash
+DIR=/你的工作台目录
+SCRIPT=/opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua
+
+private/workbenches/workbench "$DIR" script describe "$SCRIPT"
+private/workbenches/workbench "$DIR" script run "$SCRIPT" --direction right --seconds 5
+private/workbenches/workbench "$DIR" snapshot
+
+# 异步受理后返回；保留返回的 script_id，再按该 ID 查询或明确取消。
+private/workbenches/workbench "$DIR" script start "$SCRIPT" --direction left --seconds 5
+private/workbenches/workbench "$DIR" script status --session SCRIPT_ID
+private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
+```
+
+`--direction` 来自头部 `@option`，默认 `right`，也可为 `left`。`--seconds` 是整个原生会话的期限，不是跳跃时长；例如起跳失败时由这个期限停止等待并释放输入。本例省略 `@tick.gear` 时使用第3档（30Hz）；复制到用户脚本后，可在前导注释中显式设置，例如 `-- @tick.gear 4` 选择原生更新；1、2、3档分别为10Hz、20Hz和30Hz。低档只降低判断频率，不改变角色物理和每宿主更新的取消/放键；落地后在下一次到期判断清方向。
+
+阅读时关注四点：`@mode tick` 选择新引擎；`main` 每次只做短判断，返回 `nil` 后下次继续；`context.state.phase` 保存“助跑 → 等待空中 → 等待落地 → 停下”的阶段，避免每次重新跳或重复攻击；`player.move` 只需设置一次，跳跃和攻击都保留持续方向，只在确认落地后 `move(nil)`，速度接近零后返回 `"done"`。
+
+`character.velocity` 是角色自己的当前运动向量，`character.movement` 是按当前有效属性及本端物理模型推断的静止平地参考能力，两者不混用。自己、其他玩家、怪物、NPC、投射物和掉落物共享可移动物体的观察基类，每个实体各自拥有向量，世界不是运动主体。向量保留原生或原生更新区间差分的来源，未知不填零。沿目标方向达到参考移速的99%后才提交 jump：无头速度渐近稳态，不能严格比较相等，也不用固定助跑时长/距离或仅凭速度平台。完整运动参考及最大跳高的适用条件见 [运动观察](../../docs/LUA_API.md#运动观察与静止参考)。
+
+空中阶段要求真实 `character.on_ground=false` 且 `character.y` 小于原平地Y；jump 槽空闲仅表示输入已消费和释放，不表示已经落地。两端均使用本端原生地面标志确认落地，未知时不靠重复坐标推断。速度/能力参考只阻断依赖它们的助跑或停止确认，不阻断已经具备离地事实的空中攻击。`settled` 包含停止移动等条件，不能用于全程移动的落地判断。受理与输入释放也不等于真实空中出手或命中；实际效果需原生事实或画面另行核对。
+
+可以从这个结构扩展更多阶段，不要加入阻塞等待或混用 coroutine 的 `game.sleep()/game.state()`。tick 多会话共享 player，同客户端其他会话可能覆盖方向；初学试用只运行这一份动作示例。完整契约见 [tick API](../../docs/LUA_API.md#tick-环境)。
 
 ## 调用与维护
 

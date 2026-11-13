@@ -4,7 +4,7 @@
 
 用户策略使用 `script run FILE --seconds N` 或 `script run --code CODE --seconds N`，文件和源码二选一，需要持续运行时明确 `--continuous`。两种输入复用同一装载、身份核对、错误、取消与放键链，可在现有实例中执行，无需重启客户端。脚本按前导 `@mode` 选择独立的 coroutine 或 tick 引擎；coroutine 基础动作调用旧 `game` API，tick 即时操作使用 `context.game.player`。复合能力装载 `shared/scripts/` 的 Lua 文件，调用方传入业务参数，Python只处理参数、装载、显式取消与结果。
 
-带顶层 `main(context)` 的文件声明策略入口；`script run/start FILE` 从 Lua 注释读取选项合同、校验动态 CLI 参数，并由 CLI 注入本次地图与可用的静态地形。coroutine 按旧行为核对场景并调用一次入口；tick 返回 `{main=main,context=__beidou_context}` 供新引擎核对初始场景后逐帧调用，不执行旧 `game.state()`。`script describe FILE` 输出 mode、有效 tick 配置和动态参数用法。没有策略入口的旧文件继续作为原始 chunk 执行；tick 策略文件须有 `main(context)`。`--code` 不启用 `@option` 或上下文注入，但仍识别前导 `@mode/@tick.*`，由原生按源码声明分派。start 受理、状态查询与显式取消仍是同一组 CLI 操作。
+带顶层 `main(context)` 的文件声明策略入口；`script run/start FILE` 从 Lua 注释读取选项合同、校验动态 CLI 参数，并由 CLI 注入本次地图与可用的静态地形。coroutine 按旧行为核对场景并调用一次入口；tick 返回 `{main=main,context=__beidou_context}` 供新引擎核对初始场景后按会话档位调用，不执行旧 `game.state()`。`script describe FILE` 输出 mode、有效 tick 配置和动态参数用法。没有策略入口的旧文件继续作为原始 chunk 执行；tick 策略文件须有 `main(context)`。`--code` 不启用 `@option` 或上下文注入，但仍识别前导 `@mode/@tick.*`，由原生按源码声明分派。start 受理、状态查询与显式取消仍是同一组 CLI 操作。
 
 ```bash
 private/workbenches/workbench /external/workbench script run --code 'game.log("你好，Lua")' --seconds 20
@@ -20,7 +20,7 @@ private/workbenches/workbench /external/workbench script status
 
 省略 mode 或 `-- @mode coroutine` 进入现有 Runtime，其 API 和调度冻结保留；`-- @mode tick` 进入独立 TickRuntime。两者不共享上层状态、动作槽、控制权和输入生命周期，只共享适配器所需的原生 I/O；任一引擎的取消、错误和期限不结束另一引擎的会话。两端按共同的公开契约提供各自原生实现，不建立旧 API 的兼容包装。
 
-客户端 tick 引擎只有一份角色状态机，接纳的全部 tick 会话共享持续移动和单个一次性动作槽，按接纳顺序调用、后写覆盖。每个宿主更新完成后调用入口、结束时统一提交差异；动作忙时不同输入写入单个后继槽，同时返回 `false,"busy"`，当前动作完成后执行；后写覆盖排队项。字段与完整预算语义见 [tick API](LUA_API.md#tick-环境)。
+客户端 tick 引擎只有一份角色状态机，接纳的全部 tick 会话共享持续移动和单个一次性动作槽，按接纳顺序调用、后写覆盖。宿主每次更新推进原生消费、期限、取消和放键；各会话按 `@tick.gear` 到期调用入口，调用前使用当帧新鲜事实，有到期消费者的宿主帧只刷新一次共享核心领域，结束时统一提交差异；动作忙时不同输入写入单个后继槽，同时返回 `false,"busy"`，当前动作完成后执行；后写覆盖排队项。字段与完整预算语义见 [tick API](LUA_API.md#tick-环境)。
 
 以下基础动作、任务控制和内置策略描述均为 coroutine 环境。以 headless 当前面向脚本的 `State`、`Action`、`ActionResult` 为共同标准，绑定与调度位于 `shared/lua-runtime/`；原版 DLL 提供同一模型。内置策略不在本次迁移范围，选择性验证用 tick 文件不替换内置脚本。
 

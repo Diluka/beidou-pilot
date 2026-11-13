@@ -225,10 +225,11 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 
 ### tick 脚本与并发会话
 
-省略 mode 或声明 `-- @mode coroutine` 使用冻结维护的旧协程环境；声明 `-- @mode tick` 使用独立的新引擎，每个宿主 tick 调用一次 `main(context)`，通过 `context.state` 保留状态，通过 `context.game` 的独立只读领域观察，通过 `context.game.player` 提交即时意图。tick 没有旧 `game.state()/sleep/阻塞动作/任务` API，不混用两套环境。内置旅行、狩猎、恢复脚本未迁移；验证用 tick 文件独立装载，不改变内置脚本。
+省略 mode 或声明 `-- @mode coroutine` 使用冻结维护的旧协程环境；声明 `-- @mode tick` 使用独立的新引擎，按每会话频率档位到期调用 `main(context)`，通过 `context.state` 保留状态，通过 `context.game` 的独立只读领域观察，通过 `context.game.player` 提交即时意图。tick 没有旧 `game.state()/sleep/阻塞动作/任务` API，不混用两套环境。内置旅行、狩猎、恢复脚本未迁移；验证用 tick 文件独立装载，不改变内置脚本。
 
 ```lua
 -- @mode tick
+-- @tick.gear 3            -- 1=10Hz，2=20Hz，3=30Hz默认，4=本端原生更新
 -- @tick.budget_ms 100
 -- @tick.overrun abort     -- 或 skip
 -- @tick.abort_commit true
@@ -247,13 +248,13 @@ private/workbenches/workbench /external/workbench script status --session SCRIPT
 private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
 ```
 
-mode/config 只读取文件级前导单行注释，Lua 长注释内部及正文中的伪声明不生效。未知/重复 mode 或 tick 配置、非法值、coroutine 中的 tick 配置均在发布前拒绝。默认单次预算 **100ms / abort / abort_commit=true**；预算接受正有限十进制毫秒数（可为小数），不接受符号、指数或非有限数。`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用，下一次 `context.tick.overrun=true`。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。完整字段、动作槽和领域说明见 [tick API](LUA_API.md#tick-环境)。
+mode/config 只读取文件级前导单行注释，Lua 长注释内部及正文中的伪声明不生效。未知/重复 mode 或 tick 配置、非法值、coroutine 中的 tick 配置均在发布前拒绝。`@tick.gear` 接受 `1/2/3/4`，分别为10Hz、20Hz、30Hz和本端原生更新不节流，默认第3档；不接受前导零或任意tick倍率。首次稳定回调立即执行，之后按绝对相位跳过过期周期，不突发补跑。频率仅限制Lua判断和无消费者core刷新，取消、期限、原生消费、后继槽及放键每宿主更新继续；调用时领域是该帧新事实。固定频率是目标而非严格最大延迟。默认单次预算 **100ms / abort / abort_commit=true**；预算接受正有限十进制毫秒数（可为小数），不接受符号、指数或非有限数。`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用，下一次 `context.tick.overrun=true`。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。完整字段、动作槽和领域说明见 [tick API](LUA_API.md#tick-环境)。
 
 CLI tick 编译只注入既有 `options/scene/route`，返回入口及上下文，不执行 main，也不调用旧 `game.state()`；初始静态 scene 身份由原生核对。直接 `--code` 的 tick 脚本自行定义全局 main 或返回入口表，不自动注入策略参数。buff 按本端可读能力；首版两端 `buffs` 为未知、`buffs_status=unsupported`，不伪造空列表。
 
 旧原生桥没有 `scripts` 能力时，tick 在发布前返回 `bridge_tick_unsupported`，不会回退到 coroutine 产生假成功。同客户端可追加多个 tick 会话，也可与一个 coroutine 会话并存。发布/受理时短暂持锁，`script run` 的终态等待不占整程动作锁；第二个 coroutine 仍返回 `input_busy`。多 tick 共享客户端唯一角色状态机，后写覆盖；动作忙时不同动作写入单个后继槽并返回 `false,"busy"`，后写覆盖排队项，动作完成后才执行，不形成无界队列。
 
-`script status` 保留最新接纳的 `script`，新增包含各会话的 `scripts`；每项保留旧基本状态并新增 `mode` 和会话级 `control_released`。tick 的 `tick` 展示 index/time/delta、场景代次、预算、超限策略及次数，`player` 展示共享角色动作状态；它不是角色 HP/buff。指定 `--session` 后 `script` 选择对应会话，`scripts` 仍保留全部会话。`command` 是最近命令，不能代替会话身份。精确取消只检查目标终态及所属输入释放，其他会话仍持键是正常事实；需要全部停止时显式 `bridge stop`。
+`script status` 保留最新接纳的 `script`，新增包含各会话的 `scripts`；每项保留旧基本状态并新增 `mode` 和会话级 `control_released`。tick 的 `tick` 展示有效gear、实际调用index/time/delta、场景代次、预算、超限策略及次数，`player` 展示共享角色动作状态；它不是角色 HP/buff。指定 `--session` 后 `script` 选择对应会话，`scripts` 仍保留全部会话。`command` 是最近命令，不能代替会话身份。精确取消只检查目标终态及所属输入释放，其他会话仍持键是正常事实；需要全部停止时显式 `bridge stop`。
 
 策略选项写在入口附近的 Lua 注释中；类型支持 `int`、`number`、`string`、`boolean`。非布尔参数没有 `opt` 或 `default` 时必填，声明默认值后可省略。布尔参数未声明 `default` 时可省略且默认为 `true`；显式 `default=false` 时省略则为 `false`。`min`/`max` 用于数值范围，`choices=a|b` 限定候选值。默认值、正向 flag 和显式值按 `choices` 校验，`--no-flag` 作为无值负向开关直接传入 `false`，不因 `choices` 未列出 `false` 而拒绝。Lua 参数名中的下划线映射为 CLI 连字符：
 

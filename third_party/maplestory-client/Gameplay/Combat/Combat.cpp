@@ -75,6 +75,15 @@ namespace ms
 		);
 	}
 
+	std::vector<MotionSample> Combat::get_projectile_motions() const
+	{
+		std::vector<MotionSample> motions;
+		motions.reserve(bullets.size());
+		for (const auto& effect : bullets)
+			motions.push_back(effect.bullet.get_motion());
+		return motions;
+	}
+
 	SpecialMove::ForbidReason Combat::use_move(int32_t move_id)
 	{
 		const auto attack_reason = player.attack_forbid_reason();

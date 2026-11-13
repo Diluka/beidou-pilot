@@ -37,6 +37,8 @@ namespace ms
 		void draw(double viewx, double viewy, float alpha) const;
 		// Poll attacks, damage effects, etc.
 		void update();
+		// Current native flights only: no queued effects, IDs or damage claims.
+		std::vector<MotionSample> get_projectile_motions() const;
 
 		// Make the player use a special move
 		SpecialMove::ForbidReason use_move(int32_t move_id);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "stdafx.h"
 #include "NativeObservation.h"
+#include "NativeMotion.h"
 #include "LoginPageObservation.h"
 
 #include <algorithm>
@@ -106,13 +107,16 @@ Value Monsters() {
             throw ReadError("A monster object does not match the V17 layout.");
         const auto coordinates = Read<std::array<std::int32_t, 2>>(monster + 0x510);
         const auto definition = Read<Address>(monster + 0x188);
-        output.Add(Value::Object({
-            {"address", Hex(monster)}, {"object_id", SecureInt(monster + 0x17C)},
-            {"template_id", definition != 0 ? Value(SecureInt(definition + 0x0C)) : Value()},
-            {"name", definition != 0 ? TemplateName(definition + 0x30) : Value()},
-            {"x", coordinates[0]}, {"y", coordinates[1]},
-            {"active", SecureInt(monster + 0x124) != 0}
-        }));
+        MapleControl::MovableObject motion;
+        motion.SetPosition(coordinates[0], coordinates[1]);
+        motion.velocity = NativeMotion::CaptureVelocity(NativeMotion::EntityKind::Mob, monster);
+        auto document = motion.MotionDocument();
+        document["address"] = Hex(monster);
+        document["object_id"] = SecureInt(monster + 0x17C);
+        document["template_id"] = definition != 0 ? Value(SecureInt(definition + 0x0C)) : Value();
+        document["name"] = definition != 0 ? TemplateName(definition + 0x30) : Value();
+        document["active"] = SecureInt(monster + 0x124) != 0;
+        output.Add(std::move(document));
         const auto node = Read<Address>(position - 12);
         position = node != 0 ? node + 16 : 0;
         ++observed;
@@ -139,13 +143,19 @@ Value Drops() {
         const auto drop = Read<Address>(position + 4);
         const bool money = Read<std::uint32_t>(drop + 0x30) != 0;
         const auto value = Read<std::uint32_t>(drop + 0x34);
-        output.Add(Value::Object({
-            {"address", Hex(drop)}, {"object_id", Read<std::uint32_t>(drop + 0x20)},
-            {"item_id", money ? Value() : Value(value)}, {"money", money ? Value(value) : Value()},
-            {"x", static_cast<std::int32_t>(SecureValue(drop + 0x74))},
-            {"y", static_cast<std::int32_t>(SecureValue(drop + 0x68))},
-            {"landed", Read<std::uint32_t>(drop + 0x48) == 3}
-        }));
+        MapleControl::MovableObject motion;
+        motion.SetPosition(static_cast<std::int32_t>(SecureValue(drop + 0x74)),
+                           static_cast<std::int32_t>(SecureValue(drop + 0x68)));
+        motion.positionSource = MapleControl::MovableObject::PositionSource::NativeDropDestination;
+        // These are native destination anchors, not the animated display point.
+        // No same-reference-point velocity has been proved for this object kind.
+        auto document = motion.MotionDocument();
+        document["address"] = Hex(drop);
+        document["object_id"] = Read<std::uint32_t>(drop + 0x20);
+        document["item_id"] = money ? Value() : Value(value);
+        document["money"] = money ? Value(value) : Value();
+        document["landed"] = Read<std::uint32_t>(drop + 0x48) == 3;
+        output.Add(std::move(document));
         const auto node = Read<Address>(position - 12);
         position = node != 0 ? node + 16 : 0;
         ++observed;
@@ -156,14 +166,20 @@ Value Drops() {
     return output;
 }
 
-Value Npcs() {
+struct NpcRecord {
+    Address address;
+    MapleControl::Npc value;
+};
+
+// One membership algorithm for both the scene document and the typed tick State.
+std::vector<NpcRecord> NpcRecords() {
     const auto pool = Read<Address>(0x00BED780);
     if (pool == 0 || Read<Address>(pool) != 0x00AFC9F8)
         throw ReadError("The current NPC pool does not match the V17 layout.");
     const auto membership = Read<std::array<Address, 3>>(pool + 0x24);
     const auto count = membership[0];
     if (count > 512) throw ReadError("The NPC count exceeds the observation limit.");
-    auto output = Value::Array();
+    std::vector<NpcRecord> output;
     auto node = membership[1];
     std::set<Address> visited;
     std::uint32_t observed = 0;
@@ -175,17 +191,33 @@ Value Npcs() {
             throw ReadError("An NPC object does not match the V17 layout.");
         const auto definition = Read<Address>(npc + 0xA8);
         const auto coordinates = Read<std::array<std::int32_t, 2>>(npc + 0x150);
-        output.Add(Value::Object({
-            {"address", Hex(npc)}, {"object_id", Read<std::uint32_t>(npc + 0xA4)},
-            {"template_id", Read<std::uint32_t>(definition)}, {"name", TemplateName(definition + 4)},
-            {"x", coordinates[0]}, {"y", coordinates[1]}
-        }));
+        NpcRecord record;
+        record.address = npc;
+        record.value.objectId = Read<std::uint32_t>(npc + 0xA4);
+        record.value.templateId = Read<std::uint32_t>(definition);
+        record.value.name = TemplateName(definition + 4).Text();
+        record.value.SetPosition(coordinates[0], coordinates[1]);
+        record.value.velocity = NativeMotion::CaptureVelocity(NativeMotion::EntityKind::Npc, npc);
+        output.push_back(std::move(record));
         node = Read<Address>(node + 4);
         ++observed;
     }
     if (node != 0 || observed != count || Read<Address>(0x00BED780) != pool ||
         Read<std::array<Address, 3>>(pool + 0x24) != membership)
         throw ReadError("The NPC pool changed while being observed.");
+    return output;
+}
+
+Value NpcDocuments() {
+    auto output = Value::Array();
+    for (const auto& record : NpcRecords()) {
+        auto document = record.value.MotionDocument();
+        document["address"] = Hex(record.address);
+        document["object_id"] = record.value.objectId;
+        document["template_id"] = record.value.templateId;
+        document["name"] = record.value.name.empty() ? Value{} : Value(record.value.name);
+        output.Add(std::move(document));
+    }
     return output;
 }
 
@@ -431,8 +463,8 @@ void Players(std::vector<MapleControl::OtherPlayer>& output) {
                 player.reference = std::to_string(cid);
                 player.characterId = cid;
                 player.characterIdKnown = true;
-                player.x = Read<std::int32_t>(user + kUserPosX);
-                player.y = Read<std::int32_t>(user + kUserPosY);
+                player.SetPosition(Read<std::int32_t>(user + kUserPosX), Read<std::int32_t>(user + kUserPosY));
+                player.velocity = NativeMotion::CaptureVelocity(NativeMotion::EntityKind::RemoteUser, user);
                 const auto flags = Read<std::uint32_t>(user + kUserFlags);
                 player.facingKnown = true;
                 player.facingLeft = (flags & 1) != 0;
@@ -464,6 +496,11 @@ void Players(std::vector<MapleControl::OtherPlayer>& output) {
     });
 }
 
+void Npcs(std::vector<MapleControl::Npc>& output) {
+    output.clear();
+    for (auto& record : NpcRecords()) output.push_back(std::move(record.value));
+}
+
 Value Scene() {
     const auto field = Read<Address>(0x00BEDED4);
     const auto user = Read<Address>(0x00BEBF98);
@@ -477,24 +514,29 @@ Value Scene() {
     try {
         std::vector<MapleControl::OtherPlayer> observed;
         Players(observed);
-        for (const auto& player : observed)
-            players.Add(Value::Object(
-                {{"reference", player.reference},
-                 {"character_id", player.characterIdKnown ? Value(player.characterId) : Value()},
-                 {"name", player.name.empty() ? Value() : Value(player.name)},
-                 {"level", player.levelKnown ? Value(player.level) : Value()},
-                 {"x", player.x},
-                 {"y", player.y},
-                 {"facing", player.facingKnown ? Value(player.facingLeft ? "Left" : "Right") : Value()}}));
+        for (const auto& player : observed) {
+            auto document = player.MotionDocument();
+            document["reference"] = player.reference;
+            document["character_id"] = player.characterIdKnown ? Value(player.characterId) : Value();
+            document["name"] = player.name.empty() ? Value() : Value(player.name);
+            document["level"] = player.levelKnown ? Value(player.level) : Value();
+            document["facing"] = player.facingKnown ? Value(player.facingLeft ? "Left" : "Right") : Value();
+            players.Add(std::move(document));
+        }
     } catch (const ReadError& error) {
         players = Value();
         playersComplete = false;
         unavailable.Add(std::string("Player list unavailable: ") + error.what());
     }
+    MapleControl::MovableObject local;
+    local.SetPosition(coordinates[0], coordinates[1]);
+    local.velocity = NativeMotion::CaptureVelocity(NativeMotion::EntityKind::LocalUser, user);
     auto output = Value::Object({
         {"source", "client-native-api"}, {"readonly", true}, {"map_id", SecureValue(field + 0x138)},
-        {"player", Value::Object({{"x", coordinates[0]}, {"y", coordinates[1]}})},
-        {"monsters", Monsters()}, {"drops", Drops()}, {"npcs", Npcs()},
+        {"player", local.MotionDocument()},
+        {"monsters", Monsters()}, {"drops", Drops()}, {"npcs", NpcDocuments()},
+        {"projectiles", Value{}}, {"projectiles_complete", Value{}},
+        {"capabilities", Value::Object({{"projectiles", false}})},
         {"players", players}, {"players_complete", playersComplete},
         {"not_covered", Value::Array({"other_player_hp", "other_player_equipment", "other_player_party_relation"})},
         {"player_facing", flags & 1 ? "Left" : "Right"}, {"raw_flags", flags}, {"pending_dynamic", false},

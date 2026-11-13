@@ -3,6 +3,9 @@
 
 #include "Runtime.h"
 
+#include <chrono>
+#include <functional>
+
 namespace MapleControl {
 
 // Native I/O only. Hosts must use a distinct adapter instance and independent
@@ -23,8 +26,12 @@ public:
 
 enum class ScriptMode { Coroutine, Tick, Invalid };
 
+// Decision cadence only; Native runs once per host update without throttling.
+enum class TickGear { TenHz = 1, TwentyHz = 2, ThirtyHz = 3, Native = 4 };
+
 struct TickConfig {
     ScriptMode mode = ScriptMode::Coroutine;
+    TickGear gear = TickGear::ThirtyHz;
     double budgetMs = 100;
     bool skipOverrun = false;
     bool abortCommit = true;
@@ -39,7 +46,9 @@ ScriptMode ParseScriptMode(const std::string& source, std::string& error);
 // instance's movement intent and one-shot action slot. No Runtime state is used.
 class TickRuntime {
 public:
-    explicit TickRuntime(TickAdapter& adapter);
+    // Scheduling time only. Execution budgets and profiling always use real time.
+    using Now = std::function<std::chrono::steady_clock::time_point()>;
+    explicit TickRuntime(TickAdapter& adapter, Now now = std::chrono::steady_clock::now);
     ~TickRuntime();
     TickRuntime(const TickRuntime&) = delete;
     TickRuntime& operator=(const TickRuntime&) = delete;
@@ -47,7 +56,8 @@ public:
     // Chunk returns { main = function, context = table }, or defines global main.
     // Initialization is budgeted too. limitMs == 0 means no session deadline.
     bool Start(const std::string& scriptId, const std::string& source, std::uint32_t limitMs, std::string& error);
-    // Call once after native state/action-completion facts have been updated.
+    // Call every host update after native state/action-completion facts advance.
+    // Cadence gates main/core reads only, never lifecycle, input release or drain.
     void Tick(bool sceneChanged = false);
     void Cancel(const std::string& scriptId, const std::string& reason);
     void CancelAll(const std::string& reason);
@@ -57,6 +67,17 @@ public:
     // control_released, tick and player. Statuses returns an admission-order array.
     Value CurrentStatus(const std::string& scriptId) const;
     Value Statuses() const;
+
+    // Fixed-size, runtime-lifetime aggregates, also exposed as tick.profile in
+    // each session status (shared, not per-session). Available with no scripts.
+    // host_tick_calls includes idle/reentrant early returns; active_frames counts
+    // calls passing the updating/Running guard, including transition/drain frames.
+    // Timings are inclusive steady-clock microseconds: samples/total_us/max_us.
+    // observe includes snapshot copying; refresh_core includes core domain reads;
+    // lua measures main calls including bindings/lazy reads, excluding initialization.
+    // Only Tick is measured, not Start, status serialization or host Capture.
+    // Compare count/total deltas for intervals; maxima are lifetime peaks.
+    Value Profile() const;
 
 private:
     struct Impl;
