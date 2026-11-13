@@ -385,7 +385,7 @@ class LuaStrategyContract(unittest.TestCase):
         backend.assert_not_called()
         data = json.loads(output)["data"]
         self.assertEqual("tick", data["mode"])
-        self.assertEqual({"budget_ms": 100, "overrun": "abort", "abort_commit": True}, data["tick"])
+        self.assertEqual({"gear": 3, "budget_ms": 100, "overrun": "abort", "abort_commit": True}, data["tick"])
         self.assertEqual("coroutine", parse_script_execution(POLICY).mode)
         self.assertEqual("coroutine", parse_script_execution("-- @mode coroutine\n" + POLICY).mode)
         for budget, expected in ((".5", 0.5), ("1.", 1), ("0002.5", 2.5)):
@@ -393,10 +393,26 @@ class LuaStrategyContract(unittest.TestCase):
                 execution = parse_script_execution("-- @mode tick--说明\n-- @tick.budget_ms " + budget + "\n")
                 self.assertEqual(("tick", expected), (execution.mode, execution.budget_ms))
 
+    def test_tick_gears_are_visible_and_survive_compilation_and_library_injection(self) -> None:
+        for gear in (1, 2, 3, 4):
+            with self.subTest(gear=gear), patch("beidou_pilot.cli.Backend") as backend:
+                header = f"-- @mode tick\n-- @tick.gear {gear} -- 决策档位\n"
+                source = header + POLICY
+                self.path.write_text(source, encoding="utf-8")
+                code, output = self.cli("script", "describe", str(self.path))
+                self.assertEqual(0, code, output)
+                backend.assert_not_called()
+                self.assertEqual(gear, json.loads(output)["data"]["tick"]["gear"])
+                for prepared in (
+                    source,
+                    compile_strategy(source, {"mob_id": 12}, self.scene),
+                    with_library("travel", None, source),
+                ):
+                    self.assertTrue(prepared.startswith(header))
+                    self.assertEqual(gear, parse_script_execution(prepared).gear)
+
     def test_tick_compile_returns_entry_and_context_without_old_state_or_calling_main(self) -> None:
-        header = (
-            "-- @mode tick\n-- @tick.budget_ms 12.5\n-- @tick.overrun skip -- 分片执行\n-- @tick.abort_commit false\n"
-        )
+        header = "-- @mode tick\n-- @tick.gear 2\n-- @tick.budget_ms 12.5\n-- @tick.overrun skip -- 分片执行\n-- @tick.abort_commit false\n"
         source = header + POLICY
         compiled = compile_strategy(source, {"mob_id": 12}, self.scene, {"route": [{"map_id": 200}]})
         self.assertTrue(compiled.startswith(header))
@@ -409,8 +425,8 @@ class LuaStrategyContract(unittest.TestCase):
         self.assertTrue(compiled.endswith("return {main=main,context=__beidou_context}\nend\n"))
         execution = parse_script_execution(compiled)
         self.assertEqual(
-            ("tick", 12.5, "skip", False),
-            (execution.mode, execution.budget_ms, execution.overrun, execution.abort_commit),
+            ("tick", 12.5, "skip", False, 2),
+            (execution.mode, execution.budget_ms, execution.overrun, execution.abort_commit, execution.gear),
         )
         legacy = compile_strategy(POLICY, {"mob_id": 12}, self.scene)
         self.assertIn("game.state()", legacy)
@@ -455,6 +471,28 @@ class LuaStrategyContract(unittest.TestCase):
             "-- @mode tick\n-- @tick.abort_commit True",
             "-- @mode tick\n-- @tick.abort_commit 1",
             "-- @mode tick\n-- @tick budget_ms 10",
+            "-- @tick.gear 1",
+            "-- @mode coroutine\n-- @tick.gear 1",
+            "-- @mode tick\n-- @tick.gear 1\n-- @tick.gear 1",
+        ) + tuple(
+            "-- @mode tick\n-- @tick.gear " + value
+            for value in (
+                "",
+                "0",
+                "5",
+                "01",
+                "+1",
+                "-1",
+                "1.0",
+                ".1",
+                "1e0",
+                "NaN",
+                "inf",
+                "true",
+                "1 2",
+                "１",
+                "9" * 5000,
+            )
         )
         for header in invalid:
             source = header + "\nlocal function main(context)\nend\n"

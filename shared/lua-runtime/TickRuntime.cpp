@@ -225,6 +225,13 @@ bool ParseTickConfig(const std::string& source, TickConfig& config, std::string&
                 error = "invalid @mode: " + value;
                 return false;
             }
+        } else if (key == "@tick.gear") {
+            if (value.size() != 1 || value[0] < '1' || value[0] > '4') {
+                error = "@tick.gear must be 1, 2, 3 or 4";
+                return false;
+            }
+            config.gear = static_cast<TickGear>(value[0] - '0');
+            hasTick = true;
         } else if (key == "@tick.budget_ms") {
             double number = 0, fraction = 0.1;
             bool dot = false, digit = false, valid = !value.empty();
@@ -303,7 +310,8 @@ struct TickRuntime::Impl {
         std::string instanceId;
         std::uint32_t actorId = 0;
         bool actorKnown = false;
-        Clock::time_point deadline{}, started{}, previous{};
+        Clock::time_point deadline{}, started{}, previous{}, nextDue{};
+        Clock::duration period{};
         bool limited = false, invoked = false, overran = false, previousOverrun = false, directionFence = false;
         bool draining = false;
         std::uint64_t index = 0, overruns = 0;
@@ -313,6 +321,10 @@ struct TickRuntime::Impl {
         std::size_t logBytes = 0;
 
         bool Active() const { return status == "running" && finalStatus.empty(); }
+
+        bool Due(Clock::time_point now) const {
+            return Active() && (!invoked || config.gear == TickGear::Native || now >= nextDue);
+        }
     };
 
     struct Draft {
@@ -324,9 +336,10 @@ struct TickRuntime::Impl {
         Session* actionOwner = nullptr;
     };
 
-    explicit Impl(TickAdapter& native) : adapter(native) {}
+    Impl(TickAdapter& native, Now scheduleNow) : adapter(native), now(std::move(scheduleNow)) {}
 
     TickAdapter& adapter;
+    Now now;
     std::vector<std::unique_ptr<Session>> sessions;
     State observed;
     bool sampled = false;
@@ -980,6 +993,7 @@ struct TickRuntime::Impl {
                                                          {"reason", ""}})},
                               {"control_released", !owned},
                               {"tick", Value::Object({{"index", session.index},
+                                                      {"gear", static_cast<int>(session.config.gear)},
                                                       {"time", session.time},
                                                       {"delta", session.delta},
                                                       {"scene_generation", session.generation},
@@ -993,7 +1007,7 @@ struct TickRuntime::Impl {
     }
 };
 
-TickRuntime::TickRuntime(TickAdapter& adapter) : impl(new Impl(adapter)) {}
+TickRuntime::TickRuntime(TickAdapter& adapter, Now now) : impl(new Impl(adapter, std::move(now))) {}
 
 TickRuntime::~TickRuntime() {
     CancelAll("runtime_closed");
@@ -1049,7 +1063,12 @@ bool TickRuntime::Start(const std::string& scriptId, const std::string& source, 
     session.actorKnown = runtime.observed.characterKnown;
     session.generation = runtime.observed.sceneGeneration;
     session.limited = limitMs != 0;
-    if (session.limited) session.deadline = Clock::now() + std::chrono::milliseconds(limitMs);
+    if (session.limited) session.deadline = runtime.now() + std::chrono::milliseconds(limitMs);
+    if (session.config.gear != TickGear::Native) {
+        static const int rates[]{10, 20, 30};
+        session.period = std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(1.0 / rates[static_cast<int>(session.config.gear) - 1]));
+    }
     session.lua = luaL_newstate();
     if (session.lua == nullptr) {
         error = "lua_state_unavailable";
@@ -1106,7 +1125,7 @@ void TickRuntime::Tick(bool sceneChanged) {
     runtime.sampled = true;
     runtime.lastGeneration = runtime.observed.sceneGeneration;
     runtime.Poll();
-    const auto now = Clock::now();
+    const auto now = runtime.now();
     // A scene-transition frame still handles cancellation, deadlines and native
     // completion; only Lua invocation is deferred until the next stable frame.
     for (auto& session : runtime.sessions) {
@@ -1150,24 +1169,30 @@ void TickRuntime::Tick(bool sceneChanged) {
 
     std::vector<Ending> endings;
     if (!transition) {
-        {
+        const bool hasDue = std::any_of(runtime.sessions.begin(), runtime.sessions.end(),
+                                        [now](const auto& session) { return session->Due(now); });
+        if (hasDue) {
             ScopedTiming refreshCoreTiming(runtime.refreshCoreTiming);
             runtime.RefreshCore();
         }
         for (auto& owned : runtime.sessions) {
             auto& session = *owned;
-            if (!session.Active()) continue;
+            // Keep the due set fixed at frame start, even if another main is slow.
+            if (!session.Due(now)) continue;
             runtime.ClearDomains(session);
-            session.delta = session.invoked ? std::chrono::duration<double>(now - session.previous).count() : 0;
-            session.previous = now;
+            const auto callAt = runtime.now();
+            if (!session.invoked) session.nextDue = callAt;
+            session.delta = session.invoked ? std::chrono::duration<double>(callAt - session.previous).count() : 0;
+            session.previous = callAt;
             session.invoked = true;
-            session.time = std::chrono::duration<double>(now.time_since_epoch()).count();
+            session.time = std::chrono::duration<double>(callAt.time_since_epoch()).count();
             session.generation = runtime.observed.sceneGeneration;
             ++session.index;
             auto* lua = session.lua;
             lua_rawgeti(lua, LUA_REGISTRYINDEX, session.context);
             const int backing = lua_absindex(lua, -1);
             PushValue(lua, Value::Object({{"index", session.index},
+                                          {"gear", static_cast<int>(session.config.gear)},
                                           {"time", session.time},
                                           {"delta", session.delta},
                                           {"scene_generation", session.generation},
@@ -1216,6 +1241,12 @@ void TickRuntime::Tick(bool sceneChanged) {
                 endings.push_back({&session, "cancelled", "script_log_write_failed"});
             session.logs.clear();
             session.logBytes = 0;
+            if (session.config.gear != TickGear::Native) {
+                // Preserve the absolute phase; discard missed intervals, including
+                // time spent inside this main, rather than bursting to catch up.
+                const auto after = runtime.now();
+                session.nextDue += session.period * ((after - session.nextDue) / session.period + 1);
+            }
         }
     }
     runtime.Commit();

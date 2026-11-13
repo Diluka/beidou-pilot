@@ -69,7 +69,7 @@ private/workbenches/workbench "$DIR" script status --session SCRIPT_ID
 private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
 ```
 
-`--direction` 来自头部 `@option`，默认 `right`，也可为 `left`。`--seconds` 是整个原生会话的期限，不是跳跃时长；例如起跳失败时由这个期限停止等待并释放输入。
+`--direction` 来自头部 `@option`，默认 `right`，也可为 `left`。`--seconds` 是整个原生会话的期限，不是跳跃时长；例如起跳失败时由这个期限停止等待并释放输入。本例省略 `@tick.gear` 时使用第3档（30Hz）；复制到用户脚本后，可在前导注释中显式设置，例如 `-- @tick.gear 4` 选择原生更新；1、2、3档分别为10Hz、20Hz和30Hz。低档只降低判断频率，不改变角色物理和每宿主更新的取消/放键；落地后在下一次到期判断清方向。
 
 阅读时关注四点：`@mode tick` 选择新引擎；`main` 每次只做短判断，返回 `nil` 后下次继续；`context.state.phase` 保存“助跑 → 等待空中 → 等待落地 → 停下”的阶段，避免每次重新跳或重复攻击；`player.move` 只需设置一次，跳跃和攻击都保留持续方向，只在确认落地后 `move(nil)`，速度接近零后返回 `"done"`。
 

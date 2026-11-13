@@ -32,6 +32,7 @@ private/workbenches/workbench /external/workbench script run /work/scripts/contr
 
 ```lua
 -- @mode tick
+-- @tick.gear 3            -- 1=10Hz，2=20Hz，3=30Hz（默认），4=本端原生更新
 -- @tick.budget_ms 100
 -- @tick.overrun abort     -- abort | skip
 -- @tick.abort_commit true -- abort 时先提交本 tick 草稿
@@ -44,15 +45,26 @@ local function main(context)
 end
 ```
 
-运行元数据只读取首段可执行代码之前的前导单行注释，允许空行、普通注释与尾部 `--` 说明；Lua 长注释内部不解释元数据。`@mode` 只接受小写 `tick/coroutine`，重复、未知 mode、未知或重复的 `@tick.*`、格式错误均在发布前拒绝；`@tick.*` 必须配合显式的 `@mode tick`。预算为正有限十进制毫秒数，支持小数，不接受符号、科学计数、NaN 或无穷；`overrun` 为 `abort/skip`，`abort_commit` 为小写 `true/false`。未配置时为 **100ms / abort / true**。
+运行元数据只读取首段可执行代码之前的前导单行注释，允许空行、普通注释与尾部 `--` 说明；Lua 长注释内部不解释元数据。`@mode` 只接受小写 `tick/coroutine`，重复、未知 mode、未知或重复的 `@tick.*`、格式错误均在发布前拒绝；`@tick.*` 必须配合显式的 `@mode tick`。预算为正有限十进制毫秒数，支持小数，不接受符号、科学计数、NaN 或无穷；`overrun` 为 `abort/skip`，`abort_commit` 为小写 `true/false`。未配置时为 **第3档（30Hz）/ 100ms / abort / true**，单次预算与调用周期独立。
 
 策略文件仍采用唯一顶层 `main(context)` 和既有 `@option` 参数规则。CLI 注入 `options/scene`，调用方已有的 `route` 等额外上下文按原规则保留。编译结果向新引擎返回 `{main=main, context=__beidou_context}`，不调用旧 `game.state()`，也不在装载阶段执行 `main`；初始 `scene` 身份由原生 tick 引擎核对。`--code` 保留原始源码、不注入策略参数，但同样读取前导 mode/config：应定义全局 `function main(context) ... end`，或显式返回含 `main/context` 的入口表。
 
-每个宿主更新完成后调用一次入口，返回后统一提交差异，供后续帧消费。GUI 使用 `ClientApplication::Update` 主循环渲染帧，无头使用 `Stage::update` 逻辑步进；不假设固定帧长或与内部逻辑 1:1。返回 `nil` 继续；`"done"` 或 `{done=true}` 停止继续调用入口，清除所属持续方向，已提交的一次性动作（包括待执行槽）经原生消费和释放确认后正常结束。显式取消或总期限仍可中断这段收尾。Lua 错误终止该会话为 `cancelled/script_error`。每次会话重启新建上下文，不恢复上次 Lua 内存。
+宿主每次更新都推进原生生命周期；`main` 按每会话工作频率档位到期调用，首次稳定帧立即调用，返回后统一提交差异供后续帧消费。GUI 使用 `ClientApplication::Update` 主循环渲染帧，无头使用 `Stage::update` 逻辑步进，不假设渲染与角色物理更新 1:1。
+
+| 档位 | 工作频率 | 用途 |
+| --- | --- | --- |
+| 1 | 10Hz | 较慢的观察和简单判断，最多约100ms的调度等待 |
+| 2 | 20Hz | 中等响应，最多约50ms的调度等待 |
+| 3（默认） | 30Hz | 常规即时决策，最多约33ms的调度等待 |
+| 4 | 每个本端宿主更新，不节流 | 需要最高采样频率时使用；当前实测无头约125Hz、GUI约60Hz，不是固定保证 |
+
+表中固定频率是目标，实际调用还受宿主更新、工作负载及脚本执行时间影响，不保证严格最大延迟。四档依据两端实际节奏和成本设计：GUI角色物理更新约33Hz，渲染约60Hz会复用样本；无头为8ms逻辑步。30Hz默认减少重复决策，同时保留普通跳跃动作窗口的多个观察机会。档位不改变游戏物理速度、按键脉冲长度或动作槽生命周期。`@tick.gear` 只接受单字符整数 `1/2/3/4`，不接受前导零、符号、小数、指数、任意Hz或裸tick倍率。
+
+每会话使用绝对周期相位；慢帧或长回调错过周期时跳过已过区间，不补跑一串旧判断。取消、总期限、原生消费、方向keyup和后继动作槽每宿主更新继续推进，不等待下次Lua调用。降频期间持续方向不必重复提交。落地等瞬态事实需在到期回调重新观察；清方向发生在首次观察到真实落地的决策，不承诺所有档都在下一宿主帧停止。返回 `nil` 继续；`"done"` 或 `{done=true}` 停止继续调用入口，清除所属持续方向，已提交的一次性动作（包括待执行槽）经原生消费和释放确认后正常结束。显式取消或总期限仍可中断这段收尾。Lua 错误终止该会话为 `cancelled/script_error`。每次会话重启新建上下文，不恢复上次 Lua 内存。
 
 | 上下文 | 语义 |
 | --- | --- |
-| `context.tick` | 只读；`index` 为调用序号，`time/delta` 为单调时间及实际间隔（秒），`scene_generation` 为当前场景代次，`overrun` 表示上次调用超限 |
+| `context.tick` | 只读；`index` 为实际调用序号而非宿主帧号，`time/delta` 为各次真实调用的单调时间及间隔（秒），`gear` 为本会话有效档位，`scene_generation` 为当前场景代次，`overrun` 表示上次调用超限 |
 | `context.state` | 脚本自有可写表，跨 tick 保留，不解释、不序列化、不落盘 |
 | `context.options` | 策略参数及有效默认值；直接源码未提供时为空表 |
 | `context.scene` | 装载时静态场景和身份锚点，与动态 `context.game.scene` 分开 |
@@ -63,13 +75,13 @@ end
 
 ### 性能观测
 
-原生桥顶层 `tick_profile` 及会话状态的 `tick.profile` 是同一份 **runtime 生命周期聚合**，不是 Lua `context.tick` 的字段，也不表示该会话独占成本。`host_tick_calls` 包含全部宿主调用和空闲早退，`active_frames` 为实际处理帧，`reentrant_tick_calls` 为重入早退。`tick/observe/refresh_core/lua` 各含 `samples/total_us/max_us`：分别计完整 Tick、宿主快照复制、核心领域刷新及 `main` 调用，单位微秒。Lua 项含调用过程中绑定与惰性领域读取，不含初始化或回调后的动作提交。子阶段已包含在完整 Tick 中，不能相加。排除 Start 初始化、宿主原有 Capture 及桥状态发布；空闲不会为了计时新增领域采集。
+原生桥顶层 `tick_profile` 及会话状态的 `tick.profile` 是同一份 **runtime 生命周期聚合**，不是 Lua `context.tick` 的字段，也不表示该会话独占成本。`host_tick_calls` 包含全部宿主调用和空闲早退，`active_frames` 为实际处理帧，`reentrant_tick_calls` 为重入早退。`tick/observe/refresh_core/lua` 各含 `samples/total_us/max_us`：分别计完整 Tick、宿主快照复制、核心领域刷新及 `main` 调用，单位微秒。Lua 项含调用过程中绑定与惰性领域读取，不含初始化或回调后的动作提交。子阶段已包含在完整 Tick 中，不能相加。排除 Start 初始化、宿主原有 Capture 及桥状态发布；空闲不会为了计时新增领域采集。降频时 `observe` 仍随活动宿主帧推进，`refresh_core` 只计有到期消费者的稳定帧，`lua` 只计实际入口调用，不能直接拿不同分母的均值相减作为净耗时。
 
 比较测量窗口时用累计计数和 `total_us` 的差分计算均值；`max_us` 是生命周期峰值，不能用差分求区间峰值。这些是墙钟时间，不是独占 CPU 时间，也不等同于总帧耗时或动作延迟。
 
 ### 独立只读领域
 
-`context.game`（也作为全局 `game` 提供）不提供 `state()`、`observe(domain)`、阻塞动作、`sleep`、`spawn/tasks/acquire/cancel` 或旧按键接口。`game.log(text)` 接受字符串，单条最多4096字节、单次调用日志合计最多65536字节，写入该会话的原生事件日志；时间使用 `context.tick.time/delta`，不提供旧 `game.time()`。标准库开放基础语言和 `table/string/math/utf8`，不开放 `io/os/package/debug/coroutine`；禁用动态装载、`print/pcall/xpcall/setmetatable/getmetatable/rawset`，不会通过捕获预算异常绕过超限处理。每个领域是独立只读 table，嵌套表也只读；写入报 Lua 错误。核心 `character/world/scene` 每 tick 更新；低频领域每宿主 tick 按需采集一次，同一帧内跨会话复用结果。领域直接展开原生观察的 `data` 字段并附带 `status/error`，不额外嵌套一层 `data`。不支持或暂时不可读通过领域状态和错误说明，未知字段缺失或为 `nil`，不借另一后端补齐。
+`context.game`（也作为全局 `game` 提供）不提供 `state()`、`observe(domain)`、阻塞动作、`sleep`、`spawn/tasks/acquire/cancel` 或旧按键接口。`game.log(text)` 接受字符串，单条最多4096字节、单次调用日志合计最多65536字节，写入该会话的原生事件日志；时间使用 `context.tick.time/delta`，不提供旧 `game.time()`。标准库开放基础语言和 `table/string/math/utf8`，不开放 `io/os/package/debug/coroutine`；禁用动态装载、`print/pcall/xpcall/setmetatable/getmetatable/rawset`，不会通过捕获预算异常绕过超限处理。每个领域是独立只读 table，嵌套表也只读；写入报 Lua 错误。有到期会话时，核心 `character/world/scene` 在该宿主帧统一刷新一次，所有到期会话共用当帧新鲜结果；没有到期消费者的帧不为Lua刷新核心领域。其余领域每宿主帧按需采集一次，同帧跨会话复用；不会按地图ID复用上次决策的动态scene。领域直接展开原生观察的 `data` 字段并附带 `status/error`，不额外嵌套一层 `data`。不支持或暂时不可读通过领域状态和错误说明，未知字段缺失或为 `nil`，不借另一后端补齐。
 
 | 属性 | 内容与边界 |
 | --- | --- |
@@ -611,7 +623,7 @@ API 参数无效、后端能力缺失、原生状态或输入路线不可用时�
 
 ## 策略文件入口与运行上下文
 
-策略文件可在顶层声明固定 `main(context)` 入口，参数及静态上下文规则两套环境共用；tick 的每帧入口和原生身份核对见[前文](#tick-环境)。以下示例使用 coroutine：`script run/start FILE` 检查策略注释，在原生 Runtime 内先核对调用时的实例、角色、地图和场景代次，再调用一次入口；顶层代码用于声明策略和函数，控制逻辑写在入口内。入口只接收一个上下文表，基础状态和动作仍使用本文件前述的 `game.state()`、`game.observe()` 与动作 API。通用执行期限仍由 CLI `--seconds` / `--continuous` 控制；策略自有预算应使用独立的 `budget_seconds` 运行参数，避免与执行期限混淆。
+策略文件可在顶层声明固定 `main(context)` 入口，参数及静态上下文规则两套环境共用；tick 的按档位入口和逐宿主更新的原生身份核对见[前文](#tick-环境)。以下示例使用 coroutine：`script run/start FILE` 检查策略注释，在原生 Runtime 内先核对调用时的实例、角色、地图和场景代次，再调用一次入口；顶层代码用于声明策略和函数，控制逻辑写在入口内。入口只接收一个上下文表，基础状态和动作仍使用本文件前述的 `game.state()`、`game.observe()` 与动作 API。通用执行期限仍由 CLI `--seconds` / `--continuous` 控制；策略自有预算应使用独立的 `budget_seconds` 运行参数，避免与执行期限混淆。
 
 运行参数用紧邻策略源码的 `@option` 注释声明。支持 `int`、`number`、`string`、`boolean` 四种类型；未标 `opt`、也没有 `default` 的非布尔参数必填。布尔参数始终可省略：未显式声明 `default` 时默认 `true`，显式 `default=false` 可覆盖该默认值。可选修饰符为 `default=值`、数值型 `min=值` / `max=值` 和 `choices=值1|值2`。默认值、正向布尔 flag 和显式值按声明校验；`--no-flag` 作为无值负向开关直接传入 `false`，不参与 `choices` 校验。
 

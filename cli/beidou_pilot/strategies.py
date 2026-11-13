@@ -11,6 +11,8 @@ from .errors import ClientError, JsonObject, JsonValue
 
 
 OptionType = Literal["int", "number", "string", "boolean"]
+TickGear = Literal[1, 2, 3, 4]
+_TICK_GEARS: dict[str, TickGear] = {"1": 1, "2": 2, "3": 3, "4": 4}
 _ENTRY = re.compile(
     r"^\s*(?:(?:local\s+)?function\s+main\s*\(\s*context\s*\)|"
     r"(?:local\s+)?main\s*=\s*function\s*\(\s*context\s*\))\s*(?:--.*)?$"
@@ -57,6 +59,7 @@ class ScriptExecution:
     budget_ms: float = 100
     overrun: Literal["abort", "skip"] = "abort"
     abort_commit: bool = True
+    gear: TickGear = 3
 
 
 @dataclass(frozen=True)
@@ -111,7 +114,7 @@ def parse_script_execution(source: str) -> ScriptExecution:
             raise _invalid_metadata("@mode/@tick 配置须为前导注释中的单个声明值。", line_number)
         key, raw_value = match.groups()
         value = raw_value.partition("--")[0].strip()
-        if key not in {"mode", "tick.budget_ms", "tick.overrun", "tick.abort_commit"} or key in declared:
+        if key not in {"mode", "tick.gear", "tick.budget_ms", "tick.overrun", "tick.abort_commit"} or key in declared:
             raise _invalid_metadata(f"脚本运行配置未知或重复：@{key}。", line_number)
         declared[key] = value
     mode = declared.get("mode", "coroutine")
@@ -131,7 +134,10 @@ def parse_script_execution(source: str) -> ScriptExecution:
         raise _invalid_metadata("@tick.overrun 只接受 abort 或 skip。")
     if abort_commit not in {"true", "false"}:
         raise _invalid_metadata("@tick.abort_commit 只接受 true 或 false。")
-    return ScriptExecution(mode, budget_ms, overrun, abort_commit == "true")
+    gear = declared.get("tick.gear", "3")
+    if gear not in _TICK_GEARS:
+        raise _invalid_metadata("@tick.gear 只接受 1、2、3 或 4。")
+    return ScriptExecution(mode, budget_ms, overrun, abort_commit == "true", _TICK_GEARS[gear])
 
 
 def _invalid_metadata(message: str, line: int | None = None) -> ClientError:
@@ -369,6 +375,7 @@ def describe_strategy(path: Path, metadata: StrategyMetadata) -> JsonObject:
         "mode": metadata.mode,
         "tick": (
             {
+                "gear": metadata.execution.gear,
                 "budget_ms": metadata.execution.budget_ms,
                 "overrun": metadata.execution.overrun,
                 "abort_commit": metadata.execution.abort_commit,

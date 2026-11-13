@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
@@ -60,6 +61,7 @@ public:
 
     Observation ObserveDomain(const std::string& domain) const override {
         ++queries[domain];
+        if (onDomain) onDomain(domain);
         if (domain == "character")
             return {"ok",
                     Value::Object({{"buffs", {}},
@@ -186,10 +188,11 @@ public:
     std::vector<std::vector<std::string>> changes;
     std::vector<std::string> directions, events, logs;
     std::function<void()> onBegin, onRelease, onLogs;
+    std::function<void(const std::string&)> onDomain;
 };
 
-std::string Source(const std::string& body) {
-    return "-- @mode tick\n" + body;
+std::string Source(const std::string& body, TickGear gear = TickGear::Native) {
+    return "-- @mode tick\n-- @tick.gear " + std::to_string(static_cast<int>(gear)) + "\n" + body;
 }
 
 void Start(TickRuntime& runtime, const std::string& id, const std::string& source, std::uint32_t limit = 0) {
@@ -228,10 +231,22 @@ void Declarations() {
             "\n -- title\n-- @mode tick -- description\n-- @tick.budget_ms .5\n-- @tick.overrun skip\n-- @tick.abort_commit false\nfunction main() end",
             config, error),
         error);
-    Check(config.mode == ScriptMode::Tick && config.budgetMs == .5 && config.skipOverrun && !config.abortCommit,
-          "decimal budgets and explicit policies must not be truncated");
+    Check(config.mode == ScriptMode::Tick && config.budgetMs == .5 && config.skipOverrun && !config.abortCommit
+              && config.gear == TickGear::ThirtyHz,
+          "decimal budgets and explicit policies must not be truncated; default decision gear is 3");
+    for (int gear = 1; gear <= 4; ++gear)
+        Check(ParseTickConfig("-- @mode tick\n-- @tick.gear " + std::to_string(gear) + " -- cadence", config, error)
+                  && static_cast<int>(config.gear) == gear,
+              "each exact gear token must retain its selected value");
+    for (const std::string& token : std::vector<std::string>{"", "0", "5", "01", "+1", "-1", "1.0", ".1", "1e0", "NaN",
+                                                             "inf", "true", "1 2", "１", std::string(5000, '9')})
+        Check(ParseScriptMode("-- @mode tick\n-- @tick.gear " + token, error) == ScriptMode::Invalid,
+              "gear must be an exact supported ASCII token");
     const std::vector<std::string> invalid{"-- @mode unknown",
                                            "-- @mode tick\n-- @mode tick",
+                                           "-- @tick.gear 1",
+                                           "-- @mode coroutine\n-- @tick.gear 1",
+                                           "-- @mode tick\n-- @tick.gear 1\n-- @tick.gear 1",
                                            "-- @tick.budget_ms 1",
                                            "-- @mode tick\n-- @tick.budget_ms 0",
                                            "-- @mode tick\n-- @tick.budget_ms -1",
@@ -260,6 +275,245 @@ void Declarations() {
     Check(ParseTickConfig("-- @mode tick\n-- @tick.budget_ms 4294967296.25", config, error)
               && config.budgetMs == 4294967296.25,
           "large finite decimal budget must remain a double");
+}
+
+Value TickField(const TickRuntime& runtime, const std::string& id, const std::string& name) {
+    return Field(Field(runtime.CurrentStatus(id), "tick"), name);
+}
+
+void Cadence() {
+    using Clock = std::chrono::steady_clock;
+    NativeBoundary native;
+    auto now = Clock::time_point(std::chrono::seconds(100));
+    TickRuntime runtime(native, [&] { return now; });
+    const std::string body = R"lua(
+function main(c)
+  c.state.calls=(c.state.calls or 0)+1
+  assert(c.tick.index==c.state.calls and c.tick.gear>=1 and c.tick.gear<=4)
+  local elapsed=math.floor((c.tick.time-100)*1000+0.5)
+  assert(c.game.character.x==elapsed and c.game.world.x==elapsed)
+  assert(c.game.scene.monsters[1].x==elapsed+1 and c.game.scene.drops[1].x==elapsed+2)
+  assert(c.game.inventory.status=='ok')
+  if c.state.previous then assert(math.abs(c.tick.delta-(c.tick.time-c.state.previous))<1e-10)
+  else assert(c.tick.delta==0) end
+  c.state.previous=c.tick.time
+  if c.tick.gear==4 and c.tick.index==2 then return 'done' end
+end
+)lua";
+    Start(runtime, "default", "-- @mode tick\n" + body);
+    Start(runtime, "slow", Source(body, TickGear::TenHz));
+    Start(runtime, "medium", Source(body, TickGear::TwentyHz));
+    Start(runtime, "native", Source(body));
+    native.state.dropsKnown = true;
+    native.state.drops.emplace_back();
+    native.queries.clear();
+    for (int elapsed = 0; elapsed <= 200; ++elapsed) {
+        now = Clock::time_point(std::chrono::seconds(100)) + std::chrono::milliseconds(elapsed);
+        native.state.x = elapsed;
+        native.state.monsters[0].SetPosition(elapsed + 1, 3);
+        native.state.drops[0].SetPosition(elapsed + 2, 4);
+        Step(native, runtime);
+    }
+    Check(TickField(runtime, "default", "gear").Number() == 3 && TickField(runtime, "slow", "gear").Number() == 1
+              && TickField(runtime, "medium", "gear").Number() == 2
+              && TickField(runtime, "native", "gear").Number() == 4,
+          "status must retain the same effective gear as the callback context");
+    Check(TickField(runtime, "default", "index").Number() == 7 && TickField(runtime, "slow", "index").Number() == 3
+              && TickField(runtime, "medium", "index").Number() == 5
+              && TickField(runtime, "native", "index").Number() == 2,
+          "independent gears must follow 30/10/20Hz and native cadence without cumulative phase drift");
+    StatusIs(runtime, "native", "completed", "script_returned");
+    for (const auto& id : {"default", "slow", "medium"}) StatusIs(runtime, id, "running");
+    for (const auto& domain : {"character", "world", "scene", "inventory"})
+        Check(native.queries[domain] == 10, "due sessions must share exactly one current core/lazy sample per frame");
+    const auto profile = runtime.Profile();
+    Check(Field(profile, "active_frames").Number() == 201 && Field(Field(profile, "observe"), "samples").Number() == 201
+              && Field(Field(profile, "refresh_core"), "samples").Number() == 10
+              && Field(Field(profile, "lua"), "samples").Number() == 17,
+          "non-due frames advance lifecycle and observation, not main or core refresh");
+    now += std::chrono::milliseconds(1);
+    native.state.x = 201;
+    native.Advance();
+    Start(runtime, "initialization",
+          "-- @mode tick\nlocal initial=game.character.x; assert(initial==201)\n"
+          "function main(c) assert(initial==c.game.character.x); return 'done' end");
+    Check(TickField(runtime, "initialization", "index").Number() == 0 && native.queries["character"] == 11
+              && Field(Field(runtime.Profile(), "refresh_core"), "samples").Number() == 10,
+          "Start must freshly sample legal initialization reads, without invoking main or counting a host refresh");
+    Step(native, runtime);
+    StatusIs(runtime, "initialization", "completed", "script_returned");
+}
+
+void CadencePhase() {
+    using Clock = std::chrono::steady_clock;
+    NativeBoundary native;
+    const auto origin = Clock::time_point(std::chrono::seconds(100));
+    auto now = origin;
+    TickRuntime runtime(native, [&] { return now; });
+    Start(runtime, "fast",
+          Source(R"lua(function main(c)
+  assert(c.game.inventory.status=='ok')
+  if c.tick.index==4 then assert(c.game.character.x==500) end
+end)lua",
+                 TickGear::TwentyHz));
+    Start(runtime, "slow",
+          Source(R"lua(function main(c)
+  assert(c.game.inventory.status=='ok')
+  if c.tick.index==3 then assert(c.game.character.x==500) end
+end)lua",
+                 TickGear::TenHz));
+    bool slowRead = false;
+    native.onDomain = [&](const std::string& domain) {
+        if (domain == "inventory" && slowRead) {
+            slowRead = false;
+            now += std::chrono::milliseconds(375); // Inside main's C binding, not Commit or Logs.
+            native.state.x = 999;
+        }
+    };
+    native.queries.clear();
+    Step(native, runtime);
+    now = origin + std::chrono::milliseconds(50);
+    slowRead = true;
+    Step(native, runtime);
+    Check(TickField(runtime, "fast", "index").Number() == 2 && TickField(runtime, "slow", "index").Number() == 1,
+          "an earlier main cannot make a non-due session join the fixed frame-start due set");
+    Step(native, runtime); // now=425ms: only slow is due; fast skipped all intervals through its own return.
+    Check(TickField(runtime, "fast", "index").Number() == 2 && TickField(runtime, "slow", "index").Number() == 2,
+          "a long callback must not burst to catch up on the immediately following update");
+    now = origin + std::chrono::milliseconds(449);
+    Step(native, runtime);
+    Check(TickField(runtime, "fast", "index").Number() == 2, "next absolute fast phase is 450ms");
+    now = origin + std::chrono::milliseconds(450);
+    Step(native, runtime);
+    Check(TickField(runtime, "fast", "index").Number() == 3,
+          "next phase is not callback-return time plus one period (475ms)");
+    now = origin + std::chrono::milliseconds(500);
+    native.state.x = 500;
+    slowRead = true;
+    Step(native, runtime); // Both due; slow sees the same 500ms core, but starts at 875ms.
+    Check(std::abs(TickField(runtime, "fast", "time").Number() - 100.5) < 1e-10
+              && std::abs(TickField(runtime, "slow", "time").Number() - 100.875) < 1e-10
+              && std::abs(TickField(runtime, "slow", "delta").Number() - .45) < 1e-10,
+          "each callback time/delta must include the real delay caused by earlier callbacks");
+    Step(native, runtime);
+    now = origin + std::chrono::milliseconds(899);
+    Step(native, runtime);
+    Check(TickField(runtime, "fast", "index").Number() == 4 && TickField(runtime, "slow", "index").Number() == 3
+              && native.queries["character"] == 5 && native.queries["inventory"] == 5,
+          "no catch-up callbacks or stale-core reads may occur before the next future phase");
+    now = origin + std::chrono::milliseconds(900);
+    Step(native, runtime);
+    Check(TickField(runtime, "fast", "index").Number() == 5 && TickField(runtime, "slow", "index").Number() == 4
+              && std::abs(TickField(runtime, "fast", "delta").Number() - .4) < 1e-10
+              && std::abs(TickField(runtime, "slow", "delta").Number() - .025) < 1e-10,
+          "missed periods are skipped without incrementing index or substituting nominal delta");
+    Check(TickField(runtime, "fast", "overruns").Number() == 0 && TickField(runtime, "slow", "overruns").Number() == 0,
+          "advancing scheduling time inside main must not advance the real execution-budget clock");
+    NativeBoundary budgetNative;
+    TickRuntime budgeted(budgetNative, [&] { return now; }); // Scheduling time stays frozen for both infinite loops.
+    std::string error;
+    Check(!budgeted.Start("frozen-init", Source("-- @tick.budget_ms 1\nwhile true do end"), 0, error),
+          "a frozen scheduling clock cannot disable initialization's real-time budget");
+    StatusIs(budgeted, "frozen-init", "rejected", "tick_overrun");
+    Start(budgeted, "frozen-main", Source("-- @tick.budget_ms 1\nfunction main(c) while true do end end"));
+    Step(budgetNative, budgeted);
+    StatusIs(budgeted, "frozen-main", "cancelled", "tick_overrun");
+    Check(TickField(budgeted, "frozen-main", "overruns").Number() == 1
+              && Field(budgeted.CurrentStatus("frozen-main"), "last_resume_us").Number() >= 1000
+              && Field(Field(budgeted.Profile(), "lua"), "max_us").Number() >= 1000,
+          "budget hooks, post-call duration and profiling must all use actual wall time, not the scheduling seam");
+}
+
+void CadenceLifecycle() {
+    using Clock = std::chrono::steady_clock;
+    const auto origin = Clock::time_point(std::chrono::seconds(100));
+    {
+        NativeBoundary native;
+        auto now = origin;
+        TickRuntime runtime(native, [&] { return now; });
+        Start(runtime, "owner",
+              Source("function main(c) c.game.player.move('right'); c.game.player.attack() end", TickGear::TenHz));
+        Step(native, runtime);
+        Start(runtime, "queued",
+              Source("function main(c) c.game.player.pickup(); return 'done' end", TickGear::TwentyHz));
+        Step(native, runtime);
+        StatusIs(runtime, "queued", "running", "script_returned");
+        Check(native.requests.size() == 1 && native.delivered.size() == 1,
+              "fixture must occupy a native slot before queuing a draining successor");
+        native.Complete();
+        Step(native, runtime);
+        Check(native.requests.size() == 2 && native.requests.back().kind == ActionKind::Pickup
+                  && native.directions.empty(),
+              "a non-due frame must poll completion and start the queued action, pausing movement");
+        Step(native, runtime);
+        Check(native.delivered.size() == 2, "the queued action must reach the next native consumer exactly once");
+        native.Complete();
+        Step(native, runtime);
+        StatusIs(runtime, "queued", "completed", "script_returned");
+        Check(native.directions == std::vector<std::string>{"right"}
+                  && TickField(runtime, "owner", "index").Number() == 1
+                  && TickField(runtime, "queued", "index").Number() == 1,
+              "non-due drain must finish and restore persistent movement without replaying either main");
+        native.rejectClear = true;
+        runtime.Cancel("owner", "explicit_cancel");
+        Step(native, runtime);
+        StatusIs(runtime, "owner", "running", "explicit_cancel");
+        Check(!Field(runtime.CurrentStatus("owner"), "control_released").Boolean(),
+              "a rejected key-up cannot confirm cancellation between callbacks");
+        native.rejectClear = false;
+        Step(native, runtime);
+        StatusIs(runtime, "owner", "running");
+        Step(native, runtime);
+        StatusIs(runtime, "owner", "cancelled", "explicit_cancel");
+        Check(Field(runtime.CurrentStatus("owner"), "control_released").Boolean()
+                  && TickField(runtime, "owner", "index").Number() == 1 && native.requests.size() == 2
+                  && Field(Field(runtime.Profile(), "refresh_core"), "samples").Number() == 2,
+              "native release confirmation and final status must progress without waiting for cadence");
+    }
+    {
+        NativeBoundary native;
+        auto now = origin;
+        TickRuntime runtime(native, [&] { return now; });
+        Start(runtime, "deadline",
+              Source("function main(c) c.game.player.attack(); return 'done' end", TickGear::TenHz), 20);
+        Step(native, runtime);
+        StatusIs(runtime, "deadline", "running", "script_returned");
+        now += std::chrono::milliseconds(20); // Before the next 100ms decision.
+        Step(native, runtime);
+        StatusIs(runtime, "deadline", "running", "time_limit");
+        Check(native.releases == 1, "a non-due total deadline must interrupt a returned main's native drain");
+        Step(native, runtime);
+        Step(native, runtime);
+        StatusIs(runtime, "deadline", "cancelled", "time_limit");
+        Check(Field(runtime.CurrentStatus("deadline"), "control_released").Boolean()
+                  && TickField(runtime, "deadline", "index").Number() == 1
+                  && Field(Field(runtime.Profile(), "refresh_core"), "samples").Number() == 1,
+              "deadline cancellation must terminate after native release, without another main/core read");
+    }
+    {
+        NativeBoundary native;
+        auto now = origin;
+        TickRuntime runtime(native, [&] { return now; });
+        Start(runtime, "scene",
+              Source(R"lua(function main(c)
+  if c.tick.index==1 then c.game.player.move('right')
+  else assert(c.game.world.scene_generation==2 and c.game.scene.map_id==50000) end
+end)lua",
+                     TickGear::TenHz));
+        Step(native, runtime);
+        now += std::chrono::milliseconds(1);
+        ++native.state.sceneGeneration; // Same map ID, different native scene lifetime.
+        Step(native, runtime);
+        Step(native, runtime);
+        Check(native.directions.empty() && TickField(runtime, "scene", "index").Number() == 1
+                  && Field(Field(runtime.Profile(), "refresh_core"), "samples").Number() == 1,
+              "non-due scene changes must release movement immediately, not wait for or refresh Lua");
+        now = origin + std::chrono::milliseconds(100);
+        Step(native, runtime);
+        Check(native.directions.empty() && TickField(runtime, "scene", "index").Number() == 2,
+              "the next due callback must read the new same-map scene without replaying old intent");
+        StatusIs(runtime, "scene", "running");
+    }
 }
 
 void Entry() {
@@ -934,6 +1188,12 @@ int main(int argc, char** argv) {
     const std::string scenario = argv[1];
     if (scenario == "declarations")
         Declarations();
+    else if (scenario == "cadence")
+        Cadence();
+    else if (scenario == "cadence-phase")
+        CadencePhase();
+    else if (scenario == "cadence-lifecycle")
+        CadenceLifecycle();
     else if (scenario == "entry")
         Entry();
     else if (scenario == "domains")

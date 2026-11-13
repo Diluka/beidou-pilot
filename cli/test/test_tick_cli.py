@@ -30,6 +30,7 @@ def tick_state(script_id: str, *, stopped: bool = False) -> BridgeScript:
         control_released=stopped,
         tick={
             "index": 4,
+            "gear": 3,
             "time": 1.5,
             "delta": 0.008,
             "scene_generation": 1,
@@ -377,6 +378,15 @@ class TickCliContract(unittest.TestCase):
         self.assertFalse((self.files.directory / "scripts").exists())
         self.assertFalse((self.files.directory / "command.txt").exists())
 
+    def test_snapshot_keeps_the_exact_selected_tick_gear(self) -> None:
+        for gear in (1, 2, 3, 4):
+            with self.subTest(gear=gear):
+                script = tick_state("a" * 32)
+                script["tick"]["gear"] = gear
+                self.files.state.update(script=script, scripts=[script])
+                self.files.publish()
+                self.assertEqual(gear, self.client.snapshot()["scripts"][0]["tick"]["gear"])
+
     def test_snapshot_validates_each_session_and_tick_state_at_the_boundary(self) -> None:
         valid = tick_state("a" * 32)
         cases = [
@@ -391,6 +401,8 @@ class TickCliContract(unittest.TestCase):
             [dict(valid, control_released=1)],
             [valid, valid],
             [{key: value for key, value in valid.items() if key != "mode"}],
+            [dict(valid, tick={key: value for key, value in valid["tick"].items() if key != "gear"})],
+            *[[dict(valid, tick={**valid["tick"], "gear": gear})] for gear in (True, 3.0, "3", 0, -1, 5, None)],
         ]
         for scripts in cases:
             with self.subTest(scripts=scripts):

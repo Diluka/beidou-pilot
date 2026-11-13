@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from beidou_pilot.strategies import compile_strategy, parse_options, read_strategy_file
+from beidou_pilot.strategies import compile_strategy, parse_options, read_strategy_file, split_script_header
 
 
 class TickRuntimeContract(unittest.TestCase):
@@ -49,6 +49,15 @@ class TickRuntimeContract(unittest.TestCase):
     def test_file_leading_mode_and_budget_declarations_are_strict(self) -> None:
         self.run_contract("declarations")
 
+    def test_gears_share_current_core_without_sampling_non_due_frames(self) -> None:
+        self.run_contract("cadence")
+
+    def test_absolute_phase_actual_callback_time_and_missed_periods_inside_main(self) -> None:
+        self.run_contract("cadence-phase")
+
+    def test_native_pending_cancel_deadline_release_and_scene_advance_when_main_is_not_due(self) -> None:
+        self.run_contract("cadence-lifecycle")
+
     def test_entry_context_state_return_values_and_initial_identity(self) -> None:
         self.run_contract("entry")
 
@@ -87,6 +96,10 @@ class TickRuntimeContract(unittest.TestCase):
         source, metadata = read_strategy_file(path)
         self.assertIsNotNone(metadata)
         self.assertEqual("tick", metadata.mode)
+        self.assertEqual(3, metadata.execution.gear)
+        # This behavior fixture advances native frames without wall-clock waits.
+        header, body = split_script_header(source)
+        source = header + "-- @tick.gear 4\n" + body
         scene = {"instance_id": "tick-contract", "character_id": 1, "map_id": 50000, "scene_generation": 1}
         for arguments, direction in (([], "right"), (["--direction", "left"], "left")):
             with self.subTest(arguments=arguments):
