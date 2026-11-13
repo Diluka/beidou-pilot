@@ -17,6 +17,72 @@ inline const char* ObservedLoginPage(bool loginStage, const std::array<std::uint
     return nullptr;
 }
 
+// Only classify focus identity; never read edit text or length.
+template <class Read32>
+const char* LoginEditFocus(std::uint32_t stage, std::uint32_t window, Read32 read32) {
+    if (!stage || stage > UINT32_MAX - 0x173 || !window || window > UINT32_MAX - 0xD7) return nullptr;
+    std::array<std::uint32_t, 4> previous{};
+    for (int sample = 0; sample < 3; ++sample) {
+        if (read32(0x00BEDED4) != stage || read32(stage) != 0x00AF6B24 ||
+            read32(stage + 0x168) != 0 || read32(stage + 0x16C) != 0 || read32(stage + 0x170) != 0 ||
+            read32(window) != 0x00AF7940 || read32(window + 4) != 0x00AF78F4 ||
+            read32(window + 8) != 0x00AF78F0) return nullptr;
+        const auto manager = read32(0x00BEC20C);
+        if (!manager || manager > UINT32_MAX - 0x8B || read32(manager) != 0x00B3F13C) return nullptr;
+        const auto account = read32(window + 0xCC);
+        const auto password = read32(window + 0xD4);
+        if (!account || !password || account == password || account > UINT32_MAX - 0x27 ||
+            password > UINT32_MAX - 0x27) return nullptr;
+        if (read32(account + 4) != 0x00AF2B5C || read32(password + 4) != 0x00AF2B5C ||
+            read32(manager + 0x80) != window ||
+            read32(account + 0x14) != 1007 || read32(password + 0x14) != 1008 ||
+            read32(account + 0x24) != window || read32(password + 0x24) != window) return nullptr;
+        const std::array<std::uint32_t, 4> current{manager, account, password, read32(manager + 0x88)};
+        if (sample && current != previous) return nullptr;
+        previous = current;
+    }
+    if (read32(0x00BEDED4) != stage || read32(0x00BEC20C) != previous[0] ||
+        read32(previous[0] + 0x88) != previous[3] || read32(window + 0xCC) != previous[1] ||
+        read32(window + 0xD4) != previous[2]) return nullptr;
+    return previous[3] == previous[1] + 4 ? "account" :
+        previous[3] == previous[2] + 4 ? "password" : nullptr;
+}
+
+// Expose only emptiness, never edit text or length; reject mutable snapshots.
+template <class Read32>
+bool LoginEditEmpty(std::uint32_t stage, std::uint32_t window, Read32 read32, bool& accountEmpty, bool& passwordEmpty) {
+    const auto focus = LoginEditFocus(stage, window, read32);
+    if (!focus) return false;
+    const auto account = read32(window + 0xCC), password = read32(window + 0xD4);
+    std::array<std::uint32_t, 2> pointers[2]{}, lengths[2]{};
+    for (int sample = 0; sample < 2; ++sample) {
+        if (read32(window + 0xCC) != account || read32(window + 0xD4) != password) return false;
+        for (int i = 0; i < 2; ++i) {
+            const auto control = i == 0 ? account : password;
+            if (!control || control > UINT32_MAX - 0x37) return false;
+            const auto p = read32(control + 0x34);
+            pointers[sample][i] = p;
+            if (p != 0) {
+                if (p < 4) return false;
+                const auto length = read32(p - 4);
+                if (length == UINT32_MAX) return false;
+                lengths[sample][i] = length;
+            }
+        }
+    }
+    const auto after = LoginEditFocus(stage, window, read32);
+    if (!after || after != focus || read32(window + 0xCC) != account || read32(window + 0xD4) != password ||
+        pointers[0] != pointers[1] || lengths[0] != lengths[1]) return false;
+    for (int i = 0; i < 2; ++i) {
+        const auto control = i == 0 ? account : password;
+        const auto pointer = read32(control + 0x34);
+        if (pointer != pointers[1][i] || (pointer != 0 && read32(pointer - 4) != lengths[1][i])) return false;
+    }
+    accountEmpty = lengths[0][0] == 0;
+    passwordEmpty = lengths[0][1] == 0;
+    return true;
+}
+
 // World panel values are raw indices, not world identifiers.
 template <class Read32>
 bool RawWorldSelection(std::uint32_t stage, Read32 read32, std::uint32_t& count, std::uint32_t& index) {

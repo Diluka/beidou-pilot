@@ -558,6 +558,31 @@ Value StageWindows(std::uintptr_t loginStage) {
         }
         const auto name = WindowName(tables[0]);
         const auto candidate = ObservedLoginPage(loginStage, tables, At<int>(header, 0x24), At<int>(header, 0x28));
+        Value loginEditFocus, accountEmpty, passwordEmpty;
+        if (loginStage != 0 && tables == std::array<Address, 3>{0x00AF7940, 0x00AF78F4, 0x00AF78F0}) {
+            try {
+                bool knownBefore = false, knownAfter = false;
+                if (WindowActive(address, knownBefore) && knownBefore) {
+                    const auto focus = LoginEditFocus(static_cast<Address>(loginStage), address,
+                        [](Address at) { return Read<std::uint32_t>(at); });
+                    bool accountIsEmpty = false, passwordIsEmpty = false;
+                    const bool emptyKnown = focus != nullptr && LoginEditEmpty(static_cast<Address>(loginStage), address,
+                        [](Address at) { return Read<std::uint32_t>(at); }, accountIsEmpty, passwordIsEmpty);
+                    const auto finalFocus = focus == nullptr ? nullptr : LoginEditFocus(static_cast<Address>(loginStage), address,
+                        [](Address at) { return Read<std::uint32_t>(at); });
+                    if (focus != nullptr && finalFocus != nullptr && std::strcmp(focus, finalFocus) == 0 &&
+                        WindowActive(address, knownAfter) && knownAfter) {
+                        loginEditFocus = focus;
+                        if (emptyKnown) {
+                            accountEmpty = accountIsEmpty;
+                            passwordEmpty = passwordIsEmpty;
+                        }
+                    }
+                }
+            } catch (const ReadError&) {
+                // Focus is optional; do not expose edit contents on failure.
+            }
+        }
         Value rawGenderSelection;
         if (candidate != nullptr && std::strcmp(candidate, "gender") == 0) {
             try {
@@ -587,6 +612,7 @@ Value StageWindows(std::uintptr_t loginStage) {
         windows.Add(Value::Object({{"address", Hex(address)}, {"vtables", Tables(tables)},
             {"type_name", name == nullptr ? Value() : Value(name)},
             {"login_page_candidate", candidate == nullptr ? Value() : Value(candidate)},
+            {"login_edit_focus", loginEditFocus}, {"account_empty", accountEmpty}, {"password_empty", passwordEmpty},
             {"raw_gender_selection", rawGenderSelection}, {"raw_appearance_candidates", rawAppearance},
             {"width", At<int>(header, 0x24)}, {"height", At<int>(header, 0x28)},
             {"buttons", buttons}}));

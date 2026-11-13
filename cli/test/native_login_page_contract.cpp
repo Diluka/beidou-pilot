@@ -107,4 +107,76 @@ int main() {
     assert(!RawWorldSelection(stage, changingWorld, count, index));
     memory[0x00BEDA5C] = UINT32_MAX - 0x8A;
     assert(!RawWorldSelection(stage, read32, count, index));
+
+    const std::uint32_t manager = 0x50000, account = 0x60000, password = 0x70000;
+    memory[stage + 0x168] = 0;
+    memory[window] = 0x00AF7940;
+    memory[window + 4] = 0x00AF78F4;
+    memory[window + 8] = 0x00AF78F0;
+    memory[window + 0xCC] = account;
+    memory[window + 0xD4] = password;
+    memory[0x00BEC20C] = manager;
+    memory[manager] = 0x00B3F13C;
+    memory[manager + 0x80] = window;
+    memory[account + 4] = memory[password + 4] = 0x00AF2B5C;
+    memory[account + 0x14] = 1007;
+    memory[password + 0x14] = 1008;
+    memory[account + 0x24] = memory[password + 0x24] = window;
+    memory[manager + 0x88] = account + 4;
+    using NativeObservation::LoginEditEmpty;
+    using NativeObservation::LoginEditFocus;
+    assert(std::string(LoginEditFocus(stage, window, read32)) == "account");
+    memory[manager + 0x88] = password + 4;
+    assert(std::string(LoginEditFocus(stage, window, read32)) == "password");
+    memory[account + 0x34] = 0;
+    memory[password + 0x34] = 0x80004;
+    memory[0x80000] = 7;
+    bool a = false, p = true;
+    assert(LoginEditEmpty(stage, window, read32, a, p) && a && !p);
+    memory[password + 0x34] = 3;
+    assert(!LoginEditEmpty(stage, window, read32, a, p));
+    memory[password + 0x34] = 0x80004;
+    int focusReads = 0;
+    auto changingFocus = [&](std::uint32_t at) {
+        auto value = memory.at(at);
+        return at == manager + 0x88 && ++focusReads == 2 ? account + 4 : value;
+    };
+    assert(!LoginEditFocus(stage, window, changingFocus));
+    int stringReads = 0;
+    auto changingString = [&](std::uint32_t at) {
+        auto value = memory.at(at);
+        return at == password + 0x34 && ++stringReads == 2 ? 0u : value;
+    };
+    assert(!LoginEditEmpty(stage, window, changingString, a, p));
+    int lengthReads = 0;
+    auto changingLength = [&](std::uint32_t at) {
+        auto value = memory.at(at);
+        return at == 0x80000 && ++lengthReads == 2 ? value + 1 : value;
+    };
+    assert(!LoginEditEmpty(stage, window, changingLength, a, p));
+    int managerReads = 0;
+    auto changingManager = [&](std::uint32_t at) {
+        auto value = memory.at(at);
+        return at == 0x00BEC20C && ++managerReads == 2 ? 0u : value;
+    };
+    assert(!LoginEditFocus(stage, window, changingManager));
+    memory[account + 0x14] = 1;
+    assert(!LoginEditFocus(stage, window, read32));
+    memory[account + 0x14] = 1007;
+    memory[password + 0x24] = 0;
+    assert(!LoginEditFocus(stage, window, read32));
+    memory[password + 0x24] = window;
+    memory[0x80000] = 0;
+    assert(LoginEditEmpty(stage, window, read32, a, p) && a && p);
+    memory.erase(0x80000);
+    failed = false;
+    try {
+        LoginEditEmpty(stage, window, read32, a, p);
+    } catch (const std::out_of_range&) {
+        failed = true;
+    }
+    assert(failed);
+    memory[manager + 0x88] = 0;
+    assert(!LoginEditFocus(stage, window, read32));
+    assert(!LoginEditFocus(stage, UINT32_MAX - 0xD6, read32));
 }
