@@ -96,11 +96,21 @@ std::string Quote(const std::string& text) {
     std::string quoted = "\"";
     for (const char character : text) {
         switch (character) {
-        case '"': quoted += "\\\""; break;
-        case '\\': quoted += "\\\\"; break;
-        case '\n': quoted += "\\n"; break;
-        case '\r': quoted += "\\r"; break;
-        case '\t': quoted += "\\t"; break;
+        case '"':
+            quoted += "\\\"";
+            break;
+        case '\\':
+            quoted += "\\\\";
+            break;
+        case '\n':
+            quoted += "\\n";
+            break;
+        case '\r':
+            quoted += "\\r";
+            break;
+        case '\t':
+            quoted += "\\t";
+            break;
         default:
             if (static_cast<unsigned char>(character) < 0x20) {
                 const char digits[] = "0123456789abcdef";
@@ -124,8 +134,8 @@ bool WriteResult(const std::string& directory, const std::string& instance, cons
         << ",\"status\":" << Quote(status) << ",\"reason\":" << (reason.empty() ? "null" : Quote(reason)) << "}\n";
     const std::string bytes = out.str();
     const std::string temporary = directory + "\\login-action-result.tmp";
-    const HANDLE file = CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE file =
+        CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0;
     const bool complete =
@@ -151,7 +161,7 @@ bool ReadRequest(const std::string& directory, std::string& instance, Request& r
     unsigned int protocol = 0;
     std::string extra;
     if (!(stream >> protocol >> instance >> request.requestId >> request.action >> request.arguments[0]
-                  >> request.arguments[1] >> request.arguments[2])
+          >> request.arguments[1] >> request.arguments[2])
         || protocol != 1 || (stream >> extra))
         return false;
     return true;
@@ -184,10 +194,9 @@ bool DecodeBase64(const std::string& text, std::string& output) {
                 if (values[slot] < 0) return false;
             }
         }
-        const std::uint32_t chunk = (static_cast<std::uint32_t>(values[0]) << 18)
-                                    | (static_cast<std::uint32_t>(values[1]) << 12)
-                                    | (static_cast<std::uint32_t>(values[2]) << 6)
-                                    | static_cast<std::uint32_t>(values[3]);
+        const std::uint32_t chunk =
+            (static_cast<std::uint32_t>(values[0]) << 18) | (static_cast<std::uint32_t>(values[1]) << 12)
+            | (static_cast<std::uint32_t>(values[2]) << 6) | static_cast<std::uint32_t>(values[3]);
         output += static_cast<char>((chunk >> 16) & 0xFF);
         if (padding < 2) output += static_cast<char>((chunk >> 8) & 0xFF);
         if (padding < 1) output += static_cast<char>(chunk & 0xFF);
@@ -201,10 +210,14 @@ bool ParseAddress(const std::string& text, std::uint32_t& address) {
     for (std::size_t index = 2; index < text.size(); ++index) {
         const char character = text[index];
         unsigned int digit = 0;
-        if (character >= '0' && character <= '9') digit = static_cast<unsigned int>(character - '0');
-        else if (character >= 'a' && character <= 'f') digit = static_cast<unsigned int>(character - 'a' + 10);
-        else if (character >= 'A' && character <= 'F') digit = static_cast<unsigned int>(character - 'A' + 10);
-        else return false;
+        if (character >= '0' && character <= '9')
+            digit = static_cast<unsigned int>(character - '0');
+        else if (character >= 'a' && character <= 'f')
+            digit = static_cast<unsigned int>(character - 'a' + 10);
+        else if (character >= 'A' && character <= 'F')
+            digit = static_cast<unsigned int>(character - 'A' + 10);
+        else
+            return false;
         if (value > 0x0FFFFFFF) return false;
         value = (value << 4) | digit;
     }
@@ -302,8 +315,7 @@ bool Dispatch(const Request& request, std::string& reason) {
             return false;
         }
         std::uint32_t table = 0, account = 0, secret = 0;
-        if (!ActiveWindow(address, table) || table != kLoginFormVtable
-            || !WindowOwner(address, 0x80, state.login)) {
+        if (!ActiveWindow(address, table) || table != kLoginFormVtable || !WindowOwner(address, 0x80, state.login)) {
             reason = "login_form_not_active";
             return false;
         }
@@ -357,8 +369,7 @@ bool Dispatch(const Request& request, std::string& reason) {
         }
         const WindowSpec* spec = FindWindowSpec(kWorldVtable);
         if (!RequireStep(state, kStepWorld) || spec == nullptr
-            || !PageWindow(state, address, kWorldVtable, spec->ownerOffset)
-            || !ButtonSlot(address, kWorldButton)) {
+            || !PageWindow(state, address, kWorldVtable, spec->ownerOffset) || !ButtonSlot(address, kWorldButton)) {
             reason = "world_page_not_active";
             return false;
         }
@@ -371,27 +382,22 @@ bool Dispatch(const Request& request, std::string& reason) {
         return true;
     }
     if (request.action == "select_channel") {
-        int worldIndex = 0, channelIndex = 0;
-        if (!ParseInteger(request.arguments[0], 30, worldIndex)
-            || !ParseInteger(request.arguments[1], 40, channelIndex)) {
+        int channelIndex = 0;
+        std::uint32_t address = 0;
+        if (!ParseInteger(request.arguments[0], 40, channelIndex) || !ParseAddress(request.arguments[1], address)) {
             reason = "invalid_arguments";
             return false;
         }
-        if (!RequireStep(state, kStepWorld)) {
+        std::uint32_t table = 0, ready = 0;
+        if (!RequireStep(state, kStepWorld) || !ActiveWindow(address, table) || table != kChannelVtable
+            || !WindowOwner(address, 0xD4, state.login) || !Read32(address + 0xB8, ready) || ready != 0) {
             reason = "channel_page_not_active";
             return false;
         }
-        std::uint32_t worlds = 0, worldCount = 0;
-        if (!Read32(state.login + 0x18C, worlds) || worlds == 0 || !Read32(worlds - 4, worldCount)
-            || static_cast<std::uint32_t>(worldIndex) >= worldCount || worldCount > 30) {
-            reason = "world_list_unavailable";
-            return false;
-        }
-        const std::uint32_t entry = worlds + static_cast<std::uint32_t>(worldIndex) * 0x20;
-        std::uint32_t worldValue = 0, channels = 0, channelCount = 0;
-        if (!Read32(entry, worldValue) || !Read32(entry + 0x1C, channels) || channels == 0
-            || !Read32(channels - 4, channelCount) || static_cast<std::uint32_t>(channelIndex) >= channelCount
-            || channelCount > 40) {
+        std::uint32_t entry = 0, worldValue = 0, channels = 0, channelCount = 0;
+        if (!Read32(address + 0xE0, entry) || entry == 0 || !Read32(entry, worldValue)
+            || !Read32(entry + 0x1C, channels) || channels == 0 || !Read32(channels - 4, channelCount)
+            || static_cast<std::uint32_t>(channelIndex) >= channelCount || channelCount > 40) {
             reason = "channel_list_unavailable";
             return false;
         }
@@ -401,8 +407,8 @@ bool Dispatch(const Request& request, std::string& reason) {
     if (request.action == "check_name") {
         std::uint32_t address = 0;
         std::string name;
-        if (!ParseAddress(request.arguments[0], address) || !DecodeBase64(request.arguments[1], name)
-            || name.empty() || name.size() > 12) {
+        if (!ParseAddress(request.arguments[0], address) || !DecodeBase64(request.arguments[1], name) || name.empty()
+            || name.size() > 12) {
             reason = "invalid_arguments";
             return false;
         }
