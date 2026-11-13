@@ -11,8 +11,10 @@
 | [move_to.lua](travel/move_to.lua) | 根据位置反馈移动到当前层的目标 X，停止后再次确认到达。 | CLI `move X`；负责同层横向对齐，跨层与跨图路线由旅行函数库组合。 |
 | [climb_to.lua](travel/climb_to.lua) | 靠近并对齐单根绳梯，向目标 Y 攀爬，检查最终位置。 | CLI `climb X --to-y Y`；单次局部攀爬，确认失败时停止。 |
 | [enter_portal.lua](travel/enter_portal.lua) | 接近单个门户，只发送一次进入动作，再观察换图或同图传送结果。 | CLI `portal NAME`；门户需在当前可接近层。 |
+| [walk_to.lua](travel/walk_to.lua) | 按静态地形图把角色移动到当前地图的目标坐标：走、跳台、落层、绳底跳抓；竖直墙把平台切成不同区间。 | CLI `move X --to-y Y`；每段执行后重新采样再规划，执行失败的边本次会话禁用；失败信息带地图、坐标、阶段与原因。 |
 | [_route.lua](travel/_route.lua) | 普通 Lua 函数在同一预算内组合已知同层移动、落层和相邻地图门户，按阶段核对身份与到达。 | `script run/start --library travel`；接口见 [Lua API](../../docs/LUA_API.md#可选旅行函数库)。 |
 | [_common.lua](travel/_common.lua) | 旅行脚本共用的身份、场景、生命值检查，以及横向反馈对齐。 | 内部辅助文件，由装载器自动拼接到旅行脚本前。 |
+| [_terrain.lua](travel/_terrain.lua) | 单地图静态地形图：把 footholds/ropes 构建成平台区间、竖直墙与可执行边（走、跳台、落层、绳梯），并提供最短路径搜索。 | 由装载器拼接给 `walk_to.lua` 与 `combat/hunt.lua` 共用；地形规则只在这里维护。 |
 
 ## 战斗：`combat/`
 
