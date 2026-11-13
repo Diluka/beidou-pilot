@@ -50,8 +50,10 @@ def parser() -> Parser:
     q = command("gui-login-experiment", "实验：人工确认空登录表单后单次提交凭据")
     q.add_argument("--instance-id", required=True)
     q.add_argument("--run-id", required=True)
-    q = command("login", "观察容器已启动的账号登录，不发送凭据或同意")
-    q.add_argument("--timeout", type=float, default=0, help="等待角色列表的秒数，默认只观察一次")
+    q = command("login", "观察登录状态，或显式授权 GUI 登录")
+    q.add_argument("--timeout", type=float, default=None, help="等待秒数；观察默认一次，GUI 动作默认30秒")
+    q.add_argument("--accept-terms", action="store_true", help="按需授权同意协议（GUI）")
+    q.add_argument("--gender", choices=["female", "male"], help="显式指定账号性别（GUI）")
     q = command("character", "创建角色或查询既有建角请求")
     actions = q.add_subparsers(dest="character_action", required=True, parser_class=Parser)
     create = actions.add_parser("create", parents=[common], allow_abbrev=False)
@@ -305,6 +307,15 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     if cmd in {"login", "character"}:
         from .first_character import execute
 
+        if cmd == "login" and args.timeout is None:
+            args.timeout = 30 if backend.name == "beidou" and (args.accept_terms or args.gender is not None) else 0
+        if cmd == "login" and backend.name == "beidou" and (args.accept_terms or args.gender is not None):
+            if args.gender is None:
+                raise ClientError("usage", "GUI 登录动作必须明确指定性别。")
+            with control(backend, "login"):
+                return execute(backend, args)
+        if cmd == "login" and backend.name == "headless" and (args.accept_terms or args.gender is not None):
+            raise ClientError("usage", "无头登录不接受 GUI 登录选项。")
         return execute(backend, args)
     if backend.name == "headless" and cmd not in {
         "status",

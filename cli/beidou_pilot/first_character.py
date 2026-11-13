@@ -15,7 +15,55 @@ from .runtime import load_runtime
 
 def execute(backend: Backend, args: argparse.Namespace) -> JsonObject:
     if backend.name != "headless":
-        raise ClientError("unsupported_capability", "GUI 暂不支持账号登录观察和建角。")
+        if args.command != "login":
+            raise ClientError("unsupported_capability", "GUI 暂不支持建角。")
+        if not math.isfinite(args.timeout) or args.timeout < 0:
+            raise ClientError("usage", "等待时间必须为非负有限数。")
+        runtime = load_runtime(backend.root, backend.name, backend.instance)
+        if not runtime.running:
+            raise ClientError("bridge_session_unavailable", "本容器的客户端进程已退出。")
+        native = BridgeClient(backend.root, backend.name, backend.instance).snapshot()
+        if native.get("run_id") != runtime.run_id or not native.get("instance_id"):
+            raise ClientError("gui_login_identity_unconfirmed", "原生桥身份不匹配。")
+        if args.accept_terms or args.gender is not None:
+            from .gui_login import execute as gui_execute
+            from .profile import load_account_profile
+
+            return gui_execute(
+                backend,
+                load_account_profile(backend.root / "account.json"),
+                instance_id=native["instance_id"],
+                run_id=runtime.run_id,
+                accept_terms=args.accept_terms,
+                gender=args.gender,
+                timeout=args.timeout,
+            )
+        deadline = time.monotonic() + args.timeout
+        while True:
+            stage = backend.read("stage")
+            client = stage.get("client")
+            current = load_runtime(backend.root, backend.name, backend.instance)
+            if (
+                not current.running
+                or current.run_id != runtime.run_id
+                or stage.get("instance_id") != native["instance_id"]
+                or not isinstance(client, dict)
+                or client.get("run_id") != runtime.run_id
+            ):
+                raise ClientError("gui_login_identity_unconfirmed", "登录观察身份不匹配。")
+            login = stage.get("login")
+            if (
+                args.timeout == 0
+                or stage.get("stage") == "CHARACTER_SELECT"
+                and isinstance(login, dict)
+                and login.get("characters_available") is True
+            ):
+                return stage
+            if time.monotonic() >= deadline:
+                raise ClientError(
+                    "login_timeout", "等待角色列表超时；登录进程继续运行。", {"stage": stage.get("stage")}
+                )
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
     timeout = getattr(args, "timeout", 0)
     if not math.isfinite(timeout) or timeout < 0:
         raise ClientError("usage", "等待时间必须为非负有限数。")
@@ -27,11 +75,20 @@ def execute(backend: Backend, args: argparse.Namespace) -> JsonObject:
         if result["status"] in ("completed", "rejected"):
             return result
         try:
-            if not runtime.running or runtime.run_id != args.run_id or native.snapshot()["instance_id"] != args.instance_id:
+            if (
+                not runtime.running
+                or runtime.run_id != args.run_id
+                or native.snapshot()["instance_id"] != args.instance_id
+            ):
                 raise ClientError("container_identity_changed", "原实例已退出或身份已改变。")
         except ClientError:
-            return {"request_id": args.request_id, "instance_id": args.instance_id, "run_id": args.run_id,
-                    "status": "unknown", "last_observed_status": result["status"]}
+            return {
+                "request_id": args.request_id,
+                "instance_id": args.instance_id,
+                "run_id": args.run_id,
+                "status": "unknown",
+                "last_observed_status": result["status"],
+            }
         return result
     if not runtime.running:
         raise ClientError("bridge_session_unavailable", "本容器的客户端进程已退出；请查看当前所属运行日志确认原因。")
@@ -50,10 +107,14 @@ def execute(backend: Backend, args: argparse.Namespace) -> JsonObject:
                 phase = state["phase"]
                 if phase == "failed":
                     reason = state.get("error")
-                    raise ClientError("login_failed", "登录进程报告失败。",
-                                      {"reason": reason if isinstance(reason, str) else None})
+                    raise ClientError(
+                        "login_failed", "登录进程报告失败。", {"reason": reason if isinstance(reason, str) else None}
+                    )
                 if phase == "character_list" and state["characters"] is not None:
-                    return {key: state[key] for key in ("phase", "characters", "pending_request_id", "instance_id", "run_id")}
+                    return {
+                        key: state[key]
+                        for key in ("phase", "characters", "pending_request_id", "instance_id", "run_id")
+                    }
             except ClientError as error:
                 if error.code not in {"bridge_unavailable", "login_bridge_unavailable", "login_bridge_stale_state"}:
                     raise
@@ -62,9 +123,19 @@ def execute(backend: Backend, args: argparse.Namespace) -> JsonObject:
             time.sleep(min(0.1, max(0, deadline - time.monotonic())))
     state = native.snapshot()
     bridge = LoginBridge(native.directory, cast(str, state["instance_id"]), runtime.run_id)
-    creation = CharacterCreation(name=args.name, job=args.job, face=args.face, hair=args.hair,
-                                 hair_color=args.hair_color, skin=args.skin, top=args.top, bottom=args.bottom,
-                                 shoes=args.shoes, weapon=args.weapon, female=args.gender == "female")
+    creation = CharacterCreation(
+        name=args.name,
+        job=args.job,
+        face=args.face,
+        hair=args.hair,
+        hair_color=args.hair_color,
+        skin=args.skin,
+        top=args.top,
+        bottom=args.bottom,
+        shoes=args.shoes,
+        weapon=args.weapon,
+        female=args.gender == "female",
+    )
     try:
         request_id = bridge.submit(creation)
     except ClientError as error:
@@ -81,7 +152,11 @@ def execute(backend: Backend, args: argparse.Namespace) -> JsonObject:
                 return result
             current_runtime = load_runtime(backend.root, backend.name, backend.instance)
             current = native.snapshot()
-            if not current_runtime.running or current_runtime.run_id != runtime.run_id or current["instance_id"] != state["instance_id"]:
+            if (
+                not current_runtime.running
+                or current_runtime.run_id != runtime.run_id
+                or current["instance_id"] != state["instance_id"]
+            ):
                 return {**identity, "status": "unknown", "last_observed_status": last_status}
         except (ClientError, KeyboardInterrupt):
             return {**identity, "status": "unknown", "last_observed_status": last_status}
