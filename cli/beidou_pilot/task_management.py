@@ -10,7 +10,7 @@ from typing import Literal, TypedDict, cast
 import uuid
 
 from .backend import Backend
-from .bridge import BridgeClient
+from .bridge import BridgeClient, script_by_id
 from .errors import ClientError, JsonObject
 
 
@@ -106,10 +106,10 @@ def change_task(
         raise ClientError("invalid_task_options", "任务操作的源码与预期revision组合无效。")
     bridge = BridgeClient(backend.root, backend.name, backend.instance)
     before = bridge.snapshot()
-    script = before.get("script")
-    if script is None or script["id"] != script_id or script["status"] != "running":
+    script = script_by_id(before, script_id)
+    if script is None or script["status"] != "running":
         raise ClientError("task_session_mismatch", "目标Lua会话当前未运行，未发布管理请求。")
-    if "tasks" not in script or any("revision" not in task for task in script["tasks"]):
+    if script.get("mode") == "tick" or "tasks" not in script or any("revision" not in task for task in script["tasks"]):
         raise ClientError("task_management_unsupported", "当前原生桥未提供任务revision，未发布管理请求。")
     if operation != "stop" and not before["ready"]:
         raise ClientError("bridge_not_ready", "角色尚未就绪，未发布任务源码。")

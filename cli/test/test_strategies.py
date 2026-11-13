@@ -14,7 +14,14 @@ from beidou_pilot.bridge import BridgeClient
 from beidou_pilot.cli import main
 from beidou_pilot.control_scripts import run_strategy
 from beidou_pilot.errors import ClientError
-from beidou_pilot.strategies import parse_options, parse_strategy, read_strategy_file
+from beidou_pilot.strategies import (
+    compile_strategy,
+    parse_options,
+    parse_script_execution,
+    parse_strategy,
+    read_strategy_file,
+)
+from beidou_pilot.script_libraries import with_library
 from beidou_pilot.strategy_scene import scene_context
 from .test_bridge import BridgeFiles
 
@@ -369,6 +376,121 @@ class LuaStrategyContract(unittest.TestCase):
             {"heals_hp": False, "heals_mp": False, "healing_known": False, "consume_only": False},
             {name: recovery_options[name] for name in ("heals_hp", "heals_mp", "healing_known", "consume_only")},
         )
+
+    def test_tick_metadata_defaults_and_description_are_visible_without_a_client(self) -> None:
+        self.path.write_text("-- @mode tick\n" + POLICY, encoding="utf-8")
+        with patch("beidou_pilot.cli.Backend") as backend:
+            code, output = self.cli("script", "describe", str(self.path))
+        self.assertEqual(0, code, output)
+        backend.assert_not_called()
+        data = json.loads(output)["data"]
+        self.assertEqual("tick", data["mode"])
+        self.assertEqual({"budget_ms": 100, "overrun": "abort", "abort_commit": True}, data["tick"])
+        self.assertEqual("coroutine", parse_script_execution(POLICY).mode)
+        self.assertEqual("coroutine", parse_script_execution("-- @mode coroutine\n" + POLICY).mode)
+        for budget, expected in ((".5", 0.5), ("1.", 1), ("0002.5", 2.5)):
+            with self.subTest(budget=budget):
+                execution = parse_script_execution("-- @mode tick--说明\n-- @tick.budget_ms " + budget + "\n")
+                self.assertEqual(("tick", expected), (execution.mode, execution.budget_ms))
+
+    def test_tick_compile_returns_entry_and_context_without_old_state_or_calling_main(self) -> None:
+        header = (
+            "-- @mode tick\n-- @tick.budget_ms 12.5\n-- @tick.overrun skip -- 分片执行\n-- @tick.abort_commit false\n"
+        )
+        source = header + POLICY
+        compiled = compile_strategy(source, {"mob_id": 12}, self.scene, {"route": [{"map_id": 200}]})
+        self.assertTrue(compiled.startswith(header))
+        self.assertEqual(1, compiled.count("@mode tick"))
+        self.assertIn('["mob_id"]=12', compiled)
+        self.assertIn('["scene_generation"]=1', compiled)
+        self.assertIn('["route"]={{["map_id"]=200}}', compiled)
+        self.assertNotIn("game.state()", compiled)
+        self.assertNotIn("main(__beidou_context)", compiled)
+        self.assertTrue(compiled.endswith("return {main=main,context=__beidou_context}\nend\n"))
+        execution = parse_script_execution(compiled)
+        self.assertEqual(
+            ("tick", 12.5, "skip", False),
+            (execution.mode, execution.budget_ms, execution.overrun, execution.abort_commit),
+        )
+        legacy = compile_strategy(POLICY, {"mob_id": 12}, self.scene)
+        self.assertIn("game.state()", legacy)
+        self.assertIn("strategy_scene_context_stale", legacy)
+        self.assertTrue(legacy.endswith("return main(__beidou_context)\nend\n"))
+
+    def test_tick_run_and_start_use_existing_options_and_scene_rules(self) -> None:
+        self.path.write_text("-- @mode tick\n" + POLICY, encoding="utf-8")
+        for action in ("run", "start"):
+            with (
+                self.subTest(action=action),
+                patch.object(BridgeClient, "snapshot", return_value=self.files.state),
+                patch("beidou_pilot.strategy_scene.scene_context", return_value=self.scene) as context,
+                patch.object(BridgeClient, "run_script", return_value={"status": "running"}) as run,
+            ):
+                code, output = self.cli("script", action, str(self.path), "--mob-id", "12")
+            self.assertEqual(0, code, output)
+            context.assert_called_once_with(self.files.root, self.files.state)
+            self.assertIn('["mob_id"]=12', run.call_args.kwargs["code"])
+            self.assertTrue(run.call_args.kwargs["code"].startswith("-- @mode tick\n"))
+            self.assertEqual(action == "start", run.call_args.kwargs["wait_for_start"])
+            self.assertNotIn("game.state()", run.call_args.kwargs["code"])
+
+    def test_execution_config_rejects_invalid_headers_before_backend_or_publication(self) -> None:
+        invalid = (
+            "-- @mode unknown",
+            "-- @mode Tick",
+            "-- @mode",
+            "-- @mode tick junk",
+            "-- @mode tick\n-- @mode tick",
+            "-- @tick.budget_ms 10",
+            "-- @mode coroutine\n-- @tick.overrun skip",
+            "-- @mode tick\n-- @tick.unknown true",
+            "-- @mode tick\n-- @tick.budget_ms 10\n-- @tick.budget_ms 10",
+            "-- @mode tick\n-- @tick.budget_ms 0",
+            "-- @mode tick\n-- @tick.budget_ms -1",
+            "-- @mode tick\n-- @tick.budget_ms +1",
+            "-- @mode tick\n-- @tick.budget_ms 1e2",
+            "-- @mode tick\n-- @tick.budget_ms NaN",
+            "-- @mode tick\n-- @tick.budget_ms inf",
+            "-- @mode tick\n-- @tick.overrun restart",
+            "-- @mode tick\n-- @tick.abort_commit True",
+            "-- @mode tick\n-- @tick.abort_commit 1",
+            "-- @mode tick\n-- @tick budget_ms 10",
+        )
+        for header in invalid:
+            source = header + "\nlocal function main(context)\nend\n"
+            self.path.write_text(source, encoding="utf-8")
+            for arguments in ((str(self.path),), ("--code=" + source,)):
+                with (
+                    self.subTest(header=header, arguments=arguments),
+                    patch("beidou_pilot.cli.Backend") as backend,
+                    patch.object(BridgeClient, "run_script") as run,
+                ):
+                    code, output = self.cli("script", "start", *arguments)
+                self.assertEqual(2, code, output)
+                self.assertEqual("invalid_strategy_metadata", json.loads(output)["error"]["code"])
+                backend.assert_not_called()
+                run.assert_not_called()
+
+    def test_only_real_leading_line_comments_define_execution_mode(self) -> None:
+        for source in (
+            "--[[\n-- @mode tick\n]]\nlocal x = 1\n-- @mode tick\n",
+            "--[=[\n-- @mode unknown\n]=]\n-- @mode coroutine\nlocal x = 1\n",
+            "local text = '-- @mode tick'\n-- @tick.budget_ms invalid\n",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual("coroutine", parse_script_execution(source).mode)
+        source = "-- a literal --[[ inside a line comment\n--- @mode tick\nfunction main(context)\nend\n"
+        self.assertEqual("tick", parse_script_execution(source).mode)
+        self.assertEqual("tick", parse_script_execution(with_library("travel", None, source)).mode)
+        source = "--[==[\n-- @mode coroutine\n]==]\n-- @mode tick\nfunction main(context)\nend\n"
+        self.assertEqual("tick", parse_script_execution(compile_strategy(source, {}, self.scene)).mode)
+
+    def test_raw_tick_code_keeps_native_global_main_entry(self) -> None:
+        source = "-- @mode tick\nfunction main(context) return 'done' end\n"
+        with patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run:
+            code, output = self.cli("script", "start", "--code=" + source)
+        self.assertEqual(0, code, output)
+        self.assertEqual(source, run.call_args.kwargs["code"])
 
     def test_scene_context_keeps_catalog_source_and_reports_missing_terrain(self) -> None:
         terrain = self.scene["terrain"]

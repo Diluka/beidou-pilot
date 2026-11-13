@@ -7,6 +7,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import sys
 from typing import Iterator, cast
@@ -16,7 +17,7 @@ from .catalog import Catalog
 from . import dialogs
 from .rules import FIRST_JOB_LEVELS, advancement
 from .snapshot import collect, format_snapshot
-from .strategies import compile_strategy, describe_strategy, parse_options, read_strategy_file
+from .strategies import compile_strategy, describe_strategy, parse_options, parse_script_execution, read_strategy_file
 from . import __version__
 
 
@@ -54,7 +55,7 @@ def parser() -> Parser:
     q.add_argument("action", choices=["status", "stop"], nargs="?", default="status")
     q = command("script", "在客户端内运行Lua控制脚本，或只读当前脚本状态", allow_abbrev=False)
     q.add_argument("action", choices=["run", "start", "status", "cancel", "describe"])
-    q.add_argument("--session", help="cancel必须指定当前script.id，只取消匹配脚本")
+    q.add_argument("--session", help="cancel必须指定script.id；status可按script.id查询指定会话")
     q.add_argument("--library", choices=["travel", "island-supply"], help="为run/start显式装载公共Lua函数")
     source = q.add_mutually_exclusive_group()
     source.add_argument("file", type=Path, nargs="?", help="受信UTF-8 Lua文件")
@@ -337,8 +338,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
         if (bridge.directory / "state.json").exists():
             state = bridge.snapshot()
-            script = state.get("script")
-            if script is not None and script["status"] == "running":
+            scripts = state.get("scripts", [state["script"]] if state.get("script") is not None else [])
+            script = next((item for item in scripts if item["status"] == "running"), None)
+            if script is not None:
                 raise ClientError(
                     "input_busy",
                     "Lua仍在控制客户端；先显式取消对应脚本再操作窗口。",
@@ -424,9 +426,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             from .bridge import BridgeClient
 
             bridge = BridgeClient(backend.root, backend.name, backend.instance)
-            return bridge.cancel_script(args.session)
-        if args.session is not None:
-            raise ClientError("usage", "--session仅用于script cancel。")
+            return bridge.cancel_script(args.session, admission_control=control(backend, "script cancel"))
+        if args.session is not None and args.action != "status":
+            raise ClientError("usage", "--session仅用于script cancel/status。")
         if args.action == "describe":
             if args.file is None or args.code is not None or args.library is not None:
                 raise ClientError("usage", "script describe需要一个已声明main(context)的Lua文件。")
@@ -440,17 +442,31 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 raise ClientError("usage", "script status不接收脚本文件或源码。")
             from .bridge import BridgeClient
 
+            from .bridge import script_by_id
+
             bridge = BridgeClient(backend.root, backend.name, backend.instance)
             state = bridge.snapshot()
-            return {
+            script = state.get("script")
+            if args.session is not None:
+                if not re.fullmatch(r"[0-9a-fA-F]{32}", args.session):
+                    raise ClientError("invalid_bridge_options", "--session须为script status中的32位脚本ID。")
+                script = script_by_id(state, args.session)
+                if script is None:
+                    raise ClientError(
+                        "script_session_mismatch", "当前原生状态没有指定脚本会话。", {"script_id": args.session}
+                    )
+            report: JsonObject = {
                 "source": "client-native-bridge",
                 "supported": "script" in state,
                 "instance_id": state["instance_id"],
                 "run_id": state["run_id"],
-                "script": cast(JsonObject | None, state.get("script")),
+                "script": cast(JsonObject | None, script),
                 "command": cast(JsonObject, state["command"]),
                 "held_keys": state["held_keys"],
             }
+            if "scripts" in state:
+                report["scripts"] = cast(list[JsonObject], state["scripts"])
+            return report
         if args.file is None and args.code is None:
             raise ClientError("usage", "script run/start需要UTF-8本地Lua文件或--code源码。")
         from .bridge import BridgeClient
@@ -472,6 +488,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 seconds=None if args.continuous else args.seconds,
                 code=code,
                 wait_for_start=args.action == "start",
+                admission_control=control(backend, "script " + args.action),
             )
             report = {**report, "script_file": str(consumer_file), "policy_entry": "main(context)"}
         else:
@@ -487,6 +504,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 seconds=None if args.continuous else args.seconds,
                 code=code,
                 wait_for_start=args.action == "start",
+                admission_control=control(backend, "script " + args.action),
             )
             if consumer_file is not None:
                 report = {**report, "script_file": str(consumer_file)}
@@ -889,6 +907,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             elif unrecognized:
                 raise ClientError("usage", "该Lua文件未声明动态策略参数：" + " ".join(unrecognized))
+        if args.command == "script" and args.action in {"run", "start"} and args.code is not None:
+            parse_script_execution(args.code)
         if args.command == "script" and args.action == "describe" and args.file is None:
             raise ClientError("usage", "script describe需要一个Lua策略文件。")
         if unrecognized:
@@ -940,7 +960,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.command == "close":
             result = dispatch(backend, args)
-        elif args.command == "task" or args.command == "events" and args.action == "watch":
+        elif args.command in {"task", "script"} and not readonly or args.command == "events" and args.action == "watch":
             previous_handler = signal.signal(signal.SIGTERM, signal.default_int_handler)
             try:
                 result = dispatch(backend, args)

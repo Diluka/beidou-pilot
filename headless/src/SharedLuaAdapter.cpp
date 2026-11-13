@@ -102,13 +102,14 @@ Json ScriptDocument(const MapleControl::Status* script) {
 }
 
 SharedLuaAdapter::SharedLuaAdapter(std::filesystem::path bridgeDirectory, std::string registeredRun)
-    : directory(std::move(bridgeDirectory)), runId(std::move(registeredRun)), runtime(*this),
+    : directory(std::move(bridgeDirectory)), runId(std::move(registeredRun)), tickAdapter(*this), runtime(*this),
       taskTransport(directory.string(), runId),
       questInteraction(
           interaction, [this](const QuestRequest& request, std::string& error) { return RequestQuest(request, error); },
           [this](std::uint32_t objectId, std::int32_t npcId, std::string& error) {
               return OpenServerNpc(static_cast<std::int32_t>(objectId), npcId, error);
-          }) {
+          }),
+      tickRuntime(tickAdapter) {
     state.instanceId = std::to_string(getpid()) + "-" + std::to_string(UnixMs()) + "-" + std::to_string(MonotonicMs());
     if (!directory.empty()) std::filesystem::create_directories(directory);
 }
@@ -217,11 +218,12 @@ bool SharedLuaAdapter::ReleasePending() const {
 }
 
 bool SharedLuaAdapter::Running() const {
-    return runtime.Running();
+    return runtime.Running() || tickRuntime.Running();
 }
 
 void SharedLuaAdapter::Cancel(const std::string& reason) {
     runtime.Cancel(reason);
+    tickRuntime.CancelAll(reason);
 }
 
 void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
@@ -777,10 +779,7 @@ bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& er
             return false;
         }
         if (key != ms::KeyAction::LENGTH) heldActions.push_back(key);
-        for (const auto held : heldActions) {
-            stage.send_key(ms::KeyType::ACTION, held, true);
-            ++inputEvents;
-        }
+        SyncKeys();
     }
     result.dispatched = !result.skillRequested || result.skill.dispatched || !heldActions.empty();
     result.controlReleased = false;
@@ -796,11 +795,8 @@ void SharedLuaAdapter::ApplyRelease() {
         CaptureAllocation();
         allocationRequest.reset();
     }
-    for (const auto held : heldActions) {
-        ms::Stage::get().send_key(ms::KeyType::ACTION, held, false);
-        ++inputEvents;
-    }
     heldActions.clear();
+    SyncKeys();
     if (equipmentChange && result.reason == "equipment_change_requested")
         result.reason = "equipment_confirmation_stopped";
     equipmentChange.reset();
@@ -813,6 +809,49 @@ void SharedLuaAdapter::ApplyRelease() {
 
 void SharedLuaAdapter::Release() {
     ApplyRelease();
+}
+
+void SharedLuaAdapter::SyncKeys() {
+    const auto tickKeys = tickAdapter.Keys();
+    std::set<ms::KeyAction::Id> desired(heldActions.begin(), heldActions.end());
+    desired.insert(tickKeys.begin(), tickKeys.end());
+    for (const auto key : physicalKeys) {
+        if (desired.count(key) == 0) {
+            ms::Stage::get().send_key(ms::KeyType::ACTION, key, false);
+            ++inputEvents;
+        }
+    }
+    for (const auto key : desired) {
+        if (physicalKeys.count(key) == 0) {
+            ms::Stage::get().send_key(ms::KeyType::ACTION, key, true);
+            ++inputEvents;
+        }
+    }
+    physicalKeys = std::move(desired);
+}
+
+Json SharedLuaAdapter::ScriptState(const std::string& id) const {
+    const auto tick = tickRuntime.CurrentStatus(id);
+    if (tick.Type() != MapleControl::Value::Kind::Null) return Json::parse(tick.Dump());
+    const auto* script = runtime.CurrentStatus();
+    if (script == nullptr || script->id != id) {
+        const auto previous = std::find_if(scriptHistory.begin(), scriptHistory.end(),
+                                           [&id](const Json& entry) { return entry["id"] == id; });
+        return previous == scriptHistory.end() ? Json(nullptr) : *previous;
+    }
+    auto document = ScriptDocument(script);
+    document["mode"] = "coroutine";
+    document["control_released"] = !runtime.Running() && Released();
+    return document;
+}
+
+Json SharedLuaAdapter::ScriptsDocument() const {
+    auto scripts = Json::parse(tickRuntime.Statuses().Dump());
+    const auto* script = runtime.CurrentStatus();
+    for (const auto& previous : scriptHistory)
+        if (script == nullptr || previous["id"] != script->id) scripts.push_back(previous);
+    if (script != nullptr) scripts.push_back(ScriptState(script->id));
+    return scripts;
 }
 
 void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
@@ -843,31 +882,45 @@ void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
     const bool identity = protocol == 1 && instance == state.instanceId && !id.empty() && id.size() <= 64
                           && id.find_first_not_of("0123456789abcdefABCDEF-") == std::string::npos;
     bool valid = identity;
-    if (operation == "script") {
+    if (operation == "script" || operation == "cancel_script") {
         stream >> scriptId;
-        valid = valid && generation == state.sceneGeneration && value <= 0xffffffffULL && scriptId.size() == 32
-                && scriptId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos && !(stream >> extra)
-                && state.ready;
+        valid = valid && scriptId.size() == 32
+                && scriptId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos && !(stream >> extra);
+        if (operation == "script")
+            valid = valid && generation == state.sceneGeneration && value <= 0xffffffffULL && state.ready;
+        else
+            valid = valid && value == 0;
     } else
         valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
-    const bool busy = operation != "stop" && (runtime.Running() || !Released() || externalActionBusy);
-    if (!valid || busy) {
+    if (!valid) {
         rejectedId = id;
-        rejectedReason = busy ? "busy" : "invalid_or_stale_command";
-        if (!runtime.Running() && Released()) {
-            commandId = id;
-            commandStatus = "rejected";
-            commandReason = rejectedReason;
-        }
+        rejectedReason = "invalid_or_stale_command";
+        return;
+    }
+    if (operation == "cancel_script" && ScriptState(scriptId).is_null()) {
+        rejectedId = id;
+        rejectedReason = "script_session_changed";
         return;
     }
     commandId = id;
     commandStatus = "running";
     commandReason.clear();
     if (operation == "stop") {
-        runtime.Cancel("stopped");
+        Cancel("stopped");
         Release();
+        tickAdapter.Release();
         scriptCommand = false;
+        commandScriptId.clear();
+        return;
+    }
+    if (operation == "cancel_script") {
+        const auto* script = runtime.CurrentStatus();
+        if (script != nullptr && script->id == scriptId)
+            runtime.Cancel("stopped");
+        else
+            tickRuntime.Cancel(scriptId, "stopped");
+        commandScriptId = scriptId;
+        scriptCommand = true;
         return;
     }
     const auto sourcePath = directory / "scripts" / (scriptId + ".lua");
@@ -885,12 +938,37 @@ void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
         }
     }
     std::string error;
-    if (!sourceValid || !runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)) {
+    const auto mode = sourceValid ? MapleControl::ParseScriptMode(source, error) : MapleControl::ScriptMode::Invalid;
+    const bool busy =
+        mode == MapleControl::ScriptMode::Coroutine && (runtime.Running() || !Released() || externalActionBusy);
+    if (busy) {
+        rejectedId = id;
+        rejectedReason = "busy";
+        commandStatus = "rejected";
+        commandReason = "busy";
+        scriptCommand = false;
+        return;
+    }
+    if (mode == MapleControl::ScriptMode::Coroutine) {
+        const auto* previous = runtime.CurrentStatus();
+        if (previous != nullptr
+            && std::none_of(scriptHistory.begin(), scriptHistory.end(),
+                            [previous](const Json& entry) { return entry["id"] == previous->id; }))
+            scriptHistory.push_back(ScriptState(previous->id));
+    }
+    const bool started = mode == MapleControl::ScriptMode::Tick
+                             ? tickRuntime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
+                         : mode == MapleControl::ScriptMode::Coroutine
+                             ? runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
+                             : false;
+    if (!started) {
         scriptCommand = false;
         commandStatus = "rejected";
-        commandReason = error.empty() ? "script_file_unavailable" : "script_load_error";
-    } else
+        commandReason = !sourceValid ? "script_file_unavailable" : "script_load_error";
+    } else {
+        latestScriptId = commandScriptId = scriptId;
         scriptCommand = true;
+    }
 }
 
 void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
@@ -901,10 +979,6 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
         releasePending = false;
         result.controlReleased = true;
         result.settled = state.settled;
-        if (!scriptCommand && commandStatus == "running" && !runtime.Running()) {
-            commandStatus = "completed";
-            commandReason = "stopped";
-        }
     }
     if (active && reviveCharacter) {
         if (!state.ready || state.character.id != *reviveCharacter) {
@@ -944,8 +1018,10 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
     } else if (active && !allocationRequest
                && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs))
         ApplyRelease();
+    tickAdapter.Advance(nativeTick, changed);
     ReadCommand(externalActionBusy);
     runtime.Tick(changed);
+    tickRuntime.Tick(changed);
     if (!taskTransport.Tick(runtime, state)) runtime.Cancel("task_result_write_failed");
     if (active && allocationRequest) {
         if (allocation.Tick(AllocationFacts(), MonotonicMs())) {
@@ -964,13 +1040,15 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
         CaptureAllocation();
         if (!allocation.Active()) ApplyRelease();
     }
-    if (scriptCommand && !runtime.Running()) {
-        const auto* script = runtime.CurrentStatus();
-        commandStatus = script->status;
-        commandReason = script->reason;
-        scriptCommand = false;
+    if (scriptCommand) {
+        const auto script = ScriptState(commandScriptId);
+        if (!script.is_null() && script["status"] != "running" && script.value("control_released", false)) {
+            commandStatus = script["status"].get<std::string>();
+            commandReason = script["reason"].is_null() ? "" : script["reason"].get<std::string>();
+            scriptCommand = false;
+        }
     }
-    if (!scriptCommand && commandStatus == "running" && Released() && !runtime.Running()) {
+    if (!scriptCommand && commandStatus == "running" && Released() && tickAdapter.Released() && !Running()) {
         commandStatus = "completed";
         commandReason = "stopped";
     }
@@ -1239,8 +1317,9 @@ void SharedLuaAdapter::ReadObservation() {
 }
 
 void SharedLuaAdapter::Shutdown() {
-    runtime.Cancel("session_closing");
+    Cancel("session_closing");
     ApplyRelease();
+    tickAdapter.Shutdown();
     // The process is leaving the native game: no successor script can reuse its controls.
     releasePending = false;
     result.controlReleased = true;
@@ -1250,10 +1329,13 @@ void SharedLuaAdapter::Shutdown() {
     state.observedAtMs = UnixMs();
     ++state.sequence;
     runtime.Tick();
+    tickRuntime.Tick();
     if (scriptCommand) {
-        const auto* script = runtime.CurrentStatus();
-        commandStatus = script->status;
-        commandReason = script->reason;
+        const auto script = ScriptState(commandScriptId);
+        if (!script.is_null()) {
+            commandStatus = script["status"].get<std::string>();
+            commandReason = script["reason"].is_null() ? "" : script["reason"].get<std::string>();
+        }
         scriptCommand = false;
     }
     Publish();
@@ -1291,7 +1373,8 @@ Json SharedLuaAdapter::StateDocument() const {
         {"rejected_command", rejectedReason.empty()
                                  ? Json(nullptr)
                                  : Json{{"id", rejectedId}, {"status", "rejected"}, {"reason", rejectedReason}}},
-        {"script", ScriptDocument(runtime.CurrentStatus())},
+        {"script", ScriptState(latestScriptId)},
+        {"scripts", ScriptsDocument()},
         {"last_skill", nullptr},
         {"input_events", inputEvents},
         {"capabilities",
@@ -1332,7 +1415,7 @@ Json SharedLuaAdapter::StateDocument() const {
         document["action_result"]["skill_native_result"] = result.skill.nativeResult;
         document["action_result"]["skill_reason"] = result.skill.reason;
     }
-    for (const auto key : heldActions) {
+    for (const auto key : physicalKeys) {
         switch (key) {
         case ms::KeyAction::LEFT:
             document["held_actions"].push_back("Left");

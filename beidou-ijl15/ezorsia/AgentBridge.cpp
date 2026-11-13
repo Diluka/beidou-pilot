@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "AgentBridge.h"
 #include "Runtime.h"
+#include "TickRuntime.h"
+#include "NativeKeyUnion.h"
+#include "NativeTickInput.h"
 #include "TaskTransport.h"
 #include "EventTransport.h"
 #include "NativeKeyInput.h"
@@ -71,6 +74,8 @@ std::string lastConsumedId;
 std::string pendingStatus;
 std::string pendingReason;
 BeiDouBridge::NativeKeyInput keyInput;
+BeiDouBridge::NativeTickInput tickInput;
+BeiDouBridge::NativeKeyUnion nativeKeys{&keyInput, &tickInput.movement, &tickInput.action};
 BeiDouBridge::NativeMouseInput mouseInput;
 BeiDouBridge::NativeCare care;
 bool careResult = false;
@@ -86,6 +91,17 @@ std::array<unsigned int, 256> scanCodes{};
 std::array<std::uint32_t, 256> nativeScanCodes{};
 std::uint32_t nativeScanCodesOwner = 0;
 bool scriptCommand = false;
+bool stopCommand = false;
+std::string commandScriptId;
+MapleControl::ScriptMode commandScriptMode = MapleControl::ScriptMode::Coroutine;
+
+struct ScriptSession {
+    std::string id;
+    MapleControl::ScriptMode mode;
+    MapleControl::Value status;
+};
+
+std::vector<ScriptSession> scriptSessions;
 bool haveSkillResult = false;
 std::uint32_t lastSkillId = 0;
 int lastSkillResult = 0;
@@ -167,8 +183,53 @@ public:
     }
 };
 
+class BeiDouTickAdapter final : public MapleControl::TickAdapter {
+public:
+    const char* Backend() const override { return "beidou"; }
+
+    const MapleControl::State& Observe() const override { return previousState; }
+
+    MapleControl::Observation ObserveDomain(const std::string& domain) const override {
+        auto observation = NativeObservation::Collect(domain);
+        if (domain == "character") {
+            // CharacterData's verified maps are learned skill levels, not active
+            // TemporaryStat/buff records. Do not infer buffs from those maps.
+            observation.data["buffs"] = MapleControl::Value{};
+            observation.data["buffs_status"] = "unsupported";
+            observation.data["buffs_unavailable"] = "native_buff_details_unavailable";
+        }
+        return observation;
+    }
+
+    bool Supports(MapleControl::ActionKind kind) const override {
+        return kind == MapleControl::ActionKind::Jump || kind == MapleControl::ActionKind::Attack
+               || kind == MapleControl::ActionKind::Pickup || kind == MapleControl::ActionKind::UseItem;
+    }
+
+    bool SupportsSkill() const override { return true; }
+
+    bool Begin(const MapleControl::Action& action, std::string& error) override;
+    bool SetHeldKeys(const std::vector<std::string>& keys, std::string& error) override;
+
+    bool HeldKeysSettled() const override { return tickInput.HeldKeysSettled(); }
+
+    MapleControl::ActionResult Result() const override { return tickInput.Result(); }
+
+    void Release() override { tickInput.Release(currentNative.user); }
+
+    void ReleaseAction() override { tickInput.ReleaseAction(); }
+
+    bool Released() const override { return tickInput.Released(); }
+
+    bool ReleasePending() const override { return tickInput.ReleasePending(); }
+
+    bool Logs(const std::string& id, const std::vector<std::string>& lines) override { return NativeLogs(id, lines); }
+};
+
 BeiDouAdapter adapter;
 MapleControl::Runtime runtime(adapter);
+BeiDouTickAdapter tickAdapter;
+MapleControl::TickRuntime tickRuntime(tickAdapter);
 std::unique_ptr<MapleControl::TaskTransport> taskTransport;
 std::unique_ptr<MapleControl::EventTransport> eventTransport;
 
@@ -668,20 +729,18 @@ MapleControl::State CaptureState(NativeContext& native) {
 
 unsigned int __fastcall KeyPressedHook(InputSystem* input, void*, int key) {
     if (key == VK_LBUTTON && mouseInput.Owned()) return mouseInput.Held() ? 1 : 0;
-    const auto& owned = keyInput.Owned();
-    const auto& held = keyInput.Held();
-    if (key >= 0 && key < 256 && owned[key]) return held[key] ? 1 : 0;
+    if (key >= 0 && key < 256 && nativeKeys.Owned(key)) return nativeKeys.Held(key) ? 1 : 0;
     // The native input system exposes both side-specific and aggregate modifier keys.
-    if (key == VK_SHIFT && (owned[VK_LSHIFT] || owned[VK_RSHIFT]))
-        return held[VK_LSHIFT] || held[VK_RSHIFT] || originalKeyPressed(input, key);
-    if (key == VK_CONTROL && (owned[VK_LCONTROL] || owned[VK_RCONTROL]))
-        return held[VK_LCONTROL] || held[VK_RCONTROL] || originalKeyPressed(input, key);
-    if (key == VK_MENU && (owned[VK_LMENU] || owned[VK_RMENU]))
-        return held[VK_LMENU] || held[VK_RMENU] || originalKeyPressed(input, key);
+    if (key == VK_SHIFT && (nativeKeys.Owned(VK_LSHIFT) || nativeKeys.Owned(VK_RSHIFT)))
+        return nativeKeys.Held(VK_LSHIFT) || nativeKeys.Held(VK_RSHIFT) || originalKeyPressed(input, key);
+    if (key == VK_CONTROL && (nativeKeys.Owned(VK_LCONTROL) || nativeKeys.Owned(VK_RCONTROL)))
+        return nativeKeys.Held(VK_LCONTROL) || nativeKeys.Held(VK_RCONTROL) || originalKeyPressed(input, key);
+    if (key == VK_MENU && (nativeKeys.Owned(VK_LMENU) || nativeKeys.Owned(VK_RMENU)))
+        return nativeKeys.Held(VK_LMENU) || nativeKeys.Held(VK_RMENU) || originalKeyPressed(input, key);
     return originalKeyPressed(input, key);
 }
 
-bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
+bool SendOwnedKey(BeiDouBridge::NativeKeyInput& source, bool legacy, unsigned int key, bool down, std::uint64_t epoch) {
     std::uint32_t windowManager = 0;
     std::uint32_t input = 0;
     if (!ReadAt(0x00BEC20C, windowManager) || windowManager == 0 || !ReadAt(0x00BEC33C, input) || input == 0)
@@ -695,19 +754,30 @@ bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
                                     : key == VK_LCONTROL || key == VK_RCONTROL ? VK_CONTROL
                                     : key == VK_LMENU || key == VK_RMENU       ? VK_MENU
                                                                                : key;
-    if (down && epoch != keyInput.Epoch()) return true;
-    if (down && careResult && care.Active() && inputModifiers(reinterpret_cast<InputSystem*>(input)) != 0) return false;
-    if (down && careResult && care.Active() && careMenuAction != 0) {
+    if (down && epoch != source.Epoch()) return true;
+    if (legacy && down && careResult && care.Active() && inputModifiers(reinterpret_cast<InputSystem*>(input)) != 0)
+        return false;
+    if (legacy && down && careResult && care.Active() && careMenuAction != 0) {
         unsigned int currentKey = 0;
         std::string error;
         if (!BindingKey(BeiDouBridge::NativeBindingType::Menu, careMenuAction, currentKey, error) || currentKey != key)
             return false;
     }
-    if (down && careResult && care.Active()) careKeyDispatched = true;
-    keyInput.MarkDispatched(epoch);
-    ++inputEvents;
-    dispatchInput(0x100, messageKey, flags);
-    return true;
+    if (legacy && down && careResult && care.Active()) careKeyDispatched = true;
+    return nativeKeys.Deliver(source, key, down, epoch, [messageKey, flags](unsigned int, bool physicalDown) {
+        auto physicalFlags = flags;
+        if (physicalDown)
+            physicalFlags &= ~0x80000000u;
+        else
+            physicalFlags |= 0x80000000u;
+        ++inputEvents;
+        dispatchInput(0x100, messageKey, physicalFlags);
+        return true;
+    });
+}
+
+bool SendKey(unsigned int key, bool down, std::uint64_t epoch) {
+    return SendOwnedKey(keyInput, true, key, down, epoch);
 }
 
 void BeginRelease(const std::string& status, const std::string& reason) {
@@ -793,12 +863,11 @@ bool SendMouse(BeiDouBridge::NativeMouseInput::Event event, const BeiDouBridge::
     return true;
 }
 
-bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durationMs, std::string& error) {
+bool ApplyOwnedKeys(BeiDouBridge::NativeKeyInput& target, const std::vector<unsigned int>& keys,
+                    unsigned int durationMs, std::string& error) {
     std::array<bool, 256> desired{};
     if (keys.empty()) {
-        pendingStatus.clear();
-        pendingReason.clear();
-        keyInput.Request(desired, durationMs, currentNative.user, GetTickCount64());
+        target.Request(desired, durationMs, currentNative.user, GetTickCount64());
         return true;
     }
     if (!currentState->mapKnown || !currentState->characterKnown || !currentState->positionKnown
@@ -826,11 +895,167 @@ bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durati
         desired[key] = true;
         scanCodes[key] = nativeScanCodes[key];
     }
-    // A nonblocking Lua keys update replaces the desired set without flickering unchanged keys.
+    // Replace only this producer's desired set without flickering unchanged keys.
+    target.Request(desired, durationMs, currentNative.user, GetTickCount64());
+    return true;
+}
+
+bool ApplyDesiredKeys(const std::vector<unsigned int>& keys, unsigned int durationMs, std::string& error) {
+    if (!ApplyOwnedKeys(keyInput, keys, durationMs, error)) return false;
     pendingStatus.clear();
     pendingReason.clear();
-    keyInput.Request(desired, durationMs, currentNative.user, GetTickCount64());
     return true;
+}
+
+// Both engines use the same real ordinary-consumable boundary, but each owns
+// its own NativeItemUse slot and cancellation/dispatched facts.
+bool RequestNativeItem(std::uint32_t itemId, BeiDouBridge::NativeItemUse& target, std::string& error) {
+    if (itemId / 10000 != 200) {
+        error = "unsupported: ordinary HP/MP potion required";
+        return false;
+    }
+    if (!currentState->inventoryKnown) {
+        error = "inventory_unavailable";
+        return false;
+    }
+    int slot = 0;
+    bool quantityUnknown = false;
+    for (const auto& item : currentState->inventory) {
+        if (item.inventoryType != 2 || item.itemId != itemId) continue;
+        if (!item.quantityKnown) {
+            quantityUnknown = true;
+            continue;
+        }
+        if (item.quantity > 0) {
+            slot = item.slot;
+            break;
+        }
+    }
+    if (slot == 0) {
+        error = quantityUnknown ? "inventory_unavailable" : "item_not_in_inventory";
+        return false;
+    }
+    std::uint32_t context = 0;
+    if (!ReadAt(0x00BE7918, context) || context == 0) {
+        error = "native_context_unavailable";
+        return false;
+    }
+    target.Request({currentState->character.id, currentState->sceneGeneration, context, slot, itemId});
+    return true;
+}
+
+bool BeiDouTickAdapter::SetHeldKeys(const std::vector<std::string>& names, std::string& error) {
+    std::vector<unsigned int> keys;
+    for (const auto& name : names) {
+        if (name == "left")
+            keys.push_back(VK_LEFT);
+        else if (name == "right")
+            keys.push_back(VK_RIGHT);
+        else if (name == "up")
+            keys.push_back(VK_UP);
+        else if (name == "down")
+            keys.push_back(VK_DOWN);
+        else {
+            error = "unsupported: direction";
+            return false;
+        }
+    }
+    // The tick engine, not an input pulse deadline, owns persistent movement.
+    if (!ApplyOwnedKeys(tickInput.movement, keys, 0, error)) return false;
+    tickInput.MovementChanged(currentNative.user);
+    return true;
+}
+
+bool BeiDouTickAdapter::Begin(const MapleControl::Action& request, std::string& error) {
+    if (!Supports(request.kind)) {
+        error = "unsupported: tick_action";
+        return false;
+    }
+    if (!previousState.ready || previousState.character.values[6] == 0) {
+        error = "state_unavailable_or_dead";
+        return false;
+    }
+    if (!Released()) {
+        error = "busy";
+        return false;
+    }
+    tickInput.result = MapleControl::ActionResult{};
+    tickInput.itemResult = false;
+    if (request.kind == MapleControl::ActionKind::UseItem) {
+        if (!RequestNativeItem(request.itemId, tickInput.item, error)) return false;
+        tickInput.itemResult = true;
+        tickInput.result.reason = "item_use_requested";
+        return true;
+    }
+    unsigned int key = 0;
+    if (request.kind == MapleControl::ActionKind::Jump) {
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 53, key, error)) return false;
+    } else if (request.kind == MapleControl::ActionKind::Pickup) {
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 50, key, error)) return false;
+    } else if (request.skillId == 0) {
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 52, key, error)) return false;
+    }
+    const auto duration = request.durationMs == 0 ? 60 : request.durationMs;
+    const std::vector<unsigned int> keys = key == 0 ? std::vector<unsigned int>{} : std::vector<unsigned int>{key};
+    if (!ApplyOwnedKeys(tickInput.action, keys, duration, error)) return false;
+    tickInput.actionWindow = true;
+    tickInput.actionUntil = GetTickCount64() + duration;
+    if (request.kind == MapleControl::ActionKind::Attack && request.skillId != 0) {
+        BeiDouBridge::NativeSkillUse::Skill skill;
+        skill.skillId = request.skillId;
+        skill.character = previousState.character.id;
+        skill.user = currentNative.user;
+        skill.sceneGeneration = sceneGeneration;
+        skill.inputEpoch = tickInput.action.Epoch();
+        skill.deadline = tickInput.actionUntil;
+        // Direction is exclusively the tick state machine's persistent input.
+        tickInput.skill.Request(skill);
+        tickInput.result.skillRequested = true;
+        tickInput.result.skill = tickInput.skill.Result();
+    }
+    tickInput.result.reason = "native_action_requested";
+    return true;
+}
+
+MapleControl::Value CoroutineStatus(const MapleControl::Status& status) {
+    using MapleControl::Value;
+    auto tasks = Value::Array();
+    for (const auto& task : status.tasks)
+        tasks.Add(Value::Object({{"name", task.name},
+                                 {"revision", task.revision},
+                                 {"priority", task.priority},
+                                 {"status", task.status},
+                                 {"wait", task.wait},
+                                 {"reason", task.reason.empty() ? Value{} : Value(task.reason)},
+                                 {"error", task.error.empty() ? Value{} : Value(task.error)}}));
+    const auto& control = status.control;
+    return Value::Object(
+        {{"id", status.id},
+         {"mode", "coroutine"},
+         {"status", status.status},
+         {"control_released", !runtime.Running() && adapter.Released()},
+         {"reason", status.reason.empty() ? Value{} : Value(status.reason)},
+         {"error", status.error.empty() ? Value{} : Value(status.error)},
+         {"resumes", status.resumes},
+         {"budget_yields", status.budgetYields},
+         {"last_resume_us", status.lastResumeUs},
+         {"max_resume_us", status.maxResumeUs},
+         {"tasks", std::move(tasks)},
+         {"control", Value::Object({{"owner", control.owner.empty() ? Value{} : Value(control.owner)},
+                                    {"pending", control.pending.empty() ? Value{} : Value(control.pending)},
+                                    {"from", control.from.empty() ? Value{} : Value(control.from)},
+                                    {"to", control.to.empty() ? Value{} : Value(control.to)},
+                                    {"reason", control.reason.empty() ? Value{} : Value(control.reason)}})}});
+}
+
+void RefreshScriptStatuses() {
+    const auto* coroutine = runtime.CurrentStatus();
+    for (auto& session : scriptSessions) {
+        if (session.mode == MapleControl::ScriptMode::Tick)
+            session.status = tickRuntime.CurrentStatus(session.id);
+        else if (coroutine != nullptr && coroutine->id == session.id)
+            session.status = CoroutineStatus(*coroutine);
+    }
 }
 
 bool Publish(const MapleControl::State& state) {
@@ -968,9 +1193,8 @@ bool Publish(const MapleControl::State& state) {
         out << (state.playersComplete == MapleControl::Fact::True ? "true" : "false");
     out << ",\"held_keys\":[";
     bool separator = false;
-    const auto& held = keyInput.Held();
-    for (unsigned int key = 0; key < held.size(); ++key)
-        if (held[key]) {
+    for (unsigned int key = 0; key < 256; ++key)
+        if (nativeKeys.Held(key)) {
             if (separator) out << ',';
             out << key;
             separator = true;
@@ -987,34 +1211,11 @@ bool Publish(const MapleControl::State& state) {
     else
         out << "{\"id\":" << (rejectedId.empty() ? "null" : Quote(rejectedId))
             << ",\"status\":\"rejected\",\"reason\":" << Quote(rejectedReason) << '}';
-    out << ",\"script\":";
-    const auto* script = runtime.CurrentStatus();
-    if (script == nullptr)
-        out << "null";
-    else {
-        out << "{\"id\":" << Quote(script->id) << ",\"status\":" << Quote(script->status)
-            << ",\"reason\":" << (script->reason.empty() ? "null" : Quote(script->reason))
-            << ",\"error\":" << (script->error.empty() ? "null" : Quote(script->error))
-            << ",\"resumes\":" << script->resumes << ",\"budget_yields\":" << script->budgetYields
-            << ",\"last_resume_us\":" << script->lastResumeUs << ",\"max_resume_us\":" << script->maxResumeUs
-            << ",\"tasks\":[";
-        bool taskSeparator = false;
-        for (const auto& task : script->tasks) {
-            if (taskSeparator) out << ',';
-            out << "{\"name\":" << Quote(task.name) << ",\"revision\":" << task.revision
-                << ",\"priority\":" << task.priority << ",\"status\":" << Quote(task.status)
-                << ",\"wait\":" << Quote(task.wait)
-                << ",\"reason\":" << (task.reason.empty() ? "null" : Quote(task.reason))
-                << ",\"error\":" << (task.error.empty() ? "null" : Quote(task.error)) << '}';
-            taskSeparator = true;
-        }
-        const auto& control = script->control;
-        out << "],\"control\":{\"owner\":" << (control.owner.empty() ? "null" : Quote(control.owner))
-            << ",\"pending\":" << (control.pending.empty() ? "null" : Quote(control.pending))
-            << ",\"from\":" << (control.from.empty() ? "null" : Quote(control.from))
-            << ",\"to\":" << (control.to.empty() ? "null" : Quote(control.to))
-            << ",\"reason\":" << (control.reason.empty() ? "null" : Quote(control.reason)) << "}}";
-    }
+    RefreshScriptStatuses();
+    out << ",\"script\":" << (scriptSessions.empty() ? "null" : scriptSessions.back().status.Dump());
+    auto scripts = MapleControl::Value::Array();
+    for (const auto& session : scriptSessions) scripts.Add(session.status);
+    out << ",\"scripts\":" << scripts.Dump();
     out << ",\"last_skill\":";
     if (haveSkillResult)
         out << "{\"skill_id\":" << lastSkillId << ",\"native_result\":" << lastSkillResult
@@ -1086,31 +1287,58 @@ void ReadCommand() {
     rejectedReason.clear();
     bool valid = protocol == 1 && targetInstance == instanceId && !id.empty() && id.size() <= 64
                  && id.find_first_not_of("0123456789abcdefABCDEF-") == std::string::npos;
-    if (operation == "script") {
+    if (operation == "script" || operation == "cancel_script") {
         stream >> scriptId;
-        valid = valid && generation == sceneGeneration && value <= 0xffffffffULL && scriptId.size() == 32
-                && scriptId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos && !(stream >> extra)
-                && previousState.ready && previousState.character.values[6] > 0;
+        valid = valid && scriptId.size() == 32
+                && scriptId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos && !(stream >> extra);
+        if (operation == "script")
+            valid = valid && generation == sceneGeneration && value <= 0xffffffffULL && previousState.ready
+                    && previousState.character.values[6] > 0;
+        else
+            valid = valid && value == 0;
     } else
         valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
-    const bool busy = operation != "stop" && (runtime.Running() || !adapter.Released());
-    if (!valid || busy) {
+    if (!valid) {
         rejectedId = id;
-        rejectedReason = busy ? "busy" : "invalid_or_stale_command";
-        if (!runtime.Running() && adapter.Released()) {
+        rejectedReason = "invalid_or_stale_command";
+        if (!runtime.Running() && !tickRuntime.Running() && adapter.Released() && tickAdapter.Released()) {
             commandId = id;
             commandStatus = "rejected";
             commandReason = rejectedReason;
         }
         return;
     }
-    commandId = id;
-    commandStatus = "running";
-    commandReason.clear();
     if (operation == "stop") {
+        commandId = id;
+        commandStatus = "running";
+        commandReason.clear();
         runtime.Cancel("stopped");
+        tickRuntime.CancelAll("stopped");
+        tickAdapter.Release();
         scriptCommand = false;
-        BeginRelease("completed", "stopped");
+        stopCommand = true;
+        BeginRelease({}, {});
+        return;
+    }
+    if (operation == "cancel_script") {
+        const auto session = std::find_if(scriptSessions.begin(), scriptSessions.end(),
+                                          [&scriptId](const ScriptSession& entry) { return entry.id == scriptId; });
+        if (session == scriptSessions.end()) {
+            rejectedId = id;
+            rejectedReason = "script_session_mismatch";
+            return;
+        }
+        commandId = id;
+        commandStatus = "running";
+        commandReason.clear();
+        commandScriptId = scriptId;
+        commandScriptMode = session->mode;
+        scriptCommand = true;
+        stopCommand = false;
+        if (session->mode == MapleControl::ScriptMode::Tick)
+            tickRuntime.Cancel(scriptId, "cancelled");
+        else if (runtime.CurrentStatus() != nullptr && runtime.CurrentStatus()->id == scriptId)
+            runtime.Cancel("cancelled");
         return;
     }
     std::ifstream sourceFile(directory + "\\scripts\\" + scriptId + ".lua", std::ios::binary);
@@ -1127,12 +1355,92 @@ void ReadCommand() {
         }
     }
     std::string error;
-    if (!sourceValid || !runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)) {
+    const auto mode = sourceValid ? MapleControl::ParseScriptMode(source, error) : MapleControl::ScriptMode::Invalid;
+    const bool busy = mode == MapleControl::ScriptMode::Coroutine
+                          ? runtime.Running() || !adapter.Released()
+                          : mode == MapleControl::ScriptMode::Tick && !tickRuntime.Running() && !tickAdapter.Released();
+    const bool duplicate = std::any_of(scriptSessions.begin(), scriptSessions.end(),
+                                       [&scriptId](const ScriptSession& entry) { return entry.id == scriptId; });
+    if (busy || duplicate) {
+        rejectedId = id;
+        rejectedReason = busy ? "busy" : "script_session_exists";
+        return;
+    }
+    // Preserve the last admitted coroutine status before Runtime.Start replaces
+    // its single report, including when the new chunk is later rejected.
+    RefreshScriptStatuses();
+    const bool started = mode == MapleControl::ScriptMode::Tick
+                             ? tickRuntime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
+                             : mode == MapleControl::ScriptMode::Coroutine
+                                   && runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error);
+    commandId = id;
+    commandReason.clear();
+    stopCommand = false;
+    if (!started) {
         scriptCommand = false;
         commandStatus = "rejected";
-        commandReason = error.empty() ? "script_file_unavailable" : "script_load_error";
-    } else
+        commandReason = !sourceValid ? "script_file_unavailable" : "script_load_error";
+    } else {
+        scriptSessions.push_back({scriptId, mode, {}});
+        RefreshScriptStatuses();
+        commandScriptId = scriptId;
+        commandScriptMode = mode;
+        commandStatus = "running";
         scriptCommand = true;
+    }
+}
+
+bool DeliverTickInput() {
+    const auto frame = sequence;
+    tickInput.ExpireAction(GetTickCount64());
+    for (auto* input : {&tickInput.movement, &tickInput.action}) {
+        const auto delivered =
+            input->Flush([input](unsigned int key, bool down,
+                                 std::uint64_t epoch) { return SendOwnedKey(*input, false, key, down, epoch); },
+                         [] { return characterUpdates; });
+        // Native delivery may have pumped a new frame, including cancellation
+        // and a new action. Never run the superseded frame's remaining work.
+        if (sequence != frame) return false;
+        if (delivered.failed && delivered.epoch == input->Epoch()) {
+            tickInput.result.reason = "input_route_unavailable";
+            // The producer retains failed keyups and retries them. Rejection is
+            // an action-level fact, not cancellation of unrelated tick sessions.
+        }
+    }
+    tickInput.MovementFlushed(updatedCharacter, characterUpdates, currentNative.loginStage || currentNative.user == 0);
+    if (tickInput.item.Pending()) {
+        std::uint32_t context = 0;
+        if (!ReadAt(0x00BE7918, context)) context = 0;
+        const auto consumed = tickInput.item.Consume(
+            previousState.characterKnown ? previousState.character.id : 0, sceneGeneration, context,
+            [](const BeiDouBridge::NativeItemUse::Item& item) {
+                useItem(reinterpret_cast<ClientContext*>(item.context), item.slot, static_cast<int>(item.itemId));
+            });
+        if (sequence != frame) return false;
+        if (consumed == BeiDouBridge::NativeItemUse::Consumption::ContextChanged)
+            tickInput.result.reason = "item_context_changed";
+    }
+    if (tickInput.skill.Pending() && tickInput.actionWindow) {
+        BeiDouBridge::NativeSkillUse::Context context;
+        context.character = previousState.character.id;
+        context.user = currentNative.user;
+        context.sceneGeneration = sceneGeneration;
+        context.inputEpoch = tickInput.action.Epoch();
+        context.now = GetTickCount64();
+        context.updatedCharacter = updatedCharacter;
+        context.characterUpdates = characterUpdates;
+        context.facingKnown = previousState.facingKnown;
+        context.facingLeft = previousState.facingLeft;
+        const bool consumed = tickInput.skill.Consume(context, InvokeNativeSkill);
+        if (sequence != frame) return false;
+        tickInput.result.skill = tickInput.skill.Result();
+        if (!consumed) {
+            tickInput.result.reason = tickInput.result.skill.reason;
+            tickInput.actionWindow = false;
+            tickInput.action.Release();
+        }
+    }
+    return true;
 }
 
 void Tick() {
@@ -1195,8 +1503,16 @@ void Tick() {
     }
     if (!mouseInput.Released() && (changed || !ready || native.user != mouseInput.Character())) BeginRelease({}, {});
 
+    const bool tickCharacterExited = native.loginStage || native.user == 0;
+    tickInput.Observe(native.user, updatedCharacter, characterUpdates, tickCharacterExited);
+    if ((changed || !ready || previousState.character.values[6] == 0)
+        && (tickInput.movement.Active() || tickInput.actionWindow || tickInput.item.Pending()))
+        tickAdapter.Release();
+    tickInput.ExpireAction(now);
+
     ReadCommand();
     runtime.Tick(changed);
+    tickRuntime.Tick(changed);
     if (!taskTransport->Tick(runtime, previousState)) runtime.Cancel("task_result_write_failed");
     if (care.Active()) {
         const auto view = CaptureCareView(&care.Request());
@@ -1222,11 +1538,24 @@ void Tick() {
             ApplyDesiredKeys({VK_ESCAPE}, 60, error);
         }
     }
-    if (scriptCommand && !runtime.Running()) {
-        const auto* script = runtime.CurrentStatus();
-        commandStatus = script->status;
-        commandReason = script->reason;
-        scriptCommand = false;
+    if (scriptCommand) {
+        RefreshScriptStatuses();
+        const auto session = std::find_if(scriptSessions.begin(), scriptSessions.end(), [](const ScriptSession& entry) {
+            return entry.id == commandScriptId && entry.mode == commandScriptMode;
+        });
+        if (session != scriptSessions.end()) {
+            const auto& status = CareField(session->status, "status").Text();
+            if (status != "running") {
+                commandStatus = status;
+                commandReason = CareField(session->status, "reason").Text();
+                scriptCommand = false;
+            }
+        }
+    }
+    if (stopCommand && !runtime.Running() && !tickRuntime.Running() && adapter.Released() && tickAdapter.Released()) {
+        commandStatus = "completed";
+        commandReason = "stopped";
+        stopCommand = false;
     }
     NativeObservation::Tick(directory, instanceId, runId, sceneGeneration, sequence);
     if (now - lastPublishedAt >= 25) {
@@ -1237,9 +1566,13 @@ void Tick() {
                 runtime.Cancel("state_publish_failed");
             else if (keyInput.Active() || itemUse.Pending())
                 BeginRelease({}, {});
+            // This is a shared host transport failure, not a script failure.
+            tickRuntime.CancelAll("state_publish_failed");
+            tickAdapter.Release();
         }
         lastPublishedAt = now;
     }
+    if (!DeliverTickInput()) return;
     if (itemUse.Pending()) {
         std::uint32_t context = 0;
         if (!ReadAt(0x00BE7918, context)) context = 0;
@@ -1385,37 +1718,7 @@ bool BeginNativeAction(const MapleControl::Action& action, std::string& error) {
         if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 50, key, error)) return false;
         break;
     case MapleControl::ActionKind::UseItem: {
-        if (action.itemId / 10000 != 200) {
-            error = "unsupported: ordinary HP/MP potion required";
-            return false;
-        }
-        if (!currentState->inventoryKnown) {
-            error = "inventory_unavailable";
-            return false;
-        }
-        int slot = 0;
-        bool quantityUnknown = false;
-        for (const auto& item : currentState->inventory) {
-            if (item.inventoryType != 2 || item.itemId != action.itemId) continue;
-            if (!item.quantityKnown) {
-                quantityUnknown = true;
-                continue;
-            }
-            if (item.quantity > 0) {
-                slot = item.slot;
-                break;
-            }
-        }
-        if (slot == 0) {
-            error = quantityUnknown ? "inventory_unavailable" : "item_not_in_inventory";
-            return false;
-        }
-        std::uint32_t context = 0;
-        if (!ReadAt(0x00BE7918, context) || context == 0) {
-            error = "native_context_unavailable";
-            return false;
-        }
-        itemUse.Request({currentState->character.id, currentState->sceneGeneration, context, slot, action.itemId});
+        if (!RequestNativeItem(action.itemId, itemUse, error)) return false;
         itemResult = true;
         semanticResult.reason = "item_use_requested";
         return true;
