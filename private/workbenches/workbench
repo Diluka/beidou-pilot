@@ -273,7 +273,7 @@ case "$command" in
         fi
         result_code=0
         result=$(exec_cli character "$@") || result_code=$?
-        if [ "$result_code" -eq 0 ] && [ "${1-}" = create ] || [ "$result_code" -eq 0 ] && [ "${1-}" = result ]; then
+        if [ "$result_code" -eq 0 ] && { [ "${1-}" = create ] || [ "${1-}" = result ]; }; then
             if jq -e '.ok == true and .data.status == "completed"' <<<"$result" >/dev/null; then
                 root=$(jq -r '.Config.Labels["beidou.client.root"]' <<<"$inspect")
                 cid=$(jq -er '.data.character_id | select(type == "number" and floor == . and . > 0 and . < 2147483648)' <<<"$result") || fail character_result_invalid '建角完成结果缺少有效角色 ID。'

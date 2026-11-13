@@ -90,6 +90,33 @@ class WorkbenchLoginContract(unittest.TestCase):
                           "--server", "/work/runtime/default/run/server.json", "--timeout", "90"],
                          executions[0][executions[0].index("beidou-pilot"):])
 
+    def test_completed_create_binds_immediately_without_replay(self):
+        self.running_client()
+        (self.workbench / "runtime/default/host.json").write_text(
+            json.dumps({"container_id": "client", "image": "image", "run_id": "run"}))
+        profile = {"username": "fixture", "password": "fixture-secret"}
+        account = self.workbench / "account.json"
+        for path in (account, self.workbench / "runtime/default/run/account.json"):
+            path.write_text(json.dumps(profile))
+            path.chmod(0o600)
+        docker = self.directory / "bin/docker"
+        docker.write_text(docker.read_text().replace('print("{}")',
+            'print(json.dumps({"ok": True, "data": {"status": "completed", "run_id": "run", "instance_id": "native", "request_id": "a" * 32, "character_id": 42}}))'))
+        args = ["character", "create", "--name", "Example", "--job", "0", "--face", "1",
+                "--hair", "2", "--hair-color", "0", "--skin", "3", "--top", "4", "--bottom", "5",
+                "--shoes", "6", "--weapon", "7", "--gender", "female"]
+        result = self.invoke(*args)
+        self.assertEqual(0, result.returncode, result.stderr)
+        response = json.loads(result.stdout)
+        self.assertTrue(response["binding"]["ok"])
+        self.assertEqual(42, response["data"]["character_id"])
+        self.assertEqual({**profile, "character_id": 42}, json.loads(account.read_text()))
+        self.assertNotIn("fixture-secret", result.stdout + result.stderr)
+        calls = json.loads(self.state_path.read_text())["calls"]
+        executions = [call for call in calls if call[0] == "exec"]
+        self.assertEqual(1, len(executions))
+        self.assertEqual(["beidou-pilot", "--json", *args], executions[0][executions[0].index("beidou-pilot"):])
+
     def test_completed_result_binds_only_unchanged_private_profile(self):
         self.running_client()
         record = self.workbench / "runtime/default/host.json"
