@@ -255,7 +255,36 @@ int main() {
     memory[text - 4] = 256;
     assert(!CreationNameCandidate(stage, window, read32, read8, name));
     memory[text - 4] = 0;
-    assert(!CreationNameCandidate(stage, window, read32, read8, name));
+    assert(!CreationNameCandidate(stage, window, read32, read8, name)); // Nonzero terminator.
+    memory[text] = 0;
+    assert(CreationNameCandidate(stage, window, read32, read8, name) && name.empty());
+    memory.erase(text - 4);
+    bool missingLength = false;
+    try {
+        CreationNameCandidate(stage, window, read32, read8, name);
+    } catch (const std::out_of_range&) {
+        missingLength = true;
+    }
+    assert(missingLength);
+    memory[text - 4] = 0;
+    memory.erase(text);
+    bool missingTerminator = false;
+    try {
+        CreationNameCandidate(stage, window, read32, read8, name);
+    } catch (const std::out_of_range&) {
+        missingTerminator = true;
+    }
+    assert(missingTerminator);
+    memory[text] = 0;
+    memory[edit + 0x34] = 0;
+    assert(CreationNameCandidate(stage, window, read32, read8, name) && name.empty());
+    int pointerReads = 0;
+    auto changingEmpty = [&](std::uint32_t at) {
+        auto value = read32(at);
+        return at == edit + 0x34 && ++pointerReads == 2 ? text : value;
+    };
+    assert(!CreationNameCandidate(stage, window, changingEmpty, read8, name));
+    memory[text] = 'A';
     memory[edit + 0x34] = UINT32_MAX;
     memory[UINT32_MAX - 4] = 2;
     assert(!CreationNameCandidate(stage, window, read32, read8, name));

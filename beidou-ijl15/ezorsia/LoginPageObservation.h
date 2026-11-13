@@ -143,16 +143,16 @@ bool CreationNameCandidate(std::uint32_t stage, std::uint32_t window, Read32 rea
             read32(edit + 4) != 0x00AF2B5C || read32(edit + 8) != 0x00AF2B58 ||
             read32(edit + 0x14) != 1002 || read32(edit + 0x24) != window) return false;
         const auto pointer = read32(edit + 0x34);
-        if (pointer < 4) return false;
-        const auto length = read32(pointer - 4);
-        if (length == 0 || length > 255 || pointer > UINT32_MAX - length) return false;
+        if (pointer != 0 && pointer < 4) return false;
+        const auto length = pointer == 0 ? 0 : read32(pointer - 4);
+        if (length > 255 || (pointer != 0 && pointer > UINT32_MAX - length)) return false;
         std::string text;
         for (std::uint32_t i = 0; i < length; ++i) {
             const auto c = read8(pointer + i);
             if (c < 0x20 || c > 0x7E) return false;
             text.push_back(static_cast<char>(c));
         }
-        if (read8(pointer + length) != 0) return false;
+        if (pointer != 0 && read8(pointer + length) != 0) return false;
         if (sample && (edit != savedEdit || pointer != savedPointer || length != savedLength || text != saved)) return false;
         savedEdit = edit; savedPointer = pointer; savedLength = length; saved = text;
     }
@@ -164,7 +164,7 @@ bool CreationNameCandidate(std::uint32_t stage, std::uint32_t window, Read32 rea
         read32(savedEdit + 4) != 0x00AF2B5C || read32(savedEdit + 8) != 0x00AF2B58 ||
         read32(savedEdit + 0x14) != 1002 || read32(savedEdit + 0x24) != window ||
         read32(savedEdit + 0x34) != savedPointer ||
-        read32(savedPointer - 4) != savedLength || read32(stage + 0x168) != 4 ||
+        (savedPointer != 0 && read32(savedPointer - 4) != savedLength) || read32(stage + 0x168) != 4 ||
         read32(stage + 0x16C) != 0 || read32(stage + 0x170) != 0) return false;
     result = saved;
     return true;
