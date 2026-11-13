@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from beidou_pilot.world_map import edges_of, regions_of, route_text, world_data
+from beidou_pilot.world_map import display_regions, edges_of, regions_of, route_text, world_data
 from test.img_fixture import write_img
 
 
@@ -19,6 +19,12 @@ class WorldMapGraph(unittest.TestCase):
         (self.root / "config").mkdir()
         (self.root / "config/resources.json").write_text(json.dumps({"game_data": str(self.data)}))
         self.scenes = world_data(self.root)
+
+    def test_display_regions(self) -> None:
+        self.assertEqual(display_regions(self.root), {})
+        write_img(self.data / "Map/WorldMap/WorldMapA.img", {"MapList": {"0": {"mapNo": {"0": 100000000, "1": "5363.0", "2": "bad"}}}})
+        write_img(self.data / "Map/WorldMap/WorldMapB.img", {"MapList": {"0": {"mapNo": {"0": "100000000"}}}})
+        self.assertEqual(display_regions(self.root), {"WorldMapA": {100000000, 5363}, "WorldMapB": {100000000}})
 
     def _map(self, map_id: int, name: str, street: str, portals: dict[str, dict[str, object]]) -> None:
         write_img(

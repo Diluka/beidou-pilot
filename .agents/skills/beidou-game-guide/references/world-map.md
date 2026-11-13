@@ -4,16 +4,50 @@
 坐标为场景世界坐标，未知字段保留 `None`。脚本门户、任务限制、地图内地形以及当前服配置可能改变实际通行结果。
 `link` 仅记录引用，不推断其门户；实际能否走通尚未逐条实测。
 
-- 区域是按地图号启发式分组的索引，不代表游戏官方区域划分；编号范围内未必每个 ID 都存在。
-- `tools/world_route.py <起点地图> <终点地图>` 搜索已收录的静态有向门户候选路线，
-  不覆盖 NPC、船、地铁和动态脚本。搜索结果不是实际可达保证；未找到不等于不可达。
+- 世界地图展示索引取自客户端 `WorldMap*.img`；单一地图可能出现在多张图中，未展示的场景不推断归属。
+  地图号分册是启发式索引，不代表官方区域划分；编号范围内未必每个 ID 都存在。
+- `tools/world_route.py <起点地图> <终点地图>` 比较已收录的静态有向门户及部分出租车、飞艇候选；
+  未覆盖的 NPC、地铁和动态脚本保留未知。搜索结果不是实际可达保证；未找到不等于不可达。
 - 查单张地图或当前地图的门户：`beidou-pilot inspect map [地图号]`；进门户：`beidou-pilot portal <门户名>`。
 - 金银岛出租车、区域出租车及飞艇费用、NPC 和条件见路线工具的快捷候选；它们参考
   [BeiDou-Server 固定版本 00422c2](https://github.com/BeiDouMS/BeiDou-Server/tree/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc)，
-  为源码静态推断，并非当前服已实测结果。
+  为源码静态推断，单条出租车实测与限制见 [交通攻略](transport.md)。
 
 
-## 区域索引
+## 客户端世界地图展示索引
+
+同一场景可在多张世界地图展示，不代表唯一归属。
+
+- [WorldMap](world-map/WorldMap.md)（1027 个地图号）
+- [WorldMap000](world-map/WorldMap000.md)（18 个地图号）
+- [WorldMap010](world-map/WorldMap010.md)（256 个地图号）
+- [WorldMap011](world-map/WorldMap011.md)（10 个地图号）
+- [WorldMap012](world-map/WorldMap012.md)（39 个地图号）
+- [WorldMap013](world-map/WorldMap013.md)（14 个地图号）
+- [WorldMap014](world-map/WorldMap014.md)（24 个地图号）
+- [WorldMap020](world-map/WorldMap020.md)（105 个地图号）
+- [WorldMap021](world-map/WorldMap021.md)（23 个地图号）
+- [WorldMap030](world-map/WorldMap030.md)（164 个地图号）
+- [WorldMap031](world-map/WorldMap031.md)（13 个地图号）
+- [WorldMap032](world-map/WorldMap032.md)（17 个地图号）
+- [WorldMap040](world-map/WorldMap040.md)（26 个地图号）
+- [WorldMap050](world-map/WorldMap050.md)（96 个地图号）
+- [WorldMap051](world-map/WorldMap051.md)（30 个地图号）
+- [WorldMap060](world-map/WorldMap060.md)（36 个地图号）
+- [WorldMap070](world-map/WorldMap070.md)（56 个地图号）
+- [WorldMap080](world-map/WorldMap080.md)（37 个地图号）
+- [WorldMap090](world-map/WorldMap090.md)（21 个地图号）
+- [WorldMap100](world-map/WorldMap100.md)（21 个地图号）
+- [WorldMap140](world-map/WorldMap140.md)（64 个地图号）
+- [WorldMap141](world-map/WorldMap141.md)（32 个地图号）
+- [WorldMap142](world-map/WorldMap142.md)（84 个地图号）
+- [WorldMap143](world-map/WorldMap143.md)（28 个地图号）
+- [WorldMap210](world-map/WorldMap210.md)（31 个地图号）
+- [WorldMap211](world-map/WorldMap211.md)（18 个地图号）
+- [WorldMap220](world-map/WorldMap220.md)（20 个地图号）
+- [WorldMap230](world-map/WorldMap230.md)（13 个地图号）
+
+## 地图号启发式分册（未归类备选）
 
 | 区域 | 区域号 | 场景数 | 地图号范围 |
 | --- | --- | --- | --- |

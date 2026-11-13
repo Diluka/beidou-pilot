@@ -22,8 +22,7 @@ ROOT = Path(__file__).resolve().parents[4]
 SKILL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "cli"))
 
-from beidou_pilot.resources import load_resources  # noqa: E402
-from beidou_pilot.world_map import index, region_section, regions_of, route_text, world_data  # noqa: E402
+from beidou_pilot.world_map import display_regions, index, region_section, regions_of, route_text, world_data  # noqa: E402
 
 HEADER = """# 世界地图
 
@@ -31,13 +30,14 @@ HEADER = """# 世界地图
 坐标为场景世界坐标，未知字段保留 `None`。脚本门户、任务限制、地图内地形以及当前服配置可能改变实际通行结果。
 `link` 仅记录引用，不推断其门户；实际能否走通尚未逐条实测。
 
-- 区域是按地图号启发式分组的索引，不代表游戏官方区域划分；编号范围内未必每个 ID 都存在。
-- `tools/world_route.py <起点地图> <终点地图>` 搜索已收录的静态有向门户候选路线，
-  不覆盖 NPC、船、地铁和动态脚本。搜索结果不是实际可达保证；未找到不等于不可达。
+- 世界地图展示索引取自客户端 `WorldMap*.img`；单一地图可能出现在多张图中，未展示的场景不推断归属。
+  地图号分册是启发式索引，不代表官方区域划分；编号范围内未必每个 ID 都存在。
+- `tools/world_route.py <起点地图> <终点地图>` 比较已收录的静态有向门户及部分出租车、飞艇候选；
+  未覆盖的 NPC、地铁和动态脚本保留未知。搜索结果不是实际可达保证；未找到不等于不可达。
 - 查单张地图或当前地图的门户：`beidou-pilot inspect map [地图号]`；进门户：`beidou-pilot portal <门户名>`。
 - 金银岛出租车、区域出租车及飞艇费用、NPC 和条件见路线工具的快捷候选；它们参考
   [BeiDou-Server 固定版本 00422c2](https://github.com/BeiDouMS/BeiDou-Server/tree/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc)，
-  为源码静态推断，并非当前服已实测结果。
+  为源码静态推断，单条出租车实测与限制见 [交通攻略](transport.md)。
 
 """
 
@@ -46,11 +46,28 @@ def main() -> None:
     local_config = ROOT / "private/workbenches/resources.json"
     if "MAPLE_RESOURCES_CONFIG" not in os.environ and local_config.is_file():
         os.environ["MAPLE_RESOURCES_CONFIG"] = str(local_config)
-    scenes = world_data(load_resources(Path(os.environ.get("CLIENT_ROOT", ROOT))).gui_client)
+    resource_root = Path(os.environ.get("CLIENT_ROOT", ROOT))
+    scenes = world_data(resource_root)
+    display = display_regions(resource_root)
+    if not scenes or not display:
+        raise SystemExit("地图或世界地图资源不可用，未覆盖现有攻略。")
     regions = regions_of(scenes)
-    body = [HEADER, "## 区域索引", "", index(regions), ""]
+    body = [HEADER, "## 客户端世界地图展示索引", "", "同一场景可在多张世界地图展示，不代表唯一归属。", ""]
+    for name, ids in display.items():
+        body.append(f"- [{name}](world-map/{name}.md)（{len(ids)} 个地图号）")
+    body += ["", "## 地图号启发式分册（未归类备选）", "", index(regions), ""]
     region_dir = SKILL / "references/world-map"
     region_dir.mkdir(exist_ok=True)
+    volume_of = {map_id: region.entity for region in regions for map_id in region.map_ids}
+    for name, ids in display.items():
+        lines = ["[返回世界地图索引](../world-map.md)", "", f"# {name}", "",
+                 "客户端展示关系，不代表唯一归属；链接指向地图号分册，按地图号检索节点。", ""]
+        for map_id in sorted(ids):
+            if map_id in scenes:
+                lines.append(f"- `{map_id}` {scenes[map_id].name} → [门户分册]({volume_of[map_id]:05d}.md)")
+            else:
+                lines.append(f"- `{map_id}`（客户端世界地图列出，但未找到对应场景文件）")
+        (region_dir / f"{name}.md").write_text("\n".join(lines))
     for region in regions:
         (region_dir / f"{region.entity:05d}.md").write_text(
             "[返回世界地图索引](../world-map.md)\n\n" + region_section(region, scenes))

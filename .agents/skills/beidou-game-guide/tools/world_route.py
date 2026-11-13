@@ -24,7 +24,6 @@ ROOT = Path(__file__).resolve().parents[4]
 if (ROOT / "cli").is_dir():
     sys.path.insert(0, str(ROOT / "cli"))
 
-from beidou_pilot.resources import load_resources  # noqa: E402
 from beidou_pilot.world_map import route_text, world_data  # noqa: E402
 from beidou_pilot.world_transport import paid_route  # noqa: E402
 
@@ -48,7 +47,7 @@ def main() -> None:
     local_config = ROOT / "private/workbenches/resources.json"
     if "MAPLE_RESOURCES_CONFIG" not in os.environ and local_config.is_file():
         os.environ["MAPLE_RESOURCES_CONFIG"] = str(local_config)
-    scenes = world_data(load_resources(Path(os.environ.get("CLIENT_ROOT", ROOT))).gui_client)
+    scenes = world_data(Path(os.environ.get("CLIENT_ROOT", ROOT)))
     start, goal = resolve(scenes, sys.argv[1]), resolve(scenes, sys.argv[2])
     report = route_text(scenes, start, goal)
     print(json.dumps({"start": start, "goal": goal, "start_name": scenes[start].name,

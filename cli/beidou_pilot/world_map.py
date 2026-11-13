@@ -4,6 +4,7 @@
 """
 
 from collections import Counter, defaultdict, deque
+from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -74,6 +75,35 @@ def _string_names(catalog: Catalog) -> dict[int, dict[str, str]]:
             if "mapName" in values or "streetName" in values:
                 names[int(key)] = values
     return names
+
+
+def display_regions(client_root: Path) -> dict[str, set[int]]:
+    """按客户端世界地图资源文件提取展示关系；同一地图可出现在多张图中。"""
+    data = Catalog(client_root).root
+    root = data / ("Map002" if (data / "Map002").is_dir() else "Map")
+    world = root / "WorldMap"
+    paths = sorted(world.glob("WorldMap*.img")) if world.is_dir() else []
+    if not paths:
+        return {}
+    directory = ImgDirectory(root)
+    result = {}
+    for path in paths:
+        tree, _ = directory.read_tree(("WorldMap", path.name))
+        if tree is None:
+            continue
+        ids = set()
+        for node in tree.iter():
+            if node.get("name") != "mapNo":
+                continue
+            for child in node:
+                try:
+                    value = Decimal(child.get("value", ""))
+                    if value.is_finite() and value == value.to_integral_value() and value >= 0:
+                        ids.add(int(value))
+                except InvalidOperation:
+                    continue
+        result[path.stem] = ids
+    return result
 
 
 def regions_of(scenes: dict[int, Scene]) -> list[Region]:
