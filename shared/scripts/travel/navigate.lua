@@ -5,6 +5,12 @@
 -- @option[type=int,opt] goal_x 目的地图内目标水平坐标；与goal_y同时给出时继续走到该坐标
 -- @option[type=int,opt] goal_y 目的地图内目标世界高度
 -- @option[type=int,opt,default=12,min=1,max=40] tolerance 到达水平容差
+-- @option[type=int,opt,min=1] hp_item_id 移动中低生命值时使用的明确药品 ID；省略时按库存挑恢复量最大的普通药
+-- @option[type=number,opt,default=0.7,min=0,max=1] heal_hp_ratio 移动中开始用药的生命值比例
+-- @option[type=string,opt,default="auto",choices=auto|ignore|clear] mob_strategy 被近身怪物挡住时：auto 按血线决定、ignore 只喝药硬冲、clear 先清怪
+-- @option[type=int,opt,min=1] skill_id 清怪时使用的已学技能 ID；省略时使用普攻
+-- @option[type=int,opt,default=90,min=20,max=300] attack_range 近身清怪距离
+-- @option[type=int,opt,default=8,min=1,max=60] clear_limit 单次移动最多清怪攻击次数
 local function main(context)
     local options = context.options
     local route = context.route
@@ -14,6 +20,15 @@ local function main(context)
     if dialog.status == "ok" and dialog.data and dialog.data.dialog_open == true then error("navigate_dialog_open") end
     local initial = travel_initial(context, options.min_hp_ratio, error)
     local last = initial
+    local combat = {
+        hp_item_id = options.hp_item_id,
+        heal_hp_ratio = options.heal_hp_ratio,
+        min_hp_ratio = options.min_hp_ratio,
+        mob_strategy = options.mob_strategy,
+        skill_id = options.skill_id,
+        attack_range = options.attack_range,
+        clear_limit = options.clear_limit,
+    }
     -- 路线地形按数组打包以控制脚本体积；这里转回平台图需要的字段。
     local function expand(raw)
         local footholds, ropes = {}, {}
@@ -34,8 +49,9 @@ local function main(context)
         return { footholds = footholds, ropes = ropes }
     end
     -- 身份与存活跨段保持；当前地图由每段单独核对。
+    -- HP 下限由执行器在每段移动中判断；这里只核对身份与存活。
     local function check_state()
-        last = travel_state(initial, options.min_hp_ratio, deadline, true, error)
+        last = travel_state(initial, 0, deadline, true, error)
         return last
     end
     local function segment_state(expected_map, leg_index)
@@ -95,8 +111,25 @@ local function main(context)
         move_to(
             graph,
             { x = leg.portal_x, y = leg.portal_y, tolerance = options.tolerance, platform = portal_platform },
-            { state = check_state, fail = fail, deadline = leg_deadline, log = "navigate" }
+            { state = check_state, fail = fail, deadline = leg_deadline, log = "navigate", combat = combat }
         )
+        -- 到达平台后精确对齐门户坐标，确认在触发范围内才按上。
+        local align_until = math.min(deadline, game.time() + 5)
+        local aligned = false
+        while game.time() < align_until do
+            local s = check_state()
+            local dx = leg.portal_x - s.position.x
+            if math.abs(dx) <= 8 and math.abs(s.position.y - leg.portal_y) <= 40 then
+                aligned = true
+                break
+            end
+            travel_action(
+                game.move(dx > 0 and "right" or "left", math.min(0.15, math.max(0.03, math.abs(dx) / 150))),
+                fail
+            )
+            game.sleep(0.12)
+        end
+        if not aligned then fail("portal_align_stalled", "align") end
         -- 对齐后只按一次上；转场期间只等待原生状态，不重发。
         travel_action(game.stop(), fail)
         game.sleep(0.2)
@@ -142,7 +175,7 @@ local function main(context)
         move_to(
             graph,
             { x = options.goal_x, y = options.goal_y, tolerance = options.tolerance, platform = platform },
-            { state = check_state, fail = fail, deadline = deadline, log = "navigate" }
+            { state = check_state, fail = fail, deadline = deadline, log = "navigate", combat = combat }
         )
     end
     local settled = check_state()

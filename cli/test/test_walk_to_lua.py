@@ -52,6 +52,8 @@ class WalkToLuaContract(unittest.TestCase):
         *,
         initial: dict,
         character: dict | None = None,
+        inventory: list[dict] | None = None,
+        monsters: list[dict] | None = None,
     ) -> None:
         source, metadata = read_strategy_file(self.strategy)
         self.assertIsNotNone(metadata)
@@ -61,7 +63,8 @@ class WalkToLuaContract(unittest.TestCase):
             "scene": scene,
             "character": character or {"id": 1, "hp": 100, "max_hp": 100},
             "initial": initial,
-            "inventory": [],
+            "inventory": inventory or [],
+            "monsters": monsters or [],
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -155,6 +158,47 @@ class WalkToLuaContract(unittest.TestCase):
             scene,
             {"target_x": 300, "target_y": 300, "budget_seconds": 20, "plan_only": True},
             initial={"x": 20, "y": 200},
+        )
+
+    def test_moving_heals_when_hp_drops_below_threshold(self) -> None:
+        scene = _scene([_foothold(1, 0, 400, 200)])
+        self.run_scenario(
+            "hp-heal",
+            scene,
+            {"target_x": 300, "target_y": 200, "budget_seconds": 20},
+            initial={"x": 20, "y": 200},
+            character={"id": 1, "hp": 50, "max_hp": 100},
+            inventory=[{"item_id": 2000006, "quantity": 5}],
+        )
+
+    def test_depleted_potions_stop_with_explicit_reason(self) -> None:
+        scene = _scene([_foothold(1, 0, 400, 200)])
+        self.run_scenario(
+            "potion-depleted",
+            scene,
+            {"target_x": 300, "target_y": 200, "budget_seconds": 20},
+            initial={"x": 20, "y": 200},
+            character={"id": 1, "hp": 40, "max_hp": 100},
+        )
+
+    def test_blocking_monster_is_cleared_before_continuing(self) -> None:
+        scene = _scene([_foothold(1, 0, 400, 200)])
+        self.run_scenario(
+            "mob-clear",
+            scene,
+            {"target_x": 300, "target_y": 200, "budget_seconds": 30, "mob_strategy": "clear"},
+            initial={"x": 20, "y": 200},
+            monsters=[{"object_id": 1, "template_id": 100, "x": 100, "y": 200, "hp": 3}],
+        )
+
+    def test_clear_limit_stops_when_monster_never_clears(self) -> None:
+        scene = _scene([_foothold(1, 0, 400, 200)])
+        self.run_scenario(
+            "clear-limit",
+            scene,
+            {"target_x": 300, "target_y": 200, "budget_seconds": 30, "mob_strategy": "clear", "clear_limit": 4},
+            initial={"x": 20, "y": 200},
+            monsters=[{"object_id": 1, "template_id": 100, "x": 100, "y": 200, "hp": 99}],
         )
 
     def test_map_change_stops_before_confirming_arrival(self) -> None:
