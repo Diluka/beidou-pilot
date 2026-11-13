@@ -72,6 +72,21 @@ Json FactValue(Fact fact) {
     return fact == Fact::Unknown ? Json(nullptr) : Json(fact == Fact::True);
 }
 
+void CaptureVelocity(MapleControl::MovableObject& projected, const ms::MotionSample& sample) {
+    projected.velocity = {};
+    if (sample.known) {
+        projected.velocity.source = MapleControl::MotionVector::Source::NativeUpdateDelta;
+        projected.velocity.intervalMs = sample.interval_ms;
+        const double stepsPerSecond = 1000.0 / sample.interval_ms;
+        projected.velocity.x = sample.delta_x * stepsPerSecond;
+        projected.velocity.y = sample.delta_y * stepsPerSecond;
+    }
+}
+
+Json MotionDocument(const MapleControl::MovableObject& object) {
+    return Json::parse(object.MotionDocument().Dump());
+}
+
 Json ScriptDocument(const MapleControl::Status* script) {
     if (script == nullptr) return nullptr;
     Json tasks = Json::array();
@@ -236,10 +251,14 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.ready = state.inGame && ms::Stage::get().is_active();
     state.mapKnown = state.characterKnown = state.positionKnown = state.facingKnown = state.ready;
     state.monstersKnown = state.inventoryKnown = state.dropsKnown = state.playersKnown = state.ready;
+    state.npcsKnown = state.projectilesKnown = state.ready;
     state.monsters.clear();
     state.inventory.clear();
     state.drops.clear();
     state.players.clear();
+    state.npcs.clear();
+    state.projectiles.clear();
+    state.projectilesComplete = state.ready ? Fact::False : Fact::Unknown;
     state.playersComplete = Fact::Unknown;
     auto& dialogue = ms::headless_state().dialogue;
     if (dialogue.scene_generation != state.sceneGeneration) {
@@ -252,8 +271,9 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.dead = state.reviveRequestable = state.onGround = state.attacking = Fact::Unknown;
     state.characterUpdatesKnown = state.ready;
     state.characterUpdates = nativeTick;
-    state.velocity = {};
-    state.movement = {};
+    state.character.positionKnown = false;
+    state.character.velocity = {};
+    state.character.movement = {};
     if (!state.ready) {
         state.settled = Fact::Unknown;
         questInteraction.Reset();
@@ -294,28 +314,27 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.onGround = ph.onground ? Fact::True : Fact::False;
     state.attacking = player.is_attacking() ? Fact::True : Fact::False;
     const double stepsPerSecond = 1000.0 / ms::Constants::TIMESTEP;
-    state.velocity.source = MapleControl::MotionVector::Source::Native;
-    state.velocity.x = ph.hspeed * stepsPerSecond;
-    state.velocity.y = ph.vspeed * stepsPerSecond;
-    state.movement.known = true;
-    state.movement.model = "headless_normal_v1";
-    state.movement.effectiveSpeed = stats.get_total(ms::EquipStat::Id::SPEED);
-    state.movement.effectiveJump = stats.get_total(ms::EquipStat::Id::JUMP);
-    state.movement.maxSpeed = ms::Physics::walk_reference_speed(player.get_walkforce()) * stepsPerSecond;
-    state.movement.maxJumpHeight = ms::Physics::jump_reference_height(player.get_jumpforce());
+    state.character.SetPosition(pos.x(), pos.y());
+    CaptureVelocity(state.character, player.get_motion());
+    state.character.movement.known = true;
+    state.character.movement.model = "headless_normal_v1";
+    state.character.movement.effectiveSpeed = stats.get_total(ms::EquipStat::Id::SPEED);
+    state.character.movement.effectiveJump = stats.get_total(ms::EquipStat::Id::JUMP);
+    state.character.movement.maxSpeed = ms::Physics::walk_reference_speed(player.get_walkforce()) * stepsPerSecond;
+    state.character.movement.maxJumpHeight = ms::Physics::jump_reference_height(player.get_jumpforce());
     const bool settled =
         !player.is_attacking() && !ph.mobile() && (ph.onground || player.is_climbing() || player.is_underwater());
     state.settled = settled ? Fact::True : Fact::False;
     for (const auto& entry : *stage.get_mobs().get_mobs()) {
         const auto& mob = static_cast<const ms::Mob&>(*entry.second);
-        const auto p = mob.get_position();
         MapleControl::Monster projected;
         projected.objectId = entry.first;
         projected.templateId = mob.get_template_id();
         projected.templateKnown = true;
         projected.name = mob.get_name();
-        projected.x = p.x();
-        projected.y = p.y();
+        const auto p = mob.get_position();
+        projected.SetPosition(p.x(), p.y());
+        CaptureVelocity(projected, mob.get_motion());
         projected.active = mob.is_active() && mob.is_alive();
         projected.hpSequence = mob.get_hp_update_sequence();
         if (projected.hpSequence != 0) projected.hpPercent = mob.get_hp_percent();
@@ -337,11 +356,11 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     }
     for (const auto& entry : stage.get_drops().get_drops()) {
         if (!entry.second->is_active()) continue;
-        const auto p = entry.second->get_position();
         MapleControl::Drop drop;
         drop.objectId = entry.first;
-        drop.x = p.x();
-        drop.y = p.y();
+        const auto p = entry.second->get_position();
+        drop.SetPosition(p.x(), p.y());
+        CaptureVelocity(drop, entry.second->get_motion());
         const auto& nativeDrop = static_cast<const ms::Drop&>(*entry.second);
         const auto* item = dynamic_cast<const ms::ItemDrop*>(&nativeDrop);
         if (item) {
@@ -353,7 +372,6 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     }
     for (const auto& entry : *stage.get_chars().get_chars()) {
         const auto& character = static_cast<const ms::Char&>(*entry.second);
-        const auto p = character.get_position();
         MapleControl::OtherPlayer projected;
         projected.reference = std::to_string(character.get_oid());
         projected.characterId = static_cast<std::uint32_t>(character.get_oid());
@@ -361,8 +379,9 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
         projected.name = character.get_name();
         projected.level = character.get_level();
         projected.levelKnown = true;
-        projected.x = p.x();
-        projected.y = p.y();
+        const auto p = character.get_position();
+        projected.SetPosition(p.x(), p.y());
+        CaptureVelocity(projected, character.get_motion());
         projected.facingKnown = true;
         projected.facingLeft = !character.getflip();
         state.players.push_back(std::move(projected));
@@ -375,6 +394,26 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
         ms::login_state().player_packet_parse_errors == ms::headless_state().player_parse_errors_at_map_entry
             ? Fact::True
             : Fact::False;
+    for (const auto& entry : *stage.get_npcs().get_npcs()) {
+        auto& npc = static_cast<ms::Npc&>(*entry.second);
+        if (!npc.is_active()) continue;
+        MapleControl::Npc projected;
+        projected.objectId = npc.get_oid();
+        projected.templateId = npc.get_template_id();
+        projected.name = npc.get_name();
+        const auto p = npc.get_position();
+        projected.SetPosition(p.x(), p.y());
+        CaptureVelocity(projected, npc.get_motion());
+        state.npcs.push_back(std::move(projected));
+    }
+    // Combat can retain flights over a map transition. These remain native entries,
+    // without fabricating a current-scene birth, server identity or damage fact.
+    for (const auto& sample : stage.get_combat().get_projectile_motions()) {
+        MapleControl::Projectile projectile;
+        projectile.SetPosition(sample.x, sample.y);
+        CaptureVelocity(projectile, sample);
+        state.projectiles.push_back(projectile);
+    }
     CaptureInteraction();
 }
 
@@ -1112,39 +1151,40 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                                 {"name", monster.name.empty() ? Json(nullptr) : Json(monster.name)},
                                 {"x", monster.x},
                                 {"y", monster.y},
+                                {"velocity", Json::parse(monster.velocity.Document().Dump())},
                                 {"active", monster.active},
                                 {"hp_percent", monster.hpSequence != 0 ? Json(monster.hpPercent) : Json(nullptr)},
                                 {"hp_sequence", monster.hpSequence != 0 ? Json(monster.hpSequence) : Json(nullptr)},
                                 {"hp_source", monster.hpSequence != 0 ? Json("server_mob_hp") : Json(nullptr)}});
         }
         Json npcs = Json::array();
-        for (const auto& entry : *stage.get_npcs().get_npcs()) {
-            auto& npc = static_cast<ms::Npc&>(*entry.second);
-            if (!npc.is_active()) continue;
-            const auto position = npc.get_position();
-            npcs.push_back({{"object_id", npc.get_oid()},
-                            {"template_id", npc.get_template_id()},
-                            {"name", npc.get_name()},
-                            {"ref", npcTargets.at(npc.get_oid()).reference},
-                            {"x", position.x()},
-                            {"y", position.y()}});
+        for (const auto& npc : state.npcs) {
+            auto document = MotionDocument(npc);
+            document.update({{"object_id", npc.objectId},
+                             {"template_id", npc.templateId},
+                             {"name", npc.name},
+                             {"ref", npcTargets.at(npc.objectId).reference}});
+            npcs.push_back(std::move(document));
         }
         Json drops = Json::array();
         for (const auto& entry : stage.get_drops().get_drops()) {
             if (!entry.second->is_active()) continue;
             const auto& drop = static_cast<const ms::Drop&>(*entry.second);
+            MapleControl::MovableObject projected;
             const auto position = drop.get_position();
+            projected.SetPosition(position.x(), position.y());
+            CaptureVelocity(projected, drop.get_motion());
             const auto* item = dynamic_cast<const ms::ItemDrop*>(&drop);
             const bool money = dynamic_cast<const ms::MesoDrop*>(&drop) != nullptr;
-            drops.push_back({{"object_id", drop.get_oid()},
-                             {"x", position.x()},
-                             {"y", position.y()},
+            auto document = MotionDocument(projected);
+            document.update({{"object_id", drop.get_oid()},
                              {"item_id", item ? Json(item->get_item_id()) : Json(nullptr)},
                              {"money", nullptr},
                              {"kind", item    ? "item"
                                       : money ? "meso"
                                               : "unknown"},
                              {"landed", drop.is_landed()}});
+            drops.push_back(std::move(document));
         }
         Json players = Json::array();
         for (const auto& other : state.players) {
@@ -1155,10 +1195,16 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                  {"level", other.levelKnown ? Json(other.level) : Json(nullptr)},
                  {"x", other.x},
                  {"y", other.y},
+                 {"velocity", Json::parse(other.velocity.Document().Dump())},
                  {"facing", other.facingKnown ? Json(other.facingLeft ? "Left" : "Right") : Json(nullptr)}});
         }
+        Json projectiles = Json::array();
+        for (const auto& projectile : state.projectiles) projectiles.push_back(MotionDocument(projectile));
         return {{"map_id", state.mapId},
-                {"player", {{"x", state.x}, {"y", state.y}}},
+                {"player", MotionDocument(state.character)},
+                {"projectiles", std::move(projectiles)},
+                {"projectiles_complete", FactValue(state.projectilesComplete)},
+                {"projectiles_scope", "native_flying_entries"},
                 {"monsters", std::move(monsters)},
                 {"npcs", std::move(npcs)},
                 {"drops", std::move(drops)},
@@ -1214,24 +1260,26 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                 {"level", entry.second},
                 {"master_level", hasMasterLevel ? Json(skills.get_masterlevel(entry.first)) : Json(nullptr)}};
         }
-        return {{"character_id", player.get_oid()},
-                {"mesos", inventory.get_meso()},
-                {"mesos_checksum_valid", nullptr},
-                {"native_values_valid", true},
-                {"validation_source", "native_objects"},
-                {"skills", std::move(knownSkills)},
-                {"skills_complete", true},
-                {"velocity", Json::parse(state.velocity.Document().Dump())},
-                {"movement", Json::parse(state.movement.Document().Dump())},
-                {"on_ground", FactValue(state.onGround)},
-                {"attacking", FactValue(state.attacking)},
-                {"character_updates", state.characterUpdatesKnown ? Json(state.characterUpdates) : Json(nullptr)},
-                {"dead", FactValue(state.dead)},
-                {"revive_requestable", FactValue(state.reviveRequestable)},
-                {"unavailable", Json::array()},
-                {"not_covered",
-                 Json::array({"skill_names", "skill_requirements", "skill_effects", "skill_expirations",
-                              "master_level_when_absent_from_client_records", "original_client_secure_checksums"})}};
+        auto document = MotionDocument(state.character);
+        document.update(
+            {{"character_id", player.get_oid()},
+             {"mesos", inventory.get_meso()},
+             {"mesos_checksum_valid", nullptr},
+             {"native_values_valid", true},
+             {"validation_source", "native_objects"},
+             {"skills", std::move(knownSkills)},
+             {"skills_complete", true},
+             {"movement", Json::parse(state.character.movement.Document().Dump())},
+             {"on_ground", FactValue(state.onGround)},
+             {"attacking", FactValue(state.attacking)},
+             {"native_updates", state.characterUpdatesKnown ? Json(state.characterUpdates) : Json(nullptr)},
+             {"dead", FactValue(state.dead)},
+             {"revive_requestable", FactValue(state.reviveRequestable)},
+             {"unavailable", Json::array()},
+             {"not_covered",
+              Json::array({"skill_names", "skill_requirements", "skill_effects", "skill_expirations",
+                           "master_level_when_absent_from_client_records", "original_client_secure_checksums"})}});
+        return document;
     }
     if (domain == "interaction") {
         const auto* page = interaction.CurrentPage();
@@ -1386,8 +1434,6 @@ Json SharedLuaAdapter::StateDocument() const {
         {"on_ground", FactValue(state.onGround)},
         {"attacking", FactValue(state.attacking)},
         {"character_updates", state.characterUpdatesKnown ? Json(state.characterUpdates) : Json(nullptr)},
-        {"velocity", Json::parse(state.velocity.Document().Dump())},
-        {"movement", Json::parse(state.movement.Document().Dump())},
         {"dead", FactValue(state.dead)},
         {"revive_requestable", FactValue(state.reviveRequestable)},
         {"map_id", state.mapKnown ? Json(state.mapId) : Json(nullptr)},
@@ -1472,7 +1518,10 @@ Json SharedLuaAdapter::StateDocument() const {
     }
     document["character"] = nullptr;
     if (state.characterKnown) {
-        Json character = {{"id", state.character.id}, {"name", state.character.name}};
+        Json character = MotionDocument(state.character);
+        character.update({{"id", state.character.id},
+                          {"name", state.character.name},
+                          {"movement", Json::parse(state.character.movement.Document().Dump())}});
         const std::array<const char*, 13> names{
             "level",  "job", "strength", "dexterity",      "intelligence", "luck",      "hp",
             "max_hp", "mp",  "max_mp",   "ability_points", "skill_points", "experience"};
@@ -1489,6 +1538,7 @@ Json SharedLuaAdapter::StateDocument() const {
                                         {"name", mob.name.empty() ? Json(nullptr) : Json(mob.name)},
                                         {"x", mob.x},
                                         {"y", mob.y},
+                                        {"velocity", Json::parse(mob.velocity.Document().Dump())},
                                         {"active", mob.active},
                                         {"hp_percent", mob.hpSequence != 0 ? Json(mob.hpPercent) : Json(nullptr)},
                                         {"hp_sequence", mob.hpSequence != 0 ? Json(mob.hpSequence) : Json(nullptr)},
@@ -1504,6 +1554,7 @@ Json SharedLuaAdapter::StateDocument() const {
         document["drops"].push_back({{"object_id", drop.objectId},
                                      {"x", drop.x},
                                      {"y", drop.y},
+                                     {"velocity", Json::parse(drop.velocity.Document().Dump())},
                                      {"item_id", drop.itemKnown ? Json(drop.itemId) : Json(nullptr)},
                                      {"money", drop.moneyKnown ? Json(drop.money) : Json(nullptr)},
                                      {"landed", FactValue(drop.landed)}});
@@ -1516,8 +1567,19 @@ Json SharedLuaAdapter::StateDocument() const {
              {"level", other.levelKnown ? Json(other.level) : Json(nullptr)},
              {"x", other.x},
              {"y", other.y},
+             {"velocity", Json::parse(other.velocity.Document().Dump())},
              {"facing", other.facingKnown ? Json(other.facingLeft ? "Left" : "Right") : Json(nullptr)}});
     document["players_complete"] = FactValue(state.playersComplete);
+    document["npcs"] = state.npcsKnown ? Json::array() : Json(nullptr);
+    for (const auto& npc : state.npcs) {
+        auto projected = MotionDocument(npc);
+        projected.update({{"object_id", npc.objectId}, {"template_id", npc.templateId}, {"name", npc.name}});
+        document["npcs"].push_back(std::move(projected));
+    }
+    document["projectiles"] = state.projectilesKnown ? Json::array() : Json(nullptr);
+    for (const auto& projectile : state.projectiles) document["projectiles"].push_back(MotionDocument(projectile));
+    document["projectiles_complete"] = FactValue(state.projectilesComplete);
+    document["projectiles_scope"] = "native_flying_entries";
     return document;
 }
 

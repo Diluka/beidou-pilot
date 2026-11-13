@@ -156,7 +156,7 @@ namespace ms
 		mobs.update(physics);
 		chars.update(physics);
 		drops.update(physics);
-		player.update(physics);
+		player.sampled_update(physics);
 
 		portals.update(player.get_position());
 		camera.update(player.get_position());

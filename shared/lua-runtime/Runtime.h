@@ -31,21 +31,20 @@ enum class ActionKind {
     Window
 };
 
-struct Character {
+struct Character : MovableObject {
     std::uint32_t id = 0;
     std::string name;
     // level, job, str, dex, int, luk, hp, max_hp, mp, max_mp, ap, sp, exp
     std::array<std::uint32_t, 13> values{};
     std::array<bool, 13> known{};
+    MovementReference movement;
 };
 
-struct Monster {
+struct Monster : MovableObject {
     std::uint32_t objectId = 0;
     std::uint32_t templateId = 0;
     bool templateKnown = false;
     std::string name;
-    double x = 0;
-    double y = 0;
     bool active = false;
     int hpPercent = 0;
     std::uint64_t hpSequence = 0; // Zero means no server HP observation for this native object.
@@ -59,10 +58,8 @@ struct Item {
     bool quantityKnown = false;
 };
 
-struct Drop {
+struct Drop : MovableObject {
     std::uint32_t objectId = 0;
-    double x = 0;
-    double y = 0;
     std::uint32_t itemId = 0;
     bool itemKnown = false;
     std::uint32_t money = 0;
@@ -73,18 +70,25 @@ struct Drop {
 // Another character this client already knows in the current scene. The
 // reference is opaque per backend and only meaningful within one scene
 // generation; fields the backend cannot expose stay unknown.
-struct OtherPlayer {
+struct OtherPlayer : MovableObject {
     std::string reference;
     std::uint32_t characterId = 0;
     bool characterIdKnown = false;
     std::string name;
     std::uint16_t level = 0;
     bool levelKnown = false;
-    double x = 0;
-    double y = 0;
     bool facingKnown = false;
     bool facingLeft = false;
 };
+
+struct Npc : MovableObject {
+    std::uint32_t objectId = 0;
+    std::uint32_t templateId = 0;
+    std::string name;
+};
+
+// Visual projectiles may have no server object ID; do not invent a stable one.
+struct Projectile : MovableObject {};
 
 struct State {
     std::string instanceId;
@@ -97,11 +101,10 @@ struct State {
     std::uint32_t mapId = 0;
     bool characterKnown = false;
     Character character;
+    // Frozen coroutine snapshot projection; entity-owned motion is on character.
     bool positionKnown = false;
     double x = 0;
     double y = 0;
-    MotionVector velocity;
-    MovementReference movement;
     bool facingKnown = false;
     bool facingLeft = false;
     bool characterUpdatesKnown = false;
@@ -114,6 +117,12 @@ struct State {
     std::vector<Drop> drops;
     bool playersKnown = false;
     std::vector<OtherPlayer> players;
+    bool npcsKnown = false;
+    std::vector<Npc> npcs;
+    bool projectilesKnown = false;
+    std::vector<Projectile> projectiles;
+    // Only native supported flying objects are covered, not every game hazard.
+    Fact projectilesComplete = Fact::Unknown;
     // True only when the backend can account for every player packet in this scene.
     Fact playersComplete = Fact::Unknown;
     Fact settled = Fact::Unknown;

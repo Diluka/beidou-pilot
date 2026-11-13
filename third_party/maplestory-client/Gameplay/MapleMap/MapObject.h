@@ -34,6 +34,9 @@ namespace ms
 
 		// Updates the object and returns the updated layer.
 		virtual int8_t update(const Physics& physics);
+		// Observe the full virtual update, including direct coordinate corrections.
+		int8_t sampled_update(const Physics& physics);
+		MotionSample get_motion() const;
 		// Reactivates the object.
 		virtual void makeactive();
 		// Deactivates the object.

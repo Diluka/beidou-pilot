@@ -42,7 +42,16 @@ public:
         state.character.known.fill(true);
         state.character.values[6] = 100;
         state.monstersKnown = true;
-        state.monsters.push_back({7, 100100, true, "snail", 12, 3, true, 100, 1});
+        Monster monster;
+        monster.objectId = 7;
+        monster.templateId = 100100;
+        monster.templateKnown = true;
+        monster.name = "snail";
+        monster.SetPosition(12, 3);
+        monster.active = true;
+        monster.hpPercent = 100;
+        monster.hpSequence = 1;
+        state.monsters.push_back(monster);
     }
 
     const char* Backend() const override { return "contract"; }
@@ -57,9 +66,23 @@ public:
                                    {"buffs_available", false},
                                    {"unavailable", Value::Array({"native_buff_details_unavailable"})}}),
                     {}};
-        if (domain == "scene")
+        if (domain == "scene") {
+            if (!nativeNpcDomain) return {"ok", {}, {}};
+            if (state.npcsKnown) {
+                auto npcs = Value::Array();
+                for (const auto& npc : state.npcs) {
+                    auto row = npc.MotionDocument();
+                    row["object_id"] = npc.objectId;
+                    row["template_id"] = npc.templateId;
+                    row["name"] = npc.name;
+                    row["ref"] = "native-npc-reference";
+                    npcs.Add(row);
+                }
+                return {"ok", Value::Object({{"npcs", npcs}}), {}};
+            }
             return {
                 "ok", Value::Object({{"npcs", Value::Array({Value::Object({{"id", 99}, {"name", "guide"}})})}}), {}};
+        }
         if (domain == "inventory")
             return {"ok",
                     Value::Object({{"items", Value::Array({Value::Object({{"item_id", 2000000}, {"quantity", 2}})})}}),
@@ -134,6 +157,8 @@ public:
     }
 
     void Advance() {
+        state.character.positionKnown = state.positionKnown;
+        if (state.positionKnown) state.character.SetPosition(state.x, state.y);
         ++state.sequence;
         if (advanceCharacter) ++state.characterUpdates;
         if (actionActive && pendingDelivery) {
@@ -153,7 +178,7 @@ public:
 
     State state;
     mutable std::map<std::string, int> queries;
-    bool supportsItems = true, supportsSkills = true, rejectClear = false;
+    bool supportsItems = true, supportsSkills = true, rejectClear = false, nativeNpcDomain = true;
     bool actionActive = false, pendingDelivery = false, advanceCharacter = true;
     int actionReleaseTicks = 0, directionTicks = 0, releases = 0;
     ActionResult result;
@@ -716,48 +741,100 @@ void Profiling() {
 }
 
 void MotionObservations() {
+    static_assert(std::is_base_of<MovableObject, Character>::value, "self is a movable object");
+    static_assert(std::is_base_of<MovableObject, OtherPlayer>::value, "other players share the base");
+    static_assert(std::is_base_of<MovableObject, Monster>::value, "monsters share the base");
+    static_assert(std::is_base_of<MovableObject, Npc>::value, "NPCs share the base");
+    static_assert(std::is_base_of<MovableObject, Projectile>::value, "projectiles share the base");
+    static_assert(std::is_base_of<MovableObject, Drop>::value, "moving drops share the base");
     NativeBoundary native;
-    native.state.velocity.source = MapleControl::MotionVector::Source::Native;
-    native.state.velocity.x = 100;
-    native.state.velocity.y = -200;
-    native.state.movement.known = true;
-    native.state.movement.model = "contract_reference";
-    native.state.movement.maxSpeed = 100;
-    native.state.movement.maxJumpHeight = 75;
-    native.state.movement.effectiveSpeed = 100;
-    native.state.movement.effectiveJump = 100;
+    native.state.monsters.front().velocity = {MotionVector::Source::Native, -25, 5};
+    OtherPlayer other;
+    other.reference = "other";
+    other.SetPosition(9, 8);
+    other.velocity = {MotionVector::Source::Native, 13, -7};
+    native.state.playersKnown = true;
+    native.state.players.push_back(other);
+    Npc npc;
+    npc.objectId = 12;
+    npc.templateId = 1000;
+    npc.SetPosition(14, 15);
+    npc.velocity.source = MotionVector::Source::Native; // observed zero, not a default unknown
+    native.state.npcsKnown = true;
+    native.state.npcs.push_back(npc);
+    Drop drop;
+    drop.objectId = 23;
+    drop.SetPosition(24, 25);
+    drop.velocity = {MotionVector::Source::NativeUpdateDelta, 2, 3, 8};
+    native.state.dropsKnown = true;
+    native.state.drops.push_back(drop);
+    Projectile projectile;
+    projectile.SetPosition(34, 35);
+    projectile.velocity = {MotionVector::Source::NativeUpdateDelta, 200, -50, 8};
+    native.state.projectilesKnown = true;
+    native.state.projectilesComplete = Fact::False;
+    native.state.projectiles.push_back(projectile);
+    native.state.character.velocity.source = MapleControl::MotionVector::Source::Native;
+    native.state.character.velocity.x = 100;
+    native.state.character.velocity.y = -200;
+    native.state.character.movement.known = true;
+    native.state.character.movement.model = "contract_reference";
+    native.state.character.movement.maxSpeed = 100;
+    native.state.character.movement.maxJumpHeight = 75;
+    native.state.character.movement.effectiveSpeed = 100;
+    native.state.character.movement.effectiveJump = 100;
     TickRuntime runtime(native);
     Start(runtime, "motion", Source(R"lua(
 function main(c)
-  local w=c.game.world; local movement=c.game.character.movement
+  local w=c.game.character; local movement=w.movement
+  assert(c.game.world.velocity==nil and c.game.world.on_ground==nil)
+  assert(w.x~=nil and w.y~=nil and w.native_updates~=nil)
   if c.tick.index==1 then
     assert(w.velocity.source=='native' and w.velocity.x==100 and w.velocity.y==-200)
     assert(movement.kind=='model' and movement.model=='contract_reference')
     assert(movement.max_speed==100 and movement.max_jump_height==75)
     assert(movement.effective_speed==100 and movement.effective_jump==100)
     assert(movement.conditions=='stationary_flat_ground_normal')
+    local scene=c.game.scene
+    assert(scene.monsters[1].velocity.x==-25 and scene.monsters[1].velocity.y==5)
+    assert(scene.players[1].velocity.x==13 and scene.players[1].velocity.y==-7)
+    assert(scene.npcs[1].velocity.x==0 and scene.npcs[1].velocity.y==0)
+    assert(scene.npcs[1].ref=='native-npc-reference')
+    assert(scene.drops[1].velocity.x==2 and scene.drops[1].velocity.y==3)
+    assert(scene.projectiles[1].x==34 and scene.projectiles[1].velocity.x==200)
+    assert(scene.projectiles[1].velocity.source=='native_update_delta')
+    assert(scene.projectiles[1].velocity.interval_ms==8 and scene.projectiles_complete==false)
   elseif c.tick.index==2 then
     assert(w.velocity.x==-10 and w.velocity.y==0 and movement.max_speed==127.5)
+    assert(c.game.scene.monsters[1].velocity==nil)
+    assert(c.game.scene.npcs[1].velocity.x==0 and c.game.scene.npcs[1].ref==nil)
   elseif c.tick.index==3 then
     assert(w.velocity==nil and movement==nil)
+    assert(c.game.scene.players==nil) -- unreadable membership is not an empty collection
     return 'done'
   end
 end
 )lua"));
     Step(native, runtime);
     StatusIs(runtime, "motion", "running");
-    native.state.velocity.x = -10;
-    native.state.velocity.y = 0;
-    native.state.movement.maxSpeed = 127.5;
+    native.state.character.velocity.x = -10;
+    native.state.character.velocity.y = 0;
+    native.state.character.movement.maxSpeed = 127.5;
+    native.state.monsters.front().velocity = {};
+    native.nativeNpcDomain = false;
     Step(native, runtime);
     StatusIs(runtime, "motion", "running");
-    native.state.velocity = {};
-    native.state.movement = {};
+    native.state.character.velocity = {};
+    native.state.character.movement = {};
+    native.state.playersKnown = false;
     Step(native, runtime);
     Drain(native, runtime, "motion", "completed");
-    native.state.velocity.source = MapleControl::MotionVector::Source::Native;
-    native.state.movement.known = true;
-    for (const auto& field : {"game.world.velocity.x", "game.character.movement.max_speed"}) {
+    native.state.character.velocity.source = MapleControl::MotionVector::Source::Native;
+    native.state.character.movement.known = true;
+    native.state.playersKnown = true;
+    for (const auto& field :
+         {"game.character.velocity.x", "game.character.movement.max_speed", "game.scene.players[1].velocity.x",
+          "game.scene.npcs[1].velocity.x", "game.scene.drops[1].velocity.x", "game.scene.projectiles[1].velocity.x"}) {
         const std::string id = field;
         Start(runtime, id, Source("function main(c) " + id + "=0 end"));
         Step(native, runtime);
@@ -774,11 +851,11 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
     for (bool groundKnown : {true, false}) {
         NativeBoundary native;
         native.state.onGround = groundKnown ? Fact::True : Fact::Unknown;
-        native.state.velocity.source = MapleControl::MotionVector::Source::Native;
-        native.state.movement.known = true;
-        native.state.movement.model = "contract_reference";
-        native.state.movement.maxSpeed = 100;
-        native.state.movement.maxJumpHeight = 75;
+        native.state.character.velocity.source = MapleControl::MotionVector::Source::Native;
+        native.state.character.movement.known = true;
+        native.state.character.movement.model = "contract_reference";
+        native.state.character.movement.maxSpeed = 100;
+        native.state.character.movement.maxJumpHeight = 75;
         TickRuntime runtime(native);
         Start(runtime, "example", source, 2000);
         Step(native, runtime);
@@ -793,13 +870,13 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
               "the example must run up, not jump from rest with its first move");
         const double sign = direction == "right" ? 1 : -1;
         native.state.x = sign * 100;
-        native.state.velocity.x = sign * 50;
+        native.state.character.velocity.x = sign * 50;
         for (int i = 0; i < 4; ++i) Step(native, runtime);
         Check(native.requests.empty(), "distance or a low-speed plateau must not trigger takeoff");
-        native.state.velocity.x = -sign * 100;
+        native.state.character.velocity.x = -sign * 100;
         Step(native, runtime);
         Check(native.requests.empty(), "speed in the wrong direction must not satisfy run-up");
-        native.state.velocity.x = sign * 99.5;
+        native.state.character.velocity.x = sign * 99.5;
         Step(native, runtime);
         Check(native.requests.size() == 1 && native.requests[0].kind == ActionKind::Jump,
               "the example must jump once its directed speed approaches the current reference");
@@ -809,6 +886,8 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
         // The fixture supplies external native facts, not simulated game success:
         // jump key-up is consumed while the character is still above the floor.
         native.state.y = -20;
+        native.state.character.velocity = {};
+        native.state.character.movement = {}; // air/landing do not depend on these facts
         native.state.onGround = groundKnown ? Fact::False : Fact::Unknown;
         Step(native, runtime);
         native.Complete();
@@ -833,7 +912,12 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
         native.state.onGround = Fact::True;
         for (int i = 0; i < 32 && runtime.Running(); ++i) {
             Step(native, runtime);
-            if (native.directions.empty()) native.state.velocity.x = 0; // external physics has stopped after key-up
+            if (native.directions.empty()) {
+                // Restore the facts needed to confirm stopping, after actual landing release.
+                native.state.character.velocity = {MotionVector::Source::Native, 0, 0};
+                native.state.character.movement.known = true;
+                native.state.character.movement.maxSpeed = 100;
+            }
         }
         StatusIs(runtime, "example", "completed", "script_returned");
         Check(native.changes == std::vector<std::vector<std::string>>{expected, {}},

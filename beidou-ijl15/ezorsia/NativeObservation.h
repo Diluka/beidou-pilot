@@ -42,6 +42,8 @@ Value Scene();
 // Reads the current scene's remote users; throws ReadError when the pool layout
 // or a membership snapshot cannot be validated.
 void Players(std::vector<MapleControl::OtherPlayer>& output);
+// Uses the same verified NPC membership collector as Scene(), not another pool.
+void Npcs(std::vector<MapleControl::Npc>& output);
 Value Inventory();
 void BindEquipmentContext(const std::string& instance, std::uint32_t character, std::uint64_t generation);
 std::string EquipmentReference(std::uintptr_t item, std::uint32_t character);

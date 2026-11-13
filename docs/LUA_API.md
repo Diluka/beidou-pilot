@@ -73,9 +73,9 @@ end
 
 | 属性 | 内容与边界 |
 | --- | --- |
-| `game.character` | `id/name/level/job/hp/max_hp/mp/max_mp`；长字段 `strength/dexterity/intelligence/luck/ability_points/skill_points/experience` 及简写 `str/dex/int/luk/ap/sp/exp`；`movement` 为按有效属性推断的参考能力；与本端可读取的角色领域事实合并 |
-| `game.world` | `instance_id/scene_generation/ready/in_game/map_id`；已知位置同时提供 `x/y` 和 `position={x,y}`；`facing` 沿用 `Left/Right`，`velocity` 为当前运动向量，`character_updates` 为真实角色更新计数；`on_ground/attacking/settled/dead/revive_requestable` 未知时不提供。地面标志来自本端物理对象，攻击动画目前只在无头已知；GUI `attacking/settled` 保持未知 |
-| `game.scene` | 当前怪物、掉落、其他玩家及按本端能力提供的 NPC 等原生场景事实；列表完整性按实际能力声明 |
+| `game.character` | 当前玩家实体：共享可移动物体的 `x/y/velocity`，以及 `id/name/level/job/hp/max_hp/mp/max_mp`；长字段 `strength/dexterity/intelligence/luck/ability_points/skill_points/experience` 及简写 `str/dex/int/luk/ap/sp/exp`；`movement` 是角色能力参考，`on_ground/attacking/native_updates` 是本角色原生事实，未知时为 `nil`；与本端可读取的角色领域事实合并 |
+| `game.world` | `instance_id/scene_generation/ready/in_game/map_id`；既有角色快照位置仍提供 `x/y` 和 `position={x,y}`，`facing` 沿用 `Left/Right`；`settled/dead/revive_requestable` 未知时不提供。新实体运动字段不挂在此领域，GUI `settled` 保持未知 |
+| `game.scene` | `players/monsters/npcs/projectiles/drops` 的实体列表按本端支持范围提供，各行共享可移动物体的位置与向量契约；集合或字段不可读保留未知，不把不支持的集合写成空列表；完整性按本端实际能力声明 |
 | `game.inventory`、`game.quests` | 本端原生背包/装备和任务领域；任务动态性仍遵循本端来源声明 |
 | `game.chat` | 按本端可读能力；不支持时明确 `status="unsupported"`，不是空聊天记录 |
 | `game.dialog/shop/ui/hotkeys/interaction/notifications` | 按需只读观察；支持范围与原生领域一致，不增加窗口动作 API |
@@ -84,7 +84,13 @@ buff 归 `game.character`，不在 `player.status()`。首版两端都没有可�
 
 ### 运动观察与静止参考
 
-`game.world.velocity={x,y,source}` 是当前运动向量，单位为**地图像素/秒**，右、下为正，因此起跳上升时 `y<0`。`source="native"` 表示本端物理速度的单位转换或已校验解码；本次不提供位置差分估计，也不把重复渲染的整数坐标当成原生速度。未知时整个字段为 `nil`。`world.character_updates` 只随真实角色更新增加，可区分连续渲染是否复用了同一个物理样本；计数不表示输入或服务器效果成功。
+移动状态属于实体，不属于世界。共享观察模型的 `MovableObject` 是自己、其他玩家、怪物、NPC、投射物和会移动的掉落物的共同基类，各自拥有 `x/y/velocity`；角色自己的位置和运动向量从 `game.character` 读取，其余从对应 `game.scene` 列表中的实体读取。该统一发生在观察模型，不重写两端不同的原生继承树。`position_source` 标记位置来源；原生位置投影可能为整数，与内部未舍入的运动采样不混用。GUI掉落物现有 `x/y` 是原生目标落点锚点，标为 `native_drop_destination`，不是悬浮或拾取飞行的当前显示位置，其向量保持未知；不为填满共同字段而伪造当前位置或零速度。
+
+`entity.velocity={x,y,source}` 单位为**地图像素/秒**，右、下为正，上升时 `y<0`。`source="native"` 表示本端当前速度字段的已校验读取；`source="native_update_delta"` 表示同一实体完整原生更新前后未舍入坐标的位移除以该逻辑步长，并附 `interval_ms`，是这段更新的平均运动向量。无头逻辑步长为8ms，坐标和速度不使用重复渲染的整数像素作差。初次样本或原生显式重定位无法形成连续区间时保持未知。`nil` 与实际已测得的 `{x=0,y=0}` 不同，不借用自己或另一实体的向量，也不按物体类型硬填零。
+
+向量描述本客户端的运动，不承诺服务器权威速度或下一步轨迹。无头远端玩家存在延迟后追赶目标坐标的跳步；相应区间向量可呈脉冲，不能解释成服务端连续跑速。投射物条目不自动表示碰撞或伤害，也不伪造跨帧稳定ID。已支持的原生飞行集合不代表全部怪物投射物、召唤物或地图危险物，需查看覆盖范围与 `projectiles_complete`；不支持的集合保持未知。掉落物即使 `landed=true` 仍可能悬浮移动，不能据此推断向量为零。
+
+`character.on_ground` 来自本端地面事实，未知时不能靠重复坐标推断；`character.attacking` 的攻击动画目前只在无头已知，GUI保持未知。`character.native_updates` 只随真实角色更新增加，用于识别渲染是否复用了同一个角色物理样本；不是输入消费或服务器效果成功的凭据。
 
 `game.character.movement` 与当前速度分开，是**静止平地、正常行走/普通跳跃、无额外外力和障碍**的模型参考。已知时提供：
 

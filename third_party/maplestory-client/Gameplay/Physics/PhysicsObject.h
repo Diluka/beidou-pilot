@@ -24,6 +24,17 @@
 
 namespace ms
 {
+	// Complete logical-update displacement, not the integrator's next-step speed.
+	struct MotionSample
+	{
+		double x;
+		double y;
+		bool known;
+		double delta_x;
+		double delta_y;
+		uint16_t interval_ms;
+	};
+
 	// Structure that contains all properties for movement calculations
 	struct MovingObject
 	{
@@ -31,6 +42,39 @@ namespace ms
 		Linear<double> y;
 		double hspeed = 0.0;
 		double vspeed = 0.0;
+
+		// Bracket one complete native update. First measurement and explicit
+		// repositioning stay unknown; measured zero remains distinguishable.
+		void begin_motion_sample()
+		{
+			motion_start_x = crnt_x();
+			motion_start_y = crnt_y();
+			motion_continuous = motion_sampled;
+			motion_known = false;
+		}
+
+		void end_motion_sample()
+		{
+			motion_known = motion_continuous;
+			motion_delta_x = crnt_x() - motion_start_x;
+			motion_delta_y = crnt_y() - motion_start_y;
+			motion_sampled = true;
+		}
+
+		void reset_motion_sample()
+		{
+			motion_sampled = false;
+			motion_continuous = false;
+			motion_known = false;
+		}
+
+		MotionSample get_motion() const
+		{
+			return { crnt_x(), crnt_y(), motion_known,
+				motion_known ? motion_delta_x : 0.0,
+				motion_known ? motion_delta_y : 0.0,
+				motion_known ? Constants::TIMESTEP : uint16_t{0} };
+		}
 
 		void normalize()
 		{
@@ -47,11 +91,13 @@ namespace ms
 		void set_x(double d)
 		{
 			x.set(d);
+			reset_motion_sample();
 		}
 
 		void set_y(double d)
 		{
 			y.set(d);
+			reset_motion_sample();
 		}
 
 		void limitx(double d)
@@ -170,6 +216,17 @@ namespace ms
 		{
 			return { get_absolute_x(viewx, alpha), get_absolute_y(viewy, alpha) };
 		}
+
+	private:
+		// Owned by this native lifetime; no rounded-position or global-OID history.
+		// set_x/set_y invalidate explicit jumps, including jumps inside an update.
+		double motion_start_x = 0.0;
+		double motion_start_y = 0.0;
+		double motion_delta_x = 0.0;
+		double motion_delta_y = 0.0;
+		bool motion_sampled = false;
+		bool motion_continuous = false;
+		bool motion_known = false;
 	};
 
 	// Structure that contains all properties necessary for physics calculations

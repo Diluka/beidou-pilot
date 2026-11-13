@@ -39,7 +39,7 @@ namespace ms
 			if (auto& mmo = iter->second)
 			{
 				int8_t oldlayer = mmo->get_layer();
-				int8_t newlayer = mmo->update(physics);
+				int8_t newlayer = mmo->sampled_update(physics);
 
 				if (newlayer == -1)
 				{

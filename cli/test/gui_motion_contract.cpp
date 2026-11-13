@@ -45,6 +45,7 @@ constexpr std::uint32_t SpeedBacking = 0x600000;
 constexpr std::uint32_t JumpBacking = 0x600100;
 std::map<std::uintptr_t, unsigned char> memory;
 std::uintptr_t unexpectedFailure = 0;
+std::vector<std::uintptr_t> reads;
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -74,6 +75,10 @@ void Attribute(std::uintptr_t address, std::uint32_t backing, const std::array<u
 void Fixture(bool enhanced = false) {
     memory.clear();
     unexpectedFailure = 0;
+    reads.clear();
+    Put(User, std::array<std::uint32_t, 2>{{0x00B3D20C, 0x00B3D1E8}});
+    Put(Vector, std::uint32_t{0x00B3EAA8});
+    Put(Vector + 0x0C, std::uint32_t{0x00B3E9F8});
     Put(User + 0x11A4, Vector + 0x0C);
     Put(Vector + 0x50, Right128);
     Put(Vector + 0x68, Up360);
@@ -253,6 +258,273 @@ void Numeric() {
     Check(!NativeMotion::Capture(User).movement.known, "overflowed analytic apex remains unknown");
 }
 
+struct EntityFixture {
+    NativeMotion::EntityKind kind;
+    std::uint32_t object;
+    std::uint32_t vector;
+    std::array<std::uint32_t, 3> objectTables;
+    std::uint32_t comOffset;
+    std::uint32_t vectorTable;
+    std::uint32_t comTable;
+    std::array<std::uint32_t, 5> vx;
+    std::array<std::uint32_t, 5> vy;
+    double x;
+    double y;
+};
+
+// Explicit original-image layout facts, not imported from production constants.
+// Every actor owns a different address and velocity, even in the same snapshot.
+const std::array<EntityFixture, 4> Entities{{
+    {NativeMotion::EntityKind::LocalUser,
+     User,
+     Vector,
+     {{0xB3D20C, 0xB3D1E8, 0}},
+     0x11A4,
+     0xB3EAA8,
+     0xB3E9F8,
+     Right128,
+     Up360,
+     128.25,
+     -360.5},
+    {NativeMotion::EntityKind::RemoteUser,
+     0x110000,
+     0x210000,
+     {{0xB3D898, 0xB3D874, 0}},
+     0x11A4,
+     0xB3EAA8,
+     0xB3E9F8,
+     Left128,
+     Zero,
+     -128.25,
+     0},
+    {NativeMotion::EntityKind::Mob,
+     0x120000,
+     0x220000,
+     {{0xAF8270, 0xAF824C, 0xAF8248}},
+     0x118,
+     0xB3E678,
+     0xB3E5C8,
+     Zero,
+     Right128,
+     0,
+     128.25},
+    {NativeMotion::EntityKind::Npc,
+     0x130000,
+     0x230000,
+     {{0xAFC9D8, 0xAFC9B4, 0xAFC9B0}},
+     0x90,
+     0xB3E7A8,
+     0xB3E6F8,
+     Up360,
+     Left128,
+     -360.5,
+     -128.25},
+}};
+
+void EntityMemory() {
+    Fixture();
+    Put(0x00BEBF98, User);
+    for (const auto& entity : Entities) {
+        Put(entity.object, entity.objectTables);
+        Put(entity.object + entity.comOffset, entity.vector + 0x0C);
+        Put(entity.vector, entity.vectorTable);
+        Put(entity.vector + 0x0C, entity.comTable);
+        Put(entity.vector + 0x20, Left128); // position is NOT velocity
+        Put(entity.vector + 0x38, Right128);
+        Put(entity.vector + 0x50, entity.vx);
+        Put(entity.vector + 0x68, entity.vy);
+        if (entity.kind == NativeMotion::EntityKind::Mob || entity.kind == NativeMotion::EntityKind::Npc) {
+            // Tempting but wrong User offset and a valid, different secondary
+            // vector must not be used when the primary is absent or damaged.
+            Put(entity.object + 0x11A4, Vector + 0x0C);
+            const auto secondary = entity.vector + 0x80000;
+            Put(entity.object + entity.comOffset + 4, secondary + 0x0C);
+            Put(secondary, entity.vectorTable);
+            Put(secondary + 0x0C, entity.comTable);
+            Put(secondary + 0x50, Right128);
+            Put(secondary + 0x68, Right128);
+        }
+    }
+}
+
+void NativeVelocity(const MapleControl::MotionVector& value, double x, double y) {
+    Check(value.source == MapleControl::MotionVector::Source::Native, "own verified vector has native provenance");
+    Near(value.x, x, "entity owns its own native world vx");
+    Near(value.y, y, "entity owns its own native world vy");
+    Check(value.Document().Dump().find("\"source\":\"native\"") != std::string::npos, "native provenance is public");
+}
+
+void UnknownVelocity(const MapleControl::MotionVector& value) {
+    Check(value.source == MapleControl::MotionVector::Source::Unknown, "failed primary vector is unknown");
+    Check(value.Document().Type() == MapleControl::Value::Kind::Null, "missing motion is not a zero vector");
+}
+
+void EntityKinds() {
+    EntityMemory();
+    const auto before = memory;
+    for (const auto& entity : Entities) {
+        reads.clear();
+        const auto value = NativeMotion::CaptureVelocity(entity.kind, entity.object);
+        NativeVelocity(value, entity.x, entity.y);
+        for (const auto forbidden :
+             {std::uintptr_t{0x00BEBFA0}, std::uintptr_t{entity.vector + 0x110}, std::uintptr_t{entity.vector + 0x1A8}})
+            Check(std::find(reads.begin(), reads.end(), forbidden) == reads.end(),
+                  "entity velocity reads neither grounding nor character ability fields");
+    }
+    Check(memory == before, "all entity captures are immutable native reads");
+    NativeVelocity(NativeMotion::Capture(User).velocity, 128.25, -360.5);
+    Unknown(NativeMotion::Capture(Entities[1].object)); // local-only model is not a remote model
+    for (const auto& entity : Entities) {
+        Put(entity.vector + 0x50, Zero);
+        Put(entity.vector + 0x68, Zero);
+        NativeVelocity(NativeMotion::CaptureVelocity(entity.kind, entity.object), 0, 0);
+    }
+}
+
+void EntityTypes() {
+    for (const auto& entity : Entities) {
+        EntityMemory();
+        const auto before = memory;
+        std::vector<std::uintptr_t> types{entity.object, entity.object + 4, entity.vector, entity.vector + 0x0C};
+        if (entity.objectTables[2] != 0) types.push_back(entity.object + 8);
+        for (const auto address : types) {
+            memory = before;
+            memory.at(address) ^= 1;
+            UnknownVelocity(NativeMotion::CaptureVelocity(entity.kind, entity.object));
+            if (entity.kind == NativeMotion::EntityKind::LocalUser) Unknown(NativeMotion::Capture(entity.object));
+        }
+        for (const auto pointer : {0U, 4U, 12U, 0xDEADU}) {
+            memory = before;
+            Put(entity.object + entity.comOffset, pointer);
+            UnknownVelocity(NativeMotion::CaptureVelocity(entity.kind, entity.object));
+        }
+        memory = before;
+        memory.erase(entity.object + entity.comOffset);
+        UnknownVelocity(NativeMotion::CaptureVelocity(entity.kind, entity.object));
+        memory = before;
+        for (const auto& other : Entities)
+            if (other.kind != entity.kind) UnknownVelocity(NativeMotion::CaptureVelocity(other.kind, entity.object));
+        UnknownVelocity(NativeMotion::CaptureVelocity(entity.kind, 0));
+    }
+    UnknownVelocity(NativeMotion::CaptureVelocity(static_cast<NativeMotion::EntityKind>(999), User));
+}
+
+void EntityPayloads() {
+    for (const auto& entity : Entities) {
+        EntityMemory();
+        const auto before = memory;
+        for (const auto offset : {0x50, 0x58, 0x60, 0x68, 0x74, 0x78}) {
+            memory = before;
+            memory.at(entity.vector + offset) ^= 1;
+            UnknownVelocity(NativeMotion::CaptureVelocity(entity.kind, entity.object));
+        }
+        for (const auto offset : {0x50, 0x68}) {
+            memory = before;
+            memory.erase(entity.vector + offset);
+            UnknownVelocity(NativeMotion::CaptureVelocity(entity.kind, entity.object));
+            memory = before;
+            Put(entity.vector + offset, NotFinite);
+            UnknownVelocity(NativeMotion::CaptureVelocity(entity.kind, entity.object));
+        }
+        memory = before;
+        unexpectedFailure = entity.vector + 0x50;
+        bool propagated = false;
+        try {
+            NativeMotion::CaptureVelocity(entity.kind, entity.object);
+        } catch (const std::logic_error&) {
+            propagated = true;
+        }
+        Check(propagated, "per-entity sensor recovers only a native ReadError");
+    }
+}
+
+void NpcPool() {
+    EntityMemory();
+    const auto npc = Entities[3].object;
+    constexpr std::uint32_t Pool = 0x900000, Node = 0x910000, Definition = 0x920000, Name = 0x930004;
+    Put(0x00BED780, Pool);
+    Put(Pool, std::uint32_t{0x00AFC9F8});
+    Put(Pool + 0x24, std::array<std::uint32_t, 3>{{1, Node, Node}});
+    Put(Node + 4, std::uint32_t{0});
+    Put(Node + 0x10, npc);
+    Put(npc + 0xA4, std::uint32_t{777});
+    Put(npc + 0xA8, Definition);
+    Put(npc + 0x150, std::array<std::int32_t, 2>{{-1773, 408}});
+    Put(Definition, std::uint32_t{9010000});
+    Put(Definition + 4, Name);
+    Put(Name - 4, std::uint32_t{3});
+    Put(Name, std::array<unsigned char, 4>{{'N', 'p', 'c', 0}});
+    const auto before = memory;
+    std::vector<MapleControl::Npc> output;
+    NativeObservation::Npcs(output);
+    Check(output.size() == 1 && output[0].objectId == 777 && output[0].templateId == 9010000,
+          "typed NPC uses native member/object/template identities without invented IDs");
+    Check(output[0].name == "Npc" && output[0].positionKnown && output[0].x == -1773 && output[0].y == 408,
+          "typed NPC retains existing integer position cache and metadata");
+    NativeVelocity(output[0].velocity, -360.5, -128.25);
+    Check(memory == before, "typed NPC collection never mutates membership or native vectors");
+    Put(npc + 0x90, std::uint32_t{0});
+    NativeObservation::Npcs(output);
+    Check(output.size() == 1 && output[0].x == -1773, "damaged vector does not erase a verified NPC position");
+    UnknownVelocity(output[0].velocity);
+    Put(Pool + 0x24, std::array<std::uint32_t, 3>{{0, 0, 0}});
+    NativeObservation::Npcs(output);
+    Check(output.empty(), "only an observed native empty NPC pool becomes an empty collection");
+    Put(0x00BED780, std::uint32_t{0});
+    bool unavailable = false;
+    try {
+        NativeObservation::Npcs(output);
+    } catch (const NativeObservation::ReadError&) {
+        unavailable = true;
+    }
+    Check(unavailable, "an unavailable NPC pool cannot masquerade as an observed empty pool");
+}
+
+void PlayerPool() {
+    EntityMemory();
+    const auto user = Entities[1].object;
+    constexpr std::uint32_t Pool = 0x900000, Buckets = 0x910000, Node = 0x920000, Wrapper = 0x930000;
+    Put(0x00BEBFA8, Pool);
+    Put(Pool, std::uint32_t{0x00B3D778});
+    Put(Pool + 8, User);
+    Put(User + 0x11A8, std::uint32_t{10});
+    Put(Pool + 0x0C, std::uint32_t{0x00B3D7A0});
+    Put(Pool + 0x10, Buckets);
+    Put(Pool + 0x14, std::uint32_t{1});
+    Put(Pool + 0x18, std::uint32_t{1});
+    Put(Buckets, Node);
+    Put(Node, std::uint32_t{0x00B3D7A8});
+    Put(Node + 4, std::uint32_t{0});
+    Put(Node + 8, std::uint32_t{20});
+    Put(Node + 0x10, Wrapper);
+    Put(Wrapper, std::uint32_t{0x00B3D7A4});
+    Put(Wrapper + 0x10, user);
+    Put(user + 0x11A8, std::uint32_t{20});
+    Put(user + 0x11AC, std::uint32_t{0});
+    Put(user + 0x116C, std::int32_t{-47});
+    Put(user + 0x1170, std::int32_t{88});
+    Put(user + 0x570, std::uint32_t{1});
+    Put(user + 0x2AE0, static_cast<unsigned char>(11));
+    std::vector<MapleControl::OtherPlayer> output;
+    NativeObservation::Players(output);
+    Check(output.size() == 1 && output[0].characterId == 20 && output[0].reference == "20",
+          "typed player retains native map membership and reference");
+    Check(output[0].positionKnown && output[0].x == -47 && output[0].y == 88, "remote cached position is preserved");
+    NativeVelocity(output[0].velocity, -128.25, 0);
+    Put(user + 0x11A4, std::uint32_t{0});
+    NativeObservation::Players(output);
+    Check(output.size() == 1 && output[0].x == -47, "missing remote vector preserves its own position");
+    UnknownVelocity(output[0].velocity);
+    Put(0x00BEBFA8, std::uint32_t{0});
+    bool unavailable = false;
+    try {
+        NativeObservation::Players(output);
+    } catch (const NativeObservation::ReadError&) {
+        unavailable = true;
+    }
+    Check(unavailable, "an unreadable player pool is not a successfully observed empty pool");
+}
+
 void BoundaryFailure() {
     Fixture();
     unexpectedFailure = Vector + 0x50;
@@ -267,16 +539,31 @@ void BoundaryFailure() {
 }
 
 namespace NativeObservation {
-// The only replacement is the real process-memory read boundary. Production
-// NativeMotion.cpp and Observation.cpp are compiled and linked without test switches.
+// NativeMotion uses only this process-memory boundary replacement. The real
+// ObserveWorld collectors are also compiled (without the unrelated Windows PCH).
+// Their ASCII-only metadata fixtures use the byte/encoding boundaries below;
+// no movement, secure decoder, pool or typed projection is replaced.
 void Copy(std::uintptr_t address, void* output, std::size_t size) {
-    if (address == unexpectedFailure) throw std::logic_error("unexpected boundary failure");
+    reads.push_back(address);
+    if (unexpectedFailure != 0 && address == unexpectedFailure) throw std::logic_error("unexpected boundary failure");
     auto bytes = static_cast<unsigned char*>(output);
     for (std::size_t index = 0; index < size; ++index) {
         const auto found = memory.find(address + index);
         if (found == memory.end()) throw ReadError("fixture native memory is unavailable");
         bytes[index] = found->second;
     }
+}
+
+std::vector<unsigned char> Bytes(std::uintptr_t address, std::size_t size) {
+    std::vector<unsigned char> value(size);
+    Copy(address, value.data(), size);
+    return value;
+}
+
+std::string Utf8(const std::string& value) {
+    Check(std::all_of(value.begin(), value.end(), [](unsigned char byte) { return byte < 128; }),
+          "this offline encoding boundary supports ASCII metadata fixtures only");
+    return value;
 }
 }
 
@@ -293,6 +580,16 @@ int main(int argc, char** argv) {
         Numeric();
     else if (test == "boundary")
         BoundaryFailure();
+    else if (test == "entities")
+        EntityKinds();
+    else if (test == "entity_types")
+        EntityTypes();
+    else if (test == "entity_payloads")
+        EntityPayloads();
+    else if (test == "npcs")
+        NpcPool();
+    else if (test == "players")
+        PlayerPool();
     else
         Check(false, "unknown native-motion contract case");
 }

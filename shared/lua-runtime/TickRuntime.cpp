@@ -553,7 +553,11 @@ struct TickRuntime::Impl {
                     value[shortNames[index]] = observed.character.values[index];
                 }
             }
-            if (observed.movement.known) value["movement"] = observed.movement.Document();
+            Merge(value, observed.character.MotionDocument());
+            value["movement"] = observed.character.movement.Document();
+            if (observed.characterUpdatesKnown) value["native_updates"] = observed.characterUpdates;
+            SetFact(value, "on_ground", observed.onGround);
+            SetFact(value, "attacking", observed.attacking);
         } else if (name == "world") {
             value["status"] = "ok";
             value["instance_id"] = observed.instanceId;
@@ -566,13 +570,8 @@ struct TickRuntime::Impl {
                 value["y"] = observed.y;
                 value["position"] = Value::Object({{"x", observed.x}, {"y", observed.y}});
             }
-            if (observed.velocity.source != MotionVector::Source::Unknown)
-                value["velocity"] = observed.velocity.Document();
             if (observed.facingKnown) value["facing"] = observed.facingLeft ? "Left" : "Right";
-            if (observed.characterUpdatesKnown) value["character_updates"] = observed.characterUpdates;
             SetFact(value, "settled", observed.settled);
-            SetFact(value, "on_ground", observed.onGround);
-            SetFact(value, "attacking", observed.attacking);
             SetFact(value, "dead", observed.dead);
             SetFact(value, "revive_requestable", observed.reviveRequestable);
         } else if (name == "scene") {
@@ -580,10 +579,9 @@ struct TickRuntime::Impl {
             if (observed.monstersKnown) {
                 value["monsters"] = Value::Array();
                 for (const auto& monster : observed.monsters) {
-                    Value item = Value::Object({{"object_id", monster.objectId},
-                                                {"x", monster.x},
-                                                {"y", monster.y},
-                                                {"active", monster.active}});
+                    auto item = monster.MotionDocument();
+                    item["object_id"] = monster.objectId;
+                    item["active"] = monster.active;
                     if (monster.templateKnown) item["template_id"] = monster.templateId;
                     if (!monster.name.empty()) item["name"] = monster.name;
                     if (monster.hpSequence != 0) {
@@ -597,7 +595,8 @@ struct TickRuntime::Impl {
             if (observed.dropsKnown) {
                 value["drops"] = Value::Array();
                 for (const auto& drop : observed.drops) {
-                    Value item = Value::Object({{"object_id", drop.objectId}, {"x", drop.x}, {"y", drop.y}});
+                    auto item = drop.MotionDocument();
+                    item["object_id"] = drop.objectId;
                     if (drop.itemKnown) item["item_id"] = drop.itemId;
                     if (drop.moneyKnown) item["money"] = drop.money;
                     SetFact(item, "landed", drop.landed);
@@ -607,7 +606,8 @@ struct TickRuntime::Impl {
             if (observed.playersKnown) {
                 value["players"] = Value::Array();
                 for (const auto& player : observed.players) {
-                    Value item = Value::Object({{"reference", player.reference}, {"x", player.x}, {"y", player.y}});
+                    auto item = player.MotionDocument();
+                    item["reference"] = player.reference;
                     if (player.characterIdKnown) item["character_id"] = player.characterId;
                     if (!player.name.empty()) item["name"] = player.name;
                     if (player.levelKnown) item["level"] = player.level;
@@ -616,7 +616,28 @@ struct TickRuntime::Impl {
                 }
                 SetFact(value, "players_complete", observed.playersComplete);
             }
-            if (observed.monstersKnown || observed.playersKnown || observed.dropsKnown) value["status"] = "ok";
+            // Native NPC rows also carry interaction references and backend facts.
+            // Both adapters serialize their typed movable objects here; preserve
+            // those complete rows, using the snapshot only as a native-domain fallback.
+            if (observed.npcsKnown && value["npcs"].Type() != Value::Kind::Array) {
+                value["npcs"] = Value::Array();
+                for (const auto& npc : observed.npcs) {
+                    auto item = npc.MotionDocument();
+                    item["object_id"] = npc.objectId;
+                    item["template_id"] = npc.templateId;
+                    if (!npc.name.empty()) item["name"] = npc.name;
+                    value["npcs"].Add(item);
+                }
+            }
+            if (observed.projectilesKnown) {
+                value["projectiles"] = Value::Array();
+                for (const auto& projectile : observed.projectiles)
+                    value["projectiles"].Add(projectile.MotionDocument());
+                SetFact(value, "projectiles_complete", observed.projectilesComplete);
+            }
+            if (observed.monstersKnown || observed.playersKnown || observed.dropsKnown || observed.npcsKnown
+                || observed.projectilesKnown)
+                value["status"] = "ok";
         }
         return value;
     }
