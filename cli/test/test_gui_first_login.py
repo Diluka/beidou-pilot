@@ -118,24 +118,12 @@ class GuiFirstLoginTests(unittest.TestCase):
         self.assertNotIn("secret", [call.kwargs.get("payload") for call in self.backend.text.call_args_list])
         self.assertTrue((Path(self.temp.name) / "gui-login-submitted").exists())
 
-    def test_cli_dispatch_holds_one_real_input_lock(self) -> None:
-        import json
-        from contextlib import redirect_stdout
-        from io import StringIO
-        from beidou_pilot.cli import main
+    def test_removed_experiment_command_is_rejected(self) -> None:
+        from beidou_pilot.cli import parser
 
-        root = Path(self.temp.name)
-        account = root / "account.json"
-        account.write_text(json.dumps({"username": "example", "password": "secret"}))
-        account.chmod(0o600)
-        self.backend.root = root
-        self.backend.instance = "default"
-        self.backend.paths = SimpleNamespace(state_directory=root, input_lock=root / "input.lock")
-        with patch("beidou_pilot.cli.Backend", return_value=self.backend), redirect_stdout(StringIO()):
-            self.assertEqual(
-                0, main(["--json", "gui-login-experiment", "--instance-id", "instance", "--run-id", "run"])
-            )
-        self.assertEqual(3, self.backend.desktop.call_count)
+        with self.assertRaises(ClientError) as error:
+            parser().parse_args(["gui-login-experiment", "--instance-id", "instance", "--run-id", "run"])
+        self.assertEqual("usage", error.exception.code)
 
     def test_busy_or_unavailable_native_bridge_never_sends_input(self) -> None:
         state = self.bridge.return_value.snapshot.return_value
