@@ -347,7 +347,8 @@ def compile_strategy(source: str, options: JsonObject, scene: JsonObject) -> str
 
 
 def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata | None]:
-    directory = Path(__file__).resolve().parents[2] / "shared/scripts/travel"
+    shared = Path(__file__).resolve().parents[2] / "shared/scripts"
+    directory = shared / "travel"
     resolved = path.resolve()
     try:
         source = path.read_bytes().decode("utf-8")
@@ -358,6 +359,12 @@ def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata | None]:
             "walk_to.lua",
         }:
             source = (directory / "_common.lua").read_text(encoding="utf-8") + "\n" + source
+        if (
+            resolved.parent == directory.resolve()
+            and resolved.name == "walk_to.lua"
+            or (resolved.parent == (shared / "combat").resolve() and resolved.name == "hunt.lua")
+        ):
+            source = (directory / "_terrain.lua").read_text(encoding="utf-8") + "\n" + source
     except (OSError, UnicodeError) as error:
         raise ClientError(
             "invalid_script_file",
