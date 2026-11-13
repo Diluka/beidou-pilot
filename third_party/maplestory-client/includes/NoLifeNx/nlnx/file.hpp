@@ -29,26 +29,18 @@ namespace nl {
     class file {
     public:
         typedef _file_data data;
-        struct header;
-        //Creates a null file object
-        //Nothing can really be done until you call open()
+        //Creates an empty in-memory view; populate it with open_nodes().
         file() = default;
-        //Used to construct an nx file from a filename
-        //Multiple file objects can be created from the same filename
-        //and the resulting nodes are interchangeable
-        file(std::string name);
         //Destructor calls close()
         ~file();
         //Files cannot be copied
         file(file const &) = delete;
         //Files cannot be copied
         file & operator=(file const &) = delete;
-        //Transfers ownership of the file handle to another file
+        //Transfers ownership of the node view to another file
         file(file &&);
-        //Transfers ownership of the file handle to another file
+        //Transfers ownership of the node view to another file
         file & operator=(file &&);
-        //Opens the file with the given name
-        void open(std::string name);
         //Owns a stable in-memory node and string view without creating an NX file.
         void open_nodes(std::vector<node::data>&& nodes, std::vector<std::string_view>&& strings,
                        std::shared_ptr<void> owner);

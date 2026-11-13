@@ -216,14 +216,11 @@ namespace nl {
     }
     bitmap node::get_bitmap() const {
         if (!m_data || m_data->type != type::bitmap) return {nullptr, 0, 0};
-        if (m_file->memory_backed)
-            return {nullptr, m_data->bitmap.width, m_data->bitmap.height};
-        return m_file->bitmap_count ? to_bitmap() : bitmap{nullptr, 0, 0};
+        return to_bitmap();
     }
     audio node::get_audio() const {
         if (!m_data || m_data->type != type::audio) return {nullptr, 0};
-        if (m_file->memory_backed) return {nullptr, m_data->audio.length};
-        return m_file->audio_count ? to_audio() : audio{nullptr, 0};
+        return to_audio();
     }
     bool node::get_bool() const {
         return m_data && m_data->type == type::integer && to_integer() ? true : false;
@@ -299,14 +296,12 @@ namespace nl {
         return {m_data->vector[0], m_data->vector[1]};
     }
     bitmap node::to_bitmap() const {
-        return {reinterpret_cast<char const *>(m_file->base)
-            + m_file->bitmap_table[m_data->bitmap.index],
-            m_data->bitmap.width, m_data->bitmap.height};
+        // IMG views expose dimensions, not decoded pixel storage.
+        return {nullptr, m_data->bitmap.width, m_data->bitmap.height};
     }
     audio node::to_audio() const {
-        return {reinterpret_cast<char const *>(m_file->base)
-            + m_file->audio_table[m_data->audio.index],
-            m_data->audio.length};
+        // IMG views expose the audio length, not a playable buffer.
+        return {nullptr, m_data->audio.length};
     }
     node node::root() const {
         return {m_file->node_table, m_file};

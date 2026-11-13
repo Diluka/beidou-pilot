@@ -49,7 +49,7 @@ class QuestInteractionContract(unittest.TestCase):
     def test_resource_pages_and_explicit_controls_wait_for_observed_task_state(self) -> None:
         root = Path(__file__).resolve().parents[2]
         engine = root / "third_party/maplestory-client"
-        nx = engine / "includes/NoLifeNx/nlnx"
+        nlnx = engine / "includes/NoLifeNx/nlnx"
         with tempfile.TemporaryDirectory() as directory:
             parser_library = Path(directory) / "libbeidou-img.so"
             data = Path(directory) / "Data"
@@ -65,7 +65,7 @@ class QuestInteractionContract(unittest.TestCase):
                     "-fPIC",
                     "-shared",
                     str(root / "headless/src/ImgResources.cpp"),
-                    str(root / "third_party/nolifewztonx/Keys.cpp"),
+                    str(root / "headless/src/ImgKeys.cpp"),
                     "-o",
                     str(parser_library),
                 ],
@@ -93,11 +93,11 @@ class QuestInteractionContract(unittest.TestCase):
                     str(root / "headless/src/ImgResourceFile.cpp"),
                     str(root / "headless/src/QuestInteraction.cpp"),
                     str(root / "headless/src/Interaction.cpp"),
-                    str(engine / "Util/NxFiles.cpp"),
+                    str(engine / "Util/ImgFiles.cpp"),
                     str(engine / "Character/QuestLog.cpp"),
                     str(engine / "includes/NoLifeNx/nlnx/nx.cpp"),
-                    str(nx / "file.cpp"),
-                    str(nx / "node.cpp"),
+                    str(nlnx / "file.cpp"),
+                    str(nlnx / "node.cpp"),
                     str(root / "cli/test/quest_interaction_contract.cpp"),
                     "-L",
                     directory,

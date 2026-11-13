@@ -12,10 +12,10 @@ CXXFLAGS ?= -std=c++20 -O0 -g1 -ffunction-sections -fdata-sections
 LDFLAGS ?= -Wl,--gc-sections
 LDFLAGS += -Wl,-rpath,'$$ORIGIN'
 LDLIBS := -pthread -l:liblz4.so.1 -Lbuild -lbeidou-img
-IMG_RESOURCE_OBJECTS := build/img/ImgResources.o build/img/Keys.o
+IMG_RESOURCE_OBJECTS := build/img/ImgResources.o build/img/ImgKeys.o
 IMG_RESOURCE_LIBRARY := build/libbeidou-img.so
 ENGINE_SOURCES := $(shell find $(ENGINE)/Audio $(ENGINE)/Character $(ENGINE)/Data $(ENGINE)/Gameplay $(ENGINE)/Graphics $(ENGINE)/IO $(ENGINE)/Net $(ENGINE)/Util -name '*.cpp' ! -name SocketWinsock.cpp) $(ENGINE)/Configuration.cpp $(wildcard $(NX)/*.cpp)
-SOURCES := $(filter-out src/ImgResources.cpp,$(wildcard src/*.cpp))
+SOURCES := $(filter-out src/ImgResources.cpp src/ImgKeys.cpp,$(wildcard src/*.cpp))
 OBJECTS := $(patsubst $(ENGINE)/%.cpp,build/engine/%.o,$(ENGINE_SOURCES)) $(patsubst %.cpp,build/%.o,$(SOURCES)) build/shared/Runtime.o build/shared/Observation.o build/shared/TaskTransport.o build/shared/EventTransport.o $(LUA_OBJECTS)
 DEPS := $(OBJECTS:.o=.d) $(IMG_RESOURCE_OBJECTS:.o=.d)
 
@@ -29,7 +29,7 @@ build/libbeidou-img.so: $(IMG_RESOURCE_OBJECTS)
 build/img/ImgResources.o: src/ImgResources.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) -std=c++17 -O2 -fPIC -MMD -MP -c $< -o $@
-build/img/Keys.o: ../third_party/nolifewztonx/Keys.cpp
+build/img/ImgKeys.o: src/ImgKeys.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) -std=c++17 -O2 -fPIC -MMD -MP -c $< -o $@
 build/engine/%.o: $(ENGINE)/%.cpp

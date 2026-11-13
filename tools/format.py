@@ -19,7 +19,6 @@ SOURCES = {
         "cli/beidou_pilot/script_libraries.py",
         "cli/beidou_pilot/hunting.py",
         "cli/beidou_pilot/hunt_terrain.py",
-        "cli/beidou_pilot/nx.py",
         "cli/beidou_pilot/task_management.py",
         "cli/beidou_pilot/events.py",
         "cli/beidou_pilot/notifications.py",

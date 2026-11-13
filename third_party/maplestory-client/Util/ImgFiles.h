@@ -1,4 +1,4 @@
-﻿//////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////
 //	This file is part of the continued Journey MMORPG client					//
 //	Copyright (C) 2015-2019  Daniel Allendorf, Ryan Payton						//
 //																				//
@@ -20,16 +20,14 @@
 #include "../MapleStory.h"
 
 #ifdef USE_NX
-#pragma comment(lib, "NoLifeNx")
 
 #include "../Error.h"
 
 namespace ms
 {
-	namespace NxFiles
+	namespace ImgFiles
 	{
-		// Initialize NX
-		// Headless metadata does not require a particular graphical UI generation.
+		// Load the original IMG directories; metadata-only views need no graphical UI generation.
 		Error init();
 	};
 }

@@ -23,12 +23,9 @@ namespace nl
 	namespace nx
 	{
 		// Pre-defined nodes to access standard MapleStory style data
-		// Make sure you called load_all first
+		// Populated from IMG-backed in-memory views by the resource adapter.
 		extern node Base, Character, Effect, Etc, Item, Map, Map001, Map002, Map2, Mob, Mob001, Mob002, Mob2, Morph, Npc, Quest, Reactor, Skill, Skill001, Skill002, Skill003, Sound, Sound001, Sound002, Sound2, String, TamingMob, UI;
 
-		// Loads the pre-defined nodes from a standard setup of nx files for MapleStory
-		// Only call this function once
-		void load_all();
 		// Retains a metadata-only file view and returns its root node.
 		node add_file(file&&);
 	}

@@ -2,7 +2,10 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -283,6 +286,61 @@ class CatalogResourceContract(unittest.TestCase):
         )
         self.assertEqual("local-original-img", result["source_kind"])
         self.assertIsNone(result["resource_version"])
+
+    def test_catalog_reads_in_fresh_process_without_client_runtime(self) -> None:
+        # No client assets, GUI DLL, bridge, account or server configuration exists here.
+        config = self.root / "config/resources.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import json
+from pathlib import Path
+from beidou_pilot.catalog import Catalog
+catalog = Catalog(Path.cwd())
+print(json.dumps([catalog.map(50000), catalog.npc(2003),
+                  catalog.monster(100100), catalog.item(2000000)]))
+""",
+            ],
+            cwd=self.root,
+            env={
+                **os.environ,
+                "MAPLE_RESOURCES_CONFIG": str(config),
+                "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+            },
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        map_data, npc, monster, potion = json.loads(result.stdout)
+        self.assertEqual(
+            ["蜗牛树林", "罗宾", "绿蜗牛", "红色药水"], [entry["name"] for entry in (map_data, npc, monster, potion)]
+        )
+        self.assertEqual({"left": -20, "top": -50, "right": 20, "bottom": 10}, npc["click_rect"])
+        self.assertEqual(50, potion["spec"]["hp"])
+        for entry in (map_data, npc, monster, potion):
+            self.assertEqual("local-original-img", entry["source_kind"])
+            self.assertTrue(all(Path(path).is_relative_to(self.data) for path in entry["metadata_source"]))
+
+    def test_missing_img_does_not_fall_back_to_legacy_resources(self) -> None:
+        # Legacy content at the configured resource root must not fill missing IMG data.
+        legacy = self.data / "String.wz/Mob.img.xml"
+        legacy.parent.mkdir()
+        legacy.write_text(
+            '<imgdir name="Mob.img"><imgdir name="100100"><string name="name" value="旧XML"/></imgdir></imgdir>'
+        )
+        (self.data / "Mob.nx").write_bytes(b"PKG4")
+        (self.data / "String/Mob.img").unlink()
+        (self.data / "Mob/0100100.img").unlink()
+
+        monster = Catalog(self.root).monster(100100)
+
+        self.assertIsNone(monster["name"])
+        self.assertEqual({}, monster["info"])
+        self.assertEqual([], monster["metadata_source"])
+        self.assertEqual("unavailable", monster["source_kind"])
 
     def test_map_sources_exclude_unrelated_static_names(self) -> None:
         write_img(

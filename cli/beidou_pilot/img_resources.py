@@ -1,4 +1,8 @@
-"""Read original IMG trees through the native parser shared with the headless client."""
+"""Read BeiDou IMG files in this process using a standalone decoder.
+
+The local shared library decodes disk files; it does not connect to a running
+headless/GUI client, load the GUI bridge DLL, or query a game server.
+"""
 
 from ctypes import CDLL, POINTER, Structure, byref, c_char_p, c_double, c_int, c_int32, c_int64, c_size_t, c_uint16, c_uint32, c_void_p, create_string_buffer, string_at
 from functools import cache
