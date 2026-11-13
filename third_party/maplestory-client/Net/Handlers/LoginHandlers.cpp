@@ -20,6 +20,7 @@
 #include "Helpers/LoginParser.h"
 
 #include "../Packets/LoginPackets.h"
+#include "../Packets/CharCreationPackets.h"
 #include "../Packets/SelectCharPackets.h"
 
 #ifdef HEADLESS
@@ -47,6 +48,20 @@ namespace ms
 		auto reason = recv.read_int();
 		if (reason != 0)
 		{
+			if (!state.pending_request_id.empty())
+			{
+				state.creation_status = "rejected";
+				state.creation_error = "login_rejected_" + std::to_string(reason);
+				state.phase = "failed";
+				return;
+			}
+			if (reason == 23 && state.accept_tos && !state.tos_sent)
+			{
+				state.tos_sent = true;
+				state.phase = "accepting_tos";
+				TOSPacket().dispatch();
+				return;
+			}
 			state.error = "Login rejected with code " + std::to_string(reason);
 			state.phase = "failed";
 			return;
@@ -64,8 +79,15 @@ namespace ms
 		}
 		if (account.female == 10)
 		{
+			if (!state.account_female || state.gender_sent)
+			{
+				state.error = state.gender_sent ? "Account gender was not accepted" : "Account gender is required";
+				state.phase = "failed";
+				return;
+			}
+			state.gender_sent = true;
 			state.phase = "setting_gender";
-			GenderPacket(false).dispatch();
+			GenderPacket(*state.account_female).dispatch();
 			return;
 		}
 		state.phase = "requesting_worlds";
@@ -282,6 +304,12 @@ namespace ms
 			state.characters.push_back(LoginParser::parse_charentry(recv));
 		recv.read_byte();
 		recv.read_int();
+		state.characters_known = true;
+		if (state.desired_cid == 0)
+		{
+			state.phase = "character_list";
+			return;
+		}
 		for (const auto& character : state.characters)
 		{
 			if (character.id == state.desired_cid)
@@ -344,13 +372,58 @@ namespace ms
 		std::string name = recv.read_string();
 		bool used = recv.read_bool();
 
+#ifdef HEADLESS
+		auto& state = login_state();
+		if (state.phase != "checking_character_name" || !state.creation) return;
+		if (name != state.creation->name)
+		{
+			state.creation_status = "unknown";
+			state.creation_error = "name_response_mismatch";
+			state.phase = "failed";
+			return;
+		}
+		if (used)
+		{
+			state.creation_status = "rejected";
+			state.creation_error = "name_taken";
+			state.phase = "character_list";
+			return;
+		}
+		const auto& c = *state.creation;
+		state.phase = "creating_character";
+		CreateHeadlessCharPacket(c.name, c.job, c.face, c.hair, c.hair_color, c.skin, c.top, c.bottom, c.shoes, c.weapon, c.female).dispatch();
+#else
 		// Notify the character creation screen
 		if (auto raceselect = UI::get().get_element<UIRaceSelect>())
 			raceselect->send_naming_result(used);
+#endif
 	}
 
 	void AddNewCharEntryHandler::handle(InPacket& recv) const
 	{
+#ifdef HEADLESS
+		auto& state = login_state();
+		if (state.phase != "creating_character" || !state.creation) return;
+		if (recv.read_byte() != 0)
+		{
+			state.creation_status = "unknown";
+			state.creation_error = "unexpected_creation_response";
+			state.phase = "failed";
+			return;
+		}
+		CharEntry character = LoginParser::parse_charentry(recv);
+		if (character.id <= 0 || character.stats.name != state.creation->name)
+		{
+			state.creation_status = "unknown";
+			state.creation_error = "invalid_creation_response";
+			state.phase = "failed";
+			return;
+		}
+		state.created_cid = character.id;
+		state.characters.push_back(std::move(character));
+		state.creation_status = "completed";
+		state.phase = "character_list";
+#else
 		recv.skip(1);
 
 		// Parse info on the new character
@@ -359,6 +432,7 @@ namespace ms
 		// Read the updated character selection
 		if (auto charselect = UI::get().get_element<UICharSelect>())
 			charselect->add_character(std::move(character));
+#endif
 	}
 
 	void DeleteCharResponseHandler::handle(InPacket& recv) const
@@ -366,6 +440,16 @@ namespace ms
 		// Read the character id and if deletion was successful (PIC was correct)
 		int32_t cid = recv.read_int();
 		uint8_t state = recv.read_byte();
+#ifdef HEADLESS
+		auto& login = login_state();
+		if (login.phase == "creating_character" && cid == 0 && state == 9)
+		{
+			login.creation_status = "rejected";
+			login.creation_error = "creation_rejected_9";
+			login.phase = "character_list";
+			return;
+		}
+#endif
 
 		// Extract information from the state byte
 		if (state)

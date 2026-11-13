@@ -39,7 +39,7 @@ beidou-pilot --json open --account ACCOUNT_PATH
 | `character_id` | 已有角色的真实正 int32 ID |
 | `world/channel` | 可选的 0 基整数索引，默认各为 0；第 1 频道写 `channel=0` |
 
-GUI 自动登录仅支持世界 0 和第 1 至 20 频道。`open` 要求已有真实 CID，不提供无角色首次登录或建角引导；这不代表游戏服务器不支持登录时自动注册。常驻服使用不存在的用户名登录会自动创建账号（用户提供的信息，尚待本流程实测）。没有真实 CID、停在首次声明、性别选择或空角色列表时，读[账号输入与首次登录](references/first-login.md)。
+GUI 自动登录仅支持世界 0 和第 1 至 20 频道。`open` 要求已有真实 CID；首次登录和建角使用独立命令，两端都经客户端内部路径完成：GUI 由原生桥在游戏线程调用原版客户端内部动作，不再使用桌面键鼠坐标。GUI 建角仅支持空角色列表、`job=1` 和可打印 ASCII 角色名，外观候选须在当前界面实际核验。常驻 v1.12 已实测不存在的短 ASCII 用户名登录后自动注册；用户名建议不超过 10 个 ASCII 字符，验证范围见首次登录参考。没有真实 CID、停在首次声明、性别选择或空角色列表时，读[账号输入与首次登录](references/first-login.md)。
 
 可选的 `open --server SERVER_PATH` 读取服务器 JSON，仅核对当前实例的服务器，不更换连接。必填非空字符串 `project/service/expected_image`，可选非空字符串 `network`；提供的字段必须与本实例登记一致。
 

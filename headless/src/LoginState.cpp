@@ -8,6 +8,17 @@ namespace ms
 		return state;
 	}
 
+	void stop_pending_creation(const std::string& reason)
+	{
+		auto& state = login_state();
+		if (state.creation_status == "accepted")
+		{
+			state.creation_status = "unknown";
+			state.creation_error = reason;
+		}
+		state.phase = "failed";
+	}
+
 	void configure_login(int32_t cid, uint8_t world, uint8_t channel)
 	{
 		auto& state = login_state();

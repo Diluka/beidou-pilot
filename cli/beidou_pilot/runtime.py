@@ -27,7 +27,7 @@ class ContainerRuntime:
     source_revision: str
     pid: int
     run_dir: Path
-    character_id: int
+    character_id: int | None
     world: int
     channel: int
     target: TargetConfig
@@ -91,8 +91,8 @@ def load_runtime(root: Path, backend: str, instance: str = "default") -> Contain
         or any(not isinstance(value.get(key), str) or not value[key] for key in strings)
         or type(value.get("pid")) is not int
         or value["pid"] <= 0
-        or type(value.get("character_id")) is not int
-        or value["character_id"] <= 0
+        or "character_id" not in value
+        or (value["character_id"] is not None and (type(value["character_id"]) is not int or not 1 <= value["character_id"] <= 2**31 - 1))
         or any(type(value.get(key)) is not int or value[key] < 0 for key in ("world", "channel"))
         or not isinstance(value.get("target"), dict)
         or set(value["target"]) != {"project", "service", "network", "expected_image"}

@@ -200,4 +200,17 @@
   <ItemGroup>
     <CopyFileToFolders Include="config.ini" />
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="LoginAction.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="LoginAction.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LoginActionProtocol.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
 </Project>

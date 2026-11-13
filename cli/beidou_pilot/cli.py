@@ -47,6 +47,22 @@ def parser() -> Parser:
     def command(name: str, help_text: str, *, allow_abbrev: bool = True) -> argparse.ArgumentParser:
         return sub.add_parser(name, help=help_text, parents=[common], allow_abbrev=allow_abbrev)
 
+    q = command("login", "观察登录状态，或显式授权 GUI 登录")
+    q.add_argument("--timeout", type=float, default=None, help="等待秒数；观察默认一次，GUI 动作默认30秒")
+    q.add_argument("--accept-terms", action="store_true", help="按需授权同意协议（GUI）")
+    q.add_argument("--gender", choices=["female", "male"], help="显式指定账号性别（GUI）")
+    q = command("character", "创建角色或查询既有建角请求")
+    actions = q.add_subparsers(dest="character_action", required=True, parser_class=Parser)
+    create = actions.add_parser("create", parents=[common], allow_abbrev=False)
+    create.add_argument("--name", required=True)
+    for option in ("job", "face", "hair", "hair-color", "skin", "top", "bottom", "shoes", "weapon"):
+        create.add_argument("--" + option, type=int, required=True)
+    create.add_argument("--gender", choices=["male", "female"], required=True)
+    create.add_argument("--timeout", type=float, default=None, help="等待秒数；无头默认3秒，GUI默认90秒")
+    result = actions.add_parser("result", parents=[common])
+    result.add_argument("request_id")
+    result.add_argument("--run-id", required=True, help="提交时的原运行身份")
+    result.add_argument("--instance-id", required=True, help="提交时的原生实例身份")
     command("status", "当前客户端阶段与角色，不启动、不输入")
     command("instances", "列出本目录已登记的无头实例，不启动客户端")
     command("capabilities", "读取原生动作能力与静态观察支持范围，不启动客户端")
@@ -278,6 +294,22 @@ def resolve_item(backend: Backend, selector: str) -> int:
 
 def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     cmd = args.command
+    if cmd in {"login", "character"}:
+        from .first_character import execute
+
+        if cmd == "login" and args.timeout is None:
+            args.timeout = 30 if backend.name == "beidou" and (args.accept_terms or args.gender is not None) else 0
+        if cmd == "login" and backend.name == "beidou" and (args.accept_terms or args.gender is not None):
+            if args.gender is None:
+                raise ClientError("usage", "GUI 登录动作必须明确指定性别。")
+            with control(backend, "login"):
+                return execute(backend, args)
+        if cmd == "character" and backend.name == "beidou" and args.character_action == "create":
+            with control(backend, "character create"):
+                return execute(backend, args)
+        if cmd == "login" and backend.name == "headless" and (args.accept_terms or args.gender is not None):
+            raise ClientError("usage", "无头登录不接受 GUI 登录选项。")
+        return execute(backend, args)
     if backend.name == "headless" and cmd not in {
         "status",
         "instances",
@@ -940,6 +972,8 @@ def main(argv: list[str] | None = None) -> int:
             args.command
             in (
                 "status",
+                "login",
+                "character",
                 "instances",
                 "capabilities",
                 "doctor",
