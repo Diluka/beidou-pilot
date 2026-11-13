@@ -19,40 +19,68 @@ class GuiFirstLoginTests(unittest.TestCase):
         self.backend.name = "beidou"
         self.bridge = patch("beidou_pilot.gui_first_login.BridgeClient").start()
         self.addCleanup(patch.stopall)
-        self.bridge.return_value.snapshot.return_value = {"instance_id": "instance", "run_id": "run", "script": None,
-                                                         "command": {"status": "idle"}, "held_keys": []}
-        self.backend.runtime = SimpleNamespace(running=True, run_id="run", character_id=None,
-                                               world=0, channel=0, run_dir=Path(self.temp.name))
+        self.bridge.return_value.snapshot.return_value = {
+            "instance_id": "instance",
+            "run_id": "run",
+            "script": None,
+            "command": {"status": "idle"},
+            "held_keys": [],
+        }
+        self.backend.runtime = SimpleNamespace(
+            running=True, run_id="run", character_id=None, world=0, channel=0, run_dir=Path(self.temp.name)
+        )
         identity = {"instance_id": "instance", "client": {"run_id": "run"}}
-        self.stage = {**identity, "stage": "LOGIN", "renderer": "intel",
-                      "login": {"raw_step": 0, "request_pending": False, "transition_pending": False},
-                      "game_geometry": {"x": 10, "y": 20, "width": 1280, "height": 720},
-                      "windows": [{"address": "window", "vtables": ["0xaf7940", "0xaf78f4", "0xaf78f0"],
-                                   "login_edit_focus": "account", "account_empty": True, "password_empty": True}]}
-        self.dialog = {**identity, "unavailable": [], "script_dialog_open": False,
-                       "focused_talk_dialog_open": False, "registered_talk_dialog_open": False,
-                       "focused_window": {"address": "window", "vtables": ["0xaf7940", "0xaf78f4", "0xaf78f0"],
-                                          "width": 330, "height": 180,
-                                          "game_rect": {"left": 622, "top": 288, "right": 952, "bottom": 468},
-                                          "root_rect": {"left": 632, "top": 308, "right": 962, "bottom": 488},
-                                          "buttons": [{"control_id": i} for i in range(1000, 1007)]}}
+        self.stage = {
+            **identity,
+            "stage": "LOGIN",
+            "renderer": "intel",
+            "login": {"raw_step": 0, "request_pending": False, "transition_pending": False},
+            "game_geometry": {"x": 10, "y": 20, "width": 1280, "height": 720},
+            "windows": [
+                {
+                    "address": "window",
+                    "vtables": ["0xaf7940", "0xaf78f4", "0xaf78f0"],
+                    "login_edit_focus": "account",
+                    "account_empty": True,
+                    "password_empty": True,
+                }
+            ],
+        }
+        self.dialog = {
+            **identity,
+            "unavailable": [],
+            "script_dialog_open": False,
+            "focused_talk_dialog_open": False,
+            "registered_talk_dialog_open": False,
+            "focused_window": {
+                "address": "window",
+                "vtables": ["0xaf7940", "0xaf78f4", "0xaf78f0"],
+                "width": 330,
+                "height": 180,
+                "game_rect": {"left": 622, "top": 288, "right": 952, "bottom": 468},
+                "root_rect": {"left": 632, "top": 308, "right": 962, "bottom": 488},
+                "buttons": [{"control_id": i} for i in range(1000, 1007)],
+            },
+        }
         self.backend.read.side_effect = lambda domain: self.stage if domain == "stage" else self.dialog
+
         def desktop(actions):
             if actions[0]["y"] == 356:
                 self.stage["windows"][0]["login_edit_focus"] = "password"
             return {"cancelled": False, "input_dispatched": True, "timings": [{"action": "click"}]}
+
         def text(*args, **kwargs):
             if kwargs.get("payload") == "example":
                 self.stage["windows"][0]["account_empty"] = False
             elif kwargs.get("payload") == "secret":
                 self.stage["windows"][0]["password_empty"] = False
+
         self.backend.desktop.side_effect = desktop
         self.backend.text.side_effect = text
         self.profile = AccountProfile("example", "secret")
 
     def submit(self):
-        return submit_credentials_once(self.backend, profile=self.profile,
-                                       instance_id="instance", run_id="run")
+        return submit_credentials_once(self.backend, profile=self.profile, instance_id="instance", run_id="run")
 
     def test_submit_once_never_reports_authentication_success(self) -> None:
         result = self.submit()
@@ -79,7 +107,9 @@ class GuiFirstLoginTests(unittest.TestCase):
         self.backend.instance = "default"
         self.backend.paths = SimpleNamespace(state_directory=root, input_lock=root / "input.lock")
         with patch("beidou_pilot.cli.Backend", return_value=self.backend), redirect_stdout(StringIO()):
-            self.assertEqual(0, main(["--json", "gui-login-experiment", "--instance-id", "instance", "--run-id", "run"]))
+            self.assertEqual(
+                0, main(["--json", "gui-login-experiment", "--instance-id", "instance", "--run-id", "run"])
+            )
         self.assertEqual(3, self.backend.desktop.call_count)
 
     def test_busy_or_unavailable_native_bridge_never_sends_input(self) -> None:
@@ -98,8 +128,10 @@ class GuiFirstLoginTests(unittest.TestCase):
         self.backend.text.assert_not_called()
 
     def test_cancelled_and_missing_click_confirmation_never_type(self) -> None:
-        for result in ({"cancelled": True, "input_dispatched": False, "timings": []},
-                       {"cancelled": False, "input_dispatched": True, "timings": []}):
+        for result in (
+            {"cancelled": True, "input_dispatched": False, "timings": []},
+            {"cancelled": False, "input_dispatched": True, "timings": []},
+        ):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as directory:
                 self.backend.runtime.run_dir = Path(directory)
                 self.backend.desktop.side_effect = None
@@ -125,6 +157,7 @@ class GuiFirstLoginTests(unittest.TestCase):
         def text(*args, **kwargs):
             if kwargs.get("payload") == "example":
                 self.stage = {**self.stage, "stage": "UNKNOWN"}
+
         self.backend.text.side_effect = text
         with self.assertRaises(ClientError):
             self.submit()
