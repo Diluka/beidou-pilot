@@ -38,19 +38,34 @@ class AdvancementEntryContract(unittest.TestCase):
         state["monsters"] = []
         self.last_state = state
         output = io.StringIO()
-        target = "beidou_pilot." + ("control_scripts" if command == "fight" else "hunting") + ".run_strategy"
         with (
             patch.dict(os.environ, files.environment),
             patch.object(BridgeClient, "snapshot", return_value=state),
             patch("beidou_pilot.hunting.load_hunt_terrain", return_value=self.terrain),
-            patch(target, return_value={"status": "completed", "last_state": state}) as run,
+            patch("beidou_pilot.hunting.run_strategy", return_value={"status": "completed", "last_state": state}) as run,
             redirect_stdout(output),
         ):
             code = main(["--root", str(files.root), "--backend", backend, "--json", command,
                          "100100", "--bounds", "-200", "200", *options])
         return code, json.loads(output.getvalue()), run
 
-    def test_both_commands_load_only_the_selected_node_or_explicit_target(self) -> None:
+    def test_retired_fight_is_rejected_before_observing_or_running(self) -> None:
+        for backend, files in self.files.items():
+            output = io.StringIO()
+            with (
+                self.subTest(backend=backend),
+                patch.dict(os.environ, files.environment),
+                patch.object(BridgeClient, "snapshot") as snapshot,
+                patch("beidou_pilot.control_scripts.run_strategy") as run,
+                redirect_stdout(output),
+            ):
+                code = main(["--root", str(files.root), "--backend", backend, "--json", "fight", "100100"])
+            self.assertEqual(2, code)
+            self.assertEqual("usage", json.loads(output.getvalue())["error"]["code"])
+            snapshot.assert_not_called()
+            run.assert_not_called()
+
+    def test_hunt_loads_only_the_selected_node_or_explicit_target(self) -> None:
         cases = [
             (0, 7, [], 8, "first_job_checkpoint"),
             (0, 7, ["--first-job", "magician"], 8, "advancement"),
@@ -69,7 +84,7 @@ class AdvancementEntryContract(unittest.TestCase):
             (111, 119, [], 120, "advancement"),
         ]
         for backend in self.files:
-            for command in ("fight", "hunt"):
+            for command in ("hunt",):
                 for job, level, options, expected_level, source in cases:
                     with self.subTest(backend=backend, command=command, job=job, level=level, options=options):
                         code, report, run = self.combat(backend, command, job, level, options)
@@ -102,7 +117,7 @@ class AdvancementEntryContract(unittest.TestCase):
             (0, 7, ["--first-job", "mage"], "usage"),
         ]
         for backend in self.files:
-            for command in ("fight", "hunt"):
+            for command in ("hunt",):
                 for job, level, options, error in cases:
                     with self.subTest(backend=backend, command=command, job=job, level=level, options=options):
                         code, report, run = self.combat(backend, command, job, level, options)
@@ -111,7 +126,7 @@ class AdvancementEntryContract(unittest.TestCase):
 
     def test_unmapped_jobs_keep_each_commands_existing_default(self) -> None:
         for backend in self.files:
-            for command, expected_level, source in (("fight", 121, "next_level"), ("hunt", None, "none")):
+            for command, expected_level, source in (("hunt", None, "none"),):
                 with self.subTest(backend=backend, command=command):
                     code, report, run = self.combat(backend, command, 112, 120, [])
                     self.assertEqual(0, code, report)

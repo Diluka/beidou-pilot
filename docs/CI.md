@@ -20,11 +20,14 @@
 git submodule update --init --recursive
 ```
 
-准备 Python 3.14、`gcc/g++` 后，运行与 CI 相同的离线测试入口：
+准备 Python 3.14、`gcc/g++` 后，先构建当前检出目录的共享 IMG 解析库，再运行与 CI 相同的离线测试入口：
 
 ```bash
+make -C headless build/libbeidou-img.so
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
 ```
+
+解析库是本地构建产物，新的 worktree 不会继承其他检出的产物；缺少它时，依赖地图、物品等静态资料的测试会返回 `img_parser_unavailable`，不能仅凭这些错误判定客户端逻辑回归。
 
 安装并启动 Docker 后，通过统一入口构建当前提交的无头镜像并检查容器内 CLI：
 

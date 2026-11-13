@@ -308,35 +308,20 @@ class LuaStrategyContract(unittest.TestCase):
     def test_python_strategy_adapter_uses_declared_options_and_rejects_unknown_fields(self) -> None:
         backend = Mock(spec=Backend)
         backend.root, backend.name, backend.instance = self.files.root, "headless", "default"
-        options = {
-            "mob_id": 100100,
-            "budget_seconds": 60,
-            "stop_level": 10,
-            "floor_y": 20,
-            "min_x": -50,
-            "max_x": 50,
-            "retreat_x": 0,
-            "loot": False,
-        }
         with (
             patch("beidou_pilot.control_scripts.scene_context", return_value=self.scene),
             patch("beidou_pilot.control_scripts.run_source", return_value={"status": "completed"}) as run,
         ):
-            run_strategy(backend, "combat/fight", options, 61, context_state=self.files.state)
+            run_strategy(backend, "travel/move_to", {"x": 10}, 21, context_state=self.files.state)
         source = run.call_args.args[1]
-        self.assertIn('["loot"]=false', source)
-        self.assertIn('["mob_id"]=100100', source)
+        self.assertIn('["x"]=10', source)
         self.assertIn("return main(__beidou_context)", source)
-        self.assertEqual(61, run.call_args.args[2])
+        self.assertEqual(21, run.call_args.args[2])
 
         with patch("beidou_pilot.control_scripts.run_source") as unpublished:
             with self.assertRaises(ClientError) as raised:
                 run_strategy(
-                    backend,
-                    "combat/fight",
-                    {"mob_id": 100100, "not_declared": True},
-                    61,
-                    context_state=self.files.state,
+                    backend, "travel/move_to", {"x": 10, "not_declared": True}, 21, context_state=self.files.state
                 )
         self.assertEqual("invalid_strategy_option", raised.exception.code)
         unpublished.assert_not_called()
@@ -364,7 +349,6 @@ class LuaStrategyContract(unittest.TestCase):
             "travel/climb_to.lua",
             "travel/enter_portal.lua",
             "combat/hunt.lua",
-            "combat/fight.lua",
             "recovery/recover.lua",
         ):
             with self.subTest(script=relative):
@@ -378,26 +362,6 @@ class LuaStrategyContract(unittest.TestCase):
             {"budget_seconds": 20.0, "tolerance": 8, "y_tolerance": 45, "min_hp_ratio": 0.0, "x": 10},
             parse_options(travel_metadata, ["--x", "10"]),
         )
-        _, fight_metadata = read_strategy_file(scripts / "combat/fight.lua")
-        assert fight_metadata is not None
-        fight_options = parse_options(
-            fight_metadata,
-            [
-                "--mob-id",
-                "100100",
-                "--stop-level",
-                "10",
-                "--floor-y",
-                "20",
-                "--min-x",
-                "-50",
-                "--max-x",
-                "50",
-                "--retreat-x",
-                "0",
-            ],
-        )
-        self.assertIs(fight_options["loot"], False)
         _, recovery_metadata = read_strategy_file(scripts / "recovery/recover.lua")
         assert recovery_metadata is not None
         recovery_options = parse_options(recovery_metadata, ["--item-id", "2000000", "--budget-seconds", "5"])

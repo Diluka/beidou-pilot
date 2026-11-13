@@ -183,7 +183,6 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `unequip --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头卸下普通装备；明确身上负槽和空背包正槽 |
 | `stats STAT COUNT`、`skills SKILL [COUNT]` | 明确属性/技能与点数；两端 Lua 原生逐点双确认，GUI 复用本端必要窗口；未知或部分结果保留现状，按最新状态继续 |
 | `move X`、`move X --to-y Y`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单地图跨平台寻路、单根绳梯或单个门户；`move --to-y` 用静态平台图（走、跳台上升、落层、绳底跳抓）行进，竖直墙把平台切成不同区间，不支持跨地图自动选路 |
-| `fight MOB` | 同层基础Lua策略，支持预算、停级、安全范围、撤退锚点、近距拾取尝试，以及 `--hp-item` 指定或按库存自动挑选 HP 药 |
 | `hunt [MOB\|all]` | 单场景自主找怪、可达跨平台和连续战斗；支持 `--skill ID`、`--range N`、限时或 `--continuous` |
 | `script run/start --library travel\|island-supply` | 显式装载旅行函数；Lua消费者在一次会话内调用已知路线并核对目的地 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
@@ -245,7 +244,7 @@ private/workbenches/workbench /external/workbench task result REQUEST_ID
 
 请求发布前，例如等待 `task.lock` 时，Ctrl+C/SIGTERM返回通用 `interrupted` 和退出码130，此时没有已发布的 `request_id`；等待管理锁超时返回 `task_management_busy`。请求发布后，等待结果超时返回 `task_result_unconfirmed`，Ctrl+C/SIGTERM返回 `task_request_interrupted` 和退出码130，这两种结果都保留已发布的 `request_id`。管理等待失败时整会话继续运行，请求按一次发布处理；已发布的请求可用 `task result` 查询最终结果，再决定后续操作。查询结果属于响应中记录的历史实例和会话，当前角色效果另行观察。
 
-移动和战斗参数只对当前场景有效。地形与恢复属性通过配置的只读原版 `Data/**/*.img` 和共享原生解析器读取；资料缺失或未支持时明确拒绝。基础 `fight` 保留同层预算与撤退行为；`hunt` 根据当前位置在本场景连续寻找可达目标，允许正常换平台和空中攻击，地图或场景代次变化则停止。两者均保留成长节点限制。
+移动和战斗参数只对当前场景有效。地形与恢复属性通过配置的只读原版 `Data/**/*.img` 和共享原生解析器读取；资料缺失或未支持时明确拒绝。`hunt` 根据当前位置在本场景连续寻找可达目标，允许正常换平台和空中攻击，地图或场景代次变化则停止。狩猎受成长节点限制。
 
 ```bash
 private/workbenches/workbench /external/workbench hunt all --seconds 60
@@ -253,18 +252,17 @@ private/workbenches/workbench /external/workbench hunt 100100 --continuous --hp-
 private/workbenches/workbench /external/workbench hunt all --skill 1001004 --range 60 --seconds 30
 ```
 
-`hunt` 默认普攻、全部怪物、60秒，`--bounds MIN MAX` 可限定横向区域，`--until-level` 指定停级，`--min-hp-ratio` 默认0.35。`--hp-item` 仅使用明确指定、库存已知的恢复品。技能必须已学且当前后端支持；无头首批仅支持战士 `1001004/1001005`，其他类型明确拒绝。攻击距离是策略接近参数，命中以实际战斗结果为准。无可确认的进展、不可通过的地形、生命下限或取消都有明确停止；原始日志保留所属实例，最终经验跨级时按等级与经验字段分别记录。
+`hunt` 默认普攻、全部怪物、60秒，`--bounds MIN MAX` 可限定横向区域，`--until-level` 指定停级，`--min-hp-ratio` 默认0.35。`--hp-item` 仅使用明确指定、库存已知的恢复品。技能必须已学且当前后端支持；无头首批仅支持战士 `1001004/1001005`，其他类型明确拒绝。狩猎不包含拾取或结束后撤退。攻击距离是策略接近参数，命中以实际战斗结果为准。无可确认的进展、不可通过的地形、生命下限或取消都有明确停止；原始日志保留所属实例，最终经验跨级时按等级与经验字段分别记录。
 
-`fight`、`hunt` 均接受 `--first-job magician|warrior|bowman|thief|pirate`，只为本次新手练级明确首转路线：魔法师默认停8级，战士、弓箭手、飞侠、海盗默认停10级。`--until-level` 可以更早停止；高于明确转职节点时仍停在该节点，例如 `--first-job magician --until-level 10` 实际停8级。达到或超过已知节点后返回 `advancement_due`，本次装载到此结束。已转职角色依据当前职业沿用30/70/120级节点，`--first-job` 只作用于新手角色。
+`hunt` 接受 `--first-job magician|warrior|bowman|thief|pirate`，只为本次新手练级明确首转路线：魔法师默认停8级，战士、弓箭手、飞侠、海盗默认停10级。`--until-level` 可以更早停止；高于明确转职节点时仍停在该节点，例如 `--first-job magician --until-level 10` 实际停8级。达到或超过已知节点后返回 `advancement_due`，本次装载到此结束。已转职角色依据当前职业沿用30/70/120级节点，`--first-job` 只作用于新手角色。
 
 ```bash
 private/workbenches/workbench /external/workbench hunt all --first-job magician --seconds 60
-private/workbenches/workbench /external/workbench fight 100100 --first-job warrior --bounds -200 200
 ```
 
-新手路线未知时，两端 `status`/`snapshot` 的 `advancement.level`、`due` 为 `null`，`candidates` 列出各路线节点，前次命令的选择不写入状态。没有路线也没有 `--until-level` 时，`fight`/`hunt` 先停在8级检查点；到达后再次默认调用返回 `advancement_route_required`，要求明确路线或本次目标。检查点只表示本次调用的停级。未知路线下显式给出的 `--until-level` 按调用方目标执行，包括10级；调用方按养成计划选择边界。
+新手路线未知时，两端 `status`/`snapshot` 的 `advancement.level`、`due` 为 `null`，`candidates` 列出各路线节点，前次命令的选择不写入状态。没有路线也没有 `--until-level` 时，`hunt` 先停在8级检查点；到达后再次默认调用返回 `advancement_route_required`，要求明确路线或本次目标。检查点只表示本次调用的停级。未知路线下显式给出的 `--until-level` 按调用方目标执行，包括10级；调用方按养成计划选择边界。
 
-两入口结果的 `requested_level` 是实际装载的停级，`advancement` 保留当前节点或未知候选，`stop_level_source` 区分 `advancement`、`first_job_checkpoint`、`until_level`。无适用节点且未明确停级时，`fight` 仍以下一级为目标（`next_level`），`hunt` 不附加等级上限（`none`）。停级在Lua观察到等级达到或超过边界时生效；转职条件与加点由独立命令处理。
+狩猎结果的 `requested_level` 是实际装载的停级，`advancement` 保留当前节点或未知候选，`stop_level_source` 区分 `advancement`、`first_job_checkpoint`、`until_level`。无适用节点且未明确停级时，`hunt` 不附加等级上限（`none`）。停级在Lua观察到等级达到或超过边界时生效；转职条件与加点由独立命令处理。
 
 已知路线可在一个有界 Lua 内复用，接口与适用起点见 [Lua 旅行函数库](LUA_API.md#可选旅行函数库)。例如从50000东上层行进至相邻安全城镇：
 

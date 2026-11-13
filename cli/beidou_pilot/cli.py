@@ -14,7 +14,7 @@ from typing import Iterator, cast
 from .backend import Backend, ClientError, JsonObject
 from .catalog import Catalog
 from . import dialogs
-from .rules import FIRST_JOB_LEVELS, advancement, combat_stop_level
+from .rules import FIRST_JOB_LEVELS, advancement
 from .snapshot import collect, format_snapshot
 from .strategies import compile_strategy, describe_strategy, parse_options, read_strategy_file
 from . import __version__
@@ -184,16 +184,6 @@ def parser() -> Parser:
     q.add_argument("item", nargs="?", type=int)
     q.add_argument("--count", type=int, default=1)
     q.add_argument("--slot", type=int)
-    q = command("fight", "客户端内Lua策略：接近、攻击、补给、停级并退回锚点")
-    q.add_argument("mob", help="当前地图怪物名或模板ID")
-    q.add_argument("--seconds", type=float, default=60)
-    q.add_argument("--until-level", type=int)
-    q.add_argument("--first-job", choices=FIRST_JOB_LEVELS, help="本次新手练级的首转路线；magician停8级，其余停10级")
-    q.add_argument("--floor-y", type=int)
-    q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"))
-    q.add_argument("--retreat-x", type=int)
-    q.add_argument("--loot", action="store_true", help="启用同层落地物品定向拾取")
-    q.add_argument("--hp-item", type=int, help="低生命值使用的明确药品ID；省略时按库存挑回血量最大的普通药")
     q = command("hunt", "当前单一场景内自主找怪、换层和连续攻击；场景变化即停止")
     q.add_argument("mob", nargs="?", default="all", help="怪物名称、模板ID或all（默认全部怪物）")
     q.add_argument("--skill", type=int, help="指定已学且本后端支持的技能ID；省略时使用普攻")
@@ -279,32 +269,6 @@ def resolve_item(backend: Backend, selector: str) -> int:
     return cast(int, target["item_id"])
 
 
-def floor_bounds(metadata: JsonObject, x: int, y: int) -> list[int] | None:
-    segments = cast(list[JsonObject], metadata["footholds"])
-    flat = [
-        f
-        for f in segments
-        if abs(cast(int, f["y1"]) - y) <= 35 and abs(cast(int, f["y2"]) - y) <= 35 and f["x1"] != f["x2"]
-    ]
-    connected = [
-        f
-        for f in flat
-        if min(cast(int, f["x1"]), cast(int, f["x2"])) <= x <= max(cast(int, f["x1"]), cast(int, f["x2"]))
-    ]
-    if not connected:
-        return None
-    low = min(min(cast(int, f["x1"]), cast(int, f["x2"])) for f in connected)
-    high = max(max(cast(int, f["x1"]), cast(int, f["x2"])) for f in connected)
-    changed = True
-    while changed:
-        changed = False
-        for f in flat:
-            a, b = sorted((cast(int, f["x1"]), cast(int, f["x2"])))
-            if a <= high and b >= low and (a < low or b > high):
-                low, high, changed = min(low, a), max(high, b), True
-    return [low + 5, high - 5]
-
-
 def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     cmd = args.command
     if backend.name == "headless" and cmd not in {
@@ -334,7 +298,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "move",
         "climb",
         "portal",
-        "fight",
         "hunt",
         "batch",
         "use",
@@ -853,53 +816,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             min_hp_ratio=args.min_hp_ratio,
             hp_item_id=args.hp_item,
         )
-    if cmd == "fight":
-        from .bridge import BridgeClient
-        from .control_scripts import fight as lua_fight
-
-        state = BridgeClient(backend.root, backend.name, backend.instance).snapshot()
-        if not state["ready"] or state["character"] is None or state["position"] is None:
-            raise ClientError("not_ready", "角色状态尚未就绪，未开始战斗。")
-        char, pos = state["character"], state["position"]
-        if char["hp"] <= 0:
-            raise ClientError("dead", "角色已死亡，请先恢复角色。")
-        catalog = Catalog(backend.root)
-        monsters = state.get("monsters")
-        if monsters is None:
-            raise ClientError("observation_unavailable", "怪物观察尚不可用。")
-        mob_id = int(args.mob) if args.mob.isdecimal() else None
-        if mob_id is None:
-            matching = {
-                m["template_id"]
-                for m in monsters
-                if m["template_id"] is not None and args.mob in (m.get("name"), catalog.monster_name(m["template_id"]))
-            }
-            if len(matching) != 1:
-                raise ClientError("mob_not_found", "请按当前怪物名称或模板ID指定。", {"name": args.mob})
-            mob_id = matching.pop()
-        y = args.floor_y if args.floor_y is not None else pos["y"]
-        bounds = args.bounds or floor_bounds(catalog.map(state["map_id"]), pos["x"], y)
-        if bounds is None:
-            raise ClientError("floor_unknown", "请用--bounds明确本次同层战斗范围。")
-        stop_level, stop_level_source, milestone = combat_stop_level(
-            cast(JsonObject, char),
-            first_job=args.first_job,
-            until_level=args.until_level,
-            default_level=char["level"] + 1,
-        )
-        report = lua_fight(
-            backend,
-            mob_id=mob_id,
-            seconds=args.seconds,
-            stop_level=cast(int, stop_level),
-            floor_y=y,
-            bounds=(bounds[0], bounds[1]),
-            retreat_x=args.retreat_x if args.retreat_x is not None else int(pos["x"]),
-            loot=args.loot,
-            hp_item=args.hp_item,
-            context_state=state,
-        )
-        return {**report, "advancement": milestone, "stop_level_source": stop_level_source}
     if cmd == "screenshot":
         name = args.name or datetime.now(timezone.utc).strftime("shot-%Y%m%dT%H%M%S-") + str(os.getpid())
         return backend.read("desktop", "screenshot", name, "--game-crop")
