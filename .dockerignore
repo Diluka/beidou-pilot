@@ -30,6 +30,7 @@
 !.agents/skills/beidou-game-guide/SKILL.md
 !.agents/skills/beidou-game-guide/references/
 !.agents/skills/beidou-game-guide/references/*.md
+!.agents/skills/beidou-game-guide/references/world-graph.json
 !.agents/skills/beidou-game-guide/references/world-map/
 !.agents/skills/beidou-game-guide/references/world-map/*.md
 !.agents/skills/beidou-game-guide/tools/

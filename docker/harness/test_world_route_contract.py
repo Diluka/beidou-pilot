@@ -1,8 +1,9 @@
-"""线路工具的容器资源和导入合同，无需游戏资源。"""
+"""技能内路线数据与生成器安全合同。"""
 import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -10,25 +11,20 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "cli"))
-spec = importlib.util.spec_from_file_location("world_route_contract", ROOT / ".agents/skills/beidou-game-guide/tools/world_route.py")
-route = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(route)
 map_spec = importlib.util.spec_from_file_location("world_map_contract", ROOT / ".agents/skills/beidou-game-guide/tools/world_map.py")
 map_generator = importlib.util.module_from_spec(map_spec)
 map_spec.loader.exec_module(map_generator)
 
 
 class WorldRouteContract(unittest.TestCase):
-    def test_explicit_resources_config_wins(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "resources.json"
-            config.write_text(json.dumps({"gui_client": "mounted-client"}))
-            with patch.dict(os.environ, {"MAPLE_RESOURCES_CONFIG": str(config), "CLIENT_ROOT": directory}), \
-                 patch.object(sys, "argv", ["world_route.py", "1", "1"]), \
-                 patch.object(route, "world_data", side_effect=RuntimeError("observed")) as world_data:
-                with self.assertRaisesRegex(RuntimeError, "observed"):
-                    route.main()
-            world_data.assert_called_once_with(Path(directory))
+    def test_route_runs_without_runtime_resources(self):
+        script = ROOT / ".agents/skills/beidou-game-guide/tools/world_route.py"
+        env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1",
+               "MAPLE_RESOURCES_CONFIG": "/nonexistent", "CLIENT_ROOT": "/nonexistent"}
+        result = subprocess.run([sys.executable, str(script), "103000000", "102000000"],
+                                env=env, cwd="/", capture_output=True, text=True, check=True)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["paid_candidates"]["fewest_planning_legs"]["cost"], 1000)
 
     def test_generator_does_not_overwrite_when_display_data_missing(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -42,18 +38,6 @@ class WorldRouteContract(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "未覆盖"):
                     map_generator.main()
             self.assertEqual(output.read_text(), "保留原有攻略")
-
-    def test_client_root_default_config(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "config/resources.json"
-            config.parent.mkdir()
-            config.write_text(json.dumps({"gui_client": "mounted-client"}))
-            with patch.dict(os.environ, {"CLIENT_ROOT": directory}, clear=True), \
-                 patch.object(sys, "argv", ["world_route.py", "1", "1"]), \
-                 patch.object(route, "world_data", side_effect=RuntimeError("observed")) as world_data:
-                with self.assertRaisesRegex(RuntimeError, "observed"):
-                    route.main()
-            world_data.assert_called_once_with(Path(directory))
 
 
 if __name__ == "__main__":

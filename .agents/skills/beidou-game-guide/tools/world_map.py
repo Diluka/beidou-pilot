@@ -1,6 +1,6 @@
 """重新生成 references/world-map.md。
 
-用法（项目根执行，客户端资源路径取自 workbench 的 resources.json）：
+维护者重新生成时，通过 MAPLE_RESOURCES_CONFIG 显式指定资源配置；日常路线查询不需要资源：
 
     PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/beidou-game-guide/tools/world_map.py
 
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[4]
 SKILL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "cli"))
 
-from beidou_pilot.world_map import display_regions, index, region_section, regions_of, route_text, world_data  # noqa: E402
+from beidou_pilot.world_map import display_regions, edges_of, index, region_section, regions_of, route_text, world_data  # noqa: E402
 
 HEADER = """# 世界地图
 
@@ -43,15 +43,21 @@ HEADER = """# 世界地图
 
 
 def main() -> None:
-    local_config = ROOT / "private/workbenches/resources.json"
-    if "MAPLE_RESOURCES_CONFIG" not in os.environ and local_config.is_file():
-        os.environ["MAPLE_RESOURCES_CONFIG"] = str(local_config)
     resource_root = Path(os.environ.get("CLIENT_ROOT", ROOT))
     scenes = world_data(resource_root)
     display = display_regions(resource_root)
     if not scenes or not display:
         raise SystemExit("地图或世界地图资源不可用，未覆盖现有攻略。")
     regions = regions_of(scenes)
+    graph = {"version": 1, "source": "北斗 V17 客户端静态地图资源，未经逐条实测", "maps": []}
+    for map_id, scene in sorted(scenes.items()):
+        graph["maps"].append({"id": map_id, "name": scene.name, "link": scene.link,
+                              "edges": [{"name": edge.name, "target": edge.target,
+                                         "target_name": edge.target_name, "script": edge.script,
+                                         "sources": edge.sources, "receivers": edge.receivers}
+                                        for edge in edges_of(scene, scenes)]})
+    (SKILL / "references/world-graph.json").write_text(
+        json.dumps(graph, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
     body = [HEADER, "## 客户端世界地图展示索引", "", "同一场景可在多张世界地图展示，不代表唯一归属。", ""]
     for name, ids in display.items():
         body.append(f"- [{name}](world-map/{name}.md)（{len(ids)} 个地图号）")

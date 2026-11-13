@@ -37,6 +37,6 @@ description: "查阅和维护北斗冒险岛玩法攻略。覆盖主题地图任
 
 新增证据时优先更新对应攻略；入口只维护覆盖范围和链接，详细规则集中在参考资料。每篇攻略保留可查阅的来源、适用范围、关键条件与结果核对方法。
 
-世界地图由 `tools/world_map.py` 从本地客户端资源生成，不手工编辑 `references/world-map.md`；数据读取、区域归组和线路查找在 `cli/beidou_pilot/world_map.py`。
+世界地图及 `references/world-graph.json` 由维护者使用 `tools/world_map.py` 从指定客户端资源生成；日常路线查询只读技能内 graph，使用 `tools/world_route.py`，不依赖客户端资源或仓库私有目录。
 
 需要实际进入游戏核验时，按 [客户端操作技能](../beidou-pilot-client/SKILL.md) 找回授权角色、目标与已有实例，再观察并接续；攻略中的路线与收益作为规划参考，当前角色的实际状态以现场观察为准。

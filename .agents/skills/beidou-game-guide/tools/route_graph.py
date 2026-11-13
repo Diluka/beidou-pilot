@@ -1,8 +1,85 @@
-"""静态交通候选；依据 BeiDouMS/BeiDou-Server 00422c2 的 NPC 脚本及 Boats.js。"""
-from collections import defaultdict
+"""技能内静态路线计算，不依赖客户端与项目模块。"""
+from collections import defaultdict, deque
+from dataclasses import dataclass
 from heapq import heappop, heappush
 
-from .world_map import edges_of, route
+@dataclass(frozen=True)
+class Scene:
+    name: str
+    link: int | None
+    edges: list
+
+@dataclass(frozen=True)
+class Edge:
+    name: str
+    target: int
+    target_name: str | None
+    script: str | None
+    sources: list
+    receivers: list
+
+def edges_of(scene, scenes):
+    return scene.edges
+
+
+def _sites(points):
+    return " ".join(f"{x},{y}" for x, y in points)
+
+def route(scenes: dict[int, Scene], start: int, goal: int) -> tuple[list[dict[str, object]], bool]:
+    """按资源中的有向门户执行 BFS；未记录反向边时不推断反向可达。"""
+    previous: dict[int, tuple[int, Edge]] = {}
+    queue = deque([start])
+    visited = {start}
+    while queue:
+        current = queue.popleft()
+        for edge in edges_of(scenes[current], scenes):
+            if edge.script or edge.target not in scenes or edge.target in visited:
+                continue
+            visited.add(edge.target)
+            previous[edge.target] = (current, edge)
+            if edge.target == goal:
+                queue.clear()
+                break
+            queue.append(edge.target)
+    if goal not in previous:
+        return [], False
+    steps: list[dict[str, object]] = []
+    node = goal
+    while node != start:
+        origin, edge = previous[node]
+        steps.append({"from": origin, "portal": edge.name, "to": node,
+                      "portal_at": list(edge.sources), "portal_at_destination": list(edge.receivers),
+                      "script": edge.script, "reversed": False})
+        node = origin
+    return list(reversed(steps)), False
+
+
+def route_text(scenes: dict[int, Scene], start: int, goal: int) -> str:
+    for map_id in (start, goal):
+        if map_id not in scenes:
+            return f"地图 {map_id} 没有门户数据，不在世界地图 graph 里。"
+    if start == goal:
+        return f"起点与终点相同（{start} {scenes[start].name}），无需换场景。"
+    steps, estimated = route(scenes, start, goal)
+    if not steps:
+        return (f"从 {start} 到 {goal} 未在已收录的有向门户中找到线路；原因可能是资料不完整、"
+                "需要其他交通方式，或确实不可达，不能仅凭此结果判断。")
+    lines = [f"{start} {scenes[start].name} → {goal} {scenes[goal].name}，换 {len(steps)} 次场景：",
+             "静态候选路线，未核实场景内可达性、任务条件及当前服务器行为。"]
+    for number, step in enumerate(steps, 1):
+        origin, target = int(step["from"]), int(step["to"])
+        if step["reversed"]:
+            lines.append(f"{number}. 估计：从 {origin} {scenes[origin].name} 反向走对侧门户"
+                         f"（原方向入口 `{step['portal']}` {_sites(tuple(step['source']))}）→ {target} {scenes[target].name}")
+            continue
+        arrival = (f"，落点 {_sites(tuple(step['portal_at_destination']))}" if step["portal_at_destination"]
+                   else "，目的门户坐标未知")
+        script = "（脚本门户，可能另有条件）" if step["script"] else ""
+        lines.append(f"{number}. {origin} {scenes[origin].name}：走 `{step['portal']}` "
+                     f"{_sites(tuple(step['portal_at']))} → {target} {scenes[target].name}{arrival}{script}")
+    if estimated:
+        lines.append("注：其中含反向穿越的估计步骤，需现场确认。")
+    return "\n".join(lines)
 
 
 def transport_edges():

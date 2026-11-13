@@ -1,13 +1,14 @@
+import sys
 import unittest
+from pathlib import Path
 
-from beidou_pilot.world_map import Scene
-from beidou_pilot.world_transport import paid_route, transport_edges
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '.agents/skills/beidou-game-guide/tools'))
+from route_graph import Edge, Scene, paid_route, transport_edges
 
 
 def scene(number, target=None):
-    portals = () if target is None else ({'name': 'p', 'x': 0, 'y': 0, 'type': 2,
-                                         'target': target, 'target_name': None, 'script': None},)
-    return Scene(number, str(number), number // 10000, None, portals)
+    portals = [] if target is None else [Edge('p', target, None, None, [[0, 0]], [])]
+    return Scene(str(number), None, portals)
 
 
 class TransportTest(unittest.TestCase):
