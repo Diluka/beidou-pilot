@@ -15,7 +15,7 @@ description: "查阅和维护北斗冒险岛玩法攻略。覆盖商店位置与
 
 - [冒险家二转加点](references/adventurer-second-job.md)：12条分支的终态方案、121 SP预算、AP主副属性、武器取舍及四转对二转的显式前置。
 
-- [冒险家三转任务](references/adventurer-third-job-quest.md)：五系12分支的长老、分身入口、两次项链交付、圣石39题答案、中断续做及北斗快速转职入口；静态核验，尚未逐职业实测。
+- [冒险家三转任务](references/adventurer-third-job-quest.md)：五系12分支的长老、分身入口、两次项链交付、圣石39题答案及中断续做；静态核验，尚未逐职业实测。
 
 - [冒险家三转加点](references/adventurer-third-job.md)：12条分支的终态方案、151 SP预算、武器取舍及11条四转对三转的显式前置。
 

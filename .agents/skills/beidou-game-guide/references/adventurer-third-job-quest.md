@@ -2,7 +2,7 @@
 
 冒险家到70级后，可以找雪域长老接受力量与智慧试炼，完成三转。这篇攻略覆盖北斗 V17 冒险家五系、12条分支；转职后的技能分配见[三转加点规划](adventurer-third-job.md)。骑士团和战神走各自的转职任务。本文按源码与本地资料整理，尚未逐职业试玩，来源见文末。
 
-流程是：准备材料 → 找本职业的长老 → 回金银岛打导师分身 → 圣石答题 → 回长老转职。北斗另有[快速转职入口](#北斗的快速转职入口)，希望体验传统任务时按正文走。
+流程是：准备材料 → 找本职业的长老 → 回金银岛打导师分身 → 圣石答题 → 回长老转职。
 
 ## 出发前准备
 
@@ -128,17 +128,11 @@
 
 三转进度会随长老和导师的对话保存，有些步骤不一定显示在普通任务栏里。卡住时，优先看对话提示和背包中的证明道具，按上表继续。
 
-## 北斗的快速转职入口
-
-想直接转职，可以打开拍卖行看看是否进入 **BeiDou脚本中心 → 快速转职**。入口取决于服务器设置；如果打开的是原拍卖系统，就没有这个菜单，可以继续走传统试炼。
-
-已经二转且至少70级的冒险家，可以沿现有分支直接三转，无需黑符、项链或黑暗水晶，也不受传统长老的剩余SP限制。确认后打开角色信息和技能栏查看新职业。若已经开始传统试炼，快速转职不会替你补完那段剧情，已有任务和证明道具也不一定会自动清理。
-
 ## 资料来源与实测范围
 
 源码参考 [BeiDou-Server `00422c2`][source]，按中文脚本优先、缺失时使用基础脚本的顺序整理，题库采用当前中文圣石脚本，共39题。长老公馆、五系异界之门、圣石共7张地图的相关NPC，以及证明道具、水晶名称，已与本地北斗 V17 资料对照。
 
-传统三转、快速转职、证明道具掉落，以及超时、断线、死亡后继续任务的情况，均尚未实际试玩。步行路线来自地图连接，具体跳跃、绳梯和隐藏入口操作也尚未逐图尝试。
+传统三转、证明道具掉落，以及超时、断线、死亡后继续任务的情况，均尚未实际试玩。步行路线来自地图连接，具体跳跃、绳梯和隐藏入口操作也尚未逐图尝试。
 
 关键来源：
 
@@ -147,9 +141,9 @@
 - [异界之门1061009][door]规定五系入口地图及资格；[闪耀的水晶1061010][exit]规定各分身房退出去向。[三转事件目录][events]中的 `3rdJob_warrior、magician、bowman、thief、pirate.js` 规定20分钟限时、超时和断线退出。
 - [圣石2030006][stone]的 `questionTree`、`action`、`instantiateQuestionPool`、`generateSelectionMenu` 决定题目、五题流程、水晶消耗与选项随机。本文答案依据该文件，`2030006_old.js` 为历史版本。
 - [基础地图目录][maps]：公馆位于 `Map2/211000001.img.xml`；五系门在 `Map1` 下的表列地图；圣地路线在 `Map2/211040200、211040300、211040400、211040401.img.xml`。读取 `life`、`portal`、`info/decHP`；地图名称与道具名见[中文String资源][strings]的 `Map.img.xml`、`Npc.img.xml`、`Etc.img.xml`。
-- [快速转职脚本][quick]和[脚本中心9900001][center]；[拍卖入口处理器][mts]中的 `use_mts`、`openCenterScript` 决定入口是否替换。[Character.changeJob][character]决定转职点数与属性增益；[脚本加载规则][loader]说明中文覆盖优先级。
+- [Character.changeJob][character]决定转职点数与属性增益；[脚本加载规则][loader]说明中文覆盖优先级。
 
-整理日期：2026-11-11。传统三转、快速转职及中断后续做均按脚本整理，尚未逐职业试玩。不同服务器的入口、费用或任务提示可能有所调整。
+整理日期：2026-11-11。传统三转及中断后续做均按脚本整理，尚未逐职业试玩。不同服务器的入口、费用或任务提示可能有所调整。
 
 [source]: https://github.com/BeiDouMS/BeiDou-Server/tree/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server
 [elder-warrior]: https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc/2020008.js
@@ -164,8 +158,5 @@
 [stone]: https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc/2030006.js
 [maps]: https://github.com/BeiDouMS/BeiDou-Server/tree/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz/Map.wz/Map
 [strings]: https://github.com/BeiDouMS/BeiDou-Server/tree/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/wz-zh-CN/String.wz
-[quick]: https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/BeiDouSpecial/快速转职.js
-[center]: https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc/9900001.js
-[mts]: https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/net/server/channel/handlers/EnterMTSHandler.java
 [character]: https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/client/Character.java
 [loader]: https://github.com/BeiDouMS/BeiDou-Server/blob/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/src/main/java/org/gms/scripting/AbstractScriptManager.java
