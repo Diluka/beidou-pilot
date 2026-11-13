@@ -46,6 +46,10 @@ def parser() -> Parser:
     def command(name: str, help_text: str, *, allow_abbrev: bool = True) -> argparse.ArgumentParser:
         return sub.add_parser(name, help=help_text, parents=[common], allow_abbrev=allow_abbrev)
 
+    q = command("gui-login-experiment", "实验：人工确认空登录表单后单次提交凭据")
+    q.add_argument("--account", type=Path, required=True)
+    q.add_argument("--instance-id", required=True)
+    q.add_argument("--run-id", required=True)
     q = command("login", "观察容器已启动的账号登录，不发送凭据或同意")
     q.add_argument("--timeout", type=float, default=0, help="等待角色列表的秒数，默认只观察一次")
     q = command("character", "创建角色或查询既有建角请求")
@@ -285,6 +289,11 @@ def resolve_item(backend: Backend, selector: str) -> int:
 
 def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     cmd = args.command
+    if cmd == "gui-login-experiment":
+        from .gui_first_login import submit_credentials_once
+        from .profile import load_account_profile
+
+        return submit_credentials_once(backend, load_account_profile(args.account), args.instance_id, args.run_id)
     if cmd in {"login", "character"}:
         from .first_character import execute
 
