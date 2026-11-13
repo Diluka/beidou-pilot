@@ -49,6 +49,7 @@ def run_strategy(
     seconds: float | None,
     *,
     context_state: BridgeSnapshot | None = None,
+    context_extra: JsonObject | None = None,
 ) -> JsonObject:
     directory = Path(__file__).resolve().parents[2] / "shared/scripts"
     path = directory / (name + ".lua")
@@ -87,7 +88,7 @@ def run_strategy(
         else BridgeClient(backend.root, backend.name, backend.instance).snapshot()
     )
     scene = scene_context(backend.root, state)
-    report = run_source(backend, compile_strategy(source, strategy_options, scene), seconds)
+    report = run_source(backend, compile_strategy(source, strategy_options, scene, context_extra), seconds)
     return {**report, "strategy": name, "script_file": str(path)}
 
 
