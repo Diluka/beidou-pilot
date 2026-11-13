@@ -320,8 +320,9 @@ class LuaStrategyContract(unittest.TestCase):
 
         with patch("beidou_pilot.control_scripts.run_source") as unpublished:
             with self.assertRaises(ClientError) as raised:
-                run_strategy(backend, "travel/move_to", {"x": 10, "not_declared": True}, 21,
-                             context_state=self.files.state)
+                run_strategy(
+                    backend, "travel/move_to", {"x": 10, "not_declared": True}, 21, context_state=self.files.state
+                )
         self.assertEqual("invalid_strategy_option", raised.exception.code)
         unpublished.assert_not_called()
 
