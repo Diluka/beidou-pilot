@@ -1,7 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#ifdef _WIN32
-#include "stdafx.h"
-#endif
 #include "NativeMotion.h"
 #include "NativeObservation.h"
 

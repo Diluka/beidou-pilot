@@ -59,3 +59,5 @@ class GuiMotionContract(unittest.TestCase):
             for tag, source in (("ClCompile", "NativeMotion.cpp"), ("ClInclude", "NativeMotion.h")):
                 entries = project.findall(f".//ms:{tag}[@Include='{source}']", namespace)
                 self.assertEqual(len(entries), 1, f"{filename} includes {source} once")
+                if filename == "ezorsia.vcxproj" and source == "NativeMotion.cpp":
+                    self.assertEqual(entries[0].find("ms:PrecompiledHeader", namespace).text, "NotUsing")
