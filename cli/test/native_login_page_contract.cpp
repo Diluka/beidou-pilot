@@ -43,40 +43,50 @@ int main() {
     auto read32 = [&](std::uint32_t at) { return memory.at(at); };
     auto read8 = [&](std::uint32_t at) { return static_cast<std::uint8_t>(memory.at(at)); };
     std::array<std::uint32_t, 8> values{};
+    std::uint8_t selector = 0;
+    std::uint32_t job = 0;
+    memory[stage + 0x214] = 42;
     using NativeObservation::RawAppearanceSnapshot;
-    assert(RawAppearanceSnapshot(window, stage, read32, read8, values));
-    assert(values[0] == 100 && values[7] == 107);
+    assert(RawAppearanceSnapshot(window, stage, read32, read8, values, selector, job));
+    assert(values[0] == 100 && values[7] == 107 && job == 42);
     for (std::uint32_t i = 0; i < 8; ++i) memory[stage + 0x268 + 4 * i] = 0x30000 + i * 0x100;
     memory[stage + 0x234] = 1;
-    assert(RawAppearanceSnapshot(window, stage, read32, read8, values));
-    assert(values[0] == 100 && values[7] == 107);
+    assert(RawAppearanceSnapshot(window, stage, read32, read8, values, selector, job));
+    assert(values[0] == 100 && values[7] == 107 && job == 42);
+    assert(selector == 1);
+    int jobReads = 0;
+    auto changingJob = [&](std::uint32_t at) {
+        auto value = memory.at(at);
+        return at == stage + 0x214 && ++jobReads == 2 ? value + 1 : value;
+    };
+    assert(!RawAppearanceSnapshot(window, stage, changingJob, read8, values, selector, job));
     memory[stage + 0x234] = 2;
-    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values));
+    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values, selector, job));
     memory[stage + 0x234] = 0;
     memory[window + 0x6C] = stage + 4;
-    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values));
+    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values, selector, job));
     memory[window + 0x6C] = stage;
     memory[stage + 0x170] = 1;
-    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values));
+    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values, selector, job));
     memory[stage + 0x170] = 0;
     memory[0x30000 - 4] = 0;
-    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values));
+    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values, selector, job));
     memory[0x30000 - 4] = 2;
     int reads = 0;
     auto changing = [&](std::uint32_t at) {
         auto value = memory.at(at);
         return at == 0x30000 && ++reads == 2 ? value + 1 : value;
     };
-    assert(!RawAppearanceSnapshot(window, stage, changing, read8, values));
-    assert(!RawAppearanceSnapshot(window, UINT32_MAX, read32, read8, values));
-    assert(!RawAppearanceSnapshot(UINT32_MAX - 0x6E, stage, read32, read8, values));
+    assert(!RawAppearanceSnapshot(window, stage, changing, read8, values, selector, job));
+    assert(!RawAppearanceSnapshot(window, UINT32_MAX, read32, read8, values, selector, job));
+    assert(!RawAppearanceSnapshot(UINT32_MAX - 0x6E, stage, read32, read8, values, selector, job));
     memory[stage + 0x244] = UINT32_MAX - 2;
-    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values));
+    assert(!RawAppearanceSnapshot(window, stage, read32, read8, values, selector, job));
     memory[stage + 0x244] = 0x30000;
     memory.erase(0x30000 - 4);
     bool failed = false;
     try {
-        RawAppearanceSnapshot(window, stage, read32, read8, values);
+        RawAppearanceSnapshot(window, stage, read32, read8, values, selector, job);
     } catch (const std::out_of_range&) {
         failed = true;
     }
@@ -209,4 +219,64 @@ int main() {
     memory[manager + 0x88] = 0;
     assert(!LoginEditFocus(stage, window, read32));
     assert(!LoginEditFocus(stage, UINT32_MAX - 0xD6, read32));
+
+    memory[stage + 0x168] = 4;
+    memory[0x00BEDA44] = window;
+    memory[window] = 0x00AF7564;
+    memory[window + 4] = 0x00AF7518;
+    memory[window + 8] = 0x00AF7514;
+    memory[window + 0x24] = 201;
+    memory[window + 0x28] = 224;
+    memory[window + 0x6C] = stage;
+    const std::uint32_t edit = 0xA0000, text = 0xB0004;
+    memory[window + 0x84] = edit;
+    memory[edit] = 0x00AF2BA8;
+    memory[edit + 4] = 0x00AF2B5C;
+    memory[edit + 8] = 0x00AF2B58;
+    memory[edit + 0x14] = 1002;
+    memory[edit + 0x24] = window;
+    memory[edit + 0x34] = text;
+    memory[text - 4] = 2;
+    memory[text] = 'A';
+    memory[text + 1] = 'b';
+    memory[text + 2] = 0;
+    std::string name;
+    using NativeObservation::CreationNameCandidate;
+    assert(CreationNameCandidate(stage, window, read32, read8, name) && name == "Ab");
+    memory[text + 1] = 0x80;
+    assert(!CreationNameCandidate(stage, window, read32, read8, name));
+    memory[text + 1] = 'b';
+    memory[text + 2] = 1;
+    assert(!CreationNameCandidate(stage, window, read32, read8, name));
+    memory[text + 2] = 0;
+    memory[edit + 0x24] = 0;
+    assert(!CreationNameCandidate(stage, window, read32, read8, name));
+    memory[edit + 0x24] = window;
+    memory[text - 4] = 256;
+    assert(!CreationNameCandidate(stage, window, read32, read8, name));
+    memory[text - 4] = 0;
+    assert(!CreationNameCandidate(stage, window, read32, read8, name));
+    memory[edit + 0x34] = UINT32_MAX;
+    memory[UINT32_MAX - 4] = 2;
+    assert(!CreationNameCandidate(stage, window, read32, read8, name));
+    memory[edit + 0x34] = text;
+    memory[text - 4] = 2;
+    int charReads = 0;
+    auto changingName = [&](std::uint32_t at) {
+        auto value = read8(at);
+        return static_cast<std::uint8_t>(at == text && ++charReads == 2 ? 'C' : value);
+    };
+    assert(!CreationNameCandidate(stage, window, read32, changingName, name));
+    int stageReads = 0;
+    auto changingStage = [&](std::uint32_t at) {
+        auto value = read32(at);
+        return at == stage && ++stageReads == 3 ? 0u : value;
+    };
+    assert(!CreationNameCandidate(stage, window, changingStage, read8, name));
+    int editReads = 0;
+    auto changingEdit = [&](std::uint32_t at) {
+        auto value = read32(at);
+        return at == edit + 4 && ++editReads == 3 ? 0u : value;
+    };
+    assert(!CreationNameCandidate(stage, window, changingEdit, read8, name));
 }

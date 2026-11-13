@@ -624,14 +624,37 @@ Value StageWindows(std::uintptr_t loginStage) {
                 // The optional field remains unknown; preserve the rest of the window snapshot.
             }
         }
-        Value rawAppearance;
+        Value creationName;
+        if (loginStage != 0 && tables == std::array<Address, 3>{0x00AF7564, 0x00AF7518, 0x00AF7514} &&
+            At<int>(header, 0x24) == 201 && At<int>(header, 0x28) == 224) {
+            try {
+                bool knownBefore = false, knownAfter = false;
+                std::string text;
+                if (WindowActive(address, knownBefore) && knownBefore &&
+                    CreationNameCandidate(static_cast<Address>(loginStage), address,
+                        [](Address at) { return Read<std::uint32_t>(at); },
+                        [](Address at) { return Read<std::uint8_t>(at); }, text) &&
+                    WindowActive(address, knownAfter) && knownAfter)
+                    creationName = text;
+            } catch (const ReadError&) {
+                // Leave the name unknown on any failed optional read.
+            }
+        }
+        Value rawAppearance, rawAppearanceSelector, rawJob;
         if (loginStage != 0 && tables == std::array<Address, 3>{0x00AF777C, 0x00AF7730, 0x00AF772C} &&
             At<int>(header, 0x24) == 225 && At<int>(header, 0x28) == 377) {
             try {
                 std::array<std::uint32_t, 8> values{};
-                if (RawAppearanceSnapshot(address, static_cast<Address>(loginStage),
-                    [](Address at) { return Read<std::uint32_t>(at); },
-                    [](Address at) { return Read<std::uint8_t>(at); }, values)) {
+                std::uint8_t selector = 0;
+                std::uint32_t job = 0;
+                bool knownBefore = false, knownAfter = false;
+                if (WindowActive(address, knownBefore) && knownBefore &&
+                    RawAppearanceSnapshot(address, static_cast<Address>(loginStage),
+                        [](Address at) { return Read<std::uint32_t>(at); },
+                        [](Address at) { return Read<std::uint8_t>(at); }, values, selector, job) &&
+                    WindowActive(address, knownAfter) && knownAfter) {
+                    rawAppearanceSelector = selector;
+                    rawJob = job;
                     rawAppearance = Value::Array();
                     for (const auto value : values) rawAppearance.Add(value);
                 }
@@ -642,8 +665,10 @@ Value StageWindows(std::uintptr_t loginStage) {
         windows.Add(Value::Object({{"address", Hex(address)}, {"vtables", Tables(tables)},
             {"type_name", name == nullptr ? Value() : Value(name)},
             {"login_page_candidate", candidate == nullptr ? Value() : Value(candidate)},
+            {"creation_name_candidate", creationName},
             {"login_edit_focus", loginEditFocus}, {"account_empty", accountEmpty}, {"password_empty", passwordEmpty},
             {"raw_gender_selection", rawGenderSelection}, {"raw_appearance_candidates", rawAppearance},
+            {"raw_appearance_selector", rawAppearanceSelector}, {"raw_job_candidate", rawJob},
             {"layer_rect", Rectangle(layout.layer)}, {"game_rect", Rectangle(stageGame)},
             {"window_position_source", stageGame.known ? Value("stable Gr2D layer bounds and camera") : Value()},
             {"width", At<int>(header, 0x24)}, {"height", At<int>(header, 0x28)},

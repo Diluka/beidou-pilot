@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 
 namespace NativeObservation {
 // Each signature is based on one GUI sample; it is a candidate, not proof
@@ -97,6 +98,51 @@ bool LoginEditEmpty(std::uint32_t stage, std::uint32_t window, Read32 read32, bo
     return true;
 }
 
+// ASCII only: never inspect any edit other than the verified creation-name control.
+template <class Read32, class Read8>
+bool CreationNameCandidate(std::uint32_t stage, std::uint32_t window, Read32 read32, Read8 read8, std::string& result) {
+    if (!stage || stage > UINT32_MAX - 0x173 || !window || window > UINT32_MAX - 0x87) return false;
+    std::uint32_t savedEdit = 0, savedPointer = 0, savedLength = 0;
+    std::string saved;
+    for (int sample = 0; sample < 2; ++sample) {
+        if (read32(0x00BEDED4) != stage || read32(stage) != 0x00AF6B24 ||
+            read32(stage + 0x168) != 4 || read32(stage + 0x16C) != 0 || read32(stage + 0x170) != 0 ||
+            read32(0x00BEDA44) != window || read32(window) != 0x00AF7564 ||
+            read32(window + 4) != 0x00AF7518 || read32(window + 8) != 0x00AF7514 ||
+            read32(window + 0x24) != 201 || read32(window + 0x28) != 224 || read32(window + 0x6C) != stage)
+            return false;
+        const auto edit = read32(window + 0x84);
+        if (!edit || edit > UINT32_MAX - 0x37 || read32(edit) != 0x00AF2BA8 ||
+            read32(edit + 4) != 0x00AF2B5C || read32(edit + 8) != 0x00AF2B58 ||
+            read32(edit + 0x14) != 1002 || read32(edit + 0x24) != window) return false;
+        const auto pointer = read32(edit + 0x34);
+        if (pointer < 4) return false;
+        const auto length = read32(pointer - 4);
+        if (length == 0 || length > 255 || pointer > UINT32_MAX - length) return false;
+        std::string text;
+        for (std::uint32_t i = 0; i < length; ++i) {
+            const auto c = read8(pointer + i);
+            if (c < 0x20 || c > 0x7E) return false;
+            text.push_back(static_cast<char>(c));
+        }
+        if (read8(pointer + length) != 0) return false;
+        if (sample && (edit != savedEdit || pointer != savedPointer || length != savedLength || text != saved)) return false;
+        savedEdit = edit; savedPointer = pointer; savedLength = length; saved = text;
+    }
+    if (read32(0x00BEDED4) != stage || read32(stage) != 0x00AF6B24 || read32(0x00BEDA44) != window ||
+        read32(window) != 0x00AF7564 || read32(window + 4) != 0x00AF7518 ||
+        read32(window + 8) != 0x00AF7514 || read32(window + 0x24) != 201 ||
+        read32(window + 0x28) != 224 || read32(window + 0x6C) != stage ||
+        read32(window + 0x84) != savedEdit || read32(savedEdit) != 0x00AF2BA8 ||
+        read32(savedEdit + 4) != 0x00AF2B5C || read32(savedEdit + 8) != 0x00AF2B58 ||
+        read32(savedEdit + 0x14) != 1002 || read32(savedEdit + 0x24) != window ||
+        read32(savedEdit + 0x34) != savedPointer ||
+        read32(savedPointer - 4) != savedLength || read32(stage + 0x168) != 4 ||
+        read32(stage + 0x16C) != 0 || read32(stage + 0x170) != 0) return false;
+    result = saved;
+    return true;
+}
+
 // World panel values are raw indices, not world identifiers.
 template <class Read32>
 bool RawWorldSelection(std::uint32_t stage, Read32 read32, std::uint32_t& count, std::uint32_t& index) {
@@ -156,10 +202,11 @@ bool RawWorldId(std::uint32_t stage, Read32 read32, Read16 read16, std::uint16_t
 // controls allocation or traversal. The caller isolates memory-read failures.
 template <class Read32, class Read8>
 bool RawAppearanceSnapshot(std::uint32_t window, std::uint32_t stage, Read32 read32, Read8 read8,
-    std::array<std::uint32_t, 8>& values) {
+    std::array<std::uint32_t, 8>& values, std::uint8_t& selector, std::uint32_t& job) {
     if (window > UINT32_MAX - 0x6F || stage > UINT32_MAX - 0x288) return false;
     struct Sample {
         std::uint8_t selector;
+        std::uint32_t job;
         std::array<std::uint32_t, 8> pointers, lengths, values;
     } samples[2]{};
     for (auto& sample : samples) {
@@ -169,6 +216,7 @@ bool RawAppearanceSnapshot(std::uint32_t window, std::uint32_t stage, Read32 rea
             read32(window + 0x28) != 377 || read32(window + 0x6C) != stage ||
             read32(stage + 0x168) != 4 || read32(stage + 0x16C) != 0 ||
             read32(stage + 0x170) != 0) return false;
+        sample.job = read32(stage + 0x214);
         sample.selector = read8(stage + 0x234);
         if (sample.selector > 1) return false;
         const auto base = stage + (sample.selector == 0 ? 0x244 : 0x268);
@@ -187,10 +235,13 @@ bool RawAppearanceSnapshot(std::uint32_t window, std::uint32_t stage, Read32 rea
         read32(window + 8) != 0x00AF772C || read32(window + 0x24) != 225 ||
         read32(window + 0x28) != 377 || read32(window + 0x6C) != stage ||
         read32(stage + 0x168) != 4 || read32(stage + 0x16C) != 0 ||
-        read32(stage + 0x170) != 0 || read8(stage + 0x234) != samples[1].selector) return false;
-    if (samples[0].selector != samples[1].selector || samples[0].pointers != samples[1].pointers ||
+        read32(stage + 0x170) != 0 || read8(stage + 0x234) != samples[1].selector ||
+        read32(stage + 0x214) != samples[1].job) return false;
+    if (samples[0].job != samples[1].job || samples[0].selector != samples[1].selector || samples[0].pointers != samples[1].pointers ||
         samples[0].lengths != samples[1].lengths || samples[0].values != samples[1].values) return false;
     values = samples[0].values;
+    selector = samples[0].selector;
+    job = samples[0].job;
     return true;
 }
 
