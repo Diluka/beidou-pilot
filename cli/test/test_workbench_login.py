@@ -59,23 +59,24 @@ class WorkbenchLoginContract(unittest.TestCase):
         calls = json.loads(self.state_path.read_text())["calls"]
         self.assertEqual(1, sum(call[0] == "exec" for call in calls))
 
-    def test_running_gui_login_reports_unsupported_without_exec(self):
+    def test_running_gui_login_only_observes_and_rejects_replayed_options(self):
         self.running_client()
         state = json.loads(self.state_path.read_text())
         state["container"]["Config"]["Labels"]["beidou.backend"] = "beidou"
         self.state_path.write_text(json.dumps(state))
         result = self.invoke("login")
-        self.assertEqual(2, result.returncode)
-        self.assertEqual("unsupported_capability", json.loads(result.stdout)["error"]["code"])
-        self.assertFalse(any(call[0] == "exec" for call in json.loads(self.state_path.read_text())["calls"]))
-
-    def test_gui_login_rejects_unsupported_options_before_start(self):
-        (self.workbench / "workbench.json").write_text(json.dumps({"backend": "beidou"}))
-        result = self.invoke("login", "--gender", "female")
-        self.assertEqual(2, result.returncode)
-        self.assertEqual("unsupported_capability", json.loads(result.stdout)["error"]["code"])
-        self.assertFalse(any(call[0] in ("run", "exec", "build", "compose")
-                             for call in json.loads(self.state_path.read_text())["calls"]))
+        self.assertEqual(0, result.returncode, result.stderr)
+        calls = json.loads(self.state_path.read_text())["calls"]
+        executions = [call for call in calls if call[0] == "exec"]
+        self.assertEqual(1, len(executions))
+        self.assertEqual(["beidou-pilot", "--json", "login", "--timeout", "90"],
+                         executions[0][executions[0].index("beidou-pilot"):])
+        for option in (("--accept-terms",), ("--gender", "female")):
+            result = self.invoke("login", *option)
+            self.assertEqual(2, result.returncode)
+            self.assertEqual("login_options_require_start", json.loads(result.stdout)["error"]["code"])
+        calls = json.loads(self.state_path.read_text())["calls"]
+        self.assertEqual(1, sum(call[0] == "exec" for call in calls))
 
     def test_running_open_preserves_original_forwarding(self):
         self.running_client()

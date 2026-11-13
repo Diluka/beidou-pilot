@@ -91,6 +91,9 @@ class WorkbenchLoginStartContract(unittest.TestCase):
 
     def prepare_gui(self, cid=False):
         self.prepare(cid=cid)
+        # 仅夹具中替换宿主设备边界；不影响生产脚本的设备检查。
+        self.entry.write_text(self.entry.read_text().replace('[ -c /dev/dri/renderD128 ]', 'true')
+                              .replace('$(stat -c %g /dev/dri/renderD128)', '1000'))
         gui = self.directory / 'gui'
         gui.mkdir()
         resources = self.repository / 'private/workbenches/resources.json'
@@ -142,25 +145,47 @@ class WorkbenchLoginStartContract(unittest.TestCase):
         execution = next(c for c in state['calls'] if c[0] == 'exec')
         self.assertIn('open', execution)
 
-    @unittest.skipUnless(Path('/dev/dri/renderD128').is_char_device(), '宿主缺少 GUI 渲染设备，无法通过入口的设备检查')
     def test_gui_account_start_and_repeat_preserve_instance(self):
         self.prepare_gui()
-        first = self.invoke('login')
-        self.assertNotEqual(0, first.returncode)
-        self.assertEqual('unsupported_capability', json.loads(first.stdout)['error']['code'])
+        first = self.invoke('login', '--accept-terms', '--gender', 'female')
+        self.assertEqual(0, first.returncode, first.stderr + first.stdout)
         state = json.loads(self.state_path.read_text())
         self.assertEqual('account', state['compose_env']['MAPLE_LOGIN_MODE'])
         self.assertEqual('', state['compose_env']['CHARACTER_ID'])
         self.assertEqual('client', json.loads((self.workbench / 'runtime/default/host.json').read_text())['container_id'])
-        self.assertFalse(any(c[0] == 'exec' for c in state['calls']))
+        execution = [c for c in state['calls'] if c[0] == 'exec']
+        self.assertEqual(1, len(execution))
+        self.assertEqual(['beidou-pilot', '--json', 'login', '--timeout', '37', '--accept-terms', '--gender', 'female'], execution[0][execution[0].index('beidou-pilot'):])
+        self.assertNotIn('fixture-secret-password', json.dumps(state['calls']) + first.stdout + first.stderr)
         count = len(state['calls'])
         repeat = self.invoke('login')
-        self.assertEqual('unsupported_capability', json.loads(repeat.stdout)['error']['code'])
+        self.assertEqual(0, repeat.returncode, repeat.stderr + repeat.stdout)
         after = json.loads(self.state_path.read_text())
         self.assertEqual(state['client'], after['client'])
-        self.assertFalse(any(c[0] in ('run', 'compose', 'exec', 'rm', 'stop') for c in after['calls'][count:]))
+        calls = after['calls'][count:]
+        self.assertFalse(any(c[0] in ('run', 'compose', 'rm', 'stop') for c in calls))
+        execution = [c for c in calls if c[0] == 'exec']
+        self.assertEqual(1, len(execution))
+        self.assertEqual(['beidou-pilot', '--json', 'login', '--timeout', '37'], execution[0][execution[0].index('beidou-pilot'):])
 
-    @unittest.skipUnless(Path('/dev/dri/renderD128').is_char_device(), '宿主缺少 GUI 渲染设备，无法通过入口的设备检查')
+    def test_gui_start_without_options_only_observes(self):
+        self.prepare_gui()
+        result = self.invoke('login')
+        self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+        calls = json.loads(self.state_path.read_text())['calls']
+        execution = [c for c in calls if c[0] == 'exec']
+        self.assertEqual(1, len(execution))
+        self.assertEqual(['beidou-pilot', '--json', 'login', '--timeout', '37'], execution[0][execution[0].index('beidou-pilot'):])
+
+    def test_gui_start_gender_only_does_not_infer_consent(self):
+        self.prepare_gui()
+        result = self.invoke('login', '--gender', 'male')
+        self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+        calls = json.loads(self.state_path.read_text())['calls']
+        execution = [c for c in calls if c[0] == 'exec']
+        self.assertEqual(1, len(execution))
+        self.assertEqual(['beidou-pilot', '--json', 'login', '--timeout', '37', '--gender', 'male'], execution[0][execution[0].index('beidou-pilot'):])
+
     def test_gui_open_passes_character_identity_to_compose(self):
         self.prepare_gui(cid=True)
         result = self.invoke('open')

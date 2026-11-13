@@ -10,7 +10,7 @@ usage() {
   build            从 main 或 workbench.json.ref 构建/复用镜像
   plan             只读核对服务器，不构建或启动
   open             创建实例并确认入图；已有实例沿用原版本
-  login            无 CID 账号登录；GUI 仅启动诊断，须先认领并核验账号在线状态
+  login            无 CID 账号登录；须先认领并核验账号在线状态
   character create 显式提交完整建角参数至运行中的实例
   status           查询本工作台，省略命令时默认执行
   close            正常关闭并核对所属容器退出
@@ -347,9 +347,6 @@ source_ref=$(jq -r '.ref // "main"' <<<"$settings")
 timeout=$(jq -r '.timeout // 90' <<<"$settings")
 if [ "$command" = login ] && "$running"; then
     [ "$accept_terms" = 0 ] && [ -z "$female" ] || fail login_options_require_start '登录选项仅用于新启动；运行中实例不会重新应用。'
-    if [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = beidou ]; then
-        fail unsupported_capability 'GUI 容器保留现场；账号自动登录和建角尚不支持，未确认登录。'
-    fi
     wait_runtime
     exec_cli login --timeout "$timeout"
     exit $?
@@ -366,9 +363,6 @@ if [ -n "$model_proxy" ]; then
 fi
 if [ -n "$bridge" ]; then
     case "$bridge" in /*) ;; *) bridge="$workbench/$bridge" ;; esac
-fi
-if [ "$command" = login ] && [ "$backend" = beidou ]; then
-    [ "$accept_terms" = 0 ] && [ -z "$female" ] || fail unsupported_capability 'GUI 尚不支持自动处理同意或性别选项，未启动容器。'
 fi
 if [ "$command" = resources-check ]; then backend=headless; harness=false; fi
 account="$workbench/account.json"
@@ -597,9 +591,6 @@ if "$running"; then
     wait_runtime
     if [ "$command" = login ]; then
         [ "$accept_terms" = 0 ] && [ -z "$female" ] || fail login_options_require_start '登录选项仅用于新启动；运行中实例不会重新应用。'
-        if [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = beidou ]; then
-            fail unsupported_capability 'GUI 容器保留现场；账号自动登录和建角尚不支持，未确认登录。'
-        fi
         exec_cli login --timeout "$timeout"
     else exec_open; fi
     exit $?
@@ -695,7 +686,13 @@ flock -u 7
 flock -u 8
 locate
 wait_runtime
-if [ "$command" = login ] && [ "$backend" = beidou ]; then
-    fail unsupported_capability 'GUI 容器已启动并保留现场；账号自动登录和建角尚不支持，未确认登录。'
-fi
-if [ "$command" = login ]; then exec_cli login --timeout "$timeout"; else exec_open; fi
+if [ "$command" = login ]; then
+    if [ "$backend" = beidou ]; then
+        login_args=(login --timeout "$timeout")
+        if [ "$accept_terms" = 1 ]; then login_args+=(--accept-terms); fi
+        if [ -n "$female" ]; then
+            if [ "$female" = 1 ]; then login_args+=(--gender female); else login_args+=(--gender male); fi
+        fi
+        exec_cli "${login_args[@]}"
+    else exec_cli login --timeout "$timeout"; fi
+else exec_open; fi
