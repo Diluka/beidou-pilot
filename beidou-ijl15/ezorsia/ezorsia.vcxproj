@@ -188,6 +188,7 @@
     <ClInclude Include="NativeTickInput.h" />
     <ClInclude Include="NativeItemUse.h" />
     <ClInclude Include="LoginAction.h" />
+    <ClInclude Include="LoginActionProtocol.h" />
     <ClInclude Include="NativeObservation.h" />
     <ClInclude Include="..\..\shared\lua-runtime\Runtime.h" />
     <ClInclude Include="..\..\shared\lua-runtime\TickRuntime.h" />

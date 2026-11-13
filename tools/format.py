@@ -65,6 +65,7 @@ SOURCES = {
         "beidou-ijl15/ezorsia/AgentBridge.cpp",
         "beidou-ijl15/ezorsia/LoginAction.cpp",
         "beidou-ijl15/ezorsia/LoginAction.h",
+        "beidou-ijl15/ezorsia/LoginActionProtocol.h",
         "beidou-ijl15/ezorsia/AgentBridge.h",
         "beidou-ijl15/ezorsia/NativeKeyInput.h",
         "beidou-ijl15/ezorsia/NativeKeyUnion.h",
