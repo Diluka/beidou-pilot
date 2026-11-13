@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from .errors import ClientError
+from .strategies import split_script_header
 
 
 def with_library(name: str, path: Path | None, code: str | None) -> str:
@@ -27,4 +28,16 @@ def with_library(name: str, path: Path | None, code: str | None) -> str:
         raise ClientError(
             "strategy_script_unavailable", "无法装载公共 Lua 函数库，未发布执行请求。", {"reason": str(error)}
         ) from error
-    return "local travel\ndo\nlocal options\n" + common + "\n" + route + "\nend\n" + example + "\n" + str(source)
+    header, body = split_script_header(str(source))
+    return (
+        header
+        + ("\n" if header and not header.endswith("\n") else "")
+        + "local travel\ndo\nlocal options\n"
+        + common
+        + "\n"
+        + route
+        + "\nend\n"
+        + example
+        + "\n"
+        + body
+    )

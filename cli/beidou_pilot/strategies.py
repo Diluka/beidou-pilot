@@ -15,6 +15,7 @@ _ENTRY = re.compile(
     r"^\s*(?:(?:local\s+)?function\s+main\s*\(\s*context\s*\)|"
     r"(?:local\s+)?main\s*=\s*function\s*\(\s*context\s*\))\s*(?:--.*)?$"
 )
+_LONG_COMMENT = re.compile(r"--\[(=*)\[")
 _OPTION_MARKER = re.compile(r"^\s*--+\s*@option(?:\b|\[)")
 _OPTION = re.compile(r"^\s*--+\s*@option\[([^\]]+)\]\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.+?)\s*$")
 _RESERVED_FLAGS = {
@@ -51,8 +52,86 @@ class StrategyOption:
 
 
 @dataclass(frozen=True)
+class ScriptExecution:
+    mode: Literal["coroutine", "tick"] = "coroutine"
+    budget_ms: float = 100
+    overrun: Literal["abort", "skip"] = "abort"
+    abort_commit: bool = True
+
+
+@dataclass(frozen=True)
 class StrategyMetadata:
     options: tuple[StrategyOption, ...]
+    execution: ScriptExecution = ScriptExecution()
+
+    @property
+    def mode(self) -> Literal["coroutine", "tick"]:
+        return self.execution.mode
+
+
+def _script_header(source: str) -> tuple[int, list[tuple[int, str]]]:
+    """扫描真实 Lua 前导注释，长注释内部文本不作为运行元数据。"""
+    index, line_number = 0, 1
+    comments: list[tuple[int, str]] = []
+    while index < len(source):
+        if source[index].isspace():
+            line_number += source[index] == "\n"
+            index += 1
+            continue
+        if not source.startswith("--", index):
+            break
+        block = _LONG_COMMENT.match(source, index)
+        if block is not None:
+            close = source.find("]" + block[1] + "]", block.end())
+            end = len(source) if close < 0 else close + len(block[1]) + 2
+        else:
+            end = source.find("\n", index)
+            end = len(source) if end < 0 else end + 1
+            comments.append((line_number, source[index:end].rstrip("\r\n")))
+        line_number += source[index:end].count("\n")
+        index = end
+    return index, comments
+
+
+def split_script_header(source: str) -> tuple[str, str]:
+    """保留前导注释，避免源码注入遮挡原生 mode 分派。"""
+    index, _ = _script_header(source)
+    return source[:index], source[index:]
+
+
+def parse_script_execution(source: str) -> ScriptExecution:
+    """文件和直接源码共用的前导 @mode/@tick 配置边界。"""
+    _, comments = _script_header(source)
+    declared: dict[str, str] = {}
+    for line_number, line in comments:
+        if not re.match(r"^\s*--+\s*@(mode\b|tick(?:\b|\.))", line):
+            continue
+        match = re.fullmatch(r"\s*--+\s*@(mode|tick\.[A-Za-z_]+)\s+(.+?)\s*", line)
+        if match is None:
+            raise _invalid_metadata("@mode/@tick 配置须为前导注释中的单个声明值。", line_number)
+        key, raw_value = match.groups()
+        value = raw_value.partition("--")[0].strip()
+        if key not in {"mode", "tick.budget_ms", "tick.overrun", "tick.abort_commit"} or key in declared:
+            raise _invalid_metadata(f"脚本运行配置未知或重复：@{key}。", line_number)
+        declared[key] = value
+    mode = declared.get("mode", "coroutine")
+    if mode not in {"coroutine", "tick"}:
+        raise _invalid_metadata("@mode 只接受 coroutine 或 tick。")
+    if mode != "tick" and any(key.startswith("tick.") for key in declared):
+        raise _invalid_metadata("@tick 配置仅适用于显式声明 @mode tick 的脚本。")
+    budget = declared.get("tick.budget_ms", "100")
+    if not re.fullmatch(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", budget):
+        raise _invalid_metadata("@tick.budget_ms 须为正有限十进制数。")
+    budget_ms = float(budget)
+    if not math.isfinite(budget_ms) or budget_ms <= 0:
+        raise _invalid_metadata("@tick.budget_ms 须为正有限十进制数。")
+    overrun = declared.get("tick.overrun", "abort")
+    abort_commit = declared.get("tick.abort_commit", "true")
+    if overrun not in {"abort", "skip"}:
+        raise _invalid_metadata("@tick.overrun 只接受 abort 或 skip。")
+    if abort_commit not in {"true", "false"}:
+        raise _invalid_metadata("@tick.abort_commit 只接受 true 或 false。")
+    return ScriptExecution(mode, budget_ms, overrun, abort_commit == "true")
 
 
 def _invalid_metadata(message: str, line: int | None = None) -> ClientError:
@@ -152,8 +231,9 @@ def _parse_option(attributes: str, name: str, description: str, line: int) -> St
 
 def parse_strategy(source: str) -> StrategyMetadata | None:
     """仅接受文件级 main(context) 声明；普通 Lua 文件继续按原始 chunk 执行。"""
+    execution = parse_script_execution(source)
     lines = source.splitlines()
-    marked = any(_OPTION_MARKER.match(line) for line in lines)
+    marked = execution.mode == "tick" or any(_OPTION_MARKER.match(line) for line in lines)
     entry_lines = [line_number for line_number, line in enumerate(lines, 1) if _ENTRY.fullmatch(line)]
     has_entry = bool(entry_lines)
     if not marked and not has_entry:
@@ -188,7 +268,7 @@ def parse_strategy(source: str) -> StrategyMetadata | None:
             raise _invalid_metadata("boolean 参数的 --no- 标记与其他参数冲突。", line_number)
         flags.add(flag)
         options.append(option)
-    return StrategyMetadata(tuple(options))
+    return StrategyMetadata(tuple(options), execution)
 
 
 def parse_options(metadata: StrategyMetadata, arguments: list[str]) -> JsonObject:
@@ -286,6 +366,16 @@ def describe_strategy(path: Path, metadata: StrategyMetadata) -> JsonObject:
     return {
         "file": str(path),
         "entry": "main(context)",
+        "mode": metadata.mode,
+        "tick": (
+            {
+                "budget_ms": metadata.execution.budget_ms,
+                "overrun": metadata.execution.overrun,
+                "abort_commit": metadata.execution.abort_commit,
+            }
+            if metadata.mode == "tick"
+            else None
+        ),
         "usage": usage,
         "options": options,
     }
@@ -328,8 +418,22 @@ def _lua_literal(value: JsonValue) -> str:
     )
 
 
-def compile_strategy(source: str, options: JsonObject, scene: JsonObject) -> str:
-    context = _lua_literal({"options": options, "scene": scene})
+def compile_strategy(source: str, options: JsonObject, scene: JsonObject, extra: JsonObject | None = None) -> str:
+    values: JsonObject = {"options": options, "scene": scene}
+    if extra:
+        values.update(extra)
+    context = _lua_literal(values)
+    execution = parse_script_execution(source)
+    if execution.mode == "tick":
+        header, body = split_script_header(source)
+        return (
+            header
+            + ("\n" if header and not header.endswith("\n") else "")
+            + f"local __beidou_context = {context}\ndo\n"
+            + body
+            + '\nif type(main) ~= "function" then error("strategy_entry_missing") end\n'
+            + "return {main=main,context=__beidou_context}\nend\n"
+        )
     return (
         f"local __beidou_context = {context}\n"
         "local __beidou_state = game.state()\n"
@@ -346,25 +450,36 @@ def compile_strategy(source: str, options: JsonObject, scene: JsonObject) -> str
     )
 
 
+# 内置策略按需拼接的辅助文件；顺序即依赖顺序，_move 依赖 _terrain 的图与 _common 的动作检查。
+_TRAVEL_COMMON = {"move_to.lua", "climb_to.lua", "enter_portal.lua", "walk_to.lua", "navigate.lua"}
+_TRAVEL_TERRAIN = {"walk_to.lua", "navigate.lua"}
+_TRAVEL_MOVE = {"walk_to.lua", "navigate.lua"}
+
+
 def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata | None]:
     shared = Path(__file__).resolve().parents[2] / "shared/scripts"
     directory = shared / "travel"
     resolved = path.resolve()
     try:
         source = path.read_bytes().decode("utf-8")
-        if resolved.parent == directory.resolve() and resolved.name in {
-            "move_to.lua",
-            "climb_to.lua",
-            "enter_portal.lua",
-            "walk_to.lua",
-        }:
-            source = (directory / "_common.lua").read_text(encoding="utf-8") + "\n" + source
-        if (
-            resolved.parent == directory.resolve()
-            and resolved.name == "walk_to.lua"
-            or (resolved.parent == (shared / "combat").resolve() and resolved.name == "hunt.lua")
-        ):
-            source = (directory / "_terrain.lua").read_text(encoding="utf-8") + "\n" + source
+        helpers: list[str] = []
+        if resolved.parent == directory.resolve():
+            if resolved.name in _TRAVEL_COMMON:
+                helpers.append("_common.lua")
+            if resolved.name in _TRAVEL_TERRAIN:
+                helpers.append("_terrain.lua")
+            if resolved.name in _TRAVEL_MOVE:
+                helpers.append("_move.lua")
+        elif resolved.parent == (shared / "combat").resolve() and resolved.name == "hunt.lua":
+            helpers.append("_terrain.lua")
+        if helpers:
+            header, body = split_script_header(source)
+            source = (
+                header
+                + ("\n" if header and not header.endswith("\n") else "")
+                + "".join((directory / helper).read_text(encoding="utf-8") + "\n" for helper in helpers)
+                + body
+            )
     except (OSError, UnicodeError) as error:
         raise ClientError(
             "invalid_script_file",

@@ -1,6 +1,6 @@
 # Lua 脚本 API
 
-本文是编写脚本的优先参考，描述当前共享运行时实际提供的 `game` 接口。两端使用同一套字段、函数签名和结果模型，以 headless 的脚本契约为基准；可选能力与原生执行前提分别说明。
+本文是编写脚本的优先参考。客户端提供 `coroutine` 与 `tick` **两套独立运行环境**：各自拥有 Lua 状态、调度、动作控制和输入生命周期，只共享宿主必要的原生 I/O。文件级前导注释 `-- @mode tick` 选择新环境；省略或声明 `-- @mode coroutine` 使用冻结维护的旧环境。两端各环境使用相同公开契约，能力缺口和未知事实按后端如实保留；不存在把旧 API 转成 tick 的兼容层。
 
 脚本组织、控制权与传输机制见 [CONTROL.md](CONTROL.md)，复合策略维护约定见 [shared/scripts/AGENTS.md](../shared/scripts/AGENTS.md)。修改公开 API 时同步维护本文；记忆或策略目录只引用该入口。
 
@@ -19,14 +19,87 @@ private/workbenches/workbench /external/workbench script run /work/scripts/contr
 `script run` 同步等结果，`script start` 等待原生受理。CLI 中断、等待超时或观察失败只结束等待，已发布的任务继续运行；先读 `script status` 核对当前会话，再决定下一步。需要取消时明确 `script cancel --session SCRIPT_ID` 并核对终态与放键，客户端关闭另用 `close`。
 
 - 脚本源必须是 UTF-8 纯文本，原生装载上限为1 MiB，不接受预编译字节码。自定义 `script run` 默认30秒，`--seconds` 可设为 `0.001..4294967.295` 秒；`--continuous` 表示无总期限。项目复合策略包装的单独预算只作用于该策略。
-- 文件与 `--code` 二选一。直接源码须按调用方 shell 的引号规则传为一个参数，CLI 保留传入的引号、中文和换行；文件每次读取当前内容。两者使用相同 `game` API 与执行链，可在现有实例中提交生效。直接源码结果的 `script_file` 为 `null`。
-- 每次脚本启动创建独立 Lua 状态，主任务名为 `main`。多个任务共享这次 Lua 状态；主任务返回后，已创建任务继续执行，全部任务结束且输入释放确认后脚本才结束。原生执行期限到达、脚本错误或明确取消会停止本次会话全部任务。脚本结束不会关闭客户端容器。
-- 自定义脚本自行声明 `local options = {...}`；项目的复合能力由 CLI 装载器在脚本前注入 `local options`，这类文件配合对应参数装载使用。
-- `game.state()` 返回轻量状态采样，`game.observe(domain)` 按需读取一个原生领域。两者都返回独立 Lua 表拷贝，后续状态变化不修改旧表。执行动作或等待后重新读取，连续读取可能得到同一 `seq`。
+- 文件与 `--code` 二选一。直接源码须按调用方 shell 的引号规则传为一个参数，CLI 保留传入的引号、中文和换行；文件每次读取当前内容。两者按前导 `@mode` 进入对应引擎，可在现有实例中提交生效。直接源码结果的 `script_file` 为 `null`。
+- 每次脚本启动创建独立 Lua 状态。以下任务说明针对 `coroutine`：主任务名为 `main`。多个任务共享这次 Lua 状态；主任务返回后，已创建任务继续执行，全部任务结束且输入释放确认后脚本才结束。原生执行期限到达、脚本错误或明确取消会停止本次会话全部任务。脚本结束不会关闭客户端容器。
+- 原始 coroutine chunk 自行声明 `local options = {...}`；项目的复合能力由 CLI 装载器在脚本前注入 `local options`，这类文件配合对应参数装载使用。
+- `coroutine` 的 `game.state()` 返回轻量状态采样，`game.observe(domain)` 按需读取一个原生领域。两者都返回独立 Lua 表拷贝，后续状态变化不修改旧表。执行动作或等待后重新读取，连续读取可能得到同一 `seq`。
 - 未知字段为 `nil`，在 Lua 表中等同于缺键。已知的 `false`、`0`、空表 `{}` 与未知不同；`inventory == nil` 表示未知，按未知值处理。
 - 所有 `seconds` 参数使用秒。可选参数省略或传 `nil` 时采用默认值；有效时间向上取整为毫秒，实际恢复受游戏更新、释放确认和调度影响，以真实恢复时间为准。
 
+## tick 环境
+
+### 入口、配置与装载
+
+```lua
+-- @mode tick
+-- @tick.budget_ms 100
+-- @tick.overrun abort     -- abort | skip
+-- @tick.abort_commit true -- abort 时先提交本 tick 草稿
+-- @option[type=int,default=10,min=1] ticks 观察次数
+local function main(context)
+    context.state.calls = (context.state.calls or 0) + 1
+    local world = context.game.world
+    if not world.ready then return end
+    if context.state.calls >= context.options.ticks then return "done" end
+end
+```
+
+运行元数据只读取首段可执行代码之前的前导单行注释，允许空行、普通注释与尾部 `--` 说明；Lua 长注释内部不解释元数据。`@mode` 只接受小写 `tick/coroutine`，重复、未知 mode、未知或重复的 `@tick.*`、格式错误均在发布前拒绝；`@tick.*` 必须配合显式的 `@mode tick`。预算为正有限十进制毫秒数，支持小数，不接受符号、科学计数、NaN 或无穷；`overrun` 为 `abort/skip`，`abort_commit` 为小写 `true/false`。未配置时为 **100ms / abort / true**。
+
+策略文件仍采用唯一顶层 `main(context)` 和既有 `@option` 参数规则。CLI 注入 `options/scene`，调用方已有的 `route` 等额外上下文按原规则保留。编译结果向新引擎返回 `{main=main, context=__beidou_context}`，不调用旧 `game.state()`，也不在装载阶段执行 `main`；初始 `scene` 身份由原生 tick 引擎核对。`--code` 保留原始源码、不注入策略参数，但同样读取前导 mode/config：应定义全局 `function main(context) ... end`，或显式返回含 `main/context` 的入口表。
+
+每个宿主更新完成后调用一次入口，返回后统一提交差异，供后续帧消费。GUI 使用 `ClientApplication::Update` 主循环渲染帧，无头使用 `Stage::update` 逻辑步进；不假设固定帧长或与内部逻辑 1:1。返回 `nil` 继续；`"done"` 或 `{done=true}` 停止继续调用入口，清除所属持续方向，已提交的一次性动作（包括待执行槽）经原生消费和释放确认后正常结束。显式取消或总期限仍可中断这段收尾。Lua 错误终止该会话为 `cancelled/script_error`。每次会话重启新建上下文，不恢复上次 Lua 内存。
+
+| 上下文 | 语义 |
+| --- | --- |
+| `context.tick` | 只读；`index` 为调用序号，`time/delta` 为单调时间及实际间隔（秒），`scene_generation` 为当前场景代次，`overrun` 表示上次调用超限 |
+| `context.state` | 脚本自有可写表，跨 tick 保留，不解释、不序列化、不落盘 |
+| `context.options` | 策略参数及有效默认值；直接源码未提供时为空表 |
+| `context.scene` | 装载时静态场景和身份锚点，与动态 `context.game.scene` 分开 |
+| `context.route` | 调用方已有的预计算路线；无路线不伪造 |
+| `context.game` | 只读领域入口及客户端级 `player` 状态机 |
+
+单次调用用 Lua 指令 hook 周期核对墙钟预算，包括初始化阶段的执行约束。`abort` 默认先提交已写入的确定草稿，停止继续调用入口并清除所属持续方向；已提交的一次性动作经原生消费和释放确认后，以 `cancelled/tick_overrun` 结束。收尾期间总期限或显式取消仍可立即打断；`abort_commit=false` 时丢弃当次草稿。持续方向不会在会话结束后延续，已经派发的一次性动作的实际效果另行观察。`skip` 中断当次入口、保留已写草稿参与本帧提交并保留会话，下一次 `context.tick.overrun=true`，脚本自行分片或降低负载。脚本内存中的 `state` 修改不是事务回滚对象。预算 hook 约束 Lua 指令执行，不能抢占正在阻塞的原生 C 函数；这仍是受信本地脚本环境，不是恶意源码沙箱。
+
+### 独立只读领域
+
+`context.game`（也作为全局 `game` 提供）不提供 `state()`、`observe(domain)`、阻塞动作、`sleep`、`spawn/tasks/acquire/cancel` 或旧按键接口。`game.log(text)` 接受字符串，单条最多4096字节、单次调用日志合计最多65536字节，写入该会话的原生事件日志；时间使用 `context.tick.time/delta`，不提供旧 `game.time()`。标准库开放基础语言和 `table/string/math/utf8`，不开放 `io/os/package/debug/coroutine`；禁用动态装载、`print/pcall/xpcall/setmetatable/getmetatable/rawset`，不会通过捕获预算异常绕过超限处理。每个领域是独立只读 table，嵌套表也只读；写入报 Lua 错误。核心 `character/world/scene` 每 tick 更新；低频领域每宿主 tick 按需采集一次，同一帧内跨会话复用结果。领域直接展开原生观察的 `data` 字段并附带 `status/error`，不额外嵌套一层 `data`。不支持或暂时不可读通过领域状态和错误说明，未知字段缺失或为 `nil`，不借另一后端补齐。
+
+| 属性 | 内容与边界 |
+| --- | --- |
+| `game.character` | `id/name/level/job/hp/max_hp/mp/max_mp`；长字段 `strength/dexterity/intelligence/luck/ability_points/skill_points/experience` 及简写 `str/dex/int/luk/ap/sp/exp`；与本端可读取的角色领域事实合并 |
+| `game.world` | `instance_id/scene_generation/ready/in_game/map_id`；已知位置同时提供 `x/y` 和 `position={x,y}`；`facing` 沿用 `Left/Right`，`settled/dead/revive_requestable` 未知时不提供 |
+| `game.scene` | 当前怪物、掉落、其他玩家及按本端能力提供的 NPC 等原生场景事实；列表完整性按实际能力声明 |
+| `game.inventory`、`game.quests` | 本端原生背包/装备和任务领域；任务动态性仍遵循本端来源声明 |
+| `game.chat` | 按本端可读能力；不支持时明确 `status="unsupported"`，不是空聊天记录 |
+| `game.dialog/shop/ui/hotkeys/interaction/notifications` | 按需只读观察；支持范围与原生领域一致，不增加窗口动作 API |
+
+buff 归 `game.character`，不在 `player.status()`。首版两端都没有可靠的完整 buff 效果及剩余时间来源，返回 `buffs=nil`（JSON `null`）、`buffs_status="unsupported"` 和 `buffs_unavailable="native_buff_details_unavailable"`；不把未知列表伪造成 `{}`，不通过服务端查询补齐。
+
+### 角色状态机与动作槽
+
+同一客户端的所有 tick 会话共享唯一 `context.game.player`；各会话按接纳顺序调用，跨会话冲突首版采用后写覆盖，不提供优先级或所有权治理。coroutine 引擎的控制权和输入状态与它分开。
+
+| API | 语义 |
+| --- | --- |
+| `player.move("left"/"right"/"up"/"down")` | 设置持续方向；重复设置幂等，改变方向覆盖；`up` 可用于门户，不另外提供传送 API |
+| `player.move(nil)` | 清除移动意图 |
+| `player.jump()`、`player.attack()`、`player.pickup()` | 提交一次跳跃、普攻、拾取 |
+| `player.skill(skill_id)`、`player.use_item(item_id)` | 正 int32 ID；技能及普通恢复品按本端实际能力准入 |
+| `player.stop()` | 清除持续意图及待执行动作，发起当前动作释放；收束从后续状态读取 |
+| `player.status()` | 只读操作快照：`moving/action/phase/busy/held/pending_action/reason/effect/dispatched/control_released`；当前技能或药品动作另附 `skill_id/item_id` |
+
+每个动作提交返回 `ok, reason`：受理为 `true`；暂忙为 `false, "busy"`；能力不支持为 `false, "unsupported"`，均不因为暂不可用而结束脚本。参数类型错误、非法方向和越界 ID 报 Lua 错误。幂等重复不产生新动作；同 tick 多次有效提交只保留最后一次，不在中途投放输入。
+
+一次性动作同一时间只有一个活动槽。**忙时提交不同动作会写入单个后继槽，同时返回 `false, "busy"`**；当前动作完成后执行该待执行动作，后写覆盖已排队动作，不累积无界队列。同 tick 多次提交也只保留最后一个有效输入。`attack/skill` 保持移动方向；`jump/pickup/use_item` 执行期间暂停移动，完成后恢复持续意图。`held` 是语义键名数组，`phase` 为 `idle/running/releasing`；`effect="unknown"` 不表示游戏失败或成功。
+
+“动作完成”仅限本端能够观察的边界：无头 jump 等待已知落地/攀爬/水下收束，attack/skill 等待本地攻击动画结束；用药和拾取确认请求及按键消费/释放，游戏效果仍为 unknown。GUI 仅确认原生输入/请求生命周期，缺失完整动画完成事实时不伪造；一次 60ms 按键脉冲不是完整攻击动画。动作槽空闲或 `control_released=true` 均不能当作命中、拾取、药效或 buff 生效证据。
+
+取消、期限、角色变化、离开游戏及错误只结束对应会话，不结束另一引擎或其他 tick 会话。会话终态在所属输入已经过原生消费/释放确认后发布；取消某个 tick 会话不清空其他会话仍有效的输入。窗口、对话、商店、AP/SP、装备界面等非即时交互不纳入 tick player，由 CLI 逐步操作。内置旅行/狩猎/恢复脚本仍是 coroutine，未在本需求迁移；验证用 tick 文件是独立输入，不代表内置策略已经迁移。
+
 ## 函数总览
+
+**以下函数、任务控制和传统状态表属于 coroutine 环境。** 原有脚本行为冻结保留，不能在 tick 中调用；两套 API 不能混用。
 
 | 函数 | 参数与默认值 | 是否让出执行权 | 返回值 |
 | --- | --- | --- | --- |
@@ -509,7 +582,7 @@ API 参数无效、后端能力缺失、原生状态或输入路线不可用时�
 
 ## 策略文件入口与运行上下文
 
-策略文件可在顶层声明固定 `main(context)` 入口。`script run/start FILE` 检查策略注释，在原生 Runtime 内先核对调用时的实例、角色、地图和场景代次，再调用入口；顶层代码用于声明策略和函数，控制逻辑写在入口内。入口只接收一个上下文表，基础状态和动作仍使用本文件前述的 `game.state()`、`game.observe()` 与动作 API。通用执行期限仍由 CLI `--seconds` / `--continuous` 控制；策略自有预算应使用独立的 `budget_seconds` 运行参数，避免与执行期限混淆。
+策略文件可在顶层声明固定 `main(context)` 入口，参数及静态上下文规则两套环境共用；tick 的每帧入口和原生身份核对见[前文](#tick-环境)。以下示例使用 coroutine：`script run/start FILE` 检查策略注释，在原生 Runtime 内先核对调用时的实例、角色、地图和场景代次，再调用一次入口；顶层代码用于声明策略和函数，控制逻辑写在入口内。入口只接收一个上下文表，基础状态和动作仍使用本文件前述的 `game.state()`、`game.observe()` 与动作 API。通用执行期限仍由 CLI `--seconds` / `--continuous` 控制；策略自有预算应使用独立的 `budget_seconds` 运行参数，避免与执行期限混淆。
 
 运行参数用紧邻策略源码的 `@option` 注释声明。支持 `int`、`number`、`string`、`boolean` 四种类型；未标 `opt`、也没有 `default` 的非布尔参数必填。布尔参数始终可省略：未显式声明 `default` 时默认 `true`，显式 `default=false` 可覆盖该默认值。可选修饰符为 `default=值`、数值型 `min=值` / `max=值` 和 `choices=值1|值2`。默认值、正向布尔 flag 和显式值按声明校验；`--no-flag` 作为无值负向开关直接传入 `false`，不参与 `choices` 校验。
 
@@ -530,11 +603,13 @@ end
 
 CLI 参数名把 Lua 下划线转为连字符，例如 `mob_id` 使用 `--mob-id 1001001`。布尔选项可用裸 `--flag` 与 `--no-flag` 分别传入 `true`、`false`，也可显式写成 `--flag true|false`。省略布尔选项时，`context.options` 收到声明的默认值；未显式声明时收到 `true`，`default=false` 时收到 `false`。`choices` 校验默认值、正向 flag 和显式值；`--no-flag` 不会因 `choices` 未列出 `false` 而拒绝。其他可选参数仅在实际提供或声明默认值时出现在 `context.options` 中。`script describe FILE` 根据注释输出每项参数的类型、必填状态、有效默认值、范围、候选值和调用用法。
 
-`context.scene` 绑定 CLI 装载前观察到的当前场景，包含只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 与静态 `terrain`。地形可用时，`terrain.status` 为 `available`，并提供来源路径 `source`、`footholds` 和 `ropes`；`footholds` 中 `x1 == x2` 的条目是竖直墙段（`y1`/`y2` 为上下端），其余是水平或倾斜地面，`prev`/`next` 是原始连接；数据不可用或当前地图只引用另一张地图时，状态分别为 `unavailable` 或 `unsupported`，并提供错误代码、说明和来源详情，不提供空地形或借用地图的坐标。策略需要静态地形时，应先检查 `terrain.status`。身份字段由 CLI 创建，不能作为普通 `@option` 覆盖；动态 HP、位置、技能和库存等事实仍从当前 `game.state()` / `game.observe()` 读取。
+`context.scene` 绑定 CLI 装载前观察到的当前场景，包含只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 与静态 `terrain`。地形可用时，`terrain.status` 为 `available`，并提供来源路径 `source`、`footholds` 和 `ropes`；`footholds` 中 `x1 == x2` 的条目是竖直墙段（`y1`/`y2` 为上下端），其余是水平或倾斜地面，`prev`/`next` 是原始连接；数据不可用或当前地图只引用另一张地图时，状态分别为 `unavailable` 或 `unsupported`，并提供错误代码、说明和来源详情，不提供空地形或借用地图的坐标。策略需要静态地形时，应先检查 `terrain.status`。身份字段由 CLI 创建，不能作为普通 `@option` 覆盖；动态 HP、位置、技能和库存等事实在 coroutine 从当前 `game.state()` / `game.observe()` 读取，在 tick 从独立只读领域读取。
 
-通用入口调用前会重新读取 `game.state()`，并对比就绪状态及上述身份锚点；不匹配时以 `strategy_scene_context_stale` 结束，策略主体不会运行。策略入口内若再采样初始状态，也应在派发动作前与 `context.scene` 再核对一次，以覆盖预检与主体之间发生的场景变化；后续跨地图或可能换角色的操作仍按业务边界核对。静态数据读取或验证失败时，CLI 在发布脚本前报告错误。该上下文不会替代 `game.state()` / `game.observe()` 返回的动态事实。
+内置跨图策略另有 CLI 预计算的只读路线数据 `context.route`（起点、终点、每段地图的打包地形与门户坐标）；它只由对应命令注入，普通策略不会收到。
 
-没有顶层 `main(context)` 声明的 Lua 文件仍按原始 chunk 执行。`--code` 始终保留原始源码语义，不解析策略注释或注入入口上下文。
+coroutine 通用入口调用前会重新读取 `game.state()`，并对比就绪状态及上述身份锚点；不匹配时以 `strategy_scene_context_stale` 结束，策略主体不会运行。策略入口内若再采样初始状态，也应在派发动作前与 `context.scene` 再核对一次，以覆盖预检与主体之间发生的场景变化；后续跨地图或可能换角色的操作仍按业务边界核对。静态数据读取或验证失败时，CLI 在发布脚本前报告错误。该上下文不会替代 `game.state()` / `game.observe()` 返回的动态事实。
+
+没有顶层 `main(context)` 声明的 Lua 文件仍按原始 chunk 执行。`--code` 始终保留原始源码语义，不解析 `@option` 或注入入口上下文；前导 `@mode/@tick.*` 仍控制原生引擎分派与执行预算。
 
 ## Lua 环境
 

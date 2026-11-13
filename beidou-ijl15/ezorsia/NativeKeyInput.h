@@ -112,6 +112,10 @@ public:
 
     bool ReleasePending() const { return releasing; }
 
+    // Used by the independent tick release fence, including when a new movement
+    // request supersedes a release before its native keyups have completed.
+    bool TransitionsPending() const { return Any(requiredUp) || Any(upInFlight) || held != desired; }
+
     std::uint64_t Deadline() const { return deadline; }
 
     std::uint32_t ReleaseCharacter() const { return releaseCharacter; }

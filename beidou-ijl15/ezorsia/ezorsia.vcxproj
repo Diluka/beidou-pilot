@@ -184,9 +184,12 @@
     </ClInclude>
     <ClInclude Include="AgentBridge.h" />
     <ClInclude Include="NativeKeyInput.h" />
+    <ClInclude Include="NativeKeyUnion.h" />
+    <ClInclude Include="NativeTickInput.h" />
     <ClInclude Include="NativeItemUse.h" />
     <ClInclude Include="NativeObservation.h" />
     <ClInclude Include="..\..\shared\lua-runtime\Runtime.h" />
+    <ClInclude Include="..\..\shared\lua-runtime\TickRuntime.h" />
     <ClInclude Include="..\..\shared\lua-runtime\Observation.h" />
     <ClInclude Include="..\..\shared\lua-runtime\TaskTransport.h" />
     <ClInclude Include="..\..\shared\lua-runtime\EventTransport.h" />
@@ -237,6 +240,7 @@
     <ClCompile Include="ObserveUi.cpp" />
     <ClCompile Include="ObserveNotifications.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\Runtime.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="..\..\shared\lua-runtime\TickRuntime.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\Observation.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\TaskTransport.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\EventTransport.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
