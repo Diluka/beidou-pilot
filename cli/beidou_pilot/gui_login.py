@@ -16,6 +16,11 @@ def _require_input_idle(backend: Backend, instance_id: str, run_id: str) -> None
     require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
 
 
+def _check_deadline(deadline: float) -> None:
+    if time.monotonic() >= deadline:
+        raise ClientError("gui_login_timeout", "登录等待已超时，未继续输入或重放。")
+
+
 def _dispatched(result: JsonObject, action: str) -> bool:
     timings = result.get("timings")
     return (
@@ -33,7 +38,9 @@ def _dispatched(result: JsonObject, action: str) -> bool:
     )
 
 
-def _terms(backend: Backend, instance_id: str, run_id: str, accept_terms: bool) -> JsonObject:
+def _terms(
+    backend: Backend, instance_id: str, run_id: str, accept_terms: bool, deadline: float = float("inf")
+) -> JsonObject:
     if not accept_terms:
         raise ClientError("gui_terms_not_authorized", "未授权同意协议，未输入。")
 
@@ -117,6 +124,7 @@ def _terms(backend: Backend, instance_id: str, run_id: str, accept_terms: bool) 
     address, rect, enabled = observe()
     if not enabled:
         _require_input_idle(backend, instance_id, run_id)
+        _check_deadline(deadline)
         result = backend.desktop([{"action": "click", "x": rect["left"] + 176, "y": rect["top"] + 199}])
         if not _dispatched(result, "click"):
             raise ClientError("gui_login_action_unknown", "正文聚焦结果不明，停止输入。")
@@ -127,6 +135,7 @@ def _terms(backend: Backend, instance_id: str, run_id: str, accept_terms: bool) 
             if enabled:
                 break
             _require_input_idle(backend, instance_id, run_id)
+            _check_deadline(deadline)
             result = backend.read("desktop", "scroll", "down", "--ticks", "10")
             if result.get("input_dispatched") is not True or result.get("action") != "scroll":
                 raise ClientError("gui_login_action_unknown", "滚动结果不明，停止输入。")
@@ -143,6 +152,7 @@ def _terms(backend: Backend, instance_id: str, run_id: str, accept_terms: bool) 
     with os.fdopen(descriptor, "w") as stream:
         stream.write("attempted\n")
     _require_input_idle(backend, instance_id, run_id)
+    _check_deadline(deadline)
     result = backend.desktop([{"action": "click", "x": rect["left"] + 303, "y": rect["top"] + 390}])
     if not _dispatched(result, "click"):
         raise ClientError("gui_login_action_unknown", "协议确认结果不明，禁止重试。")
@@ -156,7 +166,7 @@ def _terms(backend: Backend, instance_id: str, run_id: str, accept_terms: bool) 
     return {"phase": "unknown", "action": "terms_input_dispatched", "instance_id": instance_id, "run_id": run_id}
 
 
-def _gender(backend: Backend, instance_id: str, run_id: str, gender: str) -> JsonObject:
+def _gender(backend: Backend, instance_id: str, run_id: str, gender: str, deadline: float = float("inf")) -> JsonObject:
     def observe():
         runtime = load_runtime(backend.root, backend.name, backend.instance)
         native = BridgeClient(backend.root, backend.name, backend.instance).snapshot()
@@ -201,17 +211,11 @@ def _gender(backend: Backend, instance_id: str, run_id: str, gender: str) -> Jso
             or dialog.get("registered_talk_dialog_open") is not False
             or "focused_window" not in dialog
             or (focused is not None and not isinstance(focused, dict))
-            or (
-                isinstance(focused, dict)
-                and focused.get("game_rect") != {"left": 595, "top": 160, "right": 949, "bottom": 419}
-            )
             or not isinstance(stage.get("game_geometry"), dict)
             or stage["game_geometry"].get("width") != 1280
             or stage["game_geometry"].get("height") != 720
         ):
             raise ClientError("gui_gender_state_unknown", "性别页面或实例状态不明确，停止输入。")
-        if focused is None:
-            raise ClientError("gui_gender_state_unknown", "性别窗口当前位置不可确认，未输入。")
         matches = [w for w in windows if w.get("login_page_candidate") == "gender"]
         if (
             len(matches) != 1
@@ -223,23 +227,27 @@ def _gender(backend: Backend, instance_id: str, run_id: str, gender: str) -> Jso
         ):
             raise ClientError("gui_gender_state_unknown", "性别窗口焦点不明确，停止输入。")
         window = matches[0]
-        if window.get("game_rect") is not None and window.get("game_rect") != {
-            "left": 595,
-            "top": 160,
-            "right": 949,
-            "bottom": 419,
-        }:
-            raise ClientError("gui_gender_state_unknown", "性别窗口动态位置与已验证布局不符。")
         geometry = stage["game_geometry"]
-        if type(geometry.get("x")) is not int or type(geometry.get("y")) is not int:
-            raise ClientError("gui_gender_state_unknown", "游戏窗口投影不可用。")
+        game_rect = window.get("game_rect")
+        if (
+            not isinstance(window.get("address"), str)
+            or not window["address"]
+            or window.get("window_position_source") != "stable Gr2D layer bounds and camera"
+            or type(geometry.get("x")) is not int
+            or type(geometry.get("y")) is not int
+            or not isinstance(game_rect, dict)
+            or any(type(game_rect.get(k)) is not int for k in ("left", "top", "right", "bottom"))
+            or game_rect["right"] - game_rect["left"] != 354
+            or game_rect["bottom"] - game_rect["top"] != 259
+            or not 0 <= game_rect["left"] < game_rect["right"] <= 1280
+            or not 0 <= game_rect["top"] < game_rect["bottom"] <= 720
+        ):
+            raise ClientError("gui_gender_state_unknown", "性别窗口动态投影不可确认。")
         rect = {
-            "left": geometry["x"] + 595,
-            "top": geometry["y"] + 160,
-            "right": geometry["x"] + 949,
-            "bottom": geometry["y"] + 419,
+            k: game_rect[k] + geometry["x" if k in ("left", "right") else "y"]
+            for k in ("left", "top", "right", "bottom")
         }
-        if isinstance(focused, dict) and focused.get("root_rect") != rect:
+        if isinstance(focused, dict) and (focused.get("game_rect") != game_rect or focused.get("root_rect") != rect):
             raise ClientError("gui_gender_state_unknown", "性别窗口投影不一致。")
         buttons = window.get("buttons")
         confirm = (
@@ -256,8 +264,6 @@ def _gender(backend: Backend, instance_id: str, run_id: str, gender: str) -> Jso
             or type(geometry.get("y")) is not int
             or type(rect.get("left")) is not int
             or type(rect.get("top")) is not int
-            or rect["left"] != geometry["x"] + 595
-            or rect["top"] != geometry["y"] + 160
             or rect.get("right") != rect["left"] + 354
             or rect.get("bottom") != rect["top"] + 259
             or len(confirm) != 1
@@ -270,9 +276,16 @@ def _gender(backend: Backend, instance_id: str, run_id: str, gender: str) -> Jso
             or window["raw_gender_selection"] not in (0, 1)
         ):
             raise ClientError("gui_gender_state_unknown", "性别值或按钮位置未知，停止输入。")
-        return runtime, window["address"], rect, window["raw_gender_selection"]
+        return runtime, window["address"], rect, window["raw_gender_selection"], dict(geometry), dict(game_rect)
 
-    runtime, address, rect, raw = observe()
+    def stable():
+        first = observe()
+        second = observe()
+        if first[1:] != second[1:]:
+            raise ClientError("gui_gender_state_unknown", "性别窗口两次观察不一致，未输入。")
+        return second
+
+    runtime, address, rect, raw, geometry, game_rect = stable()
     target = 0 if gender == "male" else 1
     if raw != target:
         try:
@@ -281,21 +294,26 @@ def _gender(backend: Backend, instance_id: str, run_id: str, gender: str) -> Jso
             raise ClientError("gui_gender_state_unknown", "性别选择已尝试，禁止重放。") from error
         with os.fdopen(descriptor, "w") as stream:
             stream.write("attempted\n")
+        _, current, current_rect, value, current_geometry, current_game = stable()
+        if (current, current_rect, value, current_geometry, current_game) != (address, rect, raw, geometry, game_rect):
+            raise ClientError("gui_gender_state_unknown", "性别窗口状态变化，未输入。")
         _require_input_idle(backend, instance_id, run_id)
+        _check_deadline(deadline)
         result = backend.desktop([{"action": "click", "x": rect["left"] + 228, "y": rect["top"] + 107}])
         if not _dispatched(result, "click"):
             raise ClientError("gui_login_action_unknown", "性别下拉结果不明，停止输入。")
-        _, current, new_rect, value = observe()
-        if current != address or new_rect != rect or value != raw:
+        _, current, new_rect, value, new_geometry, new_game = stable()
+        if (current, new_rect, value, new_geometry, new_game) != (address, rect, raw, geometry, game_rect):
             raise ClientError("gui_gender_state_unknown", "性别下拉状态变化，停止输入。")
         _require_input_idle(backend, instance_id, run_id)
+        _check_deadline(deadline)
         result = backend.desktop(
             [{"action": "click", "x": rect["left"] + 172, "y": rect["top"] + (125 if target == 0 else 141)}]
         )
         if not _dispatched(result, "click"):
             raise ClientError("gui_login_action_unknown", "性别选择结果不明，停止输入。")
-        runtime, current, new_rect, raw = observe()
-        if current != address or new_rect != rect or raw != target:
+        runtime, current, new_rect, raw, new_geometry, new_game = stable()
+        if (current, new_rect, raw, new_geometry, new_game) != (address, rect, target, geometry, game_rect):
             raise ClientError("gui_gender_state_unknown", "性别选择未确认，停止输入。")
     try:
         descriptor = os.open(runtime.run_dir / "gui-gender-submitted", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -303,7 +321,11 @@ def _gender(backend: Backend, instance_id: str, run_id: str, gender: str) -> Jso
         raise ClientError("gui_gender_state_unknown", "性别确认已尝试，禁止重放。") from error
     with os.fdopen(descriptor, "w") as stream:
         stream.write("attempted\n")
+    _, current, new_rect, value, new_geometry, new_game = stable()
+    if (current, new_rect, value, new_geometry, new_game) != (address, rect, target, geometry, game_rect):
+        raise ClientError("gui_gender_state_unknown", "性别确认前状态变化，未输入。")
     _require_input_idle(backend, instance_id, run_id)
+    _check_deadline(deadline)
     result = backend.desktop([{"action": "click", "x": rect["left"] + 227, "y": rect["top"] + 166}])
     if not _dispatched(result, "click"):
         raise ClientError("gui_login_action_unknown", "性别确认结果不明，禁止重试。")
@@ -319,6 +341,7 @@ def _step(
     accept_terms: bool,
     gender: str,
     world_confirmed: bool = False,
+    deadline: float = float("inf"),
 ) -> JsonObject:
     """提交一次账号或读取已就绪的角色列表；未知页面不发送输入。"""
     if type(accept_terms) is not bool or gender not in ("male", "female"):
@@ -437,6 +460,7 @@ def _step(
             with os.fdopen(descriptor, "w") as stream:
                 stream.write("attempted\n")
             _require_input_idle(backend, instance_id, run_id)
+            _check_deadline(deadline)
             result = backend.desktop([{"action": "click", "x": geometry["x"] + 483, "y": geometry["y"] + 213}])
             if not _dispatched(result, "click"):
                 raise ClientError("gui_login_action_unknown", "世界点击结果不明，禁止重放。")
@@ -448,6 +472,21 @@ def _step(
                 if isinstance(after_windows, list)
                 else []
             )
+            if (
+                again.running
+                and again.run_id == run_id
+                and fresh.get("instance_id") == instance_id
+                and fresh.get("run_id") == run_id
+                and after.get("instance_id") == instance_id
+                and isinstance(after.get("client"), dict)
+                and after["client"].get("run_id") == run_id
+                and after.get("stage") == "TRANSITION"
+                and after.get("unavailable") == []
+                and isinstance(after_login, dict)
+                and type(after_login.get("request_pending")) is bool
+                and type(after_login.get("transition_pending")) is bool
+            ):
+                return {"phase": "unknown", "action": "world_input_dispatched"}
             if (
                 again.running
                 and again.run_id == run_id
@@ -515,6 +554,7 @@ def _step(
             ):
                 raise ClientError("gui_login_action_unknown", "世界点击后状态不明确，未发送确认。")
             _require_input_idle(backend, instance_id, run_id)
+            _check_deadline(deadline)
             result = backend.desktop([{"action": "hold", "keys": ["Return"], "seconds": 0.1}])
             if not _dispatched(result, "hold"):
                 raise ClientError("gui_login_action_unknown", "世界确认结果不明，禁止重放。")
@@ -545,6 +585,7 @@ def _step(
         with os.fdopen(descriptor, "w") as stream:
             stream.write("attempted\n")
         _require_input_idle(backend, instance_id, run_id)
+        _check_deadline(deadline)
         result = backend.desktop(
             [
                 {
@@ -562,9 +603,9 @@ def _step(
         if not isinstance(windows, list):
             raise ClientError("gui_login_state_unknown", "窗口列表不可用，未输入。")
         if any(isinstance(w, dict) and w.get("login_page_candidate") == "terms" for w in windows):
-            return _terms(backend, instance_id, run_id, accept_terms)
+            return _terms(backend, instance_id, run_id, accept_terms, deadline)
         if any(isinstance(w, dict) and w.get("login_page_candidate") == "gender" for w in windows):
-            return _gender(backend, instance_id, run_id, gender)
+            return _gender(backend, instance_id, run_id, gender, deadline)
         if (
             not all(isinstance(w, dict) for w in windows)
             or len(windows) != 3
@@ -577,7 +618,8 @@ def _step(
         ):
             raise ClientError("gui_login_state_unknown", "存在未知窗口或首次登录页面，未输入。")
         _require_input_idle(backend, instance_id, run_id)
-        return submit_credentials_once(backend, profile, instance_id, run_id)
+        _check_deadline(deadline)
+        return submit_credentials_once(backend, profile, instance_id, run_id, deadline=deadline)
     raise ClientError("gui_login_state_unknown", "当前页面尚不能安全操作，未输入。")
 
 
@@ -632,8 +674,11 @@ def _execute_locked(
             if stage.get("stage") == "CHANNEL_SELECT"
             else None
         )
+        if stage.get("stage") == "TRANSITION" and last_action is None:
+            raise ClientError("gui_login_state_unknown", "未确认本次动作，不能等待未知过渡。")
         waiting = (
-            marker is not None
+            (stage.get("stage") == "TRANSITION" and last_action is not None)
+            or marker is not None
             and (runtime.run_dir / marker).exists()
             or login.get("request_pending") is True
             or login.get("transition_pending") is True
@@ -646,6 +691,7 @@ def _execute_locked(
         if type(login.get("request_pending")) is not bool or type(login.get("transition_pending")) is not bool:
             raise ClientError("gui_login_state_unknown", "请求状态不明确，停止输入。")
         if not waiting:
+            _check_deadline(deadline)
             page = (
                 "terms"
                 if terms
@@ -671,6 +717,7 @@ def _execute_locked(
                 accept_terms=accept_terms,
                 gender=gender,
                 world_confirmed=last_action == "world" and stage.get("stage") == "CHANNEL_SELECT",
+                deadline=deadline,
             )
             if result.get("phase") == "character_list":
                 return result

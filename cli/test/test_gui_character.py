@@ -241,7 +241,6 @@ class GuiCharacterTest(unittest.TestCase):
                     "deadline": float("inf"),
                 }
                 with (
-                    patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                     patch(
                         "beidou_pilot.gui_character.load_runtime",
                         return_value=SimpleNamespace(running=True, run_id="run"),
@@ -278,7 +277,6 @@ class GuiCharacterTest(unittest.TestCase):
                     "deadline": 0 if scenario == "deadline" else float("inf"),
                 }
                 with (
-                    patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                     patch(
                         "beidou_pilot.gui_character.load_runtime",
                         return_value=SimpleNamespace(running=True, run_id="run"),
@@ -319,7 +317,6 @@ class GuiCharacterTest(unittest.TestCase):
                 "deadline": time.monotonic() + 0.05,
             }
             with (
-                patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                 patch(
                     "beidou_pilot.gui_character.load_runtime", return_value=SimpleNamespace(running=True, run_id="run")
                 ),
@@ -355,7 +352,6 @@ class GuiCharacterTest(unittest.TestCase):
                 "deadline": time.monotonic() + 0.05,
             }
             with (
-                patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                 patch(
                     "beidou_pilot.gui_character.load_runtime", return_value=SimpleNamespace(running=True, run_id="run")
                 ),
@@ -388,7 +384,6 @@ class GuiCharacterTest(unittest.TestCase):
                 return {"status": "unknown"}
 
             with (
-                patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                 patch(
                     "beidou_pilot.gui_character.load_runtime",
                     return_value=SimpleNamespace(running=True, run_id="run", run_dir=root),
@@ -615,7 +610,6 @@ class GuiCharacterTest(unittest.TestCase):
                     "deadline": 0 if scenario == "timeout" else float("inf"),
                 }
                 with (
-                    patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                     patch(
                         "beidou_pilot.gui_character.load_runtime",
                         return_value=SimpleNamespace(running=True, run_id="run"),
@@ -751,7 +745,6 @@ class GuiCharacterTest(unittest.TestCase):
                 "deadline": float("inf"),
             }
             with (
-                patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                 patch(
                     "beidou_pilot.gui_character.load_runtime", return_value=SimpleNamespace(running=True, run_id="run")
                 ),
@@ -786,7 +779,6 @@ class GuiCharacterTest(unittest.TestCase):
                 "deadline": float("inf"),
             }
             with (
-                patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                 patch(
                     "beidou_pilot.gui_character.load_runtime", return_value=SimpleNamespace(running=True, run_id="run")
                 ),
@@ -1204,7 +1196,6 @@ class GuiCharacterTest(unittest.TestCase):
                 "timeout": 1.0,
             }
             with (
-                patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                 patch("beidou_pilot.gui_character.time.monotonic", side_effect=[0, 2]),
                 patch("beidou_pilot.gui_character._appearance_step") as step,
             ):
@@ -1213,7 +1204,6 @@ class GuiCharacterTest(unittest.TestCase):
                 )
                 step.assert_not_called()
             with (
-                patch("beidou_pilot.gui_character._require_verified_gui_candidates"),
                 self.assertRaises(ClientError) as error,
             ):
                 _apply_appearance(MagicMock(), params, **args)

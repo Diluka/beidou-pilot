@@ -250,10 +250,6 @@ def require_supported_creation(params: CharacterCreation) -> None:
         raise ClientError("unsupported_capability", "GUI 目前无法核验非 ASCII 姓名。")
 
 
-def _require_verified_gui_candidates() -> None:
-    """b3cf354 空姓名、a7c0fb7 冒险家职业和性别候选已实测。"""
-
-
 def plan_observed_appearance_step(params: CharacterCreation, raw: list[int], seen: list[set[int]]) -> JsonObject:
     """按封包字段顺序逐槽比较；调用前仍须实测并核对性别、职业候选。"""
     validate_character_creation(params)
@@ -439,7 +435,6 @@ def _apply_appearance(
 ) -> JsonObject:
     """内部遍历原语；调用方持有公共 input_lock 且先实证性别。超时不回退或重放。"""
     require_supported_creation(params)
-    _require_verified_gui_candidates()
     if not math.isfinite(timeout) or timeout <= 0:
         raise ClientError("usage", "外观等待时间须为正有限数。")
     try:
@@ -617,7 +612,6 @@ def _enter_name(
 ) -> JsonObject:
     """未接线姓名控制器；候选未实测期间由支持门禁止输入。"""
     require_supported_creation(params)
-    _require_verified_gui_candidates()
 
     def observe():
         runtime = load_runtime(backend.root, backend.name, backend.instance)
@@ -697,7 +691,6 @@ def _check_name(
 ) -> JsonObject:
     """姓名核查最多一次；调用者持有公共输入锁，此动作不创建角色。"""
     require_supported_creation(params)
-    _require_verified_gui_candidates()
 
     def observe():
         runtime = load_runtime(backend.root, backend.name, backend.instance)
@@ -902,7 +895,6 @@ def _submit_creation(
 ) -> JsonObject:
     """单次最终确认；调用者持公共输入锁，未知结果不可重放。"""
     require_supported_creation(params)
-    _require_verified_gui_candidates()
     unknown: JsonObject = {"request_id": request_id, "instance_id": instance_id, "run_id": run_id, "status": "unknown"}
     try:
         with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
@@ -1278,7 +1270,6 @@ def _set_gender(
     deadline: float,
 ) -> JsonObject:
     """先核实并最多切换一次外观性别；调用者持公共输入锁。"""
-    _require_verified_gui_candidates()
 
     def observe():
         runtime = load_runtime(backend.root, backend.name, backend.instance)
@@ -1421,7 +1412,6 @@ def _create_once_locked(
 ) -> JsonObject:
     """公共 input_lock 和 per-run character.lock 已由调用方持有。"""
     require_supported_creation(params)
-    _require_verified_gui_candidates()
     if not math.isfinite(timeout) or timeout <= 0:
         raise ClientError("usage", "建角等待时间须为正有限数。")
     exists = True
