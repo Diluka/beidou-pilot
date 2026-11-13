@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "stdafx.h"
 #include "NativeObservation.h"
+#include "LoginPageObservation.h"
 
 #include <algorithm>
 #include <array>
@@ -226,8 +227,26 @@ Value Stage() {
                     {"selected_index", Read<std::int32_t>(stage + 0x190)},
                     {"character_array", characters != 0 ? Value(Hex(characters)) : Value()},
                     {"character_slots", {}}, {"characters", Value::Array()},
-                    {"characters_available", false}, {"character_errors", Value::Array()}
+                    {"characters_available", false}, {"character_errors", Value::Array()},
+                    {"raw_world_selection", Value()}
                 });
+                if (step == 1 && transition == 0 && pending == 0) {
+                    try {
+                        const auto panel = Read<Address>(0x00BEDA5C);
+                        bool activeKnown = false;
+                        const auto active = WindowActive(panel, activeKnown);
+                        std::uint32_t count = 0, index = 0;
+                        if (activeKnown && active && RawWorldSelection(stage,
+                            [](Address at) { return Read<std::uint32_t>(at); }, count, index)) {
+                            bool stillKnown = false;
+                            if (WindowActive(panel, stillKnown) && stillKnown && Read<Address>(0x00BEDA5C) == panel)
+                                login["raw_world_selection"] = Value::Object({{"count", count},
+                                    {"selected_index", index == UINT32_MAX ? -1 : static_cast<int>(index)}});
+                        }
+                    } catch (const ReadError&) {
+                        // Preserve the rest of the stage snapshot on optional read failure.
+                    }
+                }
                 stageName = step == 0 ? "LOGIN" : step == 1 ? "WORLD_SELECT" : step == 2 ? "CHARACTER_SELECT" : "UNKNOWN";
                 if (step == 2 && transition == 0 && pending == 0) {
                     try {

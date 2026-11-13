@@ -96,7 +96,7 @@ class NativeObservationContract(unittest.TestCase):
         (self.directory / "state.json").write_text(json.dumps(self.state))
         domain = {
             "stage": "UNKNOWN",
-            "login": {"raw_step": 7},
+            "login": {"raw_step": 7, "raw_world_selection": {"count": 3, "selected_index": -1}},
             "windows": [
                 {
                     "address": "0x1234",
@@ -124,6 +124,7 @@ class NativeObservationContract(unittest.TestCase):
                 result = NativeObserver(self.root).observe("stage", timeout=0.2)
         self.assertEqual(domain["windows"], result["windows"])
         self.assertEqual(7, result["login"]["raw_step"])
+        self.assertEqual(domain["login"]["raw_world_selection"], result["login"]["raw_world_selection"])
 
     def test_starting_stage_preserves_unavailable_window_reason(self) -> None:
         self.state["ready"] = False

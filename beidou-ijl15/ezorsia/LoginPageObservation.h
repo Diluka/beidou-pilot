@@ -17,6 +17,36 @@ inline const char* ObservedLoginPage(bool loginStage, const std::array<std::uint
     return nullptr;
 }
 
+// World panel values are raw indices, not world identifiers.
+template <class Read32>
+bool RawWorldSelection(std::uint32_t stage, Read32 read32, std::uint32_t& count, std::uint32_t& index) {
+    if (!stage || stage > UINT32_MAX - 0x173) return false;
+    std::array<std::uint32_t, 2> counts{}, indices{};
+    std::uint32_t panel = 0;
+    for (int sample = 0; sample < 2; ++sample) {
+        if (read32(0x00BEDED4) != stage || read32(stage) != 0x00AF6B24 ||
+            read32(stage + 0x168) != 1 || read32(stage + 0x16C) != 0 || read32(stage + 0x170) != 0)
+            return false;
+        const auto current = read32(0x00BEDA5C);
+        if (current == 0 || current > UINT32_MAX - 0x8B || (sample && current != panel)) return false;
+        panel = current;
+        if (read32(panel) != 0x00AF7A90 || read32(panel + 4) != 0x00AF7A44 ||
+            read32(panel + 8) != 0x00AF7A40 || read32(panel + 0x80) != stage) return false;
+        counts[sample] = read32(panel + 0x84);
+        indices[sample] = read32(panel + 0x88);
+        if (counts[sample] > 30 || (indices[sample] != UINT32_MAX && indices[sample] >= counts[sample])) return false;
+    }
+    if (counts[0] != counts[1] || indices[0] != indices[1] ||
+        read32(0x00BEDED4) != stage || read32(0x00BEDA5C) != panel ||
+        read32(stage) != 0x00AF6B24 || read32(stage + 0x168) != 1 ||
+        read32(stage + 0x16C) != 0 || read32(stage + 0x170) != 0 ||
+        read32(panel) != 0x00AF7A90 || read32(panel + 4) != 0x00AF7A44 ||
+        read32(panel + 8) != 0x00AF7A40 || read32(panel + 0x80) != stage) return false;
+    count = counts[0];
+    index = indices[0];
+    return true;
+}
+
 // Read only the first DWORD of each nonempty native array; no native length
 // controls allocation or traversal. The caller isolates memory-read failures.
 template <class Read32, class Read8>

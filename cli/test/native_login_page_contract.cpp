@@ -75,4 +75,36 @@ int main() {
         failed = true;
     }
     assert(failed);
+
+    const std::uint32_t world = 0x40000;
+    memory[0x00BEDA5C] = world;
+    memory[world] = 0x00AF7A90;
+    memory[world + 4] = 0x00AF7A44;
+    memory[world + 8] = 0x00AF7A40;
+    memory[world + 0x80] = stage;
+    memory[world + 0x84] = 3;
+    memory[world + 0x88] = UINT32_MAX;
+    memory[stage + 0x168] = 1;
+    std::uint32_t count = 0, index = 0;
+    using NativeObservation::RawWorldSelection;
+    assert(RawWorldSelection(stage, read32, count, index) && count == 3 && index == UINT32_MAX);
+    memory[world + 0x88] = 2;
+    assert(RawWorldSelection(stage, read32, count, index) && index == 2);
+    memory[world + 0x88] = 3;
+    assert(!RawWorldSelection(stage, read32, count, index));
+    memory[world + 0x88] = 0;
+    memory[world + 0x84] = 31;
+    assert(!RawWorldSelection(stage, read32, count, index));
+    memory[world + 0x84] = 3;
+    memory[world + 0x80] = stage + 4;
+    assert(!RawWorldSelection(stage, read32, count, index));
+    memory[world + 0x80] = stage;
+    int worldReads = 0;
+    auto changingWorld = [&](std::uint32_t at) {
+        auto value = memory.at(at);
+        return at == world + 0x88 && ++worldReads == 2 ? value + 1 : value;
+    };
+    assert(!RawWorldSelection(stage, changingWorld, count, index));
+    memory[0x00BEDA5C] = UINT32_MAX - 0x8A;
+    assert(!RawWorldSelection(stage, read32, count, index));
 }
