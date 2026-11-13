@@ -151,9 +151,9 @@ bool ReadRequest(const std::string& directory, std::string& instance, Request& r
     const HANDLE input = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
                                      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (input == INVALID_HANDLE_VALUE) return false;
-    std::array<char, 1025> bytes{};
+    std::array<char, 4097> bytes{};
     DWORD length = 0;
-    const bool complete = ReadFile(input, bytes.data(), 1024, &length, nullptr) != FALSE && length < 1024;
+    const bool complete = ReadFile(input, bytes.data(), 4096, &length, nullptr) != FALSE && length < 4096;
     CloseHandle(input);
     DeleteFileA(path.c_str());
     if (!complete) return false;

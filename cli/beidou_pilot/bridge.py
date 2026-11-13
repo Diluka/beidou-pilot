@@ -1,5 +1,6 @@
 """通过本地文件协议观察并控制当前游戏进程内的原生桥。"""
 
+import base64
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 import fcntl
 import json
@@ -356,6 +357,67 @@ class BridgeClient:
             raise ClientError("stale_bridge_state", "原生桥快照已过期或采样时间无效。",
                               {"age_seconds": round(age, 4), "max_age_seconds": max_age})
         return state
+
+    def login_action(self, action: str, *arguments: str | bytes, timeout: float = 2.0) -> JsonObject:
+        """发布一次原版客户端登录/建角动作并等待同请求结果；不自动重试。"""
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ClientError("invalid_bridge_options", "原生登录动作等待时间须为正有限数。")
+        state = self.snapshot()
+        encoded: list[str] = []
+        for argument in arguments:
+            if isinstance(argument, bytes):
+                encoded.append(base64.b64encode(argument).decode("ascii"))
+            elif isinstance(argument, str):
+                encoded.append(base64.b64encode(argument.encode("cp936")).decode("ascii"))
+            else:
+                raise ClientError("invalid_bridge_request", "原生登录动作参数类型无效。")
+        if len(encoded) > 3:
+            raise ClientError("invalid_bridge_request", "原生登录动作参数过多。")
+        encoded += ["-"] * (3 - len(encoded))
+        request_id = uuid.uuid4().hex
+        line = " ".join((str(1), state["instance_id"], request_id, action, *encoded)) + "\n"
+        if len(line) >= 4096:
+            raise ClientError("gui_native_action_too_large", "原生登录动作请求超出长度上限，未发布。")
+        result_path = self.directory / "login-action-result.json"
+        try:
+            result_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            raise ClientError("login_action_publish_failed", "无法清理旧的原生登录动作结果，未发布。",
+                              {"reason": str(error)}) from error
+        temporary = self.directory / ("login-action-" + request_id + ".tmp")
+        try:
+            with temporary.open("x", encoding="ascii") as handle:
+                handle.write(line)
+            temporary.replace(self.directory / "login-action.txt")
+        except OSError as error:
+            raise ClientError("login_action_publish_failed", "原生登录动作发布未确认，未自动重放。",
+                              {"request_id": request_id, "reason": str(error)}) from error
+        until = time.monotonic() + timeout
+        while True:
+            raw: object = None
+            try:
+                raw = json.loads(result_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raw = None
+            if isinstance(raw, dict) and raw.get("request_id") == request_id:
+                if (type(raw.get("protocol")) is not int or raw["protocol"] != 1
+                        or raw.get("instance_id") != state["instance_id"]
+                        or raw.get("run_id") != state["run_id"]
+                        or raw.get("action") != action
+                        or raw.get("status") not in ("dispatched", "rejected")
+                        or (raw.get("reason") is not None and not isinstance(raw.get("reason"), str))):
+                    raise ClientError("invalid_bridge_state", "原生登录动作结果字段无效。",
+                                      {"request_id": request_id})
+                if raw["status"] == "dispatched":
+                    return cast(JsonObject, raw)
+                raise ClientError("gui_native_action_rejected", "原生桥拒绝了登录动作，未重放。",
+                                  {"action": action, "reason": raw.get("reason"), "request_id": request_id})
+            if time.monotonic() >= until:
+                raise ClientError("gui_native_action_timeout", "未在期限内确认原生登录动作结果。",
+                                  {"request_id": request_id, "action": action})
+            time.sleep(0.02)
 
     @contextmanager
     def _control(self) -> Iterator[None]:

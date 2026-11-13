@@ -20,7 +20,9 @@ class GuiLoginCliTest(unittest.TestCase):
             instance="default",
             paths=SimpleNamespace(state_directory=root, input_lock=root / "input.lock"),
         )
-        self.runtime = SimpleNamespace(running=True, run_id="run")
+        self.runtime = SimpleNamespace(
+            running=True, run_id="run", character_id=None, world=0, channel=0
+        )
         self.native = SimpleNamespace(snapshot=lambda: {"run_id": "run", "instance_id": "native"})
 
     def run_login(self, *args):
@@ -64,7 +66,8 @@ class GuiLoginCliTest(unittest.TestCase):
             patch("beidou_pilot.first_character.load_runtime", return_value=self.runtime),
             patch("beidou_pilot.first_character.BridgeClient", return_value=self.native),
             patch("beidou_pilot.gui_login.load_runtime", return_value=self.runtime),
-            patch("beidou_pilot.profile.load_account_profile", return_value="profile"),
+            patch("beidou_pilot.profile.load_account_profile",
+                  return_value=SimpleNamespace(world=0, channel=0)),
             patch("beidou_pilot.gui_login._execute_locked", side_effect=run_locked),
         ):
             self.assertEqual(self.run_login("--gender", "male", "--timeout", "5"), {"phase": "character_list"})

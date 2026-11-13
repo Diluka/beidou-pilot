@@ -1,4 +1,4 @@
-"""GUI 建角结果的保守核验；当前不支持提交未经验证的外观参数。"""
+"""GUI 建角：经原生桥调用原版客户端内部建角动作并保守核验结果。"""
 
 from dataclasses import asdict
 import fcntl
@@ -13,7 +13,6 @@ import uuid
 from .errors import ClientError, JsonObject
 from .profile import CharacterCreation, validate_character_creation
 from .login_bridge import LoginBridge
-from .gui_login import _dispatched
 from .bridge import BridgeClient, require_input_idle
 from .backend import Backend
 from .runtime import load_runtime
@@ -105,13 +104,11 @@ def mark_final_submit(directory: Path, *, instance_id: str, run_id: str, request
         ) from error
 
 
-def record_final_dispatch(
-    directory: Path, *, instance_id: str, run_id: str, request_id: str, receipt: JsonObject
-) -> None:
-    """只记录明确的单次点击派发回执；进程中断时保留未知。"""
+def record_final_dispatch(directory: Path, *, instance_id: str, run_id: str, request_id: str, dispatched: bool) -> None:
+    """只记录明确的单次原生动作回执；进程中断时保留未知。"""
     if not re.fullmatch(r"[0-9a-f]{32}", request_id):
         raise ClientError("login_bridge_invalid_request", "请求身份无效。")
-    if not _dispatched(receipt, "click"):
+    if dispatched is not True:
         raise ClientError("gui_character_action_unknown", "最终确认派发结果不明，禁止重发。")
     try:
         with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
@@ -287,6 +284,302 @@ def validate_appearance_transition(before: list[int], after: list[int], field: i
     )
 
 
+CATEGORY_PAGE = ("0xaf7360", "0xaf7314", "0xaf7310")
+NAME_PAGE = ("0xaf7564", "0xaf7518", "0xaf7514")
+APPEARANCE_PAGE = ("0xaf777c", "0xaf7730", "0xaf772c")
+CHARACTER_CREATE_PANEL = ("0xaf6d90", "0xaf6d44", "0xaf6d40")
+
+CREATION_PAGES = (
+    ("category", CATEGORY_PAGE, 700, 460),
+    ("name", NAME_PAGE, 201, 224),
+    ("appearance", APPEARANCE_PAGE, 225, 377),
+)
+
+
+def _address(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", value) or int(value, 16) == 0:
+        raise ClientError("gui_character_state_unknown", "窗口原生地址不可确认，未输入。")
+    return value
+
+
+def identify_creation_page(stage: JsonObject, *, instance_id: str, run_id: str) -> str:
+    """按已观察窗口 vtable 与尺寸识别建角页；识别不代表参数已验证。"""
+    client = stage.get("client")
+    login = stage.get("login")
+    if (
+        stage.get("instance_id") != instance_id
+        or not isinstance(client, dict)
+        or client.get("run_id") != run_id
+        or stage.get("unavailable") != []
+        or not isinstance(login, dict)
+        or login.get("request_pending") is not False
+        or login.get("transition_pending") is not False
+    ):
+        return "unknown"
+    windows = stage.get("windows")
+    if not isinstance(windows, list):
+        return "unknown"
+    for page, signature, width, height in CREATION_PAGES:
+        matches = [
+            window
+            for window in windows
+            if isinstance(window, dict)
+            and window.get("vtables") == list(signature)
+            and window.get("width") == width
+            and window.get("height") == height
+        ]
+        if len(matches) == 1:
+            return page
+    return "unknown"
+
+
+def _creation_window(stage: JsonObject, page: str) -> tuple[str, JsonObject]:
+    for name, signature, width, height in CREATION_PAGES:
+        if name != page:
+            continue
+        windows = stage.get("windows")
+        matches = (
+            [window for window in windows if isinstance(window, dict) and window.get("vtables") == list(signature)]
+            if isinstance(windows, list)
+            else []
+        )
+        if len(matches) != 1 or matches[0].get("width") != width or matches[0].get("height") != height:
+            raise ClientError("gui_character_state_unknown", "建角页面或窗口身份不可确认，未输入。")
+        return _address(matches[0].get("address")), matches[0]
+    raise ClientError("gui_character_state_unknown", "建角页面不可确认，未输入。")
+
+
+def _observe(backend: Backend, instance_id: str, run_id: str):
+    """核对实例身份、原生输入空闲与页面观察，返回新鲜 stage 与桥客户端。"""
+    runtime = load_runtime(backend.root, backend.name, backend.instance)
+    if backend.name != "beidou" or not runtime.running or runtime.run_id != run_id:
+        raise ClientError("gui_character_state_unknown", "建角实例身份已改变，未输入。")
+    bridge = BridgeClient(backend.root, backend.name, backend.instance)
+    native = bridge.snapshot()
+    if native.get("instance_id") != instance_id or native.get("run_id") != run_id:
+        raise ClientError("gui_character_identity_unconfirmed", "原生桥身份不匹配，未输入。")
+    require_input_idle(bridge, instance_id, run_id)
+    stage = backend.read("stage")
+    client = stage.get("client")
+    login = stage.get("login")
+    if (
+        stage.get("instance_id") != instance_id
+        or not isinstance(client, dict)
+        or client.get("run_id") != run_id
+        or stage.get("unavailable") != []
+        or not isinstance(login, dict)
+    ):
+        raise ClientError("gui_character_state_unknown", "建角观察或实例身份不明确，未输入。")
+    return runtime, stage, bridge
+
+
+def _require_attempt(
+    directory: Path, params: CharacterCreation, *, request_id: str, instance_id: str, run_id: str
+) -> JsonObject:
+    try:
+        with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
+            record = json.load(stream)
+    except (OSError, ValueError) as error:
+        raise ClientError("gui_character_state_unknown", "建角请求不可读取。") from error
+    if (
+        not isinstance(record, dict)
+        or record.get("instance_id") != instance_id
+        or record.get("run_id") != run_id
+        or record.get("request_id") != request_id
+        or record.get("params") != asdict(params)
+    ):
+        raise ClientError("gui_character_identity_unconfirmed", "建角请求身份或参数不匹配。")
+    return record
+
+
+def _marker(directory: Path, name: str) -> bool:
+    return (directory / name).exists()
+
+
+def _mark(directory: Path, name: str, request_id: str) -> None:
+    try:
+        descriptor = os.open(directory / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as error:
+        raise ClientError("gui_character_already_attempted", "该建角步骤已尝试，禁止重放。") from error
+    except OSError as error:
+        raise ClientError("login_bridge_write_failed", "建角步骤标记未确认，未输入。") from error
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(request_id)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _open_creation(
+    backend: Backend,
+    params: CharacterCreation,
+    *,
+    directory: Path,
+    request_id: str,
+    instance_id: str,
+    run_id: str,
+    deadline: float,
+) -> JsonObject:
+    """空列表下由原版角色列表按钮打开建角；只观察类别页。"""
+    _require_attempt(directory, params, request_id=request_id, instance_id=instance_id, run_id=run_id)
+    for name in (
+        "gui-character-final-submit",
+        "gui-character-appearance-attempt",
+        "gui-character-name-attempt",
+        "gui-character-category-attempt",
+    ):
+        if _marker(directory, name):
+            raise ClientError("gui_character_already_attempted", "建角请求已进入后续阶段，禁止重放。")
+    _, stage, bridge = _observe(backend, instance_id, run_id)
+    login = stage.get("login")
+    if (
+        stage.get("stage") != "CHARACTER_SELECT"
+        or not isinstance(login, dict)
+        or login.get("raw_step") != 2
+        or login.get("characters_available") is not True
+        or login.get("characters") != []
+        or login.get("request_pending") is not False
+        or login.get("transition_pending") is not False
+    ):
+        raise ClientError("gui_character_state_unknown", "空角色列表或实例状态不明确，未输入。")
+    windows = stage.get("windows")
+    matches = (
+        [
+            window
+            for window in windows
+            if isinstance(window, dict) and window.get("vtables") == list(CHARACTER_CREATE_PANEL)
+        ]
+        if isinstance(windows, list)
+        else []
+    )
+    if len(matches) != 1 or matches[0].get("width") != 101 or matches[0].get("height") != 131:
+        raise ClientError("gui_character_state_unknown", "角色创建按钮窗口不可确认，未输入。")
+    address = _address(matches[0].get("address"))
+    if time.monotonic() >= deadline:
+        return {"status": "unknown", "reason": "timeout"}
+    _mark(directory, "gui-character-open-attempt", request_id)
+    bridge.login_action("ui_button", address, "1001")
+    while time.monotonic() < deadline:
+        _, current, _ = _observe(backend, instance_id, run_id)
+        if identify_creation_page(current, instance_id=instance_id, run_id=run_id) == "category":
+            return {"status": "category_page"}
+        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+    return {"status": "unknown", "reason": "next_page_unconfirmed"}
+
+
+def _navigate_category(
+    backend: Backend,
+    params: CharacterCreation,
+    *,
+    directory: Path,
+    request_id: str,
+    instance_id: str,
+    run_id: str,
+    deadline: float,
+) -> JsonObject:
+    """类别页单次确认默认类别；后续仅观察姓名页。"""
+    _require_attempt(directory, params, request_id=request_id, instance_id=instance_id, run_id=run_id)
+    for name in ("gui-character-final-submit", "gui-character-appearance-attempt", "gui-character-name-attempt"):
+        if _marker(directory, name):
+            raise ClientError("gui_character_already_attempted", "请求已进入后续阶段，禁止重放类别确认。")
+    _, stage, bridge = _observe(backend, instance_id, run_id)
+    if identify_creation_page(stage, instance_id=instance_id, run_id=run_id) != "category":
+        raise ClientError("gui_character_state_unknown", "类别页面不明确，停止输入。")
+    address, _ = _creation_window(stage, "category")
+    if time.monotonic() >= deadline:
+        return {"status": "unknown", "reason": "timeout"}
+    _mark(directory, "gui-character-category-attempt", request_id)
+    bridge.login_action("ui_button", address, "1003")
+    while time.monotonic() < deadline:
+        _, current, _ = _observe(backend, instance_id, run_id)
+        if identify_creation_page(current, instance_id=instance_id, run_id=run_id) == "name":
+            return {"status": "name_page"}
+        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+    return {"status": "unknown", "reason": "next_page_unconfirmed"}
+
+
+def _submit_name(
+    backend: Backend,
+    params: CharacterCreation,
+    *,
+    directory: Path,
+    request_id: str,
+    instance_id: str,
+    run_id: str,
+    deadline: float,
+) -> JsonObject:
+    """姓名页单次发起姓名核查；核查结果由页面推进体现，不重复提交。"""
+    require_supported_creation(params)
+    _require_attempt(directory, params, request_id=request_id, instance_id=instance_id, run_id=run_id)
+    for name in ("gui-character-final-submit", "gui-character-appearance-attempt"):
+        if _marker(directory, name):
+            raise ClientError("gui_character_already_attempted", "请求已进入后续阶段，禁止重放姓名核查。")
+    _, stage, bridge = _observe(backend, instance_id, run_id)
+    if identify_creation_page(stage, instance_id=instance_id, run_id=run_id) != "name":
+        raise ClientError("gui_character_state_unknown", "姓名页面不明确，停止输入。")
+    address, _ = _creation_window(stage, "name")
+    if time.monotonic() >= deadline:
+        return {"status": "unknown", "reason": "timeout"}
+    _mark(directory, "gui-character-name-attempt", request_id)
+    bridge.login_action("check_name", address, params.name.encode("ascii"))
+    while time.monotonic() < deadline:
+        _, current, _ = _observe(backend, instance_id, run_id)
+        if identify_creation_page(current, instance_id=instance_id, run_id=run_id) == "appearance":
+            _mark(directory, "gui-character-name-checked", request_id)
+            return {"status": "appearance_page"}
+        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+    return {"status": "unknown", "reason": "next_page_unconfirmed"}
+
+
+def _set_gender(
+    backend: Backend,
+    params: CharacterCreation,
+    *,
+    directory: Path,
+    request_id: str,
+    instance_id: str,
+    run_id: str,
+    deadline: float,
+) -> JsonObject:
+    """外观页单次切换外观性别；切换后核对选择与职业。"""
+    require_supported_creation(params)
+    _require_attempt(directory, params, request_id=request_id, instance_id=instance_id, run_id=run_id)
+    checked = directory / "gui-character-name-checked"
+    try:
+        if checked.read_text(encoding="utf-8") != request_id:
+            raise ClientError("gui_character_state_unknown", "姓名核查未确认。")
+    except OSError as error:
+        raise ClientError("gui_character_state_unknown", "姓名核查结果不可读取。") from error
+    for name in ("gui-character-final-submit", "gui-character-appearance-attempt"):
+        if _marker(directory, name):
+            raise ClientError("gui_character_already_attempted", "后续步骤已尝试，禁止重放。")
+    _, stage, bridge = _observe(backend, instance_id, run_id)
+    if identify_creation_page(stage, instance_id=instance_id, run_id=run_id) != "appearance":
+        raise ClientError("gui_character_state_unknown", "外观页面不明确，停止输入。")
+    address, window = _creation_window(stage, "appearance")
+    selector, job = window.get("raw_appearance_selector"), window.get("raw_job_candidate")
+    if type(job) is not int or job != params.job or type(selector) is not int or selector not in (0, 1):
+        raise ClientError("gui_character_state_unknown", "职业或外观性别不可确认，停止输入。")
+    if selector == int(params.female):
+        return {"status": "matched"}
+    if _marker(directory, "gui-character-gender-attempt"):
+        raise ClientError("gui_character_already_attempted", "性别切换已尝试，禁止重放。")
+    if time.monotonic() >= deadline:
+        return {"status": "unknown", "reason": "timeout"}
+    _mark(directory, "gui-character-gender-attempt", request_id)
+    bridge.login_action("ui_button", address, "1019")
+    while time.monotonic() < deadline:
+        _, current, _ = _observe(backend, instance_id, run_id)
+        if identify_creation_page(current, instance_id=instance_id, run_id=run_id) != "appearance":
+            raise ClientError("gui_character_action_unknown", "性别切换后页面变化不明确。")
+        _, observed = _creation_window(current, "appearance")
+        if observed.get("raw_job_candidate") != params.job:
+            raise ClientError("gui_character_state_unknown", "性别切换后职业值变化。")
+        if observed.get("raw_appearance_selector") == int(params.female):
+            return {"status": "matched"}
+        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+    return {"status": "unknown", "reason": "timeout"}
+
+
 def _appearance_step(
     backend: Backend,
     params: CharacterCreation,
@@ -298,127 +591,40 @@ def _appearance_step(
     run_id: str,
     deadline: float,
 ) -> JsonObject:
-    """发送最多一次右箭头；调用方先确认性别并独占 GUI，异常时禁止重放。"""
-
-    def observe():
-        try:
-            with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
-                record = json.load(stream)
-        except (OSError, ValueError) as error:
-            raise ClientError("gui_character_state_unknown", "建角请求不可读取，停止输入。") from error
-        try:
-            (directory / "gui-character-final-submit").stat()
-        except FileNotFoundError:
-            pass
-        except OSError as error:
-            raise ClientError("gui_character_state_unknown", "无法确认最终提交状态。") from error
-        else:
-            raise ClientError("gui_character_state_unknown", "最终提交已尝试，禁止输入。")
-        if (
-            not isinstance(record, dict)
-            or record.get("request_id") != request_id
-            or record.get("instance_id") != instance_id
-            or record.get("run_id") != run_id
-            or record.get("params") != asdict(params)
-        ):
-            raise ClientError("gui_character_identity_unconfirmed", "建角请求身份或参数不匹配。")
-        runtime = load_runtime(backend.root, backend.name, backend.instance)
-        require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-        stage = backend.read("stage")
-        dialog = backend.read("dialog")
-        if (
-            backend.name != "beidou"
-            or not runtime.running
-            or runtime.run_id != run_id
-            or identify_creation_page(stage, dialog, instance_id=instance_id, run_id=run_id) != "appearance"
-            or dialog.get("script_dialog_open") is not False
-            or dialog.get("focused_talk_dialog_open") is not False
-            or dialog.get("registered_talk_dialog_open") is not False
-        ):
-            raise ClientError("gui_character_state_unknown", "外观页面或实例状态不明确，停止输入。")
-        focused = dialog["focused_window"]
-        windows = stage.get("windows")
-        address = focused.get("address")
-        if not isinstance(address, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", address) or int(address, 16) == 0:
-            raise ClientError("gui_character_state_unknown", "外观窗口地址不可确认。")
-        matches = (
-            [window for window in windows if isinstance(window, dict) and window.get("address") == address]
-            if isinstance(windows, list)
-            else []
-        )
-        if len(matches) != 1 or matches[0].get("vtables") != focused.get("vtables"):
-            raise ClientError("gui_character_state_unknown", "外观窗口身份不明确。")
-        raw = matches[0].get("raw_appearance_candidates")
-        if (
-            not isinstance(raw, list)
-            or len(raw) != 8
-            or any(type(value) is not int for value in raw)
-            or type(matches[0].get("raw_job_candidate")) is not int
-            or matches[0]["raw_job_candidate"] != params.job
-            or type(matches[0].get("raw_appearance_selector")) is not int
-            or matches[0]["raw_appearance_selector"] != int(params.female)
-        ):
-            raise ClientError("gui_character_state_unknown", "外观原始值、职业或性别不可确认。")
-        return focused, matches[0], raw
-
-    focused, window, before = observe()
-    plan = plan_observed_appearance_step(params, before, seen)
+    """外观页发送最多一次原生轮转，并核对只有目标槽发生变化。"""
+    _require_attempt(directory, params, request_id=request_id, instance_id=instance_id, run_id=run_id)
+    if _marker(directory, "gui-character-final-submit"):
+        raise ClientError("gui_character_state_unknown", "最终提交已尝试，禁止输入。")
+    _, stage, bridge = _observe(backend, instance_id, run_id)
+    if identify_creation_page(stage, instance_id=instance_id, run_id=run_id) != "appearance":
+        raise ClientError("gui_character_state_unknown", "外观页面或实例状态不明确，停止输入。")
+    address, window = _creation_window(stage, "appearance")
+    raw = window.get("raw_appearance_candidates")
+    selector, job = window.get("raw_appearance_selector"), window.get("raw_job_candidate")
+    if (
+        not isinstance(raw, list)
+        or len(raw) != 8
+        or any(type(value) is not int for value in raw)
+        or type(job) is not int
+        or job != params.job
+        or type(selector) is not int
+        or selector != int(params.female)
+    ):
+        raise ClientError("gui_character_state_unknown", "外观原始值、职业或性别不可确认。")
+    plan = plan_observed_appearance_step(params, raw, seen)
     if plan["status"] != "step":
         return plan
-    control_id, field = plan["control_id"], plan["field"]
-    stage_buttons, dialog_buttons = window.get("buttons"), focused.get("buttons")
-    stage_matches = (
-        [b for b in stage_buttons if isinstance(b, dict) and b.get("control_id") == control_id]
-        if isinstance(stage_buttons, list)
-        else []
-    )
-    dialog_matches = (
-        [b for b in dialog_buttons if isinstance(b, dict) and b.get("control_id") == control_id]
-        if isinstance(dialog_buttons, list)
-        else []
-    )
-    rect = dialog_matches[0].get("root_rect") if len(dialog_matches) == 1 else None
-    window_rect = focused.get("root_rect")
-    if (
-        len(stage_matches) != 1
-        or stage_matches[0].get("enabled") is not True
-        or not isinstance(rect, dict)
-        or not isinstance(window_rect, dict)
-        or any(
-            type(rect.get(k)) is not int or type(window_rect.get(k)) is not int
-            for k in ("left", "top", "right", "bottom")
-        )
-        or rect["right"] - rect["left"] != 15
-        or rect["bottom"] - rect["top"] != 16
-        or window_rect["right"] - window_rect["left"] != 225
-        or window_rect["bottom"] - window_rect["top"] != 377
-        or stage_matches[0].get("width") != 15
-        or stage_matches[0].get("height") != 16
-        or stage_matches[0].get("layout_x") != 196
-        or stage_matches[0].get("layout_y") != 106 + field * 18
-        or dialog_matches[0].get("layout_x") != stage_matches[0]["layout_x"]
-        or dialog_matches[0].get("layout_y") != stage_matches[0]["layout_y"]
-        or rect["left"] != window_rect["left"] + stage_matches[0]["layout_x"]
-        or rect["top"] != window_rect["top"] + stage_matches[0]["layout_y"]
-        or not (
-            window_rect["left"] <= rect["left"] < rect["right"] <= window_rect["right"]
-            and window_rect["top"] <= rect["top"] < rect["bottom"] <= window_rect["bottom"]
-        )
-    ):
-        raise ClientError("gui_character_state_unknown", "外观按钮或坐标不可确认。")
-    require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
+    control, field = plan["control_id"], plan["field"]
     if time.monotonic() >= deadline:
         return {"status": "unknown", "reason": "timeout"}
-    seen[field].add(before[field])
-    result = backend.desktop(
-        [{"action": "click", "x": (rect["left"] + rect["right"]) // 2, "y": (rect["top"] + rect["bottom"]) // 2}]
-    )
-    if not _dispatched(result, "click"):
-        raise ClientError("gui_character_action_unknown", "外观输入结果不明，停止输入。")
-    after_focused, _, after = observe()
-    if after_focused.get("address") != focused.get("address") or not validate_appearance_transition(
-        before, after, field
-    ):
+    seen[field].add(raw[field])
+    bridge.login_action("ui_button", address, str(control))
+    _, after_stage, _ = _observe(backend, instance_id, run_id)
+    if identify_creation_page(after_stage, instance_id=instance_id, run_id=run_id) != "appearance":
+        raise ClientError("gui_character_action_unknown", "外观轮转后页面变化不明确。")
+    after_address, after_window = _creation_window(after_stage, "appearance")
+    after = after_window.get("raw_appearance_candidates")
+    if after_address != address or not validate_appearance_transition(raw, after, field):
         raise ClientError("gui_character_action_unknown", "外观变化不明确，停止输入。")
     return {"status": "changed", "field": field, "raw": after}
 
@@ -433,22 +639,13 @@ def _apply_appearance(
     run_id: str,
     timeout: float,
 ) -> JsonObject:
-    """内部遍历原语；调用方持有公共 input_lock 且先实证性别。超时不回退或重放。"""
+    """按已观察候选逐槽轮转到目标值；超时不回退或重放。"""
     require_supported_creation(params)
     if not math.isfinite(timeout) or timeout <= 0:
         raise ClientError("usage", "外观等待时间须为正有限数。")
-    try:
-        descriptor = os.open(
-            directory / "gui-character-appearance-attempt", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
-        )
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(request_id)
-            stream.flush()
-            os.fsync(stream.fileno())
-    except FileExistsError as error:
-        raise ClientError("gui_character_already_attempted", "外观调整已尝试，禁止重放。") from error
-    except OSError as error:
-        raise ClientError("login_bridge_write_failed", "外观尝试标记未确认，禁止输入。") from error
+    if _marker(directory, "gui-character-appearance-attempt"):
+        raise ClientError("gui_character_already_attempted", "外观调整已尝试，禁止重放。")
+    _mark(directory, "gui-character-appearance-attempt", request_id)
     deadline = time.monotonic() + timeout
     seen: list[set[int]] = [set() for _ in range(8)]
     while time.monotonic() < deadline:
@@ -467,371 +664,14 @@ def _apply_appearance(
     return {"status": "unknown", "reason": "timeout"}
 
 
-def identify_creation_page(stage: JsonObject, dialog: JsonObject, *, instance_id: str, run_id: str) -> str:
-    """识别已采样的焦点窗口；识别页面不代表动作或参数已验证。"""
-    for sample in (stage, dialog):
-        client = sample.get("client")
-        if (
-            sample.get("instance_id") != instance_id
-            or not isinstance(client, dict)
-            or client.get("run_id") != run_id
-            or sample.get("unavailable") != []
-        ):
-            return "unknown"
-    login = stage.get("login")
-    focused = dialog.get("focused_window")
-    if (
-        not isinstance(login, dict)
-        or login.get("request_pending") is not False
-        or login.get("transition_pending") is not False
-        or not isinstance(focused, dict)
-    ):
-        return "unknown"
-    vtables = focused.get("vtables")
-    if (
-        not isinstance(vtables, list)
-        or not all(isinstance(value, str) for value in vtables)
-        or type(login.get("raw_step")) is not int
-        or type(focused.get("width")) is not int
-        or type(focused.get("height")) is not int
-    ):
-        return "unknown"
-    signature = (login["raw_step"], tuple(vtables), focused["width"], focused["height"])
-    pages = {
-        (3, ("0xaf7360", "0xaf7314", "0xaf7310"), 700, 460): "category",
-        (4, ("0xaf7564", "0xaf7518", "0xaf7514"), 201, 224): "name",
-        (4, ("0xaf777c", "0xaf7730", "0xaf772c"), 225, 377): "appearance",
-    }
-    return pages.get(signature, "unknown")
-
-
-def creation_page_button(
-    stage: JsonObject, dialog: JsonObject, *, instance_id: str, run_id: str, page: str
-) -> JsonObject | None:
-    """仅返回两种已观察稳定页面的确认按钮坐标，不代表参数已核实。"""
-    expected = {
-        "category": (1003, 530, 422, 73, 29, 240, 40, 700, 460),
-        "name": (1000, 27, 178, 81, 41, 721, 155, 201, 224),
-    }
-    if page not in expected or identify_creation_page(stage, dialog, instance_id=instance_id, run_id=run_id) != page:
+def _final_state(stage: JsonObject, params: CharacterCreation, *, instance_id: str, run_id: str) -> JsonObject | None:
+    """最终提交前的纯比较：页面、外观、职业、性别与创建按钮就绪。"""
+    if identify_creation_page(stage, instance_id=instance_id, run_id=run_id) != "appearance":
         return None
-    if any(
-        dialog.get(key) is not False
-        for key in ("script_dialog_open", "focused_talk_dialog_open", "registered_talk_dialog_open")
-    ):
-        return None
-    focused, geometry, windows = dialog.get("focused_window"), dialog.get("game_geometry"), stage.get("windows")
-    if not isinstance(focused, dict) or not isinstance(geometry, dict) or not isinstance(windows, list):
-        return None
-    control_id, x, y, width, height, gx, gy, window_width, window_height = expected[page]
-    if (
-        geometry.get("width") != 1280
-        or geometry.get("height") != 720
-        or type(geometry.get("x")) is not int
-        or type(geometry.get("y")) is not int
-        or focused.get("game_rect") != {"left": gx, "top": gy, "right": gx + window_width, "bottom": gy + window_height}
-        or focused.get("root_rect")
-        != {
-            "left": geometry["x"] + gx,
-            "top": geometry["y"] + gy,
-            "right": geometry["x"] + gx + window_width,
-            "bottom": geometry["y"] + gy + window_height,
-        }
-    ):
-        return None
-    address = focused.get("address")
-    if not isinstance(address, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", address) or int(address, 16) == 0:
-        return None
-    matches = [window for window in windows if isinstance(window, dict) and window.get("address") == address]
-    if len(matches) != 1 or matches[0].get("vtables") != focused.get("vtables"):
-        return None
-    native_buttons, projected_buttons = matches[0].get("buttons"), focused.get("buttons")
-    native = (
-        [button for button in native_buttons if isinstance(button, dict) and button.get("control_id") == control_id]
-        if isinstance(native_buttons, list)
-        else []
-    )
-    projected = (
-        [button for button in projected_buttons if isinstance(button, dict) and button.get("control_id") == control_id]
-        if isinstance(projected_buttons, list)
-        else []
-    )
-    if len(native) != 1 or len(projected) != 1:
-        return None
-    if (
-        native[0].get("enabled") is not True
-        or any(
-            button.get("layout_x") != x
-            or button.get("layout_y") != y
-            or button.get("width") != width
-            or button.get("height") != height
-            for button in (native[0], projected[0])
-        )
-        or projected[0].get("root_rect")
-        != {
-            "left": geometry["x"] + gx + x,
-            "top": geometry["y"] + gy + y,
-            "right": geometry["x"] + gx + x + width,
-            "bottom": geometry["y"] + gy + y + height,
-        }
-    ):
-        return None
-    return {"action": "click", "x": geometry["x"] + gx + x + width // 2, "y": geometry["y"] + gy + y + height // 2}
-
-
-def name_candidate_decision(
-    stage: JsonObject, dialog: JsonObject, *, instance_id: str, run_id: str, name: str
-) -> JsonObject:
-    """姓名页纯决策；候选未经实机验证，调用方不得据此启用真实输入。"""
-    if (
-        not isinstance(name, str)
-        or not name
-        or any(not 32 <= ord(ch) <= 126 for ch in name)
-        or creation_page_button(stage, dialog, instance_id=instance_id, run_id=run_id, page="name") is None
-    ):
-        return {"status": "unknown"}
-    focused = dialog["focused_window"]
-    matches = [w for w in stage["windows"] if isinstance(w, dict) and w.get("address") == focused["address"]]
-    if len(matches) != 1 or matches[0].get("creation_name_focused") is not True:
-        return {"status": "unknown"}
-    candidate = matches[0].get("creation_name_candidate")
-    if not isinstance(candidate, str) or any(not 32 <= ord(ch) <= 126 for ch in candidate):
-        return {"status": "unknown"}
-    return {"status": "empty" if not candidate else "matched" if candidate == name else "different"}
-
-
-def _enter_name(
-    backend: Backend,
-    params: CharacterCreation,
-    *,
-    directory: Path,
-    request_id: str,
-    instance_id: str,
-    run_id: str,
-    deadline: float,
-) -> JsonObject:
-    """未接线姓名控制器；候选未实测期间由支持门禁止输入。"""
-    require_supported_creation(params)
-
-    def observe():
-        runtime = load_runtime(backend.root, backend.name, backend.instance)
-        require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-        if backend.name != "beidou" or not runtime.running or runtime.run_id != run_id:
-            raise ClientError("gui_character_state_unknown", "建角实例状态不明确。")
-        stage, dialog = backend.read("stage"), backend.read("dialog")
-        decision = name_candidate_decision(stage, dialog, instance_id=instance_id, run_id=run_id, name=params.name)
-        return decision["status"], dialog
-
     try:
-        with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
-            record = json.load(stream)
-    except (OSError, ValueError) as error:
-        raise ClientError("gui_character_state_unknown", "建角请求不可读取。") from error
-    for marker in ("gui-character-final-submit", "gui-character-name-check", "gui-character-appearance-attempt"):
-        try:
-            (directory / marker).stat()
-        except FileNotFoundError:
-            continue
-        except OSError as error:
-            raise ClientError("gui_character_state_unknown", "请求进度不可读取。") from error
-        raise ClientError("gui_character_already_attempted", "请求已进入后续阶段，禁止输入姓名。")
-    if (
-        not isinstance(record, dict)
-        or record.get("instance_id") != instance_id
-        or record.get("run_id") != run_id
-        or record.get("request_id") != request_id
-        or record.get("params") != asdict(params)
-    ):
-        raise ClientError("gui_character_identity_unconfirmed", "建角请求身份或参数不匹配。")
-    status, dialog = observe()
-    if status == "matched":
-        return {"status": "matched"}
-    if status != "empty":
-        return {"status": "unknown"}
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    try:
-        descriptor = os.open(directory / "gui-character-name-attempt", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(request_id)
-            stream.flush()
-            os.fsync(stream.fileno())
-    except FileExistsError as error:
-        raise ClientError("gui_character_already_attempted", "姓名输入已尝试，禁止重放。") from error
-    except OSError as error:
-        raise ClientError("login_bridge_write_failed", "姓名输入标记未确认，禁止输入。") from error
-    current, next_dialog = observe()
-    if (
-        current != "empty"
-        or next_dialog["focused_window"].get("address") != dialog["focused_window"].get("address")
-        or time.monotonic() >= deadline
-    ):
-        return {"status": "unknown"}
-    require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    backend.text("runtime-ui", "type-private", payload=params.name)
-    status, next_dialog = observe()
-    if not isinstance(next_dialog.get("focused_window"), dict) or next_dialog["focused_window"].get(
-        "address"
-    ) != dialog["focused_window"].get("address"):
-        return {"status": "unknown"}
-    return {"status": "matched" if status == "matched" else "unknown"}
-
-
-def _check_name(
-    backend: Backend,
-    params: CharacterCreation,
-    *,
-    directory: Path,
-    request_id: str,
-    instance_id: str,
-    run_id: str,
-    deadline: float,
-) -> JsonObject:
-    """姓名核查最多一次；调用者持有公共输入锁，此动作不创建角色。"""
-    require_supported_creation(params)
-
-    def observe():
-        runtime = load_runtime(backend.root, backend.name, backend.instance)
-        require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-        if backend.name != "beidou" or not runtime.running or runtime.run_id != run_id:
-            raise ClientError("gui_character_state_unknown", "建角实例状态不明确。")
-        stage, dialog = backend.read("stage"), backend.read("dialog")
-        return stage, dialog
-
-    try:
-        with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
-            record = json.load(stream)
-    except (OSError, ValueError) as error:
-        raise ClientError("gui_character_state_unknown", "建角请求不可读取。") from error
-    if (
-        not isinstance(record, dict)
-        or record.get("instance_id") != instance_id
-        or record.get("run_id") != run_id
-        or record.get("request_id") != request_id
-        or record.get("params") != asdict(params)
-    ):
-        raise ClientError("gui_character_identity_unconfirmed", "建角请求身份或参数不匹配。")
-    for marker in ("gui-character-final-submit", "gui-character-appearance-attempt"):
-        try:
-            (directory / marker).stat()
-        except FileNotFoundError:
-            continue
-        except OSError as error:
-            raise ClientError("gui_character_state_unknown", "请求进度不可确认。") from error
-        raise ClientError("gui_character_already_attempted", "请求已进入后续阶段，禁止重放姓名核查。")
-    stage, dialog = observe()
-    action = creation_page_button(stage, dialog, instance_id=instance_id, run_id=run_id, page="name")
-    if (
-        action is None
-        or name_candidate_decision(stage, dialog, instance_id=instance_id, run_id=run_id, name=params.name)["status"]
-        != "matched"
-    ):
-        return {"status": "unknown"}
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    try:
-        descriptor = os.open(directory / "gui-character-name-check", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(request_id)
-            stream.flush()
-            os.fsync(stream.fileno())
-    except FileExistsError as error:
-        raise ClientError("gui_character_already_attempted", "姓名核查已尝试，禁止重放。") from error
-    except OSError as error:
-        raise ClientError("login_bridge_write_failed", "姓名核查标记未确认，禁止输入。") from error
-    current, current_dialog = observe()
-    if (
-        creation_page_button(current, current_dialog, instance_id=instance_id, run_id=run_id, page="name") != action
-        or current_dialog["focused_window"].get("address") != dialog["focused_window"].get("address")
-        or name_candidate_decision(current, current_dialog, instance_id=instance_id, run_id=run_id, name=params.name)[
-            "status"
-        ]
-        != "matched"
-    ):
-        return {"status": "unknown"}
-    require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    if not _dispatched(backend.desktop([action]), "click"):
-        raise ClientError("gui_character_action_unknown", "姓名核查结果不明，禁止重放。")
-    while time.monotonic() < deadline:
-        stage, dialog = observe()
-        focused = dialog.get("focused_window")
-        windows = stage.get("windows")
-        address = focused.get("address") if isinstance(focused, dict) else None
-        if (
-            identify_creation_page(stage, dialog, instance_id=instance_id, run_id=run_id) == "appearance"
-            and isinstance(address, str)
-            and re.fullmatch(r"0x[0-9a-fA-F]+", address)
-            and int(address, 16) != 0
-            and isinstance(windows, list)
-            and len(
-                [
-                    w
-                    for w in windows
-                    if isinstance(w, dict)
-                    and w.get("address") == address
-                    and w.get("vtables") == focused.get("vtables")
-                ]
-            )
-            == 1
-        ):
-            break
-        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
-    else:
-        return {"status": "unknown", "reason": "next_page_unconfirmed"}
-    try:
-        descriptor = os.open(directory / "gui-character-name-checked", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(request_id)
-            stream.flush()
-            os.fsync(stream.fileno())
-    except OSError as error:
-        raise ClientError("login_bridge_write_failed", "姓名核查结果未持久化，停止建角。") from error
-    return {"status": "appearance_page"}
-
-
-def _final_confirmation_action(
-    stage: JsonObject, dialog: JsonObject, params: CharacterCreation, *, instance_id: str, run_id: str
-) -> JsonObject | None:
-    """未实测候选的纯比较；实际动作仍受验证门阻断。"""
-    if identify_creation_page(stage, dialog, instance_id=instance_id, run_id=run_id) != "appearance" or any(
-        dialog.get(key) is not False
-        for key in ("script_dialog_open", "focused_talk_dialog_open", "registered_talk_dialog_open")
-    ):
+        address, window = _creation_window(stage, "appearance")
+    except ClientError:
         return None
-    focused, geometry, windows = dialog.get("focused_window"), dialog.get("game_geometry"), stage.get("windows")
-    if not isinstance(focused, dict) or not isinstance(geometry, dict) or not isinstance(windows, list):
-        return None
-    address = focused.get("address")
-    if (
-        not isinstance(address, str)
-        or not re.fullmatch(r"0x[0-9a-fA-F]+", address)
-        or int(address, 16) == 0
-        or geometry.get("width") != 1280
-        or geometry.get("height") != 720
-        or type(geometry.get("x")) is not int
-        or type(geometry.get("y")) is not int
-        or focused.get("game_rect") != {"left": 721, "top": 155, "right": 946, "bottom": 532}
-        or focused.get("root_rect")
-        != {
-            "left": geometry["x"] + 721,
-            "top": geometry["y"] + 155,
-            "right": geometry["x"] + 946,
-            "bottom": geometry["y"] + 532,
-        }
-    ):
-        return None
-    matches = [
-        w
-        for w in windows
-        if isinstance(w, dict) and w.get("address") == address and w.get("vtables") == focused.get("vtables")
-    ]
-    if len(matches) != 1:
-        return None
-    window = matches[0]
     expected = [
         params.face,
         params.hair,
@@ -848,39 +688,20 @@ def _final_confirmation_action(
         or len(raw) != 8
         or any(type(value) is not int for value in raw)
         or raw != expected
-        or type(window.get("raw_job_candidate")) is not int
-        or window["raw_job_candidate"] != params.job
+        or window.get("raw_job_candidate") != params.job
         or type(window.get("raw_appearance_selector")) is not int
         or window["raw_appearance_selector"] != int(params.female)
     ):
         return None
-    native, projected = window.get("buttons"), focused.get("buttons")
-    first = (
-        [b for b in native if isinstance(b, dict) and b.get("control_id") == 1000] if isinstance(native, list) else []
-    )
-    second = (
-        [b for b in projected if isinstance(b, dict) and b.get("control_id") == 1000]
-        if isinstance(projected, list)
+    buttons = window.get("buttons")
+    create = (
+        [button for button in buttons if isinstance(button, dict) and button.get("control_id") == 1000]
+        if isinstance(buttons, list)
         else []
     )
-    if (
-        len(first) != 1
-        or len(second) != 1
-        or first[0].get("enabled") is not True
-        or any(
-            b.get("layout_x") != 37 or b.get("layout_y") != 330 or b.get("width") != 81 or b.get("height") != 41
-            for b in (first[0], second[0])
-        )
-        or second[0].get("root_rect")
-        != {
-            "left": geometry["x"] + 758,
-            "top": geometry["y"] + 485,
-            "right": geometry["x"] + 839,
-            "bottom": geometry["y"] + 526,
-        }
-    ):
+    if len(create) != 1 or create[0].get("enabled") is not True:
         return None
-    return {"action": "click", "x": geometry["x"] + 798, "y": geometry["y"] + 505}
+    return {"address": address}
 
 
 def _submit_creation(
@@ -893,49 +714,27 @@ def _submit_creation(
     run_id: str,
     deadline: float,
 ) -> JsonObject:
-    """单次最终确认；调用者持公共输入锁，未知结果不可重放。"""
+    """单次最终确认；调用方持公共输入锁，未知结果不可重放。"""
     require_supported_creation(params)
     unknown: JsonObject = {"request_id": request_id, "instance_id": instance_id, "run_id": run_id, "status": "unknown"}
+    _require_attempt(directory, params, request_id=request_id, instance_id=instance_id, run_id=run_id)
     try:
-        with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
-            record = json.load(stream)
-        name_checked = (directory / "gui-character-name-checked").read_text(encoding="utf-8")
-    except (OSError, ValueError) as error:
-        raise ClientError("gui_character_state_unknown", "请求或姓名检查结果不可确认。") from error
-    if (
-        not isinstance(record, dict)
-        or record.get("instance_id") != instance_id
-        or record.get("run_id") != run_id
-        or record.get("request_id") != request_id
-        or record.get("params") != asdict(params)
-        or name_checked != request_id
-    ):
-        raise ClientError("gui_character_identity_unconfirmed", "请求或姓名检查身份不匹配。")
-
-    def observe():
-        runtime = load_runtime(backend.root, backend.name, backend.instance)
-        require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-        if backend.name != "beidou" or not runtime.running or runtime.run_id != run_id:
-            raise ClientError("gui_character_state_unknown", "建角实例状态不明确。")
-        stage, dialog = backend.read("stage"), backend.read("dialog")
-        return _final_confirmation_action(stage, dialog, params, instance_id=instance_id, run_id=run_id), dialog
-
-    action, dialog = observe()
-    if action is None or time.monotonic() >= deadline:
+        if (directory / "gui-character-name-checked").read_text(encoding="utf-8") != request_id:
+            raise ClientError("gui_character_state_unknown", "姓名核查未确认。")
+    except OSError as error:
+        raise ClientError("gui_character_state_unknown", "姓名核查结果不可读取。") from error
+    if _marker(directory, "gui-character-final-submit"):
+        raise ClientError("gui_character_already_attempted", "最终确认已尝试，禁止重发。")
+    _, stage, bridge = _observe(backend, instance_id, run_id)
+    target = _final_state(stage, params, instance_id=instance_id, run_id=run_id)
+    if target is None or time.monotonic() >= deadline:
         return unknown
-    mark_final_submit(directory, instance_id=instance_id, run_id=run_id, request_id=request_id)
-    current, current_dialog = observe()
-    if (
-        current != action
-        or not isinstance(current_dialog.get("focused_window"), dict)
-        or current_dialog["focused_window"].get("address") != dialog["focused_window"].get("address")
-    ):
+    _mark(directory, "gui-character-final-submit", request_id)
+    _, again, bridge = _observe(backend, instance_id, run_id)
+    if _final_state(again, params, instance_id=instance_id, run_id=run_id) != target:
         return unknown
-    require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-    if time.monotonic() >= deadline:
-        return unknown
-    receipt = backend.desktop([action])
-    record_final_dispatch(directory, instance_id=instance_id, run_id=run_id, request_id=request_id, receipt=receipt)
+    bridge.login_action("ui_button", target["address"], "1000")
+    record_final_dispatch(directory, instance_id=instance_id, run_id=run_id, request_id=request_id, dispatched=True)
     return unknown
 
 
@@ -1021,392 +820,6 @@ def observe_result(
     )
 
 
-def _navigate_category(
-    backend: Backend,
-    params: CharacterCreation,
-    *,
-    directory: Path,
-    request_id: str,
-    instance_id: str,
-    run_id: str,
-    deadline: float,
-) -> JsonObject:
-    """单次确认默认类别；调用方持公共输入锁，翻页不证明请求的职业已核实。"""
-
-    def observe():
-        runtime = load_runtime(backend.root, backend.name, backend.instance)
-        require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-        if backend.name != "beidou" or not runtime.running or runtime.run_id != run_id:
-            raise ClientError("gui_character_state_unknown", "建角实例状态不明确。")
-        stage, dialog = backend.read("stage"), backend.read("dialog")
-        return stage, dialog
-
-    try:
-        with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
-            record = json.load(stream)
-    except (OSError, ValueError) as error:
-        raise ClientError("gui_character_state_unknown", "建角请求不可读取。") from error
-    if (
-        not isinstance(record, dict)
-        or record.get("instance_id") != instance_id
-        or record.get("run_id") != run_id
-        or record.get("request_id") != request_id
-        or record.get("params") != asdict(params)
-    ):
-        raise ClientError("gui_character_identity_unconfirmed", "建角请求身份或参数不匹配。")
-    for marker in ("gui-character-final-submit", "gui-character-appearance-attempt"):
-        try:
-            (directory / marker).stat()
-        except FileNotFoundError:
-            continue
-        except OSError as error:
-            raise ClientError("gui_character_state_unknown", "无法核对请求进度。") from error
-        raise ClientError("gui_character_already_attempted", "请求已进入后续阶段，禁止重放类别确认。")
-    stage, dialog = observe()
-    action = creation_page_button(stage, dialog, instance_id=instance_id, run_id=run_id, page="category")
-    if action is None:
-        raise ClientError("gui_character_state_unknown", "类别页面不明确，停止输入。")
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    try:
-        descriptor = os.open(directory / "gui-character-category-attempt", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(request_id)
-            stream.flush()
-            os.fsync(stream.fileno())
-    except FileExistsError as error:
-        raise ClientError("gui_character_already_attempted", "类别确认已尝试，禁止重放。") from error
-    except OSError as error:
-        raise ClientError("login_bridge_write_failed", "类别确认标记未确认，禁止输入。") from error
-    after_stage, after_dialog = observe()
-    if creation_page_button(
-        after_stage, after_dialog, instance_id=instance_id, run_id=run_id, page="category"
-    ) != action or after_dialog["focused_window"].get("address") != dialog["focused_window"].get("address"):
-        raise ClientError("gui_character_state_unknown", "类别页面已变化，停止输入。")
-    require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    receipt = backend.desktop([action])
-    if not _dispatched(receipt, "click"):
-        raise ClientError("gui_character_action_unknown", "类别确认结果不明，禁止重放。")
-    while time.monotonic() < deadline:
-        stage, dialog = observe()
-        if creation_page_button(stage, dialog, instance_id=instance_id, run_id=run_id, page="name") is not None:
-            return {"status": "name_page"}
-        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
-    return {"status": "unknown", "reason": "next_page_unconfirmed"}
-
-
-def _open_creation(
-    backend: Backend,
-    params: CharacterCreation,
-    *,
-    directory: Path,
-    request_id: str,
-    instance_id: str,
-    run_id: str,
-    deadline: float,
-) -> JsonObject:
-    """空列表单次点击创建；后续仅观察类别页，调用者持公共输入锁。"""
-
-    def observe():
-        runtime = load_runtime(backend.root, backend.name, backend.instance)
-        require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-        stage, dialog = backend.read("stage"), backend.read("dialog")
-        client, login, windows = stage.get("client"), stage.get("login"), stage.get("windows")
-        focus, geometry = dialog.get("focused_window"), dialog.get("game_geometry")
-        if (
-            backend.name != "beidou"
-            or not runtime.running
-            or runtime.run_id != run_id
-            or stage.get("instance_id") != instance_id
-            or not isinstance(client, dict)
-            or client.get("run_id") != run_id
-            or stage.get("unavailable") != []
-            or stage.get("stage") != "CHARACTER_SELECT"
-            or not isinstance(login, dict)
-            or login.get("raw_step") != 2
-            or login.get("characters_available") is not True
-            or login.get("characters") != []
-            or login.get("request_pending") is not False
-            or login.get("transition_pending") is not False
-            or not isinstance(windows, list)
-            or dialog.get("instance_id") != instance_id
-            or not isinstance(dialog.get("client"), dict)
-            or dialog["client"].get("run_id") != run_id
-            or dialog.get("unavailable") != []
-            or any(
-                dialog.get(k) is not False
-                for k in ("script_dialog_open", "focused_talk_dialog_open", "registered_talk_dialog_open")
-            )
-            or not isinstance(focus, dict)
-            or focus.get("vtables") != ["0xaf6f04", "0xaf6eb8", "0xaf6eb4"]
-            or focus.get("width") != 720
-            or focus.get("height") != 80
-            or not isinstance(geometry, dict)
-            or geometry.get("width") != 1280
-            or geometry.get("height") != 720
-            or type(geometry.get("x")) is not int
-            or type(geometry.get("y")) is not int
-        ):
-            raise ClientError("gui_character_state_unknown", "空角色列表或实例不明确。")
-        focus_address = focus.get("address")
-        if (
-            not isinstance(focus_address, str)
-            or not re.fullmatch(r"0x[0-9a-fA-F]+", focus_address)
-            or int(focus_address, 16) == 0
-            or len(
-                [
-                    w
-                    for w in windows
-                    if isinstance(w, dict)
-                    and w.get("address") == focus_address
-                    and w.get("vtables") == focus.get("vtables")
-                ]
-            )
-            != 1
-        ):
-            raise ClientError("gui_character_state_unknown", "角色列表焦点不明确。")
-        matches = [
-            w for w in windows if isinstance(w, dict) and w.get("vtables") == ["0xaf6d90", "0xaf6d44", "0xaf6d40"]
-        ]
-        if len(matches) != 1:
-            raise ClientError("gui_character_state_unknown", "角色创建窗口不唯一。")
-        window = matches[0]
-        address = window.get("address")
-        buttons = window.get("buttons")
-        create = (
-            [b for b in buttons if isinstance(b, dict) and b.get("control_id") == 1001]
-            if isinstance(buttons, list)
-            else []
-        )
-        if (
-            not isinstance(address, str)
-            or not re.fullmatch(r"0x[0-9a-fA-F]+", address)
-            or int(address, 16) == 0
-            or window.get("width") != 101
-            or window.get("height") != 131
-            or window.get("game_rect") != {"left": 812, "top": 209, "right": 913, "bottom": 340}
-            or window.get("root_rect")
-            != {
-                "left": geometry["x"] + 812,
-                "top": geometry["y"] + 209,
-                "right": geometry["x"] + 913,
-                "bottom": geometry["y"] + 340,
-            }
-            or len(create) != 1
-            or create[0].get("enabled") is not True
-            or create[0].get("layout_x") != 4
-            or create[0].get("layout_y") != 36
-            or create[0].get("width") != 101
-            or create[0].get("height") != 35
-        ):
-            raise ClientError("gui_character_state_unknown", "角色创建按钮位置不明确。")
-        return (
-            {"action": "click", "x": geometry["x"] + 812 + 4 + 50, "y": geometry["y"] + 209 + 36 + 17},
-            address,
-            focus_address,
-        )
-
-    try:
-        with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
-            record = json.load(stream)
-    except (OSError, ValueError) as error:
-        raise ClientError("gui_character_state_unknown", "建角请求不可读取。") from error
-    if (
-        not isinstance(record, dict)
-        or record.get("instance_id") != instance_id
-        or record.get("run_id") != run_id
-        or record.get("request_id") != request_id
-        or record.get("params") != asdict(params)
-        or record.get("previous_ids") != []
-    ):
-        raise ClientError("gui_character_identity_unconfirmed", "空角色请求身份不匹配。")
-    action, address, focus_address = observe()
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    try:
-        descriptor = os.open(directory / "gui-character-open-attempt", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(request_id)
-            stream.flush()
-            os.fsync(stream.fileno())
-    except FileExistsError as error:
-        raise ClientError("gui_character_already_attempted", "角色创建页面已尝试打开，禁止重放。") from error
-    except OSError as error:
-        raise ClientError("login_bridge_write_failed", "页面操作标记未确认。") from error
-    if observe() != (action, address, focus_address):
-        return {"status": "unknown"}
-    require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    if not _dispatched(backend.desktop([action]), "click"):
-        raise ClientError("gui_character_action_unknown", "打开创建页面结果不明，禁止重放。")
-    while time.monotonic() < deadline:
-        runtime = load_runtime(backend.root, backend.name, backend.instance)
-        native = BridgeClient(backend.root, backend.name, backend.instance).snapshot()
-        if (
-            not runtime.running
-            or runtime.run_id != run_id
-            or native.get("instance_id") != instance_id
-            or native.get("run_id") != run_id
-        ):
-            return {"status": "unknown"}
-        stage, dialog = backend.read("stage"), backend.read("dialog")
-        if creation_page_button(stage, dialog, instance_id=instance_id, run_id=run_id, page="category") is not None:
-            return {"status": "category_page"}
-        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
-    return {"status": "unknown", "reason": "next_page_unconfirmed"}
-
-
-def _set_gender(
-    backend: Backend,
-    params: CharacterCreation,
-    *,
-    directory: Path,
-    request_id: str,
-    instance_id: str,
-    run_id: str,
-    deadline: float,
-) -> JsonObject:
-    """先核实并最多切换一次外观性别；调用者持公共输入锁。"""
-
-    def observe():
-        runtime = load_runtime(backend.root, backend.name, backend.instance)
-        require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-        stage, dialog = backend.read("stage"), backend.read("dialog")
-        if (
-            backend.name != "beidou"
-            or not runtime.running
-            or runtime.run_id != run_id
-            or identify_creation_page(stage, dialog, instance_id=instance_id, run_id=run_id) != "appearance"
-            or any(
-                dialog.get(k) is not False
-                for k in ("script_dialog_open", "focused_talk_dialog_open", "registered_talk_dialog_open")
-            )
-        ):
-            raise ClientError("gui_character_state_unknown", "性别页面或实例状态不明。")
-        focused, windows = dialog["focused_window"], stage.get("windows")
-        address = focused.get("address")
-        matches = (
-            [
-                w
-                for w in windows
-                if isinstance(w, dict) and w.get("address") == address and w.get("vtables") == focused.get("vtables")
-            ]
-            if isinstance(windows, list)
-            else []
-        )
-        if (
-            not isinstance(address, str)
-            or not re.fullmatch(r"0x[0-9a-fA-F]+", address)
-            or int(address, 16) == 0
-            or len(matches) != 1
-        ):
-            raise ClientError("gui_character_state_unknown", "性别窗口身份不明确。")
-        window = matches[0]
-        if (
-            type(window.get("raw_job_candidate")) is not int
-            or window["raw_job_candidate"] != params.job
-            or type(window.get("raw_appearance_selector")) is not int
-            or window["raw_appearance_selector"] not in (0, 1)
-            or not isinstance(window.get("raw_appearance_candidates"), list)
-            or len(window["raw_appearance_candidates"]) != 8
-            or any(type(v) is not int for v in window["raw_appearance_candidates"])
-        ):
-            raise ClientError("gui_character_state_unknown", "职业、性别或外观原始值不明确。")
-        return focused, window
-
-    try:
-        with (directory / "gui-character-attempt.json").open(encoding="utf-8") as stream:
-            record = json.load(stream)
-        if (directory / "gui-character-name-checked").read_text(encoding="utf-8") != request_id:
-            raise ClientError("gui_character_state_unknown", "姓名核查未确认。")
-    except (OSError, ValueError) as error:
-        raise ClientError("gui_character_state_unknown", "请求状态不可读取。") from error
-    if (
-        not isinstance(record, dict)
-        or record.get("instance_id") != instance_id
-        or record.get("run_id") != run_id
-        or record.get("request_id") != request_id
-        or record.get("params") != asdict(params)
-    ):
-        raise ClientError("gui_character_identity_unconfirmed", "建角请求身份或参数不匹配。")
-    for marker in ("gui-character-gender-attempt", "gui-character-appearance-attempt", "gui-character-final-submit"):
-        try:
-            (directory / marker).stat()
-        except FileNotFoundError:
-            continue
-        except OSError as error:
-            raise ClientError("gui_character_state_unknown", "请求进度不可读取。") from error
-        raise ClientError("gui_character_already_attempted", "性别或后续步骤已尝试，禁止重放。")
-    focused, window = observe()
-    if window["raw_appearance_selector"] == int(params.female):
-        return {"status": "matched"}
-    native, projected, rect = window.get("buttons"), focused.get("buttons"), focused.get("root_rect")
-    buttons = (
-        [b for b in native if isinstance(b, dict) and b.get("control_id") == 1019] if isinstance(native, list) else []
-    )
-    drawn = (
-        [b for b in projected if isinstance(b, dict) and b.get("control_id") == 1019]
-        if isinstance(projected, list)
-        else []
-    )
-    if (
-        len(buttons) != 1
-        or len(drawn) != 1
-        or buttons[0].get("enabled") is not True
-        or any(
-            b.get("layout_x") != 196 or b.get("layout_y") != 250 or b.get("width") != 15 or b.get("height") != 16
-            for b in (buttons[0], drawn[0])
-        )
-        or not isinstance(rect, dict)
-        or any(type(rect.get(k)) is not int for k in ("left", "top", "right", "bottom"))
-        or rect["right"] - rect["left"] != 225
-        or rect["bottom"] - rect["top"] != 377
-        or drawn[0].get("root_rect")
-        != {
-            "left": rect["left"] + 196,
-            "top": rect["top"] + 250,
-            "right": rect["left"] + 211,
-            "bottom": rect["top"] + 266,
-        }
-    ):
-        raise ClientError("gui_character_state_unknown", "性别按钮或坐标不明确。")
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    try:
-        descriptor = os.open(directory / "gui-character-gender-attempt", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(request_id)
-            stream.flush()
-            os.fsync(stream.fileno())
-    except FileExistsError as error:
-        raise ClientError("gui_character_already_attempted", "性别切换已尝试，禁止重放。") from error
-    except OSError as error:
-        raise ClientError("login_bridge_write_failed", "性别切换标记未确认。") from error
-    current, observed = observe()
-    if (
-        current.get("address") != focused.get("address")
-        or current.get("root_rect") != rect
-        or current.get("buttons") != focused.get("buttons")
-        or observed.get("buttons") != window.get("buttons")
-        or observed.get("raw_appearance_selector") != window["raw_appearance_selector"]
-        or observed.get("raw_appearance_candidates") != window["raw_appearance_candidates"]
-    ):
-        return {"status": "unknown"}
-    require_input_idle(BridgeClient(backend.root, backend.name, backend.instance), instance_id, run_id)
-    if time.monotonic() >= deadline:
-        return {"status": "unknown", "reason": "timeout"}
-    receipt = backend.desktop([{"action": "click", "x": rect["left"] + 203, "y": rect["top"] + 258}])
-    if not _dispatched(receipt, "click"):
-        raise ClientError("gui_character_action_unknown", "性别切换派发不明，禁止重放。")
-    after, observed = observe()
-    if after.get("address") != focused.get("address") or observed["raw_appearance_selector"] != int(params.female):
-        return {"status": "unknown"}
-    return {"status": "matched"}
-
-
 def _create_once_locked(
     backend: Backend, params: CharacterCreation, *, directory: Path, instance_id: str, run_id: str, timeout: float
 ) -> JsonObject:
@@ -1483,22 +896,25 @@ def _create_once_locked(
         for operation, expected in (
             (_open_creation, "category_page"),
             (_navigate_category, "name_page"),
-            (_enter_name, "matched"),
-            (_check_name, "appearance_page"),
+            (_submit_name, "appearance_page"),
             (_set_gender, "matched"),
         ):
             result = operation(backend, params, **arguments)
             if result.get("status") != expected:
-                return {**identity, "status": "unknown"}
+                return {**identity, "status": "unknown", "reason": result.get("reason")}
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return {**identity, "status": "unknown"}
+            return {**identity, "status": "unknown", "reason": "timeout"}
         result = _apply_appearance(backend, params, directory=directory, **identity, timeout=remaining)
         if result.get("status") != "matched":
-            return {**identity, "status": "unknown"}
+            return {**identity, "status": "unknown", "reason": result.get("reason")}
         _submit_creation(backend, params, **arguments)
-        if (directory / "gui-character-final-dispatched").read_text(encoding="utf-8") != identity["request_id"]:
-            return {**identity, "status": "unknown"}
+        try:
+            dispatched = (directory / "gui-character-final-dispatched").read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {**identity, "status": "unknown", "reason": "final_dispatch_unconfirmed"}
+        if dispatched != identity["request_id"]:
+            return {**identity, "status": "unknown", "reason": "final_dispatch_unconfirmed"}
         return _wait_creation_result(
             backend, bridge_directory=BridgeClient(backend.root, backend.name, backend.instance).directory, **arguments
         )
