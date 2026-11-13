@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from beidou_pilot.bridge import require_input_idle
 from beidou_pilot.errors import ClientError
 from beidou_pilot.gui_first_login import submit_credentials_once
 from beidou_pilot.profile import AccountProfile
@@ -23,6 +24,7 @@ class GuiFirstLoginTests(unittest.TestCase):
             "instance_id": "instance",
             "run_id": "run",
             "script": None,
+            "scripts": [],
             "command": {"status": "idle"},
             "held_keys": [],
         }
@@ -118,11 +120,11 @@ class GuiFirstLoginTests(unittest.TestCase):
 
     def test_busy_or_unavailable_native_bridge_never_sends_input(self) -> None:
         state = self.bridge.return_value.snapshot.return_value
-        state["script"] = {"status": "running"}
+        state["scripts"] = [{"status": "running", "control_released": False}]
         with self.assertRaises(ClientError):
             self.submit()
         self.backend.desktop.assert_not_called()
-        state["script"] = None
+        state["scripts"] = []
         state["instance_id"] = "other"
         with self.assertRaises(ClientError):
             self.submit()
@@ -130,6 +132,74 @@ class GuiFirstLoginTests(unittest.TestCase):
         with self.assertRaises(ClientError):
             self.submit()
         self.backend.text.assert_not_called()
+
+    def test_other_running_session_and_missing_or_unreleased_list_are_blocked(self) -> None:
+        state = self.bridge.return_value.snapshot.return_value
+        state["script"] = {"status": "completed", "control_released": True}
+        for scripts in (
+            None,
+            [{"status": "completed"}],
+            [{"status": "completed", "control_released": False}],
+            [{"status": "completed", "control_released": True}, {"status": "running", "control_released": False}],
+        ):
+            with self.subTest(scripts=scripts):
+                state["scripts"] = scripts
+                with self.assertRaises(ClientError):
+                    self.submit()
+                self.backend.text.assert_not_called()
+
+    def test_other_session_starts_after_account_click_stops_username(self) -> None:
+        def desktop(actions):
+            self.bridge.return_value.snapshot.return_value["scripts"] = [
+                {"status": "running", "control_released": False}
+            ]
+            return {"cancelled": False, "input_dispatched": True, "timings": [{"action": "click"}]}
+
+        self.backend.desktop.side_effect = desktop
+        with self.assertRaises(ClientError):
+            self.submit()
+        self.backend.text.assert_not_called()
+        self.assertTrue((Path(self.temp.name) / "gui-login-submitted").exists())
+
+    def test_other_session_starts_after_username_stops_password(self) -> None:
+        def text(*args, **kwargs):
+            if kwargs.get("payload") == "example":
+                self.stage["windows"][0]["account_empty"] = False
+                self.bridge.return_value.snapshot.return_value["scripts"] = [
+                    {"status": "running", "control_released": False}
+                ]
+
+        self.backend.text.side_effect = text
+        with self.assertRaises(ClientError):
+            self.submit()
+        self.assertNotIn("secret", [call.kwargs.get("payload") for call in self.backend.text.call_args_list])
+        self.assertTrue((Path(self.temp.name) / "gui-login-submitted").exists())
+
+    def test_idle_helper_rejects_missing_and_unknown_native_states(self) -> None:
+        bridge = self.bridge.return_value
+        baseline = {
+            "instance_id": "instance",
+            "run_id": "run",
+            "scripts": [],
+            "command": {"status": "idle"},
+            "held_keys": [],
+        }
+        cases = [
+            {key: value for key, value in baseline.items() if key != "scripts"},
+            {**baseline, "scripts": [{"status": "unknown", "control_released": True}]},
+            {**baseline, "command": {"status": "unknown"}},
+            {**baseline, "command": {"status": "running"}},
+            {**baseline, "held_keys": ["Left"]},
+            {**baseline, "instance_id": "other"},
+            {**baseline, "run_id": "other"},
+        ]
+        for state in cases:
+            with self.subTest(state=state):
+                bridge.snapshot.return_value = state
+                with self.assertRaises(ClientError):
+                    require_input_idle(bridge, "instance", "run")
+        bridge.snapshot.return_value = baseline
+        require_input_idle(bridge, "instance", "run")
 
     def test_cancelled_and_missing_click_confirmation_never_type(self) -> None:
         for result in (

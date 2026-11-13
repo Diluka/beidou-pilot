@@ -225,6 +225,25 @@ def _validate_script(script: object, *, require_mode: bool = False) -> None:
             raise ClientError("invalid_bridge_state", "原生桥的tick角色操作状态字段无效。")
 
 
+def require_input_idle(bridge: "BridgeClient", instance_id: str, run_id: str) -> None:
+    """仅在同一新鲜实例的全部脚本均已释放输入时允许 GUI 操作。"""
+    state = bridge.snapshot()
+    if state["instance_id"] != instance_id or state["run_id"] != run_id:
+        raise ClientError("bridge_identity_changed", "原生桥实例身份已变化，未发送输入。")
+    scripts = state.get("scripts")
+    if (
+        not isinstance(scripts, list)
+        or any(
+            script.get("status") not in {"completed", "cancelled", "rejected"}
+            or script.get("control_released") is not True
+            for script in scripts
+        )
+        or state["command"]["status"] not in {"idle", "completed", "cancelled", "rejected"}
+        or state["held_keys"] != []
+    ):
+        raise ClientError("input_busy", "原生脚本或输入状态不空闲，未发送输入。")
+
+
 class BridgeClient:
     def __init__(self, client_root: Path, backend: str = "beidou", instance: str = "default") -> None:
         from .instances import InstancePaths
