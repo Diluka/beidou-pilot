@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "QuestInteraction.h"
-#include "Util/NxFiles.h"
+#include "Util/ImgFiles.h"
 
+#include <nlnx/file.hpp>
 #include <nlnx/node.hpp>
 #include <nlnx/nx.hpp>
 
@@ -9,7 +10,15 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
+
+// Resource views must only come from the IMG provider, never a disk NX path.
+static_assert(!std::is_constructible_v<nl::file, std::string>);
+
+template <class T>
+concept HasDiskOpen = requires(T& view, std::string path) { view.open(path); };
+static_assert(!HasDiskOpen<nl::file>);
 
 namespace {
 void Check(bool condition, const char* message) {
@@ -43,7 +52,7 @@ bool HasControl(const Interaction& model, const std::string& text) {
 int main(int argc, char** argv) {
     Check(argc == 2, "quest_fixture_path_required");
     std::filesystem::current_path(argv[1]);
-    const auto resourceError = ms::NxFiles::init();
+    const auto resourceError = ms::ImgFiles::init();
     Check(!resourceError, "original_img_resources_did_not_initialize");
     Interaction model;
     const Interaction::Context context{"provider-contract", 1, 2};

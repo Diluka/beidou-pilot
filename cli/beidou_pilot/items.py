@@ -178,14 +178,14 @@ def use(backend: Backend, item_id: int, count: int = 1, until_hp: int | None = N
         if move_to == 999999999:
             map_info = cast(JsonObject, catalog.map(teleport_before["map_id"]).get("info", {}))
             static_destination = map_info.get("returnMap")
-            static_destination_source = "local-wz-map.returnMap"
+            static_destination_source = "local-img-map.returnMap"
         else:
             static_destination = move_to
-            static_destination_source = "local-wz-item.spec.moveTo"
+            static_destination_source = "local-img-item.spec.moveTo"
     if until_hp is not None and not heals_hp:
-        raise ClientError("healing_metadata_missing", "本地 WZ 未说明该物品恢复 HP，无法按目标 HP 连续使用。")
+        raise ClientError("healing_metadata_missing", "本地原版 IMG 未说明该物品恢复 HP，无法按目标 HP 连续使用。")
     if until_mp is not None and not heals_mp:
-        raise ClientError("healing_metadata_missing", "本地 WZ 未说明该物品恢复 MP，无法按目标 MP 连续使用。")
+        raise ClientError("healing_metadata_missing", "本地原版 IMG 未说明该物品恢复 MP，无法按目标 MP 连续使用。")
     if native_use:
         from .control_scripts import run_strategy
 

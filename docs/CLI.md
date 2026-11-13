@@ -123,6 +123,8 @@ private/workbenches/workbench /external/workbench resources-check
 
 该命令固定选择headless镜像，读取公共资源配置并只读解析原版 Data/IMG，全程离线；GUI工作目录也可使用，后端设置保持原样。
 
+Python `Catalog` 同样直接读取资源配置的 `game_data`，在自身进程内加载独立的 `libbeidou-img.so` 解码原版 IMG；不向游戏客户端、桥 DLL 或服务器请求静态数据。解析库随两种客户端镜像交付，源码离线开发可用 `make -C headless build/libbeidou-img.so` 构建，`BEIDOU_IMG_LIBRARY` 可显式选择该本地库。资源只取北斗 `Data/`；缺失条目保持未知，不回退到旧 NX 或导出 XML。内存节点兼容库仍保留上游 `nl::node` / `nl::nx` 名称，它们不是 NX 文件来源。
+
 ## 客户端事件
 
 ```bash

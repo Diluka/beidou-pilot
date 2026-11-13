@@ -52,7 +52,7 @@ class Edge:
 
 
 def world_data(client_root: Path) -> dict[int, Scene]:
-    """带门户的地图；名称与街名取自 String.wz/Map.img，门户取自各张地图。"""
+    """带门户的地图；名称与街名取自 String/Map.img，门户取自各张地图。"""
     catalog = Catalog(client_root)
     names = _string_names(catalog)
     scenes = {}
@@ -64,8 +64,8 @@ def world_data(client_root: Path) -> dict[int, Scene]:
 
 
 def _string_names(catalog: Catalog) -> dict[int, dict[str, str]]:
-    """String.wz/Map.img 里按地图号建立的 mapName、streetName；只取地图号节点。"""
-    tree = catalog._tree("String.wz/Map.img.xml")
+    """String/Map.img 里按地图号建立的 mapName、streetName；只取地图号节点。"""
+    tree = catalog._tree("String/Map.img")
     names: dict[int, dict[str, str]] = {}
     for node in tree.iter() if tree is not None else ():
         key = node.get("name", "")

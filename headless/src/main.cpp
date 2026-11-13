@@ -12,7 +12,7 @@
 #include "IO/UI.h"
 #include "Net/Session.h"
 #include "Net/Packets/LoginPackets.h"
-#include "Util/NxFiles.h"
+#include "Util/ImgFiles.h"
 
 #include <chrono>
 #include <csignal>
@@ -62,7 +62,7 @@ int main(int argc, char** argv)
         }
         const auto resources = std::filesystem::absolute(offline ? argv[2] : config.at("resources_dir").get<std::string>());
         std::filesystem::current_path(resources);
-        const auto resource_error = ms::NxFiles::init();
+        const auto resource_error = ms::ImgFiles::init();
         if (resource_error) throw std::runtime_error(resource_error.get_message());
         ms::Char::init();
         ms::DamageNumber::init();

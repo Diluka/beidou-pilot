@@ -9,7 +9,10 @@
   },
   "converter": {
     "repository": "https://github.com/ryantpayton/NoLifeWzToNx",
-    "commit": "73bddde1214445795d0a5cd4c3d431fe15eb49eb"
+    "commit": "73bddde1214445795d0a5cd4c3d431fe15eb49eb",
+    "local_adaptations": [
+      "Original IMG metadata decoding and reference resolution are integrated into headless/src/ImgResources.cpp, with key data in headless/src/ImgKeys.cpp. No standalone converter module, NX serialization, WZ container conversion or converter CLI remains."
+    ]
   },
   "json": {
     "repository": "https://github.com/nlohmann/json",
