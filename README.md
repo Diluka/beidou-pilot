@@ -82,7 +82,7 @@ private/workbenches/workbench /external/workbench close
 - [客户端操作技能](.agents/skills/beidou-pilot-client/SKILL.md)：供新会话接续工作台、登录已有角色，并区分账号注册与首次建角；可显式调用 `$beidou-pilot-client`。
 - [游戏 AI harness](docs/HARNESS.md)：隔离 Codex、角色上下文、游戏工具与开发 AI 协作。
 - [命令使用](docs/CLI.md)：实例、观察、动作、GUI 入口和错误结果。
-- [Lua API 参考](docs/LUA_API.md)：写脚本使用的状态字段、函数参数、返回值与错误语义。
+- [Lua API 导航](docs/LUA_API.md)：按引擎选择 [coroutine API](docs/LUA_COROUTINE_API.md) 或 [tick API](docs/LUA_TICK_API.md)，两份文档分别说明状态、动作、参数、返回值与执行语义。
 - [Lua 脚本目录说明](shared/scripts/README.md)：内置旅行、战斗、恢复策略及示例的用途、调用入口和弃用标记。
 - [Lua 与控制协议](docs/CONTROL.md)：脚本、控制权、取消和效果边界。
 - [架构与支持范围](docs/ARCHITECTURE.md)：代码职责、外部资源、两端能力和限制。

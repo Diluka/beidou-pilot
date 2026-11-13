@@ -100,4 +100,4 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/tes
 
 - 脚本状态/动作/结果以headless接口为统一标准，由独立shared/lua-runtime绑定；ijl15新增桥直接一致，不保留旧接口别名或兼容包装。各端所需原生实现可保留，未知事实不得伪造为一致。
 
-- Lua脚本公共接口集中维护在 `docs/LUA_API.md`，写策略优先查该参考；绑定、状态字段、参数/返回或错误语义变化时同改文档。Serena记忆只链接该入口，不重复维护接口清单。
+- Lua脚本公共接口按引擎分开维护：`docs/LUA_COROUTINE_API.md` 与 `docs/LUA_TICK_API.md`；`docs/LUA_API.md` 只作导航。写策略优先查所属引擎的参考；绑定、状态字段、参数/返回或错误语义变化时同步更新对应文档。Serena记忆只链接导航入口，不重复维护接口清单。
