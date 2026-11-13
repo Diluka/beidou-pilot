@@ -54,14 +54,44 @@ def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_
         raise ClientError("gui_login_already_attempted", "本次运行已有登录尝试，禁止重放。") from error
     with os.fdopen(descriptor, "w") as stream:
         stream.write("attempted\n")
+    def verify_form() -> None:
+        current = backend.read("stage")
+        current_dialog = backend.read("dialog")
+        for sample in (current, current_dialog):
+            client = sample.get("client")
+            if sample.get("instance_id") != instance_id or not isinstance(client, dict) or client.get("run_id") != run_id:
+                raise ClientError("gui_login_identity_unconfirmed", "运行身份已变化。")
+        if (current.get("stage") != "LOGIN" or current.get("renderer") != "intel"
+                or current.get("unavailable") or current.get("game_geometry") != geometry
+                or current.get("login") != stage.get("login")
+                or current_dialog.get("unavailable")
+                or current_dialog.get("script_dialog_open") is not False
+                or current_dialog.get("focused_talk_dialog_open") is not False
+                or current_dialog.get("registered_talk_dialog_open") is not False
+                or current_dialog.get("focused_window") != focused):
+            raise ClientError("gui_login_form_unconfirmed", "登录表单状态已变化。")
+
+    def click(px: int, py: int) -> None:
+        verify_form()
+        result = backend.desktop([{"action": "click", "x": px, "y": py}])
+        timings = result.get("timings")
+        if (result.get("cancelled") is not False or result.get("input_dispatched") is not True
+                or not isinstance(timings, list) or len(timings) != 1
+                or not isinstance(timings[0], dict) or timings[0].get("action") != "click"):
+            raise ClientError("gui_login_input_unknown", "点击未确认。")
+
     try:
-        backend.desktop([{"action": "click", "x": x + 727, "y": y + 308}])
+        click(x + 727, y + 308)
+        verify_form()
         backend.text("runtime-ui", "key", "ctrl+a")
+        verify_form()
         backend.text("runtime-ui", "type-private", payload=profile.username)
-        backend.desktop([{"action": "click", "x": x + 727, "y": y + 336}])
+        click(x + 727, y + 336)
+        verify_form()
         backend.text("runtime-ui", "key", "ctrl+a")
+        verify_form()
         backend.text("runtime-ui", "type-private", payload=profile.password)
-        backend.desktop([{"action": "click", "x": x + 880, "y": y + 306}])
+        click(x + 880, y + 306)
     except Exception:
         raise ClientError("gui_login_input_unknown", "输入结果不明；保留现场，禁止重试。") from None
     return {"status": "unknown", "credentials_submitted": True, "instance_id": instance_id, "run_id": run_id}

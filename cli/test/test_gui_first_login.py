@@ -35,6 +35,7 @@ class GuiFirstLoginTests(unittest.TestCase):
                                           "root_rect": {"left": 632, "top": 308, "right": 962, "bottom": 488},
                                           "buttons": [{"control_id": i} for i in range(1000, 1007)]}}
         self.backend.read.side_effect = lambda domain: self.stage if domain == "stage" else self.dialog
+        self.backend.desktop.return_value = {"cancelled": False, "input_dispatched": True, "timings": [{"action": "click"}]}
         self.profile = AccountProfile("example", "secret")
 
     def submit(self):
@@ -83,6 +84,39 @@ class GuiFirstLoginTests(unittest.TestCase):
         with self.assertRaises(ClientError):
             self.submit()
         self.backend.text.assert_not_called()
+
+    def test_cancelled_and_missing_click_confirmation_never_type(self) -> None:
+        for result in ({"cancelled": True, "input_dispatched": False, "timings": []},
+                       {"cancelled": False, "input_dispatched": True, "timings": []}):
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as directory:
+                self.backend.runtime.run_dir = Path(directory)
+                self.backend.desktop.return_value = result
+                self.backend.text.reset_mock()
+                with self.assertRaises(ClientError) as error:
+                    self.submit()
+                self.assertNotIn("secret", str(error.exception))
+                self.backend.text.assert_not_called()
+                self.assertTrue((Path(directory) / "gui-login-submitted").exists())
+
+    def test_password_click_cancelled_stops_before_password(self) -> None:
+        self.backend.desktop.side_effect = [
+            {"cancelled": False, "input_dispatched": True, "timings": [{"action": "click"}]},
+            {"cancelled": True, "input_dispatched": False, "timings": []},
+        ]
+        with self.assertRaises(ClientError):
+            self.submit()
+        self.assertNotIn("secret", [call.kwargs.get("payload") for call in self.backend.text.call_args_list])
+        self.assertTrue((Path(self.temp.name) / "gui-login-submitted").exists())
+
+    def test_form_change_after_username_stops_before_password(self) -> None:
+        def text(*args, **kwargs):
+            if kwargs.get("payload") == "example":
+                self.stage = {**self.stage, "stage": "UNKNOWN"}
+        self.backend.text.side_effect = text
+        with self.assertRaises(ClientError):
+            self.submit()
+        self.assertNotIn("secret", [call.kwargs.get("payload") for call in self.backend.text.call_args_list])
+        self.assertTrue((Path(self.temp.name) / "gui-login-submitted").exists())
 
     def test_uncertain_form_never_sends_input(self) -> None:
         self.dialog["focused_window"]["vtables"] = ["unknown"]
