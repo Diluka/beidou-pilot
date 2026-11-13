@@ -122,7 +122,11 @@ nodes:
         description: 爬绳、跨图和同图门户分别返回其可确认的到达事实。
       - kind: file
         value: cli/beidou_pilot/control_scripts.py
-        description: 原生尝试、同层到达和基础战斗采用不同的结果解释。
+        description: 原生动作尝试与同层到达采用不同的结果解释。
+      - kind: symbol
+        file: cli/beidou_pilot/hunting.py
+        value: hunt
+        description: 连续狩猎返回前后角色状态、经验变化与停级依据，实际效果按最终读数确认。
   - id: field-play.bounded
     kind: invariant
     name: 行动绑定现场身份与安全预算
