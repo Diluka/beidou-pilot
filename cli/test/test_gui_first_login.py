@@ -99,6 +99,25 @@ class GuiFirstLoginTests(unittest.TestCase):
         self.assertEqual("gui_login_already_attempted", error.exception.code)
         self.assertEqual(3, self.backend.desktop.call_count)
 
+    def test_deadline_expires_during_observation_before_click(self) -> None:
+        with patch("beidou_pilot.gui_first_login.time.monotonic", return_value=10):
+            with self.assertRaises(ClientError):
+                submit_credentials_once(self.backend, self.profile, "instance", "run", deadline=10)
+        self.backend.desktop.assert_not_called()
+        self.backend.text.assert_not_called()
+        self.assertTrue((Path(self.temp.name) / "gui-login-submitted").exists())
+        with self.assertRaises(ClientError) as error:
+            self.submit()
+        self.assertEqual("gui_login_already_attempted", error.exception.code)
+
+    def test_deadline_expires_before_password_never_types_it(self) -> None:
+        with patch("beidou_pilot.gui_first_login.time.monotonic", side_effect=[0, 0, 0, 10]):
+            with self.assertRaises(ClientError):
+                submit_credentials_once(self.backend, self.profile, "instance", "run", deadline=10)
+        self.assertEqual(2, self.backend.desktop.call_count)
+        self.assertNotIn("secret", [call.kwargs.get("payload") for call in self.backend.text.call_args_list])
+        self.assertTrue((Path(self.temp.name) / "gui-login-submitted").exists())
+
     def test_cli_dispatch_holds_one_real_input_lock(self) -> None:
         import json
         from contextlib import redirect_stdout

@@ -61,7 +61,7 @@ def parser() -> Parser:
     for option in ("job", "face", "hair", "hair-color", "skin", "top", "bottom", "shoes", "weapon"):
         create.add_argument("--" + option, type=int, required=True)
     create.add_argument("--gender", choices=["male", "female"], required=True)
-    create.add_argument("--timeout", type=float, default=3)
+    create.add_argument("--timeout", type=float, default=None, help="等待秒数；无头默认3秒，GUI默认90秒")
     result = actions.add_parser("result", parents=[common])
     result.add_argument("request_id")
     result.add_argument("--run-id", required=True, help="提交时的原运行身份")
@@ -313,6 +313,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             if args.gender is None:
                 raise ClientError("usage", "GUI 登录动作必须明确指定性别。")
             with control(backend, "login"):
+                return execute(backend, args)
+        if cmd == "character" and backend.name == "beidou" and args.character_action == "create":
+            with control(backend, "character create"):
                 return execute(backend, args)
         if cmd == "login" and backend.name == "headless" and (args.accept_terms or args.gender is not None):
             raise ClientError("usage", "无头登录不接受 GUI 登录选项。")

@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -35,7 +36,14 @@ class GuiAccountContainerTest(unittest.TestCase):
     def test_account_without_character_starts_gui(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            self.run_entrypoint(root, 'account', dict(username='user', password='secret'))
+            stderr = io.StringIO()
+            with patch('sys.stderr', stderr):
+                self.run_entrypoint(root, 'account', dict(username='user', password='secret'))
+            event = json.loads(stderr.getvalue())
+            self.assertEqual('login_awaiting_request', event['event'])
+            self.assertIn('等待显式 login', event['message'])
+            self.assertIn('尚未确认登录', event['message'])
+            self.assertNotIn('secret', stderr.getvalue())
             registration = json.loads(root.joinpath('state/container.json').read_text())
             self.assertIsNone(registration['character_id'])
             self.assertNotIn('secret', json.dumps(registration))

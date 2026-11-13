@@ -32,7 +32,7 @@ def main() -> None:
         raise ClientError("login_invalid", "登录模式必须为 character 或 account。")
     if mode == "account":
         if backend == "beidou":
-            print(json.dumps({"event": "login_unsupported", "code": "unsupported", "message": "GUI 首次登录和建角自动流程尚不支持；仅启动可观察界面。"}, ensure_ascii=False), file=sys.stderr)
+            print(json.dumps({"event": "login_awaiting_request", "message": "GUI 账号模式等待显式 login 请求；尚未确认登录。"}, ensure_ascii=False), file=sys.stderr)
         accept = os.environ.get("MAPLE_ACCEPT_TERMS", "0")
         female = os.environ.get("MAPLE_FEMALE")
         if accept not in {"0", "1"} or female not in {None, "0", "1"}:

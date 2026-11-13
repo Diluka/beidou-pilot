@@ -1,6 +1,7 @@
 """人工确认截图后的实验性单次 GUI 凭据提交，不识别首次弹窗。"""
 
 import os
+import time
 from typing import cast
 
 from .backend import Backend, JsonObject
@@ -9,7 +10,9 @@ from .errors import ClientError
 from .profile import AccountProfile
 
 
-def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_id: str, run_id: str) -> JsonObject:
+def submit_credentials_once(
+    backend: Backend, profile: AccountProfile, instance_id: str, run_id: str, *, deadline: float | None = None
+) -> JsonObject:
     runtime = backend.runtime
     if (
         backend.name != "beidou"
@@ -152,8 +155,13 @@ def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_
         ):
             raise ClientError("gui_login_form_unconfirmed", "登录输入框状态或焦点未确认。")
 
+    def check_deadline() -> None:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ClientError("gui_login_timeout", "登录期限已到，未发送后续输入。")
+
     def click(px: int, py: int, account_empty: bool, password_empty: bool, focus: str | None = None) -> None:
         verify_form(account_empty, password_empty, focus)
+        check_deadline()
         result = backend.desktop([{"action": "click", "x": px, "y": py}])
         timings = result.get("timings")
         if (
@@ -169,10 +177,12 @@ def submit_credentials_once(backend: Backend, profile: AccountProfile, instance_
     try:
         click(x + 727, y + 308, True, True)
         verify_form(True, True, "account")
+        check_deadline()
         backend.text("runtime-ui", "type-private", payload=profile.username)
         verify_form(False, True, "account")
         click(x + 727, y + 336, False, True, "account")
         verify_form(False, True, "password")
+        check_deadline()
         backend.text("runtime-ui", "type-private", payload=profile.password)
         verify_form(False, False, "password")
         click(x + 880, y + 306, False, False, "password")
