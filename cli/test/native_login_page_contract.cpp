@@ -25,11 +25,9 @@ int main() {
 
     const std::uint32_t stage = 0x10000, window = 0x20000;
     std::map<std::uint32_t, std::uint32_t> memory{
-        {0x00BEDED4, stage}, {stage, 0x00AF6B24}, {window, 0x00AF777C},
-        {window + 4, 0x00AF7730}, {window + 8, 0x00AF772C},
-        {window + 0x24, 225}, {window + 0x28, 377}, {window + 0x6C, stage},
-        {stage + 0x168, 4}, {stage + 0x16C, 0}, {stage + 0x170, 0}, {stage + 0x234, 0}
-    };
+        {0x00BEDED4, stage},      {stage, 0x00AF6B24},  {window, 0x00AF777C}, {window + 4, 0x00AF7730},
+        {window + 8, 0x00AF772C}, {window + 0x24, 225}, {window + 0x28, 377}, {window + 0x6C, stage},
+        {stage + 0x168, 4},       {stage + 0x16C, 0},   {stage + 0x170, 0},   {stage + 0x234, 0}};
     for (std::uint32_t i = 0; i < 8; ++i) {
         const auto p = 0x30000 + i * 0x100;
         memory[stage + 0x244 + 4 * i] = p;
@@ -59,7 +57,10 @@ int main() {
     assert(!RawAppearanceSnapshot(window, stage, read32, read8, values));
     memory[0x30000 - 4] = 2;
     int reads = 0;
-    auto changing = [&](std::uint32_t at) { auto value = memory.at(at); return at == 0x30000 && ++reads == 2 ? value + 1 : value; };
+    auto changing = [&](std::uint32_t at) {
+        auto value = memory.at(at);
+        return at == 0x30000 && ++reads == 2 ? value + 1 : value;
+    };
     assert(!RawAppearanceSnapshot(window, stage, changing, read8, values));
     assert(!RawAppearanceSnapshot(window, UINT32_MAX, read32, read8, values));
     assert(!RawAppearanceSnapshot(UINT32_MAX - 0x6E, stage, read32, read8, values));
@@ -68,7 +69,10 @@ int main() {
     memory[stage + 0x244] = 0x30000;
     memory.erase(0x30000 - 4);
     bool failed = false;
-    try { RawAppearanceSnapshot(window, stage, read32, read8, values); }
-    catch (const std::out_of_range&) { failed = true; }
+    try {
+        RawAppearanceSnapshot(window, stage, read32, read8, values);
+    } catch (const std::out_of_range&) {
+        failed = true;
+    }
     assert(failed);
 }

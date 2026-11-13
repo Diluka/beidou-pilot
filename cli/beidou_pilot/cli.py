@@ -292,7 +292,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .gui_first_login import submit_credentials_once
         from .profile import load_account_profile
 
-        return submit_credentials_once(backend, load_account_profile(backend.root / "account.json"), args.instance_id, args.run_id)
+        return submit_credentials_once(
+            backend, load_account_profile(backend.root / "account.json"), args.instance_id, args.run_id
+        )
     if cmd in {"login", "character"}:
         from .first_character import execute
 
