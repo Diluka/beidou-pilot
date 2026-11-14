@@ -244,7 +244,8 @@
     <ClCompile Include="NativeObservation.cpp" />
     <ClCompile Include="NativeMotion.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="NativeSceneTerrain.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><LanguageStandard>stdcpp17</LanguageStandard></ClCompile>
-    <ClCompile Include="..\..\headless\src\ImgResources.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><LanguageStandard>stdcpp17</LanguageStandard></ClCompile>
+    <!-- Keep the decoder's existing UTF-8 conversion; acknowledge only its C++17 codecvt deprecation. -->
+    <ClCompile Include="..\..\headless\src\ImgResources.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><LanguageStandard>stdcpp17</LanguageStandard><PreprocessorDefinitions>_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
     <ClCompile Include="..\..\headless\src\ImgKeys.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><LanguageStandard>stdcpp17</LanguageStandard></ClCompile>
     <ClCompile Include="ObserveWorld.cpp" />
     <ClCompile Include="ObserveCharacter.cpp" />
