@@ -87,17 +87,23 @@ class BridgeTick(TypedDict):
     overruns: int
 
 
+BridgePlayerAction = Literal["jump", "attack", "skill", "use_item", "pickup"]
+
+
 class BridgePlayer(TypedDict):
     moving: Literal["left", "right", "up", "down"] | None
-    action: str | None
-    phase: Literal["idle", "running", "releasing"]
-    busy: bool
-    held: list[str]
-    pending_action: str | None
+    input_action: BridgePlayerAction | None
+    input_settled: bool
+    action: BridgePlayerAction | None
+    phase: Literal["idle", "running", "unknown"]
+    busy: bool | None
+    held: list[Literal["left", "right", "up", "down", "jump", "attack", "skill", "use_item", "pickup"]]
     reason: str
     effect: str
     dispatched: bool
     control_released: bool
+    input_skill_id: NotRequired[int]
+    input_item_id: NotRequired[int]
     skill_id: NotRequired[int]
     item_id: NotRequired[int]
 
@@ -214,16 +220,18 @@ def _validate_script(script: object, *, require_mode: bool = False) -> None:
                 or any(type(tick.get(field)) is not bool for field in ("overrun", "abort_commit"))
                 or type(script.get("control_released")) is not bool):
             raise ClientError("invalid_bridge_state", "原生桥的tick调度字段无效。")
-        if (not isinstance(player, dict) or player.get("phase") not in ("idle", "running", "releasing")
+        if (not isinstance(player, dict) or player.get("phase") not in ("idle", "running", "unknown")
                 or "moving" not in player or player["moving"] not in (None, "left", "right", "up", "down")
-                or any(field not in player or player[field] is not None and not isinstance(player[field], str)
-                       for field in ("action", "pending_action"))
+                or any(field not in player or player[field] not in (None, "jump", "attack", "skill", "use_item", "pickup")
+                       for field in ("action", "input_action"))
                 or any(not isinstance(player.get(field), str) for field in ("reason", "effect"))
-                or any(type(player.get(field)) is not bool for field in ("busy", "dispatched", "control_released"))
+                or "busy" not in player or (player["busy"] is not None and type(player["busy"]) is not bool)
+                or any(type(player.get(field)) is not bool
+                       for field in ("input_settled", "dispatched", "control_released"))
                 or any(field in player and (type(player[field]) is not int or not 1 <= player[field] <= 0x7FFFFFFF)
-                       for field in ("skill_id", "item_id"))
+                       for field in ("input_skill_id", "input_item_id", "skill_id", "item_id"))
                 or not isinstance(player.get("held"), list)
-                or any(key not in ("left", "right", "up", "down", "jump", "attack", "pickup")
+                or any(key not in ("left", "right", "up", "down", "jump", "attack", "skill", "use_item", "pickup")
                        for key in player["held"])):
             raise ClientError("invalid_bridge_state", "原生桥的tick角色操作状态字段无效。")
 
