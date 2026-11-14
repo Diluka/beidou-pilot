@@ -5,7 +5,8 @@
 - 新实例默认固定 main 的已提交版本；已有实例通过 docker exec 使用启动时的 CLI 与内置 Lua，版本与主检出当前内容无关。工作目录整体挂 /work，根目录维护 account.json 和可选 workbench.json，公共资源只在主检出目录的 private/workbenches/resources.json 一份，开发 worktree 也共用；常驻服务器在脚本固定，调试和实际游戏验收默认复用常驻服与已授权的已有账号角色及就绪实例，仅在场景必须时新建账号或角色，特殊情况确需隔离服时记录原因并在目录内显式声明。每个目录使用 default 容器，CLIENT_ROOT=/work/runtime/default/RUN_ID；脚本读 /work/scripts，继续隔离桥、锁与日志。
 - private 下只有公共 workbench 脚本纳入 Git，其他账号、共享配置和运行数据继续忽略。GUI装配统一使用 docker/compose.yaml。原版 `/client` 与 `Data/` `/data` 使用同一只读原件；无头资源和 Python 静态查询通过共享原生 IMG 解析器读取，GUI 客户端从 `/client` 读取运行资源。资源边界变化时同步维护 `docs/ARCHITECTURE.md` 与客户端 Docker 参考。
 - cli/test 使用包相对导入共享 BridgeFiles；开发子进程测试的 PYTHONPATH 指 cli 代码根。测试集中放在 cli/test 并统一由包相对导入处理路径。
-- Python 只在动作前静态规划，Lua 首动作核对原生 instance_id/CID/map/scene_generation；旧规划只作用于原进程。
+- Python 只在动作前静态规划，Lua 在入口及持续策略的每次采样核对原生 instance_id/CID/map/scene_generation；旧规划只作用于原进程。
+- Lua 状态契约：`ready` 已包含角色与位置；characterKnown 成立时全部角色属性都标记为已知；已实现的动作 API 调用返回结果表。核对脚本断言时不要按测试替身可造出的缺字段推断。
 - 写脚本先查 docs/LUA_API.md，接口细节以该文档为准；公共接口变化同步更新该文档，记忆只保存入口。
 - 基础操作属于 game API，shared/scripts 只保存复合能力；示例在其 examples 子目录，由调用方显式加载。策略是初步脚手架，按实际行为迭代，详见 shared/scripts/AGENTS.md；原生错误从源头修复。
 - 原版 V17 跳跃绑定为 type5/id53，id51 是 sit；公共 jump 必须调用跳跃，GUI 专属补丁保留在 GUI 适配层。
