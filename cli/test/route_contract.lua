@@ -76,7 +76,7 @@ game = {
         end
         if scenario == "scene" then state.scene_generation = 2 end
         if scenario == "identity" then state.character.id = 2 end
-        if scenario == "unknown-hp" then state.character.max_hp = nil end
+        if scenario == "observation-unavailable" then state.ready = false end
         if direction == "left" or direction == "right" then
             if scenario == "inertia" then
                 if state.position.y > -80 and state.position.y < 275 then
@@ -143,6 +143,8 @@ else
         assert(now < 1.2 and portals == 0 and failure:find("budget"), failure)
     elseif scenario == "missing-terrain" then
         assert(inputs == 0 and failure:find("unknown_drop_target"), failure)
+    elseif scenario == "observation-unavailable" then
+        assert(inputs == 1 and portals == 0 and failure:find("travel_observation_unavailable"), failure)
     else
         assert(inputs == 1 and portals == 0, "route continued after identity or scene changed")
     end

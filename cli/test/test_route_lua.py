@@ -63,8 +63,8 @@ class RouteLuaContract(unittest.TestCase):
             with self.subTest(name=name):
                 self.scenario(name)
 
-    def test_identity_scene_and_unexpected_transition_stop_without_arrival(self) -> None:
-        for name in ("identity", "scene", "unexpected-portal", "unknown-hp", "destination"):
+    def test_identity_scene_transition_and_observation_unavailable_stop_without_arrival(self) -> None:
+        for name in ("identity", "scene", "unexpected-portal", "observation-unavailable", "destination"):
             with self.subTest(name=name):
                 self.scenario(name)
 

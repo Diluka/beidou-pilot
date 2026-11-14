@@ -9,7 +9,7 @@ local function travel_check(condition, reason, fail)
     end
 end
 local function travel_action(result, fail)
-    if result then travel_check(result.reason ~= "control_preempted", result.reason, fail) end
+    travel_check(result.reason ~= "control_preempted", result.reason, fail)
     return result
 end
 local function travel_initial(context, min_hp_ratio, fail)
@@ -22,11 +22,7 @@ local function travel_initial(context, min_hp_ratio, fail)
         fail
     )
     travel_check(s.map_id == scene.map_id and s.scene_generation == scene.scene_generation, "travel_map_changed", fail)
-    travel_check(
-        s.character.hp and s.character.max_hp and s.character.max_hp > 0,
-        "travel_observation_unavailable",
-        fail
-    )
+    travel_check(s.character.max_hp > 0, "travel_observation_unavailable", fail)
     travel_check(s.character.hp > 0 and s.character.hp / s.character.max_hp >= min_hp_ratio, "travel_hp_limit", fail)
     return s
 end
@@ -48,11 +44,7 @@ local function travel_state(initial, min_hp_ratio, deadline, allow_transition, f
             fail
         )
     end
-    travel_check(
-        s.character.hp and s.character.max_hp and s.character.max_hp > 0,
-        "travel_observation_unavailable",
-        fail
-    )
+    travel_check(s.character.max_hp > 0, "travel_observation_unavailable", fail)
     travel_check(s.character.hp > 0 and s.character.hp / s.character.max_hp >= min_hp_ratio, "travel_hp_limit", fail)
     return s
 end

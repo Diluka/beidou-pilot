@@ -55,7 +55,7 @@ function methods:state(transition)
     )
 end
 function methods:action(result)
-    if result and result.reason == "control_not_owned" then self:fail("control_not_owned") end
+    if result.reason == "control_not_owned" then self:fail("control_not_owned") end
     return travel_action(result, function(reason) self:fail(reason) end)
 end
 function methods:stop()
