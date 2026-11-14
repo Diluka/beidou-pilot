@@ -36,7 +36,6 @@ local function main(context)
         game.stop()
         return
     end
-    assert(math.abs(state.position.y - options.y) <= options.y_tolerance, "portal_other_layer")
     assert(deadline - game.time() >= 0.4, "travel_budget_exhausted")
     -- 只派发一次进入动作；转场期间只等待原生状态，不重发Up。
     game.move("up", 0.18)

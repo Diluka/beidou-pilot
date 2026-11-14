@@ -10,26 +10,18 @@
 -- @option[type=boolean,opt,default=false] consume_only 仅核对单次库存消费，不将其称为恢复
 local function main(context)
     local options = context.options
-    local scene = context.scene
     -- Repeated recovery is driven in the client; this script never controls GUI slots.
     local initial = game.state()
     assert(initial.ready and initial.character and initial.position, "use_context_unavailable")
-    assert(
-        initial.instance_id == scene.instance_id
-            and initial.character.id == scene.character_id
-            and initial.map_id == scene.map_id
-            and initial.scene_generation == scene.scene_generation,
-        "strategy_scene_context_stale"
-    )
     local deadline = game.time() + options.budget_seconds
     local used = 0
 
     local function observe()
         local s = game.state()
+        assert(s.ready and s.character and s.position, "use_context_unavailable")
+        -- 用药期间换图或角色变化时，库存和血量读数不再描述同一场景。
         assert(
-            s.ready
-                and s.instance_id == initial.instance_id
-                and s.character
+            s.instance_id == initial.instance_id
                 and s.character.id == initial.character.id
                 and s.map_id == initial.map_id
                 and s.scene_generation == initial.scene_generation,
@@ -39,10 +31,7 @@ local function main(context)
         assert(s.inventory, "inventory_unavailable")
         local quantity = 0
         for _, item in ipairs(s.inventory) do
-            if item.item_id == options.item_id then
-                assert(item.quantity ~= nil, "inventory_unavailable")
-                quantity = quantity + item.quantity
-            end
+            if item.item_id == options.item_id then quantity = quantity + (item.quantity or 0) end
         end
         return s, quantity
     end

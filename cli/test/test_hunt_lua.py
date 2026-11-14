@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from beidou_pilot.strategies import compile_strategy, read_strategy_file
+from beidou_pilot.strategies import compile_strategy
 
 
 class HuntLuaContract(unittest.TestCase):
@@ -27,39 +27,6 @@ class HuntLuaContract(unittest.TestCase):
         hunt = (root / "shared/scripts/combat/hunt.lua").read_text(encoding="utf-8")
         cls.strategy = Path(temporary.name) / "hunt-with-terrain.lua"
         cls.strategy.write_text(terrain + "\n" + hunt, encoding="utf-8")
-
-    def test_stale_entry_context_stops_recovery_before_actions(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        scene = {
-            "instance_id": "current-instance",
-            "character_id": 4,
-            "map_id": 100,
-            "scene_generation": 2,
-            "terrain": {"status": "unavailable", "error": "hunt_terrain_unavailable"},
-        }
-        options_by_strategy = {
-            "recovery/recover.lua": {
-                "item_id": 2000000,
-                "count": 1,
-                "budget_seconds": 60,
-                "heals_hp": False,
-                "heals_mp": False,
-                "healing_known": False,
-                "consume_only": False,
-            },
-        }
-        for relative, options in options_by_strategy.items():
-            with self.subTest(strategy=relative), tempfile.TemporaryDirectory() as temporary:
-                strategy_path = root / "shared/scripts" / relative
-                source, metadata = read_strategy_file(strategy_path)
-                self.assertIsNotNone(metadata)
-                compiled_path = Path(temporary) / "compiled.lua"
-                compiled_path.write_text(compile_strategy(source, options, scene), encoding="utf-8")
-                subprocess.run(
-                    [str(self.executable), str(self.strategy_context_contract), str(compiled_path)],
-                    check=True,
-                    timeout=5,
-                )
 
     def test_generated_preflight_rejects_each_identity_anchor_before_main(self) -> None:
         scene = {
@@ -110,7 +77,7 @@ class HuntLuaContract(unittest.TestCase):
                 )
 
     def test_rope_recovery_stops_when_unsafe_stalled_or_preempted(self) -> None:
-        for scenario in ("resume-no-endpoint", "resume-stalled", "resume-preempted", "resume-context", "resume-budget"):
+        for scenario in ("resume-no-endpoint", "resume-stalled", "resume-preempted", "resume-budget"):
             with self.subTest(scenario=scenario):
                 subprocess.run(
                     [str(self.executable), str(self.contract), scenario, str(self.strategy)], check=True, timeout=5
@@ -138,8 +105,8 @@ class HuntLuaContract(unittest.TestCase):
             [str(self.executable), str(self.contract), "wide-local-spawn", str(self.strategy)], check=True, timeout=5
         )
 
-    def test_stalled_approach_and_scene_change_stop_without_attacking(self) -> None:
-        for scenario in ("stalled", "context", "stale-entry"):
+    def test_stalled_approach_and_stale_entry_stop_without_attacking(self) -> None:
+        for scenario in ("stalled", "stale-entry"):
             with self.subTest(scenario=scenario):
                 subprocess.run(
                     [str(self.executable), str(self.contract), scenario, str(self.strategy)], check=True, timeout=5

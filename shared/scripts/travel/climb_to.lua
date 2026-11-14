@@ -11,11 +11,6 @@ local function main(context)
     local initial = travel_initial(context, options.min_hp_ratio)
     local deadline = game.time() + options.budget_seconds
     local direction = options.direction or (options.y < initial.position.y and "up" or "down")
-    assert(
-        not (direction == "up" and options.y > initial.position.y + options.tolerance)
-            and not (direction == "down" and options.y < initial.position.y - options.tolerance),
-        "invalid_climb_direction"
-    )
     local state = align_to_x(initial, options.x, 5, 45, deadline, options.min_hp_ratio)
     if math.abs(state.position.y - options.y) <= options.tolerance then return end
     local stop_y = options.y
