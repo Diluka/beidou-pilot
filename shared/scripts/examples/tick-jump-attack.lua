@@ -41,10 +41,11 @@ local function main(context)
         state.phase = "attack_input" -- 只设置一次，保持由原生消费者处理。
     elseif state.phase == "attack_input" then
         local input = player.status()
-        if input.input_settled and input.dispatched then
-            -- 确认输入消费后撤下，已经发生的攻击动画仍自然播放。
+        if input.action == "attack" and input.dispatched then
+            -- 当前原生动作确为普攻且已派发才撤下，不把上次跳跃反馈当成普攻。
+            -- 撤下槽不表示已放键，已经发生的攻击动画仍自然播放。
             -- 低频观察可能错过原生重复边界，本例不承诺精确出手次数。
-            assert(player.clear_action())
+            assert(player.skill(nil))
             state.phase = "landing"
         end
     elseif state.phase == "landing" and character.on_ground == true then

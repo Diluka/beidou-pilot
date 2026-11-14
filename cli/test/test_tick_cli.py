@@ -43,7 +43,6 @@ def tick_state(script_id: str, *, stopped: bool = False) -> BridgeScript:
         player={
             "moving": None if stopped else "right",
             "input_action": None,
-            "input_settled": True,
             "action": None,
             "phase": "idle",
             "busy": False,
@@ -51,7 +50,6 @@ def tick_state(script_id: str, *, stopped: bool = False) -> BridgeScript:
             "reason": "",
             "effect": "unknown",
             "dispatched": False,
-            "control_released": stopped,
         },
     )
     return script
@@ -111,7 +109,7 @@ class TickCliContract(unittest.TestCase):
         self.assertFalse((self.files.directory / "command.txt").exists())
 
     def test_snapshot_and_status_consume_sanitized_native_terminal_scripts(self) -> None:
-        # 取自双端已发布的原生script结构；身份、计数和时间固定化，不保留运行原件。
+        # 按当前共享Runtime投影维护的脱敏结构；身份、计数和时间固定化，不保留运行原件。
         native_script = json.loads(
             """{
                 "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mode": "tick",
@@ -133,9 +131,9 @@ class TickCliContract(unittest.TestCase):
                     }
                 },
                 "player": {
-                    "moving": null, "input_action": null, "input_settled": true, "action": null,
+                    "moving": null, "input_action": null, "action": null,
                     "phase": "idle", "busy": false, "held": [], "reason": "native_jump_input_consumed",
-                    "effect": "unknown", "dispatched": true, "control_released": true
+                    "effect": "unknown", "dispatched": true
                 }
             }"""
         )
@@ -159,6 +157,10 @@ class TickCliContract(unittest.TestCase):
                     code, report = self.cli("script", "status", "--session", script["id"])
                 self.assertEqual(script, state["script"])
                 self.assertEqual([script], state["scripts"])
+                for projected in (state["script"], state["scripts"][0]):
+                    self.assertNotIn("input_settled", projected["player"])
+                    self.assertNotIn("control_released", projected["player"])
+                    self.assertTrue(projected["control_released"])
                 self.assertEqual((0, script), (code, report["data"]["script"]))
                 self.assertFalse((self.files.directory / "command.txt").exists())
 
@@ -197,13 +199,12 @@ class TickCliContract(unittest.TestCase):
                 self.assertEqual(script["player"], self.client.snapshot()["script"]["player"])
 
     def test_snapshot_accepts_held_input_before_native_action_starts_or_idle_is_known(self) -> None:
-        for phase, busy, settled in (("idle", False, True), ("unknown", None, False)):
+        for phase, busy in (("idle", False), ("unknown", None)):
             with self.subTest(phase=phase):
                 script = tick_state("a" * 32)
                 script["player"].update(
                     input_action="skill",
                     input_skill_id=1001004,
-                    input_settled=settled,
                     held=["right", "skill"],
                     phase=phase,
                     busy=busy,
@@ -268,7 +269,11 @@ class TickCliContract(unittest.TestCase):
                     request = native.result(2)
                 self.assertEqual("bridge_release_unconfirmed", unconfirmed.exception.code)
                 self.assertFalse(unconfirmed.exception.details["script"]["control_released"])
-                self.assertTrue(unconfirmed.exception.details["script"]["player"]["control_released"])
+                player = unconfirmed.exception.details["script"]["player"]
+                self.assertIsNone(player["input_action"])
+                self.assertEqual([], player["held"])
+                self.assertNotIn("input_settled", player)
+                self.assertNotIn("control_released", player)
                 self.assertEqual(request, self.files.command())
 
     def test_cancel_confirms_only_session_release_while_shared_player_keeps_another_input(self) -> None:
@@ -302,7 +307,7 @@ class TickCliContract(unittest.TestCase):
         self.assertEqual(["cancel_script", "0", target["id"]], request[4:])
         self.assertEqual(("cancelled", True, [39]), (report["status"], report["control_released"], report["held_keys"]))
         self.assertEqual(player, report["script"]["player"])
-        self.assertFalse(report["script"]["player"]["control_released"])
+        self.assertNotIn("control_released", report["script"]["player"])
         self.assertEqual("already_stopped", self.client.cancel_script(target["id"])["status"])
         self.assertEqual(request, self.files.command())
 
@@ -607,10 +612,7 @@ class TickCliContract(unittest.TestCase):
             {**player, "phase": None},
             {**player, "busy": 1},
             {**player, "busy": "unknown"},
-            {**player, "input_settled": None},
-            {**player, "input_settled": 1},
             {**player, "dispatched": 0},
-            {**player, "control_released": None},
             {**player, "moving": "sideways"},
             {**player, "held": "skill"},
             {**player, "held": ["cast"]},
@@ -619,7 +621,7 @@ class TickCliContract(unittest.TestCase):
             {**player, "effect": True},
             *[
                 {key: value for key, value in player.items() if key != field}
-                for field in ("input_action", "input_settled", "action", "busy")
+                for field in ("input_action", "action", "busy", "dispatched")
             ],
             *[
                 {**player, field: value}

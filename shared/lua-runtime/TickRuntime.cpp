@@ -446,6 +446,13 @@ struct TickRuntime::Impl {
         auto& session = Invocation(lua);
         const bool idRequired = skill || kind == ActionKind::UseItem;
         if (lua_gettop(lua) != (idRequired ? 1 : 0)) return luaL_error(lua, "invalid player action arguments");
+        if (skill && lua_isnil(lua, 1)) {
+            auto& target = session.runtime.draft;
+            target.actionSet = true;
+            target.action = {};
+            target.actionOwner = nullptr;
+            return Reply(lua, true);
+        }
         lua_Integer id = 0;
         if (idRequired) {
             if (!lua_isinteger(lua, 1)) return luaL_error(lua, "action id must be an integer");
@@ -476,16 +483,6 @@ struct TickRuntime::Impl {
 
     static int Pickup(lua_State* lua) { return Submit(lua, ActionKind::Pickup); }
 
-    static int ClearAction(lua_State* lua) {
-        auto& session = Invocation(lua);
-        if (lua_gettop(lua) != 0) return luaL_error(lua, "clear_action accepts no arguments");
-        auto& target = session.runtime.draft;
-        target.actionSet = true;
-        target.action = {};
-        target.actionOwner = nullptr;
-        return Reply(lua, true);
-    }
-
     static int Stop(lua_State* lua) {
         auto& session = Invocation(lua);
         if (lua_gettop(lua) != 0) return luaL_error(lua, "stop accepts no arguments");
@@ -508,23 +505,18 @@ struct TickRuntime::Impl {
         if (inputActive) keys.Add(ActionName(input));
         const auto idle = current != nullptr ? observed.actionIdle : adapter.Observe().actionIdle;
         const bool nativeBusy = active != nullptr || idle == Fact::False;
-        const bool draftChanged = current != nullptr && draft.actionSet && !SameAction(input, draft.action);
-        const bool settledInput = !draftChanged && adapter.ActionIntentSettled();
         const Value busy = nativeBusy ? Value(true) : idle == Fact::True ? Value(false) : Value{};
-        Value value = Value::Object(
-            {{"moving", movement.empty() ? Value{} : Value(movement)},
-             {"input_action", desired != nullptr ? Value(ActionName(*desired)) : Value{}},
-             {"input_settled", settledInput},
-             {"action", active != nullptr ? Value(ActionName(*active)) : Value{}},
-             {"phase", nativeBusy           ? "running"
-                       : idle == Fact::True ? "idle"
-                                            : "unknown"},
-             {"busy", busy},
-             {"held", keys},
-             {"reason", inputError.empty() ? result.reason : inputError},
-             {"effect", result.effect},
-             {"dispatched", result.dispatched},
-             {"control_released", !inputActive && settledInput && held.empty() && adapter.HeldKeysSettled()}});
+        Value value = Value::Object({{"moving", movement.empty() ? Value{} : Value(movement)},
+                                     {"input_action", desired != nullptr ? Value(ActionName(*desired)) : Value{}},
+                                     {"action", active != nullptr ? Value(ActionName(*active)) : Value{}},
+                                     {"phase", nativeBusy           ? "running"
+                                               : idle == Fact::True ? "idle"
+                                                                    : "unknown"},
+                                     {"busy", busy},
+                                     {"held", keys},
+                                     {"reason", inputError.empty() ? result.reason : inputError},
+                                     {"effect", result.effect},
+                                     {"dispatched", result.dispatched}});
         if (desired != nullptr && desired->skillId != 0) value["input_skill_id"] = desired->skillId;
         if (desired != nullptr && desired->itemId != 0) value["input_item_id"] = desired->itemId;
         if (active != nullptr && active->skillId != 0) value["skill_id"] = active->skillId;
@@ -721,10 +713,9 @@ struct TickRuntime::Impl {
             lua_pushnil(lua);
             lua_setglobal(lua, name);
         }
-        static const luaL_Reg player[]{
-            {"move", Move},           {"jump", Jump},     {"attack", Attack}, {"skill", Skill},
-            {"use_item", UseItem},    {"pickup", Pickup}, {"stop", Stop},     {"clear_action", ClearAction},
-            {"status", PlayerStatus}, {nullptr, nullptr}};
+        static const luaL_Reg player[]{{"move", Move},   {"jump", Jump},           {"attack", Attack},
+                                       {"skill", Skill}, {"use_item", UseItem},    {"pickup", Pickup},
+                                       {"stop", Stop},   {"status", PlayerStatus}, {nullptr, nullptr}};
         lua_newtable(lua); // backing of game proxy
         luaL_newlib(lua, player);
         Protect(lua);

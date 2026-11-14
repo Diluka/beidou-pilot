@@ -479,7 +479,7 @@ function main(c)
     c.state.step = (c.state.step or 0) + 1
     if c.state.step == 1 then c.game.player.attack()
     elseif c.state.step == 2 then c.game.player.skill(2001002)
-    elseif c.state.step == 3 then c.game.player.clear_action() end
+    elseif c.state.step == 3 then c.game.player.skill(nil) end
 end
 )lua",
                                    1000, error),
@@ -545,7 +545,7 @@ void RejectedAttackRecovery() {
     Check(clearedRuntime.Start("clear-retry",
                                "-- @mode tick\n-- @tick.gear 4\nfunction main(c) "
                                "c.state.n=(c.state.n or 0)+1; if c.state.n==1 then c.game.player.skill(1001004) "
-                               "elseif c.state.n==3 then c.game.player.clear_action() end end",
+                               "elseif c.state.n==3 then c.game.player.skill(nil) end end",
                                1000, error),
           error.c_str());
     for (unsigned frame = 0; frame < 10; ++frame) cleared.Advance(clearedRuntime);
@@ -568,7 +568,7 @@ function main(c)
     local step = c.state.step
     if step == 1 or step == 103 or step == 105 then c.game.player.use_item(2000000)
     elseif step == 2 or step == 5 or step == 202 then c.game.player.use_item(2000001)
-    elseif step == 3 or step == 102 then c.game.player.clear_action()
+    elseif step == 3 or step == 102 then c.game.player.skill(nil)
     elseif step == 4 or step == 104 then c.game.player.attack() end
 end
 )lua",

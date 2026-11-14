@@ -144,7 +144,7 @@ end
     def test_motion_facts_and_reference_capabilities_are_fresh_read_only_and_unknown_when_missing(self) -> None:
         self.run_contract("motion")
 
-    def test_held_skill_example_sets_once_and_waits_for_release_without_waiting_for_animation(self) -> None:
+    def test_held_skill_example_returns_done_and_runtime_confirms_release_without_waiting_for_animation(self) -> None:
         path = Path(__file__).resolve().parents[2] / "shared/scripts/examples/tick-held-skill.lua"
         source, metadata = read_strategy_file(path)
         self.assertIsNotNone(metadata)

@@ -20,7 +20,7 @@ private/workbenches/workbench /external/workbench script status
 
 省略 mode 或 `-- @mode coroutine` 进入现有 Runtime，其 API 和调度冻结保留；`-- @mode tick` 进入独立 TickRuntime。两者不共享上层状态、动作槽、控制权和输入生命周期，只共享适配器所需的原生 I/O；任一引擎的取消、错误和期限不结束另一引擎的会话。两端按共同的公开契约提供各自原生实现，不建立旧 API 的兼容包装。
 
-客户端 tick 引擎只有一份角色输入状态机，全部 tick 会话共享持续方向与单个持续动作意图，按接纳顺序调用、后写覆盖。宿主推进原生保持/消费、期限、取消和放键，各会话按 `@tick.gear` 到期读取当帧新鲜事实并提交意图差异；相同输入不重按，动作忙时仍可替换或撤下意图。输入B不覆盖原生正在执行的A，没有历史后继请求队列；B被撤下后不会补发。`clear_action()`只清动作，`stop()`清方向与动作，角色已发生动画自然收束。连续触发由各端原生消费者推进，不按Lua频率重放；仅用药增加专属100ms派发保护。状态、支持边界和完整预算语义见 [tick API](LUA_TICK_API.md#tick-环境)。
+客户端 tick 引擎只有一份角色输入状态机，全部 tick 会话共享持续方向与单个持续动作意图，按接纳顺序调用、后写覆盖。宿主推进原生保持/消费、期限、取消和放键，各会话按 `@tick.gear` 到期读取当帧新鲜事实并提交意图差异；相同输入不重按，动作忙时仍可替换或撤下意图。输入B不覆盖原生正在执行的A，没有历史后继请求队列；B被撤下后不会补发。`player.skill(nil)`撤下整个动作槽（跳跃、普攻、技能、用药或拾取），方向保持；`stop()`清方向与动作，角色已发生动画自然收束。连续触发由各端原生消费者推进，不按Lua频率重放；仅用药增加专属100ms派发保护。状态、支持边界和完整预算语义见 [tick API](LUA_TICK_API.md#tick-环境)。
 
 以下基础动作、任务控制和内置策略描述均为 coroutine 环境。以 headless 当前面向脚本的 `State`、`Action`、`ActionResult` 为共同标准，绑定与调度位于 `shared/lua-runtime/`；原版 DLL 提供同一模型。内置策略不在本次迁移范围，选择性验证用 tick 文件不替换内置脚本。
 
@@ -88,7 +88,7 @@ Lua 发布仍使用原有单行 `script` 操作和 UTF-8 源码文件，原生�
 
 `stop 0` 保留全停语义；新桥 `cancel_script` 只停止对应 `script.id` 并确认其输入释放，不全局放键。没有 `scripts` 字段的旧后端仍按旧单会话合同先核对 ID，再回退 `stop`；旧桥装载 tick 则直接返回 `bridge_tick_unsupported`，不回退到旧引擎。
 
-`state.json` 保留 `script`（最新接纳会话）及稳定的旧字段，新增 `scripts` 数组，每项沿用 `id/status/reason/error/resumes/budget_yields/last_resume_us/max_resume_us/tasks/control` 并携带 `mode="tick"/"coroutine"` 和会话级 `control_released`。tick 额外有 `tick={index,time,delta,scene_generation,overrun,overruns,budget_ms,overrun_policy,abort_commit}` 与客户端共享 `player` 操作快照。原始 `command` 只反映最近命令，不代表所有会话；CLI 等待按 `scriptId` 定位自己的会话，不能在其他命令更新 `command.id` 后失联。
+`state.json` 保留 `script`（最新接纳会话）及稳定的旧字段，新增 `scripts` 数组，每项沿用 `id/status/reason/error/resumes/budget_yields/last_resume_us/max_resume_us/tasks/control` 并携带 `mode="tick"/"coroutine"` 和会话级 `control_released`。tick 额外有 `tick={index,time,delta,scene_generation,overrun,overruns,budget_ms,overrun_policy,abort_commit}` 与客户端共享 `player` 操作快照。`player` 只区分当前输入槽和已开始的原生动作，不暴露 `input_settled/control_released`；Lua直接返回done，由Runtime确认停止所属持续输入（持键路径包含真实释放），槽空不表示停止已确认。原始 `command` 只反映最近命令，不代表所有会话；CLI 等待按 `scriptId` 定位自己的会话，不能在其他命令更新 `command.id` 后失联。
 
 完成或取消的释放判断使用该会话的 `control_released`，不要求全局 `held_keys=[]`；全局仍可能包含其他 tick 或 coroutine 的合法持键。`bridge stop` 才要求全部会话停止及全局输入释放。旧后端没有多会话能力时仍保留原 command/held_keys 判定，未确认释放时报 `bridge_release_unconfirmed`。
 

@@ -49,12 +49,12 @@
 | [read-state.lua](examples/read-state.lua) | 使用 `game.state()` 做只读分支和短循环，检查角色就绪、地图及存活状态。 | 只读示例。 |
 | [read-domains.lua](examples/read-domains.lua) | 使用 `game.observe()` 按需读取场景、装备、任务和 UI，保留不可用及不支持状态。 | 只读，适合学习分领域观察。 |
 | [common-basic.lua](examples/common-basic.lua) | 顺序调用移动、朝向、跳跃、攻击、拾取，并在低血量时尝试使用固定药品。 | 会实际移动、攻击和消耗物品；只演示动作串联。 |
-| [tick-held-skill.lua](examples/tick-held-skill.lua) | 只设置一次技能持续意图，到明确的演示期限后撤下并核对输入释放。 | 会消耗MP；传入角色已学会且本端支持的技能，保持时长不用于猜动画结束。 |
+| [tick-held-skill.lua](examples/tick-held-skill.lua) | 只设置一次技能持续意图，到明确的演示期限后撤下并结束，由Runtime确认停止所属持续输入。 | 会消耗MP；传入角色已学会且本端支持的技能，保持时长不用于猜动画结束。 |
 | [tick-jump-attack.lua](examples/tick-jump-attack.lua) | 保持方向助跑再起跳，空中普攻并撤下保持，落地后停止。 | 会实际移动、跳跃和普攻；需本端已知地面和动作忙闲事实，不寻路、不选怪、不保证命中或精确出手次数。 |
 
 ### tick 持续输入：技能保持与撤下
 
-`tick-held-skill.lua` 演示 `player.skill(id)` 只调用一次，后续回调不重放。客户端按本端原生动作完成和准入处理当前仍有效的意图；`clear_action()`只撤下动作，不清方向或强行中断已发生动画。显式 `hold_seconds` 是调用者选择的保持期限，不是动画时间。无动作锁技能每次保持只派发一次；GUI蓄力类别不支持。用药与技能不同，持续用药会重复尝试消耗，目标达到必须撤下；详见 [持续输入合同](../../docs/LUA_TICK_API.md#角色状态机与动作槽)。
+`tick-held-skill.lua` 演示 `player.skill(id)` 只调用一次，后续回调不重放。客户端按本端原生动作完成和准入处理当前仍有效的意图；`player.skill(nil)`撤下整个动作槽，不清方向或强行中断已发生动画。撤下后直接返回 `"done"`，由Runtime确认停止所属持续输入（持键路径包含真实释放）后发布会话完成；脚本不轮询内部握手。按ID技能没有实体技能键，撤下移除持续意图及未执行派发，不发送技能key-up。显式 `hold_seconds` 是调用者选择的保持期限，不是动画时间。无动作锁技能每次保持只派发一次；GUI蓄力类别不支持。用药与技能不同，持续用药会重复尝试消耗，目标达到必须撤下；详见 [持续输入合同](../../docs/LUA_TICK_API.md#角色状态机与动作槽)。
 
 ```bash
 private/workbenches/workbench "$DIR" script run \
@@ -82,11 +82,11 @@ private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
 
 `--direction` 来自头部 `@option`，默认 `right`，也可为 `left`。`--seconds` 是整个原生会话的期限，不是跳跃时长；例如起跳失败时由这个期限停止等待并释放输入。本例省略 `@tick.gear` 时使用第3档（30Hz）；复制到用户脚本后，可在前导注释中显式设置，例如 `-- @tick.gear 4` 选择原生更新；1、2、3档分别为10Hz、20Hz和30Hz。低档只降低判断频率，不改变角色物理和每宿主更新的取消/放键；落地后在下一次到期判断清方向。
 
-阅读时关注四点：`@mode tick`选择新引擎；`main`只做短判断，返回nil后下次继续；`context.state.phase`保存“助跑 → 空中 → 攻击输入消费 → 撤下保持 → 落地停止”阶段；方向和动作都只需设置一次，攻击输入确认消费后用 `clear_action()`撤下，已经发生的动画继续，落地后用 `move(nil)`清方向，速度接近零再返回done。
+阅读时关注四点：`@mode tick`选择新引擎；`main`只做短判断，返回nil后下次继续；`context.state.phase`保存“助跑 → 空中 → 攻击输入消费 → 撤下保持 → 落地停止”阶段；方向和动作都只需设置一次，当前原生 `action="attack"` 且 `dispatched=true` 后用 `player.skill(nil)`撤下，已经发生的动画继续，落地后用 `move(nil)`清方向，速度接近零再返回done。
 
 `character.velocity` 是角色自己的当前运动向量，`character.movement` 是按当前有效属性及本端物理模型推断的静止平地参考能力，两者不混用。自己、其他玩家、怪物、NPC、投射物和掉落物共享可移动物体的观察基类，每个实体各自拥有向量，世界不是运动主体。向量保留原生或原生更新区间差分的来源，未知不填零。沿目标方向达到参考移速的99%后才提交 jump：无头速度渐近稳态，不能严格比较相等，也不用固定助跑时长/距离或仅凭速度平台。完整运动参考及最大跳高的适用条件见 [运动观察](../../docs/LUA_TICK_API.md#运动观察与静止参考)。
 
-空中阶段要求真实 `character.on_ground=false`、Y小于原平地Y且 `character.action_idle=true`；输入保持与角色动作分开，不用“槽空”猜落地。地面/动作事实未知时不以重复坐标推断。速度/能力参考只阻断助跑或停止确认，不阻断已具备离地事实的攻击。攻击输入消费确认后撤下保持，低频可能错过原生重复边界，所以本例不承诺精确一次出手。`settled` 包含停止移动，不能用于全程移动的落地判断；派发、释放或动画结束也不等于命中。
+空中阶段要求真实 `character.on_ground=false`、Y小于原平地Y且 `character.action_idle=true`；输入保持与角色动作分开，不用“槽空”猜落地。地面/动作事实未知时不以重复坐标推断。速度/能力参考只阻断助跑或停止确认，不阻断已具备离地事实的攻击。当前原生普攻与派发事实确认后撤下保持，不能把上次跳跃的 `dispatched` 或仍在空中当作普攻已派发。槽空也不表示所属输入已停止；最终返回done后由Runtime确认停止所属持续输入（持键路径包含真实释放）。低频可能错过原生重复边界，所以本例不承诺精确一次出手。`settled` 包含停止移动，不能用于全程移动的落地判断；派发、释放或动画结束也不等于命中。
 
 可以从这个结构扩展更多阶段，不要加入阻塞等待或混用 coroutine 的 `game.sleep()/game.state()`。tick 多会话共享 player，同客户端其他会话可能覆盖方向；初学试用只运行这一份动作示例。完整契约见 [tick API](../../docs/LUA_TICK_API.md#tick-环境)。
 

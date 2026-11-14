@@ -145,24 +145,22 @@ end
 | `player.move(nil)` | 只清移动意图 |
 | `player.jump()`、`player.attack()`、`player.pickup()` | 将跳跃、普攻、拾取放入持续动作输入槽，直到替换或撤下 |
 | `player.skill(skill_id)`、`player.use_item(item_id)` | 正int32 ID，保持该技能或普通恢复品意图；实际准入由本端原生决定 |
-| `player.clear_action()` | 只撤下动作输入，方向保持；不强制取消已经发生的动画 |
-| `player.stop()` | 清方向和动作意图，发起真实放键；释放确认另读状态 |
+| `player.skill(nil)` | 撤下整个动作输入槽，包含此前的跳跃、普攻、技能、用药或拾取；方向保持，不取消或改写已开始的原生动作 |
+| `player.stop()` | 清方向和动作意图；持键路径发起真实释放，槽空不等于停止已确认 |
 | `player.status()` | 只读共享快照，见下表；角色动画忙闲另看 `game.character.action_idle` |
 
-设置函数返回 `ok, reason`：`true`表示本tick意图草稿受理，不表示技能已经开始或药效已发生；能力不支持返回 `false,"unsupported"`。类型、方向和越界ID报Lua错误。原生忙时仍可替换/撤下输入，不再以 `false,"busy"` 保存待执行动作。有效草稿在回调后统一提交，同tick仅末值投放；回调内 `status().input_*` 可看到已写草稿，`action`仍来自已开始的原生动作。原生拒绝通过后续 `reason` 和原生结果观察，不冒充已执行。
+设置函数返回 `ok, reason`：`true`表示本tick意图草稿受理，不表示技能已经开始或药效已发生；能力不支持返回 `false,"unsupported"`。`skill` 必须恰好传一个参数：显式 `nil` 撤下槽，普通技能仍传正int32 ID；缺参、多参、非法类型或越界ID报Lua错误，不默认为撤下或成功。撤下不依赖技能能力，先前动作也不必是技能。类型、方向和其他动作参数错误同样报Lua错误。原生忙时仍可替换/撤下输入，不再以 `false,"busy"` 保存待执行动作。有效草稿在回调后统一提交，同tick仅末值投放；回调内 `status().input_*` 可看到已写草稿，`action`仍来自已开始的原生动作。原生拒绝通过后续 `reason` 和原生结果观察，不冒充已执行。
 
 | 状态字段 | 含义 |
 | --- | --- |
 | `moving` | 已提交的方向意图或nil |
 | `input_action`、`input_skill_id/input_item_id` | 当前持续输入；ID只随相应输入提供。槽空为nil |
-| `input_settled` | 当前输入变更已被原生确认，包括旧输入放开；保持中的新输入也可为true，不等于动画结束。回调内不同的新草稿尚未投放，为false；同值重设不清除已有确认 |
 | `action`、`skill_id/item_id` | 能归属的已开始原生动作，不被新输入B覆盖；无已知动作时为nil，不用意图猜测 |
 | `busy`、`phase` | 原生动作已知忙为true/running，已知闲为false/idle，否则nil/unknown；输入非空不等于busy |
 | `held` | 已提交方向与动作的语义持有集合，不是GUI物理键或命中结果 |
 | `reason/effect/dispatched` | 已有的最近原生输入处理反馈；不承诺逐帧解释全部准入条件。无头等待原生准入时可保持intent_accepted、dispatched=false；`effect="unknown"` 不表示成功或失败 |
-| `control_released` | 本共享player没有持续输入且原生释放确认；角色动画仍可能继续。会话终态判断用会话自己的同名字段 |
 
-`pending_action`已删除。A执行中放入B，当前输入为B、当前已知动作仍为A；撤下B或替换C后，只消费仍有效的输入，不在A结束后补发历史B。相同意图重复提交不重置按下边沿或原生重复节奏。方向独立保持，不为拾取/用药人工暂停；原生自行裁决哪些动作能同时发生。
+`player` 不提供 `input_settled/control_released` 等内部握手字段。`skill(nil)` 或 `input_action=nil` 只表示槽已撤下，不证明所属持续输入已停止；脚本结束直接返回 `"done"`，由Runtime确认停止所属持续输入（持键路径包含真实释放）后发布终态，外部消费者读取会话顶层 `control_released`。按ID技能保持的是持续意图，有可读取动作锁时原生在动作结束且准入允许时继续派发；撤下移除意图和未执行派发，不制造技能实体键或技能key-up。`pending_action`已删除。A执行中放入B，当前输入为B、当前已知动作仍为A；撤下B或替换C后，只消费仍有效的输入，不在A结束后补发历史B。相同意图重复提交不重置按下边沿或原生重复节奏。方向独立保持，不为拾取/用药人工暂停；原生自行裁决哪些动作能同时发生。
 
 各动作保持语义按本端原生能力实现，不把Lua调用频率当连发速度：
 
@@ -203,6 +201,6 @@ CLI 提供的初始场景身份不能作为普通 `@option` 覆盖；核验后�
 
 ## 示例与实现入口
 
-从 [tick-held-skill.lua](<../shared/scripts/examples/tick-held-skill.lua>) 学习只设置一次技能、保持后撤下及释放确认，再用 [tick-jump-attack.lua](<../shared/scripts/examples/tick-jump-attack.lua>) 学习按真实速度起跳、撤下攻击保持及落地确认；运行命令见 [共享脚本README](<../shared/scripts/README.md#示例examples>)。例子按真实事实推进，不以动作接纳代替游戏效果。
+从 [tick-held-skill.lua](<../shared/scripts/examples/tick-held-skill.lua>) 学习只设置一次技能、保持后撤下并由Runtime确认停止所属持续输入，再用 [tick-jump-attack.lua](<../shared/scripts/examples/tick-jump-attack.lua>) 学习按真实速度起跳、撤下攻击保持及落地确认；运行命令见 [共享脚本README](<../shared/scripts/README.md#示例examples>)。例子按真实事实推进，不以动作接纳代替游戏效果。
 
 实现入口：[TickRuntime.cpp](../shared/lua-runtime/TickRuntime.cpp)、[无头tick适配器](../headless/src/TickNativeAdapter.cpp)、[GUI桥](../beidou-ijl15/ezorsia/AgentBridge.cpp)。领域与预算、状态机和停止语义以本页为准，不向旧引擎转发。

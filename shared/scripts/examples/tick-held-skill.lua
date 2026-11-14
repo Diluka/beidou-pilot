@@ -13,15 +13,10 @@ local function main(context)
         state.started = context.tick.time
         return
     end
-    if state.released then
-        if player.status().input_settled then
-            context.game.log("held_skill: input released; native animation may still be running")
-            return "done"
-        end
-    elseif context.tick.time - state.started >= context.options.hold_seconds then
-        -- 明确结束输入保持，不用这个时长推算技能动画何时完成。
-        assert(player.clear_action())
-        state.released = true
-        return -- 下一次观察确认本次清空已被原生消费。
+    if context.tick.time - state.started >= context.options.hold_seconds then
+        -- 只撤下动作槽，不用这个时长推算技能动画何时完成。
+        assert(player.skill(nil))
+        context.game.log("held_skill: input withdrawn; runtime will confirm input stopped")
+        return "done" -- Runtime确认停止所属持续输入后才发布会话完成。
     end
 end

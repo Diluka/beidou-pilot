@@ -109,7 +109,7 @@ void Keys(SharedLuaAdapter& host) {
           "jump_reports_confirmed_native_input_not_a_fabricated_game_effect");
     adapter.ReleaseAction();
     Check(!player.is_key_down(ms::KeyAction::JUMP) && player.is_key_down(ms::KeyAction::RIGHT),
-          "clear_action_keeps_direction");
+          "action_withdrawal_keeps_direction");
     Check(adapter.ReleasePending(), "real_key_up_requires_a_later_native_frame");
     adapter.Advance(21, false);
     Check(adapter.Released(), "native_frame_confirms_key_up");

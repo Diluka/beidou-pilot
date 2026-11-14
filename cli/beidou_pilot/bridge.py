@@ -93,7 +93,6 @@ BridgePlayerAction = Literal["jump", "attack", "skill", "use_item", "pickup"]
 class BridgePlayer(TypedDict):
     moving: Literal["left", "right", "up", "down"] | None
     input_action: BridgePlayerAction | None
-    input_settled: bool
     action: BridgePlayerAction | None
     phase: Literal["idle", "running", "unknown"]
     busy: bool | None
@@ -101,7 +100,6 @@ class BridgePlayer(TypedDict):
     reason: str
     effect: str
     dispatched: bool
-    control_released: bool
     input_skill_id: NotRequired[int]
     input_item_id: NotRequired[int]
     skill_id: NotRequired[int]
@@ -226,8 +224,7 @@ def _validate_script(script: object, *, require_mode: bool = False) -> None:
                        for field in ("action", "input_action"))
                 or any(not isinstance(player.get(field), str) for field in ("reason", "effect"))
                 or "busy" not in player or (player["busy"] is not None and type(player["busy"]) is not bool)
-                or any(type(player.get(field)) is not bool
-                       for field in ("input_settled", "dispatched", "control_released"))
+                or type(player.get("dispatched")) is not bool
                 or any(field in player and (type(player[field]) is not int or not 1 <= player[field] <= 0x7FFFFFFF)
                        for field in ("input_skill_id", "input_item_id", "skill_id", "item_id"))
                 or not isinstance(player.get("held"), list)
