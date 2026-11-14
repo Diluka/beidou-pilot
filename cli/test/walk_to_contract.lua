@@ -38,6 +38,25 @@ local state = {
     monsters = {},
 }
 if state.character.id == nil then state.character.id = case.scene.character_id end
+local monsters = {}
+for index, mob in ipairs(case.monsters or {}) do
+    monsters[index] = {
+        object_id = mob.object_id or index,
+        template_id = mob.template_id or 100,
+        x = mob.x,
+        y = mob.y,
+        hp = mob.hp or 3,
+        active = true,
+    }
+end
+state.inventory = case.inventory or {}
+local uses, attacks, skills = 0, 0, 0
+local function monster_near(x)
+    for _, mob in ipairs(monsters) do
+        if mob.active and math.abs(mob.x - x) <= 90 then return mob end
+    end
+    return nil
+end
 local floor_index = 1
 local function floor_at(x)
     for index, floor in ipairs(floors) do
@@ -94,7 +113,11 @@ end
 
 game = {
     time = function() return now end,
-    state = function() return copy(state) end,
+    state = function()
+        local snapshot = copy(state)
+        snapshot.monsters = copy(monsters)
+        return snapshot
+    end,
     observe = function(domain)
         if domain == "dialog" then return { status = "ok", data = { dialog_open = false } } end
         return { status = "unsupported" }
@@ -126,6 +149,13 @@ game = {
                 end
             end
         else
+            if scenario == "mob-clear" or scenario == "clear-limit" then
+                local mob = monster_near(state.position.x)
+                if mob then
+                    advance(seconds)
+                    return { reason = "native_action_dispatched" }
+                end
+            end
             local dx = (direction == "right" and 1 or -1) * 130 * seconds
             local next_x = state.position.x + dx
             local wall = wall_between(state.position.x, next_x)
@@ -141,6 +171,7 @@ game = {
             end
             if not falling and floors[floor_index] then state.position.y = ground(floor_index) end
         end
+        if scenario == "potion-depleted" then state.character.hp = math.max(0, (state.character.hp or 0) - 6) end
         advance(seconds)
         return { reason = "native_action_dispatched" }
     end,
@@ -157,6 +188,44 @@ game = {
             end
         end
         advance(0.05)
+        return { reason = "native_action_dispatched" }
+    end,
+    face = function(direction)
+        state.facing = direction
+        advance(0.05)
+        return { reason = "native_action_dispatched" }
+    end,
+    attack = function()
+        attacks = attacks + 1
+        local mob = monster_near(state.position.x)
+        if mob then
+            mob.hp = mob.hp - 1
+            if mob.hp <= 0 then mob.active = false end
+        end
+        advance(0.3)
+        return { reason = "native_action_dispatched" }
+    end,
+    skill = function()
+        skills = skills + 1
+        attacks = attacks + 1
+        local mob = monster_near(state.position.x)
+        if mob then
+            mob.hp = mob.hp - 1
+            if mob.hp <= 0 then mob.active = false end
+        end
+        advance(0.3)
+        return { reason = "native_action_dispatched" }
+    end,
+    use_item = function(item_id)
+        uses = uses + 1
+        for _, item in ipairs(state.inventory) do
+            if item.item_id == item_id and (item.quantity or 0) > 0 then
+                item.quantity = item.quantity - 1
+                break
+            end
+        end
+        state.character.hp = math.min(state.character.max_hp, (state.character.hp or 0) + 40)
+        advance(0.2)
         return { reason = "native_action_dispatched" }
     end,
     log = function(message) logs[#logs + 1] = message end,
@@ -212,6 +281,20 @@ elseif scenario == "plan-only" then
     assert(ok, fail_text())
     assert(inputs == 0, "plan_only must not move")
     assert(count("walk_to_plan") >= 1, "plan_only did not log a plan")
+elseif scenario == "hp-heal" then
+    assert(ok, fail_text())
+    assert(math.abs(state.position.x - 300) <= 12, "did not reach target while healing")
+    assert(uses >= 1, "did not use potion during movement")
+elseif scenario == "potion-depleted" then
+    assert(not ok, "depleted potion must stop")
+    assert(fail_text():find("potion_exhausted", 1, true), fail_text())
+elseif scenario == "mob-clear" then
+    assert(ok, fail_text())
+    assert(math.abs(state.position.x - 300) <= 12, "did not reach target after clearing")
+    assert(attacks >= 1, "did not attack the blocking monster")
+elseif scenario == "clear-limit" then
+    assert(not ok, "clear limit must stop")
+    assert(fail_text():find("mob_blocked", 1, true), fail_text())
 elseif scenario == "map-change" then
     assert(not ok, "map change must stop")
     assert(has("travel_map_changed"), fail_text())

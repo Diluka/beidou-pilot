@@ -279,10 +279,11 @@ local function terrain_connect(graph, ropes)
                     then
                         connect(i, j, "walk", from_x, to_x, rise, nil, 1)
                     end
-                elseif gap >= 0 and gap <= 20 and rise > 6 and rise <= TERRAIN_JUMP_RISE then
-                    -- 相邻窄台阶链：客户端没有空中横向控制，只能靠反复起跳逐级落上。
-                    -- 规划把它放在最低优先级；跨越竖直墙的台阶链不生成。
-                    local from_x, to_x = terrain_inside(a, ax - direction * 12), terrain_inside(b, bx + direction * 24)
+                end
+                -- 相邻窄台：起跳高度在跳跃可及范围内，靠短助跑保持水平惯性跳上。
+                -- 水平间隙过大或跨越竖直墙的台阶链不生成。
+                if gap > 2 and gap <= 40 and rise > 6 and rise <= TERRAIN_JUMP_RISE then
+                    local from_x, to_x = terrain_inside(a, ax - direction * 6), terrain_inside(b, bx + direction * 10)
                     local from_y, to_y = terrain_height(a, from_x), terrain_height(b, to_x)
                     if
                         not terrain_crosses_wall(
@@ -293,7 +294,7 @@ local function terrain_connect(graph, ropes)
                             math.max(from_y, to_y)
                         )
                     then
-                        connect(i, j, "step", from_x, to_x, rise, nil, 8)
+                        connect(i, j, "step", from_x, to_x, rise, nil, 4)
                     end
                 end
             end
@@ -452,6 +453,20 @@ local function terrain_build(data, options)
     }
     terrain_connect(graph, data.ropes or {})
     return graph
+end
+
+-- 平台图未覆盖但角色高度稳定时使用：取水平范围内高度最接近的平台。
+local function terrain_nearest_platform(graph, x, y, max_distance)
+    local selected, nearest = nil, max_distance or 100
+    for _, platform in ipairs(graph.platforms) do
+        if x >= platform.left - TERRAIN_WALL_MARGIN and x <= platform.right + TERRAIN_WALL_MARGIN then
+            local distance = math.abs(terrain_height(platform, x) - y)
+            if distance <= nearest then
+                selected, nearest = platform, distance
+            end
+        end
+    end
+    return selected
 end
 
 local function terrain_platform_at(graph, x, y, tolerance)
