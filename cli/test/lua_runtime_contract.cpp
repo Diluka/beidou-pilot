@@ -1122,8 +1122,36 @@ game.activate("opaque-native-control")
           "unsupported_activation_reached_native_dispatch");
 }
 
+void StandardLibraries() {
+    NativeBoundary native;
+    MapleControl::Runtime runtime(native);
+    std::string error;
+    Check(runtime.Start("standard-libraries", R"lua(
+assert(type(print) == "function" and type(pcall) == "function" and type(xpcall) == "function")
+assert(type(load) == "function" and type(loadfile) == "function" and type(dofile) == "function")
+assert(type(require) == "function" and type(package) == "table" and type(package.loaded) == "table")
+assert(type(setmetatable) == "function" and type(getmetatable) == "function" and type(rawset) == "function")
+assert(type(io) == "table" and type(os) == "table" and type(debug) == "table" and type(coroutine) == "table")
+local chunk = assert(load("return 2 + 3", "=inline"))
+assert(chunk() == 5)
+)lua",
+                        5000, error),
+          error);
+    for (int tick = 0; tick < 30 && runtime.Running(); ++tick) {
+        native.Advance();
+        runtime.Tick();
+    }
+    const auto* status = runtime.CurrentStatus();
+    Check(!runtime.Running() && status->status == "completed" && status->error.empty(),
+          "standard libraries unavailable: " + status->error);
+}
+
 int main(int argc, char** argv) {
     Check(argc == 2, "expected contract scenario");
+    if (std::string(argv[1]) == "standard-libraries") {
+        StandardLibraries();
+        return 0;
+    }
     if (std::string(argv[1]) == "combat-contract") {
         CombatRequestsAndFacts();
         return 0;

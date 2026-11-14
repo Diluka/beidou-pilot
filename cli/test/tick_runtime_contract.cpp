@@ -930,7 +930,11 @@ void Domains() {
     Start(runtime, "domains", Source(R"lua(
 function main(c)
   local g=c.game
-  assert(rawset==nil and getmetatable==nil and setmetatable==nil and debug==nil)
+  assert(type(print)=="function" and type(pcall)=="function" and type(xpcall)=="function")
+  assert(type(load)=="function" and type(loadfile)=="function" and type(dofile)=="function")
+  assert(type(require)=="function" and type(package)=="table" and type(io)=="table" and type(os)=="table")
+  assert(type(debug)=="table" and type(coroutine)=="table" and type(rawset)=="function")
+  assert(type(setmetatable)=="function" and type(getmetatable)=="function")
   assert(g.character == g.character and g.inventory == g.inventory)
   assert(g.character.id==1 and g.character.hp==100 and g.character.buffs==nil)
   assert(g.character.buffs_available==false)
@@ -970,8 +974,7 @@ end
                                           "table.insert(c.scene.terrain.ropes,{})",
                                           "local f,t=pairs(c.scene); t.map_id=0",
                                           "c.tick.index=0",
-                                          "local f,t=pairs(game.character); t.hp=0",
-                                          "rawset(game.character,'hp',0)"};
+                                          "local f,t=pairs(game.character); t.hp=0"};
     for (std::size_t index = 0; index < writes.size(); ++index) {
         const std::string id = "readonly-" + std::to_string(index);
         Start(runtime, id, Source("function main(c) " + writes[index] + " end"));

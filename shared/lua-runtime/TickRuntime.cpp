@@ -701,18 +701,9 @@ struct TickRuntime::Impl {
     void Open(Session& session) {
         auto* lua = session.lua;
         *static_cast<Session**>(lua_getextraspace(lua)) = &session;
-        static const luaL_Reg libraries[]{{LUA_GNAME, luaopen_base},        {LUA_TABLIBNAME, luaopen_table},
-                                          {LUA_STRLIBNAME, luaopen_string}, {LUA_MATHLIBNAME, luaopen_math},
-                                          {LUA_UTF8LIBNAME, luaopen_utf8},  {nullptr, nullptr}};
-        for (const auto* library = libraries; library->func != nullptr; ++library) {
-            luaL_requiref(lua, library->name, library->func, 1);
-            lua_pop(lua, 1);
-        }
-        for (const char* name :
-             {"dofile", "loadfile", "load", "print", "pcall", "xpcall", "setmetatable", "getmetatable", "rawset"}) {
-            lua_pushnil(lua);
-            lua_setglobal(lua, name);
-        }
+        // Standard libraries are provided as-is; the runtime owns scheduling, budgets
+        // and native I/O only, with no capability trimming for its own scripts.
+        luaL_openlibs(lua);
         static const luaL_Reg player[]{{"move", Move},   {"jump", Jump},           {"attack", Attack},
                                        {"skill", Skill}, {"use_item", UseItem},    {"pickup", Pickup},
                                        {"stop", Stop},   {"status", PlayerStatus}, {nullptr, nullptr}};

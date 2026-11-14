@@ -91,3 +91,6 @@ class LuaRuntimeContract(unittest.TestCase):
 
     def test_management_release_callbacks_preserve_target_and_session_lifecycles(self) -> None:
         subprocess.run([str(self.executable), "management-callbacks"], check=True, timeout=10)
+
+    def test_standard_libraries_are_provided_as_is(self) -> None:
+        subprocess.run([str(self.executable), "standard-libraries"], check=True, timeout=10)
