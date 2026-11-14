@@ -136,7 +136,7 @@ nodes:
       - kind: symbol
         file: shared/lua-runtime/Runtime.cpp
         value: Runtime::Start
-        description: 注册唯一一份公共 game 函数及允许的标准库。
+        description: 注册唯一一份公共 game 函数与按原样提供的 Lua 标准库。
   - id: script-execution.strategy-entry
     kind: interface
     name: main(context) 策略入口与参数合同
@@ -173,16 +173,19 @@ nodes:
   - id: script-execution.trusted-source
     kind: invariant
     name: 仅执行受信脚本
-    summary: Lua 环境仅开放所需标准库并限制日志和指令预算；不提供任意原生函数的 CPU 或内存隔离，脚本必须受信。
-    aliases: [受信 Lua, 指令预算, 标准库边界]
+    summary: Lua 环境按 Lua 原样提供标准库并限制日志和指令预算；不提供 CPU 或内存隔离，脚本必须受信。
+    aliases: [受信 Lua, 指令预算, 标准库原样提供]
     anchors:
       - kind: symbol
         file: shared/lua-runtime/Runtime.cpp
         value: Runtime::Start
-        description: 创建 Lua 状态并移除文件加载、系统调用及错误吞并等入口。
+        description: 创建 Lua 状态、注册标准库和公共 game 函数。
       - kind: document
-        value: docs/LUA_API.md
-        description: 说明指令与日志预算、开放库及受信脚本前提。
+        value: docs/LUA_TICK_API.md
+        description: 说明 tick 指令预算、标准库提供及受信脚本前提。
+      - kind: document
+        value: docs/LUA_COROUTINE_API.md
+        description: 说明 coroutine 指令让出预算、标准库提供及受信脚本前提。
 relations:
   - {from: script-execution.run, type: part_of, to: script-execution, summary: 脚本装载和整会话运行归执行领域。}
   - {from: script-execution.manage-task, type: part_of, to: script-execution, summary: 活动任务的新增替换和停止归执行领域。}

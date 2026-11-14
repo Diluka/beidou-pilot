@@ -40,7 +40,7 @@ GUI普通200类用药按物品ID与实际消费槽直接调用原生入口，与
 
 ## 脚本 API 入口
 
-编写脚本先按 [Lua API 导航](LUA_API.md) 选择 [coroutine API](LUA_COROUTINE_API.md) 或 [tick API](LUA_TICK_API.md)。两份参考分别维护各自的状态结构、能力字段、函数签名、默认参数、返回值、错误和标准库限制，本篇只说明执行与控制协议。
+编写脚本先按 [Lua API 导航](LUA_API.md) 选择 [coroutine API](LUA_COROUTINE_API.md) 或 [tick API](LUA_TICK_API.md)。两份参考分别维护各自的状态结构、能力字段、函数签名、默认参数、返回值、错误和标准库能力，本篇只说明执行与控制协议。
 
 公共接口变更时，运行时实现和 API 参考在同一改动中更新；策略不通过重复实现基础操作来补出未声明的接口。共享策略仍按其局部维护约定迭代，已有参数属于脚手架阶段。
 

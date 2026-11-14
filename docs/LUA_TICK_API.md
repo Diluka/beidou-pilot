@@ -74,7 +74,7 @@ end
 
 ### 独立只读领域
 
-`context.game`（也作为全局 `game` 提供）不提供 `state()`、`observe(domain)`、阻塞动作、`sleep`、`spawn/tasks/acquire/cancel` 或旧按键接口。`game.log(text)` 接受字符串，单条最多4096字节、单次调用日志合计最多65536字节，写入该会话的原生事件日志；时间使用 `context.tick.time/delta`，不提供旧 `game.time()`。标准库开放基础语言和 `table/string/math/utf8`，不开放 `io/os/package/debug/coroutine`；禁用动态装载、`print/pcall/xpcall/setmetatable/getmetatable/rawset`，不会通过捕获预算异常绕过超限处理。每个领域是独立只读 table，嵌套表也只读；写入报 Lua 错误。有到期会话时，核心 `character/world/scene` 在该宿主帧统一刷新一次，所有到期会话共用当帧新鲜结果；没有到期消费者的帧不为Lua刷新核心领域。其余领域每宿主帧按需采集一次，同帧跨会话复用；不会按地图ID复用上次决策的动态scene。领域直接展开原生观察的 `data` 字段并附带 `status/error`，不额外嵌套一层 `data`。不支持或暂时不可读通过领域状态和错误说明，未知字段缺失或为 `nil`，不借另一后端补齐。
+`context.game`（也作为全局 `game` 提供）不提供 `state()`、`observe(domain)`、阻塞动作、`sleep`、`spawn/tasks/acquire/cancel` 或旧按键接口。`game.log(text)` 接受字符串，单条最多4096字节、单次调用日志合计最多65536字节，写入该会话的原生事件日志；时间使用 `context.tick.time/delta`，不提供旧 `game.time()`。标准库按 Lua 原样提供，基础语言、`io/os/package/debug/coroutine` 以及 `load`、`require`、`pcall`、`print`、`setmetatable` 等均可用；运行时只负责调度、预算和原生 I/O，不裁剪语言能力。每个领域是独立只读 table，嵌套表也只读；常规写入报 Lua 错误，`rawset` 只在脚本侧影子生效、不改变运行时观察。有到期会话时，核心 `character/world/scene` 在该宿主帧统一刷新一次，所有到期会话共用当帧新鲜结果；没有到期消费者的帧不为Lua刷新核心领域。其余领域每宿主帧按需采集一次，同帧跨会话复用；不会按地图ID复用上次决策的动态scene。领域直接展开原生观察的 `data` 字段并附带 `status/error`，不额外嵌套一层 `data`。不支持或暂时不可读通过领域状态和错误说明，未知字段缺失或为 `nil`，不借另一后端补齐。
 
 | 属性 | 内容与边界 |
 | --- | --- |

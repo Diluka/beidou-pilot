@@ -1057,18 +1057,9 @@ bool Runtime::Start(const std::string& scriptId, const std::string& source, std:
         return false;
     }
     *static_cast<Impl**>(lua_getextraspace(runtime.main)) = &runtime;
-    static const luaL_Reg libraries[]{{LUA_GNAME, luaopen_base},        {LUA_TABLIBNAME, luaopen_table},
-                                      {LUA_STRLIBNAME, luaopen_string}, {LUA_MATHLIBNAME, luaopen_math},
-                                      {LUA_UTF8LIBNAME, luaopen_utf8},  {nullptr, nullptr}};
-    for (const auto* library = libraries; library->func != nullptr; ++library) {
-        luaL_requiref(runtime.main, library->name, library->func, 1);
-        lua_pop(runtime.main, 1);
-    }
-    for (const char* name :
-         {"dofile", "loadfile", "load", "print", "pcall", "xpcall", "setmetatable", "getmetatable"}) {
-        lua_pushnil(runtime.main);
-        lua_setglobal(runtime.main, name);
-    }
+    // Standard libraries are provided as-is; the runtime owns scheduling, budgets
+    // and native I/O only, with no capability trimming for its own scripts.
+    luaL_openlibs(runtime.main);
     static const luaL_Reg functions[]{{"state", Impl::Observe},
                                       {"observe", Impl::ObserveDomain},
                                       {"capabilities", Impl::Capabilities},

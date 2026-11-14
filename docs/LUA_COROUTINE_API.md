@@ -543,9 +543,9 @@ coroutine 通用入口调用前会重新读取 `game.state()`，并对比就绪�
 
 ## Lua 环境
 
-开放基础库及 `table/string/math/utf8`。可正常使用函数、表、条件、循环、`assert/error`等Lua语法和这些库。
+标准库按 Lua 原样提供：基础库与 `string/table/math/utf8/io/os/package/debug/coroutine` 和独立解释器一致，`require`、`load`、`pcall`、`print` 等均可用。可正常使用函数、表、条件、循环、`assert/error`等Lua语法和这些库。
 
-未开放 `io/os/debug/package/coroutine`；不存在 `require` 或自建协程入口。基础库移除了 `dofile/loadfile/load/print/pcall/xpcall/setmetatable/getmetatable`。使用 `game.log`记录消息；错误会交回公共运行时，脚本不能用已移除的 `pcall/xpcall`包住动作后吞掉未知效果。
+运行时只负责调度、预算和原生 I/O，不裁剪语言能力。`game` 是原生能力入口；使用 `game.log`记录消息，脚本错误交回公共运行时并按会话终态处理。
 
 ## 最小公共动作示例
 
