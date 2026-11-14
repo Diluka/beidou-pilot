@@ -107,6 +107,9 @@ struct ScriptSession {
 };
 
 std::vector<ScriptSession> scriptSessions;
+// 被拒绝的 tick 会话仍由共享运行时保留，但不进入 scriptSessions；
+// 单独投影，调用方才能看到模块缺失/编译错误的来源与行号。
+std::vector<MapleControl::Value> rejectedTickScripts;
 bool haveSkillResult = false;
 std::uint32_t lastSkillId = 0;
 int lastSkillResult = 0;
@@ -1269,6 +1272,7 @@ bool Publish(const MapleControl::State& state) {
     out << ",\"script\":" << (scriptSessions.empty() ? "null" : scriptSessions.back().status.Dump());
     auto scripts = MapleControl::Value::Array();
     for (const auto& session : scriptSessions) scripts.Add(session.status);
+    for (const auto& rejected : rejectedTickScripts) scripts.Add(rejected);
     out << ",\"scripts\":" << scripts.Dump();
     out << ",\"tick_profile\":" << tickRuntime.Profile().Dump();
     out << ",\"last_skill\":";
@@ -1455,6 +1459,10 @@ void ReadCommand() {
         scriptCommand = false;
         commandStatus = "rejected";
         commandReason = !sourceValid ? "script_file_unavailable" : "script_load_error";
+        if (mode == MapleControl::ScriptMode::Tick) {
+            const auto rejected = tickRuntime.CurrentStatus(scriptId);
+            if (rejected.Type() != MapleControl::Value::Kind::Null) rejectedTickScripts.push_back(rejected);
+        }
     } else {
         scriptSessions.push_back({scriptId, mode, {}});
         RefreshScriptStatuses();
