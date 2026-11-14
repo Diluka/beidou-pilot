@@ -3,15 +3,6 @@
 #include "SharedLuaAdapter.h"
 #include "Gameplay/Stage.h"
 
-#include <chrono>
-
-namespace {
-std::uint64_t NowMs() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
-}
-
 TickNativeAdapter::TickNativeAdapter(SharedLuaAdapter& owner) : host(owner) {}
 
 const char* TickNativeAdapter::Backend() const {
@@ -74,49 +65,33 @@ bool TickNativeAdapter::HeldKeysSettled() const {
 }
 
 bool TickNativeAdapter::Begin(const MapleControl::Action& action, std::string& error) {
+    return SetActionIntent(action, error);
+}
+
+bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std::string& error) {
     using Kind = MapleControl::ActionKind;
-    if (!Supports(action.kind)) {
+    if (action.kind == Kind::Stop) {
+        ReleaseAction();
+        return true;
+    }
+    if (action.kind != Kind::Jump && action.kind != Kind::Attack && action.kind != Kind::Pickup
+        && action.kind != Kind::UseItem) {
         error = "unsupported: tick_action";
         return false;
     }
-    if (action.kind == Kind::Stop) {
-        Release();
-        return true;
-    }
-    const auto& state = Observe();
-    if (!state.ready || state.dead == MapleControl::Fact::True) {
+    if (!Observe().ready || Observe().dead == MapleControl::Fact::True) {
         error = "state_unavailable_or_dead";
         return false;
     }
-    if (!Released()) {
-        error = "busy";
-        return false;
+    if (intent.kind == action.kind && intent.skillId == action.skillId && intent.itemId == action.itemId) {
+        // Ownership may change, but an unchanged semantic hold emits no edges
+        // and must not rearm a no-action skill or a consumable repeat timer.
+        intent.sessionId = action.sessionId;
+        return true;
     }
     auto& stage = ms::Stage::get();
     auto& player = stage.get_player();
-    result = {};
-    result.sessionId = action.sessionId;
-    result.reason = "native_action_dispatched";
-    if (action.kind == Kind::Jump)
-        actionKeys = {ms::KeyAction::JUMP};
-    else if (action.kind == Kind::Pickup)
-        actionKeys = {ms::KeyAction::PICKUP};
-    else if (action.kind == Kind::Attack && action.skillId == 0) {
-        if (!player.can_attack()) {
-            result.controlReleased = true;
-            result.reason = "native_attack_not_allowed";
-            return true;
-        }
-        actionKeys = {ms::KeyAction::ATTACK};
-    } else if (action.kind == Kind::Attack) {
-        const auto reason = stage.get_combat().use_move(static_cast<std::int32_t>(action.skillId));
-        result.skillRequested = true;
-        result.skill.nativeResult = static_cast<int>(reason);
-        result.skill.dispatched = reason == ms::SpecialMove::FBR_NONE;
-        result.skill.reason = result.skill.dispatched ? "native_skill_dispatched" : "native_skill_rejected";
-        result.dispatched = result.skill.dispatched;
-        result.reason = result.skill.reason;
-    } else if (action.kind == Kind::UseItem) {
+    if (action.kind == Kind::UseItem) {
         if (action.itemId / 10000 != 200 && action.itemId / 10000 != 201) {
             error = "unsupported: ordinary_potion_or_food_required";
             return false;
@@ -125,21 +100,34 @@ bool TickNativeAdapter::Begin(const MapleControl::Action& action, std::string& e
             error = "item_not_in_inventory";
             return false;
         }
-        player.use_item(action.itemId);
-        result.reason = "item_use_requested";
-        result.dispatched = true;
-    } else {
-        error = "unsupported: tick_action";
-        return false;
     }
-    if (!actionKeys.empty()) result.dispatched = true;
-    active = true;
-    pulseReleased = false;
-    actionKind = action.kind;
-    result.controlReleased = false;
-    deadlineMs = NowMs() + action.durationMs;
+
+    intent = action;
+    intentTick = currentTick;
+    intentChanged = true;
+    result = {};
+    result.sessionId = action.sessionId;
+    result.reason = "native_input_intent_accepted";
+    actionKeys.clear();
+    if (action.kind == Kind::Jump)
+        actionKeys = {ms::KeyAction::JUMP};
+    else if (action.kind == Kind::Pickup)
+        actionKeys = {ms::KeyAction::PICKUP};
+    else if (action.kind == Kind::Attack && action.skillId == 0)
+        actionKeys = {ms::KeyAction::ATTACK};
+    stage.get_combat().hold_move(
+        action.kind == Kind::Attack && action.skillId != 0 ? std::optional<int32_t>(action.skillId) : std::nullopt);
+    player.hold_item(action.kind == Kind::UseItem ? action.itemId : 0);
     host.SyncKeys();
     return true;
+}
+
+const MapleControl::Action* TickNativeAdapter::ActiveAction() const {
+    return nativeActive ? &activeAction : nullptr;
+}
+
+bool TickNativeAdapter::ActionIntentSettled() const {
+    return !intentChanged || currentTick > intentTick;
 }
 
 MapleControl::ActionResult TickNativeAdapter::Result() const {
@@ -147,11 +135,11 @@ MapleControl::ActionResult TickNativeAdapter::Result() const {
 }
 
 bool TickNativeAdapter::Released() const {
-    return !active && !releasing;
+    return intent.kind == MapleControl::ActionKind::Stop && ActionIntentSettled();
 }
 
 bool TickNativeAdapter::ReleasePending() const {
-    return releasing;
+    return intent.kind == MapleControl::ActionKind::Stop && !ActionIntentSettled();
 }
 
 void TickNativeAdapter::Release() {
@@ -161,49 +149,93 @@ void TickNativeAdapter::Release() {
     }
     movement.clear();
     ReleaseAction();
-}
-
-void TickNativeAdapter::ReleaseAction() {
-    actionKeys.clear();
-    active = false;
-    releasing = true;
-    releaseTick = currentTick;
     host.SyncKeys();
 }
 
+void TickNativeAdapter::ReleaseAction() {
+    if (intent.kind == MapleControl::ActionKind::Stop) return;
+    intent = {};
+    actionKeys.clear();
+    intentTick = currentTick;
+    intentChanged = true;
+    result.controlReleased = false;
+    auto& stage = ms::Stage::get();
+    stage.get_combat().hold_move(std::nullopt);
+    stage.get_player().hold_item(0);
+    host.SyncKeys();
+    // Releasing input never interrupts or relabels an already playing action.
+}
+
 void TickNativeAdapter::Advance(std::uint64_t nativeTick, bool sceneChanged) {
+    using Kind = MapleControl::ActionKind;
     currentTick = nativeTick;
-    if (releasing && currentTick > releaseTick) {
-        releasing = false;
-        result.controlReleased = true;
+    const auto& player = ms::Stage::get().get_player();
+    const auto& combat = ms::Stage::get().get_combat();
+    if (sceneChanged || !Observe().ready) {
+        Release();
+        nativeActive = false;
+        moveSequence = combat.get_move_sequence();
+        itemSequence = player.get_held_item_sequence();
+        result.controlReleased = ActionIntentSettled();
+        return;
+    }
+    if (Observe().dead == MapleControl::Fact::True) Release();
+    if (ActionIntentSettled()) {
+        if (intentChanged && (intent.kind == Kind::Jump || intent.kind == Kind::Pickup)) {
+            // Confirm native input consumption, not a launch, landing or loot.
+            result.dispatched = true;
+            result.sessionId = intent.sessionId;
+            result.reason = intent.kind == Kind::Jump ? "native_jump_input_consumed" : "native_pickup_input_consumed";
+        }
+        intentChanged = false;
+        result.controlReleased = intent.kind == Kind::Stop;
         result.settled = Observe().settled;
     }
-    if (sceneChanged || !Observe().ready || Observe().dead == MapleControl::Fact::True) {
-        if (active || !movement.empty()) Release();
-    } else if (active && !pulseReleased && NowMs() >= deadlineMs) {
-        // Release the pulse once. A later logic step must consume the key-up;
-        // only an attack animation may continue to own the action slot.
-        actionKeys.clear();
-        pulseReleased = true;
-        releasing = true;
-        releaseTick = currentTick;
-        host.SyncKeys();
+    if (!player.is_attacking()) nativeActive = false;
+    if (combat.get_move_sequence() != moveSequence) {
+        moveSequence = combat.get_move_sequence();
+        const auto skillId = static_cast<std::uint32_t>(combat.get_last_move());
+        const auto source = combat.get_last_move_input();
+        const bool owned = intent.kind == Kind::Attack && intent.skillId == skillId
+                           && ((skillId != 0 && source == ms::Combat::MoveInput::HeldSkill)
+                               || (skillId == 0 && source == ms::Combat::MoveInput::HeldKey
+                                   && std::find(host.heldActions.begin(), host.heldActions.end(), ms::KeyAction::ATTACK)
+                                          == host.heldActions.end()));
+        // This identity comes from an admitted native dispatch, not the desired
+        // slot. A replacement B cannot turn an unfinished native A into B.
+        if (player.is_attacking()) {
+            activeAction = {};
+            activeAction.kind = Kind::Attack;
+            activeAction.skillId = skillId;
+            if (owned) activeAction.sessionId = intent.sessionId;
+            nativeActive = true;
+        }
+        // A direct/coroutine move can be the global current action, but is not
+        // evidence that this tick owner's input was dispatched.
+        if (owned) {
+            result.dispatched = true;
+            result.sessionId = intent.sessionId;
+            result.skillRequested = skillId != 0;
+            result.skill.dispatched = skillId != 0;
+            result.skill.reason = skillId != 0 ? "native_skill_dispatched" : "";
+            result.reason = skillId != 0 ? "native_skill_dispatched" : "native_attack_dispatched";
+        }
     }
-    if (active && pulseReleased && !releasing) {
-        auto& player = ms::Stage::get().get_player();
-        if (actionKind == MapleControl::ActionKind::Attack)
-            active = player.is_attacking();
-        else
-            // Jump completes its input lifecycle here; flight and landing are
-            // physical facts, not ownership of the one-shot input slot.
-            active = false;
+    if (player.get_held_item_sequence() != itemSequence) {
+        itemSequence = player.get_held_item_sequence();
+        if (intent.kind == Kind::UseItem && intent.itemId == static_cast<std::uint32_t>(player.get_last_held_item())) {
+            result.dispatched = true;
+            result.sessionId = intent.sessionId;
+            result.reason = "item_use_requested";
+        }
     }
 }
 
 void TickNativeAdapter::Shutdown() {
     Release();
-    releasing = false;
+    intentChanged = false;
     movementChanged = false;
+    nativeActive = false;
     result.controlReleased = true;
     result.settled = MapleControl::Fact::Unknown;
 }

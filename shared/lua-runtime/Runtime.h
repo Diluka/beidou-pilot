@@ -128,6 +128,8 @@ struct State {
     Fact settled = Fact::Unknown;
     Fact onGround = Fact::Unknown;
     Fact attacking = Fact::Unknown;
+    // Native character action lock; independent of physical rest or held input.
+    Fact actionIdle = Fact::Unknown;
     Fact dead = Fact::Unknown;
     Fact reviveRequestable = Fact::Unknown;
 };

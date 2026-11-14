@@ -268,7 +268,7 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
         dialogue.scene_generation = state.sceneGeneration;
         dialogue.closed_by = "scene_changed";
     }
-    state.dead = state.reviveRequestable = state.onGround = state.attacking = Fact::Unknown;
+    state.dead = state.reviveRequestable = state.onGround = state.attacking = state.actionIdle = Fact::Unknown;
     state.characterUpdatesKnown = state.ready;
     state.characterUpdates = nativeTick;
     state.character.positionKnown = false;
@@ -313,6 +313,7 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.facingLeft = !player.getflip();
     state.onGround = ph.onground ? Fact::True : Fact::False;
     state.attacking = player.is_attacking() ? Fact::True : Fact::False;
+    state.actionIdle = player.is_attacking() ? Fact::False : Fact::True;
     const double stepsPerSecond = 1000.0 / ms::Constants::TIMESTEP;
     state.character.SetPosition(pos.x(), pos.y());
     CaptureVelocity(state.character, player.get_motion());
@@ -1031,6 +1032,9 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
     const auto generation = state.sceneGeneration;
     Capture(nativeTick);
     const bool changed = generation != state.sceneGeneration;
+    // Read the just-consumed native input before the coroutine owner's timeout
+    // can change the key union and erase the dispatch's ownership evidence.
+    tickAdapter.Advance(nativeTick, changed);
     if (releasePending && nativeTick > releaseTick) {
         releasePending = false;
         result.controlReleased = true;
@@ -1074,7 +1078,6 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
     } else if (active && !allocationRequest
                && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs))
         ApplyRelease();
-    tickAdapter.Advance(nativeTick, changed);
     ReadCommand(externalActionBusy);
     runtime.Tick(changed);
     tickRuntime.Tick(changed);
@@ -1272,6 +1275,7 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
              {"movement", Json::parse(state.character.movement.Document().Dump())},
              {"on_ground", FactValue(state.onGround)},
              {"attacking", FactValue(state.attacking)},
+             {"action_idle", FactValue(state.actionIdle)},
              {"native_updates", state.characterUpdatesKnown ? Json(state.characterUpdates) : Json(nullptr)},
              {"dead", FactValue(state.dead)},
              {"revive_requestable", FactValue(state.reviveRequestable)},
@@ -1433,6 +1437,7 @@ Json SharedLuaAdapter::StateDocument() const {
         {"ready", state.ready},
         {"on_ground", FactValue(state.onGround)},
         {"attacking", FactValue(state.attacking)},
+        {"action_idle", FactValue(state.actionIdle)},
         {"character_updates", state.characterUpdatesKnown ? Json(state.characterUpdates) : Json(nullptr)},
         {"dead", FactValue(state.dead)},
         {"revive_requestable", FactValue(state.reviveRequestable)},

@@ -66,10 +66,6 @@ bool SameAction(const Action& left, const Action& right) {
     return left.kind == right.kind && left.skillId == right.skillId && left.itemId == right.itemId;
 }
 
-bool PausesMovement(const Action& action) {
-    return action.kind != ActionKind::Attack && action.kind != ActionKind::Jump;
-}
-
 void PushValue(lua_State* lua, const Value& value) {
     switch (value.Type()) {
     case Value::Kind::Null:
@@ -313,7 +309,7 @@ struct TickRuntime::Impl {
         Clock::time_point deadline{}, started{}, previous{}, nextDue{};
         Clock::duration period{};
         bool limited = false, invoked = false, overran = false, previousOverrun = false, directionFence = false;
-        bool draining = false;
+        bool actionFence = false;
         std::uint64_t index = 0, overruns = 0;
         double time = 0, delta = 0, lastUs = 0, maxUs = 0;
         std::uint64_t generation = 0;
@@ -331,7 +327,7 @@ struct TickRuntime::Impl {
         bool movementSet = false;
         std::string movement;
         Session* movementOwner = nullptr;
-        bool actionSet = false, stop = false;
+        bool actionSet = false;
         Action action;
         Session* actionOwner = nullptr;
     };
@@ -348,12 +344,12 @@ struct TickRuntime::Impl {
     Session* current = nullptr;
     Session* movementOwner = nullptr;
     Session* actionOwner = nullptr;
-    Session* pendingOwner = nullptr;
+    std::string inputError;
     std::vector<std::pair<std::string, std::string>> cancellations;
     std::string movement;
     std::vector<std::string> held;
-    Action action, pending;
-    bool actionActive = false, pendingActive = false, releasing = false, updating = false;
+    Action input;
+    bool inputActive = false, updating = false;
     ActionResult result;
     Draft draft;
     std::uint64_t hostTickCalls = 0, activeFrames = 0, reentrantTickCalls = 0;
@@ -460,20 +456,10 @@ struct TickRuntime::Impl {
         requested.skillId = skill ? static_cast<std::uint32_t>(id) : 0;
         requested.itemId = kind == ActionKind::UseItem ? static_cast<std::uint32_t>(id) : 0;
         requested.sessionId = session.id;
-        if (runtime.actionActive && !runtime.releasing && !runtime.draft.stop
-            && SameAction(runtime.action, requested)) {
-            // Last submission still wins: an idempotent current action replaces
-            // a different draft/queued request without scheduling a replay.
-            runtime.draft.actionSet = true;
-            runtime.draft.action = requested;
-            runtime.draft.actionOwner = &session;
-            return Reply(lua, true);
-        }
         runtime.draft.actionSet = true;
         runtime.draft.action = requested;
         runtime.draft.actionOwner = &session;
-        return Reply(lua, !(runtime.actionActive || runtime.releasing),
-                     runtime.actionActive || runtime.releasing ? "busy" : nullptr);
+        return Reply(lua, true);
     }
 
     static int Jump(lua_State* lua) { return Submit(lua, ActionKind::Jump); }
@@ -486,43 +472,59 @@ struct TickRuntime::Impl {
 
     static int Pickup(lua_State* lua) { return Submit(lua, ActionKind::Pickup); }
 
+    static int ClearAction(lua_State* lua) {
+        auto& session = Invocation(lua);
+        if (lua_gettop(lua) != 0) return luaL_error(lua, "clear_action accepts no arguments");
+        auto& target = session.runtime.draft;
+        target.actionSet = true;
+        target.action = {};
+        target.actionOwner = nullptr;
+        return Reply(lua, true);
+    }
+
     static int Stop(lua_State* lua) {
         auto& session = Invocation(lua);
         if (lua_gettop(lua) != 0) return luaL_error(lua, "stop accepts no arguments");
         auto& target = session.runtime.draft;
-        target.stop = target.movementSet = true;
+        target.movementSet = target.actionSet = true;
         target.movement.clear();
         target.movementOwner = &session;
-        target.actionSet = false;
+        target.action = {};
         target.actionOwner = nullptr;
         return Reply(lua, true);
     }
 
     Value Player() const {
+        const auto* active = adapter.ActiveAction();
+        const auto* desired = current != nullptr && draft.actionSet
+                                  ? (draft.action.kind == ActionKind::Stop ? nullptr : &draft.action)
+                                  : (inputActive ? &input : nullptr);
         Value keys = Value::Array();
         for (const auto& key : held) keys.Add(key);
-        if (actionActive && !releasing && result.dispatched && !result.controlReleased) {
-            if (action.kind == ActionKind::Jump)
-                keys.Add("jump");
-            else if (action.kind == ActionKind::Pickup)
-                keys.Add("pickup");
-            else if (action.kind == ActionKind::Attack && action.skillId == 0)
-                keys.Add("attack");
-        }
-        Value value = Value::Object({{"moving", movement.empty() ? Value{} : Value(movement)},
-                                     {"action", actionActive ? Value(ActionName(action)) : Value{}},
-                                     {"phase", releasing      ? "releasing"
-                                               : actionActive ? "running"
-                                                              : "idle"},
-                                     {"busy", actionActive || releasing},
-                                     {"held", keys},
-                                     {"pending_action", pendingActive ? Value(ActionName(pending)) : Value{}},
-                                     {"reason", result.reason},
-                                     {"effect", result.effect},
-                                     {"dispatched", result.dispatched},
-                                     {"control_released", !actionActive && !releasing && held.empty()}});
-        if (actionActive && action.skillId != 0) value["skill_id"] = action.skillId;
-        if (actionActive && action.itemId != 0) value["item_id"] = action.itemId;
+        if (inputActive) keys.Add(ActionName(input));
+        const auto idle = current != nullptr ? observed.actionIdle : adapter.Observe().actionIdle;
+        const bool nativeBusy = active != nullptr || idle == Fact::False;
+        const bool draftChanged = current != nullptr && draft.actionSet && !SameAction(input, draft.action);
+        const bool settledInput = !draftChanged && adapter.ActionIntentSettled();
+        const Value busy = nativeBusy ? Value(true) : idle == Fact::True ? Value(false) : Value{};
+        Value value = Value::Object(
+            {{"moving", movement.empty() ? Value{} : Value(movement)},
+             {"input_action", desired != nullptr ? Value(ActionName(*desired)) : Value{}},
+             {"input_settled", settledInput},
+             {"action", active != nullptr ? Value(ActionName(*active)) : Value{}},
+             {"phase", nativeBusy           ? "running"
+                       : idle == Fact::True ? "idle"
+                                            : "unknown"},
+             {"busy", busy},
+             {"held", keys},
+             {"reason", inputError.empty() ? result.reason : inputError},
+             {"effect", result.effect},
+             {"dispatched", result.dispatched},
+             {"control_released", !inputActive && settledInput && held.empty() && adapter.HeldKeysSettled()}});
+        if (desired != nullptr && desired->skillId != 0) value["input_skill_id"] = desired->skillId;
+        if (desired != nullptr && desired->itemId != 0) value["input_item_id"] = desired->itemId;
+        if (active != nullptr && active->skillId != 0) value["skill_id"] = active->skillId;
+        if (active != nullptr && active->itemId != 0) value["item_id"] = active->itemId;
         return value;
     }
 
@@ -571,6 +573,7 @@ struct TickRuntime::Impl {
             if (observed.characterUpdatesKnown) value["native_updates"] = observed.characterUpdates;
             SetFact(value, "on_ground", observed.onGround);
             SetFact(value, "attacking", observed.attacking);
+            SetFact(value, "action_idle", observed.actionIdle);
         } else if (name == "world") {
             value["status"] = "ok";
             value["instance_id"] = observed.instanceId;
@@ -714,9 +717,10 @@ struct TickRuntime::Impl {
             lua_pushnil(lua);
             lua_setglobal(lua, name);
         }
-        static const luaL_Reg player[]{{"move", Move},   {"jump", Jump},           {"attack", Attack},
-                                       {"skill", Skill}, {"use_item", UseItem},    {"pickup", Pickup},
-                                       {"stop", Stop},   {"status", PlayerStatus}, {nullptr, nullptr}};
+        static const luaL_Reg player[]{
+            {"move", Move},           {"jump", Jump},     {"attack", Attack}, {"skill", Skill},
+            {"use_item", UseItem},    {"pickup", Pickup}, {"stop", Stop},     {"clear_action", ClearAction},
+            {"status", PlayerStatus}, {nullptr, nullptr}};
         lua_newtable(lua); // backing of game proxy
         luaL_newlib(lua, player);
         Protect(lua);
@@ -849,7 +853,7 @@ struct TickRuntime::Impl {
 
     std::vector<std::string> WantedKeys() const {
         std::vector<std::string> wanted;
-        if (!movement.empty() && !(actionActive && !releasing && PausesMovement(action))) wanted.push_back(movement);
+        if (!movement.empty()) wanted.push_back(movement);
         return wanted;
     }
 
@@ -866,52 +870,41 @@ struct TickRuntime::Impl {
         }
     }
 
-    void BeginPending() {
-        if (!pendingActive || actionActive || releasing || !adapter.Released()) return;
-        action = pending;
-        actionOwner = pendingOwner;
-        pendingActive = false;
-        pendingOwner = nullptr;
-        if (PausesMovement(action) && !held.empty()) {
-            std::string error;
-            if (adapter.SetHeldKeys({}, error))
-                held.clear();
-            else {
-                result = {};
-                result.reason = error;
-                actionOwner = nullptr;
-                return;
-            }
-        }
+    void SetInput(const Action& requested, Session* owner) {
+        if (inputActive == (requested.kind != ActionKind::Stop) && SameAction(input, requested) && actionOwner == owner)
+            return;
+        auto* previousOwner = actionOwner;
         std::string error;
-        if (adapter.Begin(action, error)) {
-            actionActive = true;
-            result = adapter.Result();
+        if (adapter.SetActionIntent(requested, error)) {
+            input = requested;
+            inputActive = requested.kind != ActionKind::Stop;
+            actionOwner = inputActive ? owner : nullptr;
+            inputError.clear();
         } else {
+            // A rejected replacement must not leave an obsolete input held.
+            adapter.ReleaseAction();
+            input = {};
+            inputActive = false;
             actionOwner = nullptr;
-            result = {};
-            result.reason = error.empty() ? "native_action_rejected" : error;
+            inputError = error.empty() ? "native_input_rejected" : error;
         }
+        if (previousOwner != nullptr) previousOwner->actionFence = !adapter.ActionIntentSettled();
+        result = adapter.Result();
     }
 
     void Poll() {
-        if (actionActive || releasing) result = adapter.Result();
+        result = adapter.Result();
         if (adapter.HeldKeysSettled() && held == WantedKeys())
             for (auto& session : sessions) session->directionFence = false;
-        if ((actionActive || releasing) && adapter.Released()) {
-            result = adapter.Result();
-            result.controlReleased = true;
-            actionActive = releasing = false;
-            actionOwner = nullptr;
-        }
+        if (adapter.ActionIntentSettled())
+            for (auto& session : sessions) session->actionFence = false;
         for (auto& session : sessions) {
             if (session->finalStatus.empty()) continue;
-            if (actionOwner == session.get() || movementOwner == session.get() || pendingOwner == session.get()
-                || session->directionFence)
+            if (actionOwner == session.get() || movementOwner == session.get() || session->directionFence
+                || session->actionFence)
                 continue;
             session->status = session->finalStatus;
             session->finalStatus.clear();
-            session->draining = false;
             if (session->lua != nullptr) {
                 lua_close(session->lua);
                 session->lua = nullptr;
@@ -927,55 +920,28 @@ struct TickRuntime::Impl {
             movement = draft.movement;
             movementOwner = movement.empty() ? nullptr : draft.movementOwner;
         }
-        if (draft.stop) {
-            pendingActive = false;
-            pendingOwner = nullptr;
-            if (actionActive || releasing) {
-                if (!adapter.ReleasePending()) adapter.Release();
-                releasing = true;
-                held.clear();
-            }
-        }
-        if (draft.actionSet) {
-            if (actionActive && !releasing && SameAction(action, draft.action)) {
-                pendingActive = false;
-                pendingOwner = nullptr;
-            } else {
-                pending = draft.action;
-                pendingOwner = draft.actionOwner;
-                pendingActive = true;
-            }
-        }
-        BeginPending();
+        if (draft.actionSet) SetInput(draft.action, draft.actionOwner);
         SyncHeld();
         draft = {};
     }
 
-    void Finish(Session& session, const std::string& status, const std::string& reason, bool drain = false) {
-        if (session.status != "running" || (!session.finalStatus.empty() && !session.draining)) return;
+    void Finish(Session& session, const std::string& status, const std::string& reason) {
+        if (session.status != "running" || !session.finalStatus.empty()) return;
         session.reason = reason;
         session.finalStatus = status;
-        session.draining = drain;
-        if (!drain && pendingOwner == &session) {
-            pendingActive = false;
-            pendingOwner = nullptr;
-        }
         if (movementOwner == &session) {
             movement.clear();
             movementOwner = nullptr;
             session.directionFence = !held.empty() || !adapter.HeldKeysSettled();
         }
-        if (!drain && actionOwner == &session && (actionActive || releasing)) {
-            if (!adapter.ReleasePending()) adapter.ReleaseAction();
-            releasing = true;
-        }
+        if (actionOwner == &session) SetInput({}, nullptr);
         SyncHeld();
         Poll();
     }
 
     Value StatusValue(const Session& session) const {
         const bool owned =
-            actionOwner == &session || movementOwner == &session || pendingOwner == &session || session.directionFence;
+            actionOwner == &session || movementOwner == &session || session.directionFence || session.actionFence;
         return Value::Object({{"id", session.id},
                               {"status", session.status},
                               {"reason", session.reason.empty() ? Value{} : Value(session.reason)},
@@ -987,7 +953,7 @@ struct TickRuntime::Impl {
                               {"max_resume_us", session.maxUs},
                               {"tasks", Value::Array()},
                               {"control", Value::Object({{"owner", movementOwner != nullptr ? movementOwner->id : ""},
-                                                         {"pending", pendingOwner != nullptr ? pendingOwner->id : ""},
+                                                         {"pending", ""},
                                                          {"from", ""},
                                                          {"to", ""},
                                                          {"reason", ""}})},
@@ -1146,13 +1112,7 @@ void TickRuntime::Tick(bool sceneChanged) {
         if (runtime.movementOwner != nullptr) runtime.movementOwner->directionFence = true;
         runtime.movement.clear();
         runtime.movementOwner = nullptr;
-        runtime.pendingActive = false;
-        runtime.pendingOwner = nullptr;
-        if (runtime.actionActive || runtime.releasing) {
-            if (!runtime.adapter.ReleasePending()) runtime.adapter.Release();
-            runtime.releasing = true;
-            runtime.held.clear();
-        }
+        runtime.SetInput({}, nullptr);
         std::string error;
         if (runtime.adapter.SetHeldKeys({}, error))
             runtime.held.clear();
@@ -1164,7 +1124,6 @@ void TickRuntime::Tick(bool sceneChanged) {
     struct Ending {
         Impl::Session* session;
         std::string status, reason;
-        bool drain = false;
     };
 
     std::vector<Ending> endings;
@@ -1231,10 +1190,10 @@ void TickRuntime::Tick(bool sceneChanged) {
                 if (!session.config.skipOverrun) {
                     if (!session.config.abortCommit) runtime.draft = before;
                     session.error = "tick execution budget exceeded";
-                    endings.push_back({&session, "cancelled", "tick_overrun", session.config.abortCommit});
+                    endings.push_back({&session, "cancelled", "tick_overrun"});
                 }
             } else if (done && called == LUA_OK)
-                endings.push_back({&session, "completed", "script_returned", true});
+                endings.push_back({&session, "completed", "script_returned"});
             session.previousOverrun = session.overran;
             lua_settop(lua, 0);
             if (!session.logs.empty() && !runtime.adapter.Logs(session.id, session.logs))
@@ -1251,7 +1210,7 @@ void TickRuntime::Tick(bool sceneChanged) {
     }
     runtime.Commit();
     runtime.DrainCancellations();
-    for (const auto& ending : endings) runtime.Finish(*ending.session, ending.status, ending.reason, ending.drain);
+    for (const auto& ending : endings) runtime.Finish(*ending.session, ending.status, ending.reason);
     runtime.Poll();
 }
 
