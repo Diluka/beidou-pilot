@@ -438,7 +438,8 @@ native_paths=(docker/headless/Dockerfile headless/Makefile headless/src shared/l
     third_party/maplestory-client third_party/json third_party/lua)
 if [ "$backend" = beidou ]; then
     native_paths=(beidou-ijl15/ezorsia beidou-ijl15/ezorsia.sln beidou-ijl15/tools/build-agent-bridge.ps1
-        shared/lua-runtime third_party/lua third_party/detours .github/workflows/agent-bridge.yml)
+        shared/lua-runtime headless/src/ImgResources.cpp headless/src/ImgResources.h headless/src/ImgKeys.cpp
+        third_party/lua third_party/detours .github/workflows/agent-bridge.yml)
 fi
 build_image() {
     mkdir -p "$main_root/tmp/client-images"

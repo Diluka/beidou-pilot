@@ -125,6 +125,7 @@ def main() -> None:
         os.execv("/bin/beidou-headless", ["beidou-headless", "--config", str(native_profile)])
     else:
         os.environ["MAPLE_BRIDGE_DIR"] = "Z:" + str(paths.bridge).replace("/", "\\")
+        os.environ["MAPLE_DATA_ROOT"] = "Z:" + resources["game_data"].replace("/", "\\")
         os.execv("/opt/beidou/entrypoint.sh", ["/opt/beidou/entrypoint.sh"])
 
 

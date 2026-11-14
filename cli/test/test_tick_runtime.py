@@ -61,6 +61,50 @@ class TickRuntimeContract(unittest.TestCase):
     def test_entry_context_state_return_values_and_initial_identity(self) -> None:
         self.run_contract("entry")
 
+    def test_scene_tracks_two_maps_and_same_map_reentry_without_losing_caller_context(self) -> None:
+        self.run_contract("scene-continuity")
+
+    def test_scene_is_shared_across_gears_without_reading_during_transition_or_replaying_input(self) -> None:
+        self.run_contract("scene-cadence")
+
+    def test_scene_reports_missing_reference_error_and_wrong_map_without_old_geometry(self) -> None:
+        self.run_contract("scene-unavailable")
+
+    def test_strategy_file_and_direct_code_receive_native_scene_without_session_restart(self) -> None:
+        body = """local function main(context)
+  local c=context
+  local s=c.scene
+  assert(s.map_id==c.game.world.map_id and s.scene_generation==c.tick.scene_generation)
+  assert(s.terrain.status=='available' and s.terrain.source=='local-IMG-contract')
+  assert(c.game.terrain==nil)
+  if c.options then assert(c.options.goal==50001 and c.route.goal==50001 and c.custom=='keep') end
+  if c.tick.index==1 then
+    assert(s.map_id==50000 and s.terrain.footholds[1].x1==10)
+    c.state.route_index=2
+    c.game.player.move('up')
+  else
+    assert(s.map_id==50001 and s.terrain.footholds[1].x1==20 and c.state.route_index==2)
+    return 'done'
+  end
+end
+"""
+        header = "-- @mode tick\n-- @tick.gear 4\n-- @option[type=int,min=1] goal destination\n"
+        policy = self.executable.parent / "scene-policy.lua"
+        policy.write_text(header + body, encoding="utf-8")
+        source, metadata = read_strategy_file(policy)
+        self.assertIsNotNone(metadata)
+        options = parse_options(metadata, ["--goal", "50001"])
+        scene = {"instance_id": "tick-contract", "character_id": 1, "map_id": 50000, "scene_generation": 1}
+        entries = {
+            "file": compile_strategy(source, options, scene, {"route": {"goal": 50001}, "custom": "keep"}),
+            "code": header + body.replace("local function main", "function main", 1),
+        }
+        for entry, compiled_source in entries.items():
+            with self.subTest(entry=entry):
+                script = self.executable.parent / ("scene-" + entry + ".lua")
+                script.write_text(compiled_source, encoding="utf-8")
+                subprocess.run([str(self.executable), "scene-script", str(script)], check=True, timeout=10)
+
     def test_domains_are_recursive_read_only_core_refreshed_and_lazy_cached(self) -> None:
         self.run_contract("domains")
 

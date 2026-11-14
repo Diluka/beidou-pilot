@@ -30,6 +30,18 @@ Value Field(const Value& object, const std::string& name) {
     return {};
 }
 
+Observation Terrain(std::uint32_t mapId, int x) {
+    return {"ok",
+            Value::Object(
+                {{"map_id", mapId},
+                 {"source", "local-IMG-contract"},
+                 {"footholds",
+                  Value::Array({Value::Object(
+                      {{"id", 7}, {"x1", x}, {"y1", 0}, {"x2", x + 100}, {"y2", 0}, {"prev", 0}, {"next", 0}})})},
+                 {"ropes", Value::Array({Value::Object({{"index", 1}, {"x", x + 50}, {"y1", -50}, {"y2", 0}})})}}),
+            {}};
+}
+
 class NativeBoundary final : public TickAdapter {
 public:
     NativeBoundary() {
@@ -62,6 +74,10 @@ public:
     Observation ObserveDomain(const std::string& domain) const override {
         ++queries[domain];
         if (onDomain) onDomain(domain);
+        if (domain == "terrain") {
+            const auto found = terrains.find(state.mapId);
+            return found == terrains.end() ? Observation{"unavailable", {}, "local_terrain_missing"} : found->second;
+        }
         if (domain == "character")
             return {"ok",
                     Value::Object({{"buffs", {}},
@@ -180,6 +196,7 @@ public:
 
     State state;
     mutable std::map<std::string, int> queries;
+    std::map<std::uint32_t, Observation> terrains;
     bool supportsItems = true, supportsSkills = true, rejectClear = false, nativeNpcDomain = true;
     bool actionActive = false, pendingDelivery = false, advanceCharacter = true;
     int actionReleaseTicks = 0, directionTicks = 0, releases = 0;
@@ -552,8 +569,233 @@ return {main=main, context={options={distance=5}, route={50001}, scene={
     Check(runtime.CurrentStatus("absent").Type() == Value::Kind::Null, "unknown session is null");
 }
 
+void SceneContinuity() {
+    NativeBoundary native;
+    native.terrains[50000] = Terrain(50000, 10);
+    native.terrains[50001] = Terrain(50001, 20);
+    native.terrains[50002] = Terrain(50002, 30);
+    TickRuntime runtime(native);
+    Start(runtime, "route", Source(R"lua(
+local maps, generations, xs = {50000,50001,50002,50002,50002}, {1,2,3,4,4}, {10,20,30,40,40}
+local function main(c)
+  local s, i = c.scene, c.tick.index
+  assert(s.instance_id==c.game.world.instance_id and s.character_id==c.game.character.id)
+  assert(s.map_id==maps[i] and s.map_id==c.game.world.map_id)
+  assert(s.scene_generation==generations[i] and s.scene_generation==c.tick.scene_generation)
+  assert(s.scene_generation==c.game.world.scene_generation)
+  assert(s.terrain.status=='available' and s.terrain.source=='local-IMG-contract')
+  assert(s.terrain.footholds[1].x1==xs[i] and s.terrain.ropes[1].x==xs[i]+50)
+  assert(c.options.goal==50002 and c.route[2]==50001 and c.custom.label=='keep')
+  c.state.calls=(c.state.calls or 0)+1
+  assert(c.state.calls==i)
+  if i==1 then c.state.self=c.state; c.state.route_index=2
+  else
+    assert(c.state.self==c.state and c.state.route_index==2)
+    assert(c.state.previous.map_id==maps[i-1] and c.state.previous.scene_generation==generations[i-1])
+    assert(c.state.previous.terrain.footholds[1].x1==xs[i-1])
+    if i==5 then assert(c.state.previous==s) else assert(c.state.previous~=s) end
+  end
+  c.state.previous=s
+  if i==5 then return 'done' end
+end
+return {main=main,context={options={goal=50002},route={50000,50001,50002},custom={label='keep'},scene={
+  instance_id='tick-contract',character_id=1,map_id=50000,scene_generation=1,
+  terrain={status='available',source='stale-caller',footholds={{x1=-999}},ropes={}}}}}
+)lua"));
+    Check(native.queries["terrain"] == 0, "admission must not parse static resources before a stable consumer");
+    Step(native, runtime);
+    for (std::uint32_t map : {50001, 50002}) {
+        native.state.mapId = map;
+        ++native.state.sceneGeneration;
+        Step(native, runtime);
+        Step(native, runtime);
+        StatusIs(runtime, "route", "running");
+    }
+    native.terrains[50002] = Terrain(50002, 40);
+    ++native.state.sceneGeneration; // Same map re-entered, new local scene lifetime.
+    Step(native, runtime);
+    Step(native, runtime);
+    Step(native, runtime);
+    StatusIs(runtime, "route", "completed", "script_returned");
+    Check(native.queries["terrain"] == 4 && TickField(runtime, "route", "index").Number() == 5,
+          "two map changes and same-map reentry must refresh terrain without restarting route state");
+}
+
+void SceneCadence() {
+    using Clock = std::chrono::steady_clock;
+    const auto origin = Clock::time_point(std::chrono::seconds(100));
+    auto now = origin;
+    NativeBoundary native;
+    native.terrains[50000] = Terrain(50000, 10);
+    native.terrains[50001] = Terrain(50001, 20);
+    TickRuntime runtime(native, [&] { return now; });
+    const std::string body = R"lua(function main(c)
+  assert(c.game.terrain==nil and c.game.scene.terrain==nil)
+  assert(c.scene.map_id==c.game.world.map_id and c.scene.scene_generation==c.tick.scene_generation)
+  assert(c.scene.terrain.status=='available')
+  assert(c.scene.terrain.footholds[1].x1==(c.scene.map_id==50000 and 10 or 20))
+  c.state.calls=(c.state.calls or 0)+1
+  assert(c.state.calls==c.tick.index)
+end)lua";
+    Start(runtime, "slow",
+          Source(body + R"lua(
+local original=main
+function main(c)
+  original(c)
+  if c.tick.index==1 then c.game.player.move('right'); c.game.player.attack() end
+end)lua",
+                 TickGear::TenHz));
+    Start(runtime, "fast", Source(body, TickGear::TwentyHz));
+    Step(native, runtime);
+    Check(native.queries["terrain"] == 1 && native.requests.size() == 1,
+          "all initial consumers must share one local static read");
+    now += std::chrono::milliseconds(1);
+    native.state.mapId = 50001;
+    ++native.state.sceneGeneration;
+    Step(native, runtime);
+    Check(native.directions.empty() && native.releases == 1 && native.queries["terrain"] == 1,
+          "a non-due transition must release old input without reading new terrain");
+    native.state.ready = native.state.mapKnown = native.state.characterKnown = false;
+    Step(native, runtime);
+    native.state.ready = native.state.mapKnown = native.state.characterKnown = true;
+    Step(native, runtime);
+    Check(native.queries["terrain"] == 1 && TickField(runtime, "slow", "index").Number() == 1
+              && TickField(runtime, "fast", "index").Number() == 1,
+          "unready and non-due stable frames cannot invoke Lua or parse terrain");
+    now = origin + std::chrono::milliseconds(50);
+    Step(native, runtime);
+    Check(native.queries["terrain"] == 2 && TickField(runtime, "fast", "index").Number() == 2
+              && TickField(runtime, "slow", "index").Number() == 1,
+          "the first stable due consumer must obtain the new local map");
+    now = origin + std::chrono::milliseconds(100);
+    Step(native, runtime);
+    Start(runtime, "newcomer", Source(body));
+    Step(native, runtime);
+    Check(native.queries["terrain"] == 2 && native.requests.size() == 1 && native.delivered.size() == 1
+              && native.directions.empty(),
+          "later and newly admitted consumers share the current scene without replaying old input");
+    Step(native, runtime, true); // An explicit host transition also invalidates an otherwise equal identity.
+    Check(native.queries["terrain"] == 2 && TickField(runtime, "newcomer", "index").Number() == 1,
+          "an explicit transition cannot read terrain or invoke its native-gear main");
+    Step(native, runtime);
+    Check(native.queries["terrain"] == 3 && native.requests.size() == 1
+              && TickField(runtime, "newcomer", "index").Number() == 2,
+          "the next stable consumer must replace a transition-invalidated scene without replay");
+    runtime.CancelAll("explicit_cancel");
+    Step(native, runtime);
+}
+
+void SceneUnavailable() {
+    NativeBoundary native;
+    native.terrains[50000] = Terrain(50000, 10);
+    native.terrains[50001] = {"unavailable",
+                              Value::Object({{"message", "IMG missing"},
+                                             {"details", Value::Object({{"map_id", 50001}})},
+                                             {"footholds", Value::Array({Value::Object({{"x1", -999}})})},
+                                             {"ropes", Value::Array()}}),
+                              "local_terrain_missing"};
+    native.terrains[50002] = {"unsupported", {}, "local_reference_map"}; // No data map identity is required.
+    native.terrains[50003] = {"error", Value::Object({{"message", "IMG unreadable"}}), "local_read_failed"};
+    native.terrains[50004] = Terrain(99999, 90); // A resource result cannot relabel another map's geometry.
+    native.terrains[50005] = {"ok", Value::Object({{"footholds", Value::Array()}, {"ropes", Value::Array()}}), {}};
+    TickRuntime runtime(native);
+    Start(runtime, "missing", Source(R"lua(function main(c)
+  local s=c.scene
+  assert(s.map_id==c.game.world.map_id and s.scene_generation==c.game.world.scene_generation)
+  if s.map_id==50000 then assert(s.terrain.status=='available')
+  else
+    assert(s.terrain.footholds==nil and s.terrain.ropes==nil)
+    assert(type(s.terrain.error)=='string' and #s.terrain.error>0)
+    if s.map_id==50001 then
+      assert(s.terrain.status=='unavailable' and s.terrain.error=='local_terrain_missing')
+      assert(s.terrain.message=='IMG missing' and s.terrain.details.map_id==50001)
+    elseif s.map_id==50002 then assert(s.terrain.status=='unsupported' and s.terrain.error=='local_reference_map')
+    elseif s.map_id==50003 then assert(s.terrain.status=='error' and s.terrain.message=='IMG unreadable')
+    else assert(s.terrain.status=='unavailable') end
+  end
+  c.state.calls=(c.state.calls or 0)+1
+  assert(c.state.calls==c.tick.index)
+end)lua"));
+    Step(native, runtime);
+    for (std::uint32_t map = 50001; map <= 50005; ++map) {
+        native.state.mapId = map;
+        ++native.state.sceneGeneration;
+        Step(native, runtime);
+        Step(native, runtime);
+        Step(native, runtime); // Explicit failure remains visible; no per-tick retries.
+        StatusIs(runtime, "missing", "running");
+    }
+    Check(native.queries["terrain"] == 6 && TickField(runtime, "missing", "index").Number() == 11,
+          "unavailable/reference/error/mismatched results must stay explicit without caller fallback or retries");
+    runtime.CancelAll("explicit_cancel");
+
+    NativeBoundary unknown;
+    unknown.state.mapKnown = false;
+    unknown.terrains[50000] = Terrain(50000, 10);
+    TickRuntime waiting(unknown);
+    Start(waiting, "unknown-map", Source(R"lua(function main(c)
+  if c.tick.index==1 then
+    assert(c.scene.map_id==nil and c.game.world.map_id==nil)
+    assert(c.scene.terrain.status=='unavailable' and c.scene.terrain.footholds==nil)
+    c.state.waited=true
+  else
+    assert(c.state.waited and c.scene.map_id==50000 and c.scene.terrain.status=='available')
+    return 'done'
+  end
+end)lua"));
+    Step(unknown, waiting);
+    Check(unknown.queries["terrain"] == 0, "an unknown current map cannot authorize reading a stale numeric map ID");
+    unknown.state.mapKnown = true;
+    Step(unknown, waiting);
+    StatusIs(waiting, "unknown-map", "completed");
+    Check(unknown.queries["terrain"] == 1, "a known current identity must replace the explicit unavailable scene");
+
+    for (const auto& change : {"instance", "character"}) {
+        NativeBoundary io;
+        io.terrains[50000] = Terrain(50000, 10);
+        io.terrains[50001] = Terrain(50001, 20);
+        TickRuntime engine(io);
+        Start(engine, change, Source("function main(c) assert(c.scene.terrain.status=='available') end"));
+        Step(io, engine);
+        if (std::string(change) == "instance")
+            io.state.instanceId = "other";
+        else
+            io.state.character.id = 2;
+        io.state.mapId = 50001;
+        ++io.state.sceneGeneration;
+        Step(io, engine);
+        Step(io, engine);
+        StatusIs(engine, change, "cancelled", std::string(change) + "_changed");
+        Check(io.queries["terrain"] == 1 && TickField(engine, change, "index").Number() == 1,
+              "scene refresh cannot turn an instance/character change into a continuing session");
+    }
+}
+
+void SceneScript(const std::string& path) {
+    std::ifstream input(path);
+    Check(static_cast<bool>(input), "scene script input required");
+    const std::string source{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    NativeBoundary native;
+    native.terrains[50000] = Terrain(50000, 10);
+    native.terrains[50001] = Terrain(50001, 20);
+    TickRuntime runtime(native);
+    Start(runtime, "script-scene", source);
+    Step(native, runtime);
+    Check(native.directions == std::vector<std::string>{"up"}, "script must begin its route in the first scene");
+    native.state.mapId = 50001;
+    ++native.state.sceneGeneration;
+    Step(native, runtime);
+    Check(native.directions.empty() && TickField(runtime, "script-scene", "index").Number() == 1,
+          "scene transition cannot invoke main or retain the old portal input");
+    Step(native, runtime);
+    Drain(native, runtime, "script-scene", "completed", "script_returned");
+    Check(native.queries["terrain"] == 2 && TickField(runtime, "script-scene", "index").Number() == 2,
+          "compiled and direct entries must cross scenes in one unchanged native session");
+}
+
 void Domains() {
     NativeBoundary native;
+    native.terrains[50000] = Terrain(50000, 10);
     TickRuntime runtime(native);
     Step(native, runtime);
     Check(native.queries.empty(), "an unused tick engine cannot collect domains or burden the coroutine path");
@@ -593,6 +835,12 @@ end
                                           "table.insert(game.scene.monsters,{})",
                                           "game.player.move=false",
                                           "c.game={}",
+                                          "c.scene={}",
+                                          "c.scene.map_id=0",
+                                          "c.scene.terrain.status='available'",
+                                          "c.scene.terrain.footholds[1].x1=0",
+                                          "table.insert(c.scene.terrain.ropes,{})",
+                                          "local f,t=pairs(c.scene); t.map_id=0",
                                           "c.tick.index=0",
                                           "local f,t=pairs(game.character); t.hp=0",
                                           "rawset(game.character,'hp',0)"};
@@ -1184,7 +1432,9 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2 || (argc == 4 && std::string(argv[1]) == "jump-attack-example"), "scenario required");
+    Check(argc == 2 || (argc == 3 && std::string(argv[1]) == "scene-script")
+              || (argc == 4 && std::string(argv[1]) == "jump-attack-example"),
+          "scenario required");
     const std::string scenario = argv[1];
     if (scenario == "declarations")
         Declarations();
@@ -1196,6 +1446,14 @@ int main(int argc, char** argv) {
         CadenceLifecycle();
     else if (scenario == "entry")
         Entry();
+    else if (scenario == "scene-continuity")
+        SceneContinuity();
+    else if (scenario == "scene-cadence")
+        SceneCadence();
+    else if (scenario == "scene-unavailable")
+        SceneUnavailable();
+    else if (scenario == "scene-script")
+        SceneScript(argv[2]);
     else if (scenario == "domains")
         Domains();
     else if (scenario == "draft")
