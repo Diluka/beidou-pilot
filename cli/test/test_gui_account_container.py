@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -32,6 +33,8 @@ class GuiAccountContainerTest(unittest.TestCase):
              patch.object(os, 'execv') as execute:
             entrypoint.main()
             execute.assert_called_once_with('/opt/beidou/entrypoint.sh', ['/opt/beidou/entrypoint.sh'])
+            self.assertEqual('Z:\\data', os.environ['MAPLE_DATA_ROOT'])
+            self.assertEqual('/data', json.loads(root.joinpath('config/resources.json').read_text())['game_data'])
 
     def test_account_without_character_starts_gui(self):
         with TemporaryDirectory() as directory:
@@ -53,6 +56,23 @@ class GuiAccountContainerTest(unittest.TestCase):
             with self.assertRaises(ClientError) as error:
                 self.run_entrypoint(Path(directory), 'character', dict(username='user', password='secret'))
             self.assertEqual(error.exception.code, 'profile_invalid')
+
+    def test_gui_privilege_boundary_forwards_the_configured_catalog_root(self):
+        source = (Path(__file__).resolve().parents[2] / 'docker/gui/entrypoint.sh').read_text()
+        # Exercise the actual env arguments after reset, without running network,
+        # uid/capability setup or starting a GUI on the test host.
+        forwarded, remainder = source.split('\n  env ', 1)[1].rsplit(' /opt/beidou/bootstrap.sh', 1)
+        self.assertEqual('\n', remainder)
+        configured = dict(CLIENT_ROOT='/work', RUN_ID='fixture', MAPLE_INSTANCE='default',
+                          CLIENT_IMAGE_ID='image', MAPLE_RESOURCES_CONFIG='/work/config/resources.json',
+                          MAPLE_BRIDGE_DIR=r'Z:\work\runtime\bridge', MAPLE_DATA_ROOT=r'Z:\data',
+                          NOT_FOR_GUI='must-be-cleared')
+        result = subprocess.run(['bash', '-eu', '-c', 'setpriv --reset-env env ' + forwarded + ' /usr/bin/env'],
+                                env={**os.environ, **configured}, text=True, capture_output=True, check=True)
+        observed = dict(line.split('=', 1) for line in result.stdout.splitlines())
+        self.assertEqual(configured['MAPLE_DATA_ROOT'], observed.get('MAPLE_DATA_ROOT'))
+        self.assertEqual(configured['MAPLE_BRIDGE_DIR'], observed.get('MAPLE_BRIDGE_DIR'))
+        self.assertNotIn('NOT_FOR_GUI', observed)
 
     def test_compose_passes_explicit_mode_and_allows_missing_label(self):
         compose = (Path(__file__).resolve().parents[2] / 'docker/compose.yaml').read_text()

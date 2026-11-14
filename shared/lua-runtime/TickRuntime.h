@@ -13,6 +13,10 @@ namespace MapleControl {
 // the one-shot action only; SetHeldKeys updates persistent input independently.
 class TickAdapter : public Adapter {
 public:
+    // ObserveDomain("terrain") is an internal, current-map static observation,
+    // not a public game domain. On "ok", data contains map_id/source/footholds/
+    // ropes, validated by the local resource producer. Other statuses preserve
+    // their error/message/details without geometry. No cross-backend fallback.
     // Canonical names: left/right/up/down/jump/attack/pickup. The runtime sends
     // directional keys here; Begin owns one-shot keys and must not alter directions.
     virtual bool SetHeldKeys(const std::vector<std::string>& keys, std::string& error) = 0;

@@ -41,6 +41,10 @@ typedef struct BeidouImgNodeInfo {
 
 int beidou_img_directory_open(const char* path, int base_only, BeidouImgDirectory** result,
                               char* error, size_t error_capacity);
+// Open exactly one IMG. Node zero is the image root; close/enumerate it with
+// the directory functions below. No sibling files or directories are read.
+int beidou_img_file_open(const char* path, BeidouImgDirectory** result,
+                         char* error, size_t error_capacity);
 void beidou_img_directory_close(BeidouImgDirectory* directory);
 size_t beidou_img_directory_node_count(const BeidouImgDirectory* directory);
 size_t beidou_img_directory_string_count(const BeidouImgDirectory* directory);

@@ -53,6 +53,9 @@ SOURCES = {
         "cli/beidou_pilot/navigation.py",
         "cli/test/test_navigate_lua.py",
         "cli/test/test_catalog_resources.py",
+        "cli/test/test_img_resources.py",
+        "cli/test/test_scene_terrain.py",
+        "cli/test/test_gui_scene_terrain.py",
     ),
     "clang-format": (
         "shared/lua-runtime/*.cpp",
@@ -82,6 +85,8 @@ SOURCES = {
         "beidou-ijl15/ezorsia/NativeObservation.h",
         "beidou-ijl15/ezorsia/NativeMotion.cpp",
         "beidou-ijl15/ezorsia/NativeMotion.h",
+        "beidou-ijl15/ezorsia/NativeSceneTerrain.cpp",
+        "beidou-ijl15/ezorsia/NativeSceneTerrain.h",
         "beidou-ijl15/ezorsia/ObserveNotifications.cpp",
         "cli/test/*_contract.cpp",
     ),
