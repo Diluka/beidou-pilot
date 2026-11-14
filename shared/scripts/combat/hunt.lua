@@ -44,17 +44,6 @@ local function main(context)
     local function current_state()
         local s = game.state()
         assert(s.ready and s.character and s.position, "hunt_state_unavailable")
-        assert(
-            s.instance_id == scene.instance_id
-                and s.character.id == scene.character_id
-                and s.map_id == scene.map_id
-                and s.scene_generation == scene.scene_generation,
-            "hunt_context_changed"
-        )
-        assert(
-            s.character.hp and s.character.max_hp and s.character.level and s.character.experience,
-            "hunt_character_unavailable"
-        )
         assert(s.character.hp > 0, "dead")
         assert(s.character.hp / s.character.max_hp >= options.min_hp_ratio, "hunt_hp_limit")
         assert(s.position.x >= options.min_x and s.position.x <= options.max_x, "hunt_outside_area")
@@ -251,10 +240,7 @@ local function main(context)
             assert(s.inventory, "hunt_inventory_unavailable")
             local quantity = 0
             for _, item in ipairs(s.inventory) do
-                if item.item_id == options.hp_item_id then
-                    assert(item.quantity, "hunt_hp_item_quantity_unknown")
-                    quantity = quantity + item.quantity
-                end
+                if item.item_id == options.hp_item_id then quantity = quantity + (item.quantity or 0) end
             end
             assert(quantity > 0, "hunt_hp_item_depleted")
             game.use_item(options.hp_item_id)

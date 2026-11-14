@@ -495,8 +495,7 @@ class BridgeClient:
     def _stop(self, before: BridgeSnapshot, timeout: float) -> BridgeSnapshot:
         # 清理始终绑定原进程实例；换图后的同一实例仍可释放按键。
         request_id = self._publish(before, "stop", 0, [])
-        state = self._wait(before, request_id, timeout)
-        assert state is not None  # stop不传取消标记，等待不会以取消请求返回。
+        state = cast(BridgeSnapshot, self._wait(before, request_id, timeout))
         script = state.get("script")
         if (state["command"]["status"] != "completed" or state["held_keys"]
                 or (script is not None and script["status"] == "running")

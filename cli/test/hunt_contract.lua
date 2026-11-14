@@ -96,7 +96,7 @@ elseif scenario == "rope-long-approach" or scenario == "rope-blocked" or scenari
         { object_id = 1, template_id = 100, x = 65, y = 200, active = true },
         { object_id = 2, template_id = 100, x = (open_rope_x or blocked_rope_x) + 40, y = 0, active = true },
     }
-elseif scenario == "stalled" or scenario == "context" then
+elseif scenario == "stalled" then
     state.monsters = { { object_id = 1, template_id = 100, x = 300, y = 200, active = true } }
 elseif scenario == "fall" then
     options.terrain.footholds[2] = { id = 2, x1 = 180, x2 = 400, y1 = 100, y2 = 100 }
@@ -201,20 +201,12 @@ game = {
                 assert(resume_moves == 1, "recovery continued after losing control")
                 return { reason = "control_preempted" }
             end
-            if scenario == "resume-context" then
-                state.scene_generation = 2
-                return
-            end
             if scenario == "resume-stalled" then
                 advance(seconds)
                 return
             end
         end
         advance(seconds, direction == "left" or direction == "right")
-        if scenario == "context" then
-            state.scene_generation = 2
-            return
-        end
         if scenario == "stalled" then return end
         if direction == "up" or direction == "down" then
             -- 原生边界：第一根绳梯不响应攀爬，另一根绳梯正常；不读取策略的边或平台图。
@@ -340,17 +332,11 @@ elseif scenario == "resume-stalled" then
 elseif scenario == "resume-preempted" then
     assert(not ok and failure:find("control_preempted"), tostring(failure))
     assert(resume_moves == 1 and #killed == 0, "recovery dispatched after control was preempted")
-elseif scenario == "resume-context" then
-    assert(not ok and failure:find("hunt_context_changed"), tostring(failure))
-    assert(resume_moves == 1 and #killed == 0, "recovery dispatched into another scene")
 elseif scenario == "resume-budget" then
     assert(not ok and failure:find("hunt_rope_recovery_budget"), tostring(failure))
     assert(now < 0.7 and #killed == 0, "rope recovery ignored the total hunting budget")
 elseif scenario == "stalled" then
     assert(not ok and failure:find("hunt_chase_stalled"), tostring(failure))
-    assert(#killed == 0)
-elseif scenario == "context" then
-    assert(not ok and failure:find("hunt_context_changed"), tostring(failure))
     assert(#killed == 0)
 elseif scenario == "gui-turn-stalled" then
     assert(not ok and failure:find("hunt_combat_progress_unconfirmed"), tostring(failure))

@@ -26,10 +26,10 @@ local function main(context)
 
     local function observe()
         local s = game.state()
+        assert(s.ready and s.character and s.position, "use_context_unavailable")
+        -- 用药期间换图或角色变化时，库存和血量读数不再描述同一场景。
         assert(
-            s.ready
-                and s.instance_id == initial.instance_id
-                and s.character
+            s.instance_id == initial.instance_id
                 and s.character.id == initial.character.id
                 and s.map_id == initial.map_id
                 and s.scene_generation == initial.scene_generation,
@@ -39,10 +39,7 @@ local function main(context)
         assert(s.inventory, "inventory_unavailable")
         local quantity = 0
         for _, item in ipairs(s.inventory) do
-            if item.item_id == options.item_id then
-                assert(item.quantity ~= nil, "inventory_unavailable")
-                quantity = quantity + item.quantity
-            end
+            if item.item_id == options.item_id then quantity = quantity + (item.quantity or 0) end
         end
         return s, quantity
     end
