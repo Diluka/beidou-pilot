@@ -44,6 +44,13 @@ local function main(context)
     local function current_state()
         local s = game.state()
         assert(s.ready and s.character and s.position, "hunt_state_unavailable")
+        assert(
+            s.instance_id == scene.instance_id
+                and s.character.id == scene.character_id
+                and s.map_id == scene.map_id
+                and s.scene_generation == scene.scene_generation,
+            "hunt_context_changed"
+        )
         assert(s.character.hp > 0, "dead")
         assert(s.character.hp / s.character.max_hp >= options.min_hp_ratio, "hunt_hp_limit")
         assert(s.position.x >= options.min_x and s.position.x <= options.max_x, "hunt_outside_area")
@@ -74,9 +81,7 @@ local function main(context)
         end
         return candidate
     end
-    local function recovery_action(result)
-        assert(not result or result.reason ~= "control_preempted", "control_preempted")
-    end
+    local function recovery_action(result) assert(result.reason ~= "control_preempted", "control_preempted") end
     local function recover_rope(s, rope)
         local destination, nearest = nil, math.huge
         for i, platform in ipairs(platforms) do

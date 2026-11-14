@@ -76,8 +76,8 @@ class HuntLuaContract(unittest.TestCase):
                     [str(self.executable), str(self.contract), scenario, str(self.strategy)], check=True, timeout=5
                 )
 
-    def test_rope_recovery_stops_when_unsafe_stalled_or_preempted(self) -> None:
-        for scenario in ("resume-no-endpoint", "resume-stalled", "resume-preempted", "resume-budget"):
+    def test_rope_recovery_stops_when_unsafe_stalled_preempted_or_scene_changed(self) -> None:
+        for scenario in ("resume-no-endpoint", "resume-stalled", "resume-preempted", "resume-context", "resume-budget"):
             with self.subTest(scenario=scenario):
                 subprocess.run(
                     [str(self.executable), str(self.contract), scenario, str(self.strategy)], check=True, timeout=5
@@ -105,8 +105,8 @@ class HuntLuaContract(unittest.TestCase):
             [str(self.executable), str(self.contract), "wide-local-spawn", str(self.strategy)], check=True, timeout=5
         )
 
-    def test_stalled_approach_and_stale_entry_stop_without_attacking(self) -> None:
-        for scenario in ("stalled", "stale-entry"):
+    def test_stalled_approach_and_scene_change_stop_without_attacking(self) -> None:
+        for scenario in ("stalled", "context", "stale-entry"):
             with self.subTest(scenario=scenario):
                 subprocess.run(
                     [str(self.executable), str(self.contract), scenario, str(self.strategy)], check=True, timeout=5

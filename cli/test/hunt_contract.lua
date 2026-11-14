@@ -96,7 +96,7 @@ elseif scenario == "rope-long-approach" or scenario == "rope-blocked" or scenari
         { object_id = 1, template_id = 100, x = 65, y = 200, active = true },
         { object_id = 2, template_id = 100, x = (open_rope_x or blocked_rope_x) + 40, y = 0, active = true },
     }
-elseif scenario == "stalled" then
+elseif scenario == "stalled" or scenario == "context" then
     state.monsters = { { object_id = 1, template_id = 100, x = 300, y = 200, active = true } }
 elseif scenario == "fall" then
     options.terrain.footholds[2] = { id = 2, x1 = 180, x2 = 400, y1 = 100, y2 = 100 }
@@ -187,12 +187,14 @@ game = {
         if blocked_logs > 0 then released_after_block = true end
         if scenario == "rope-inertia" then brake_at = now + 0.04 end
         advance(0.01)
+        return { reason = "control_released" }
     end,
     face = function(direction)
         if not (scenario == "gui-lock" or scenario == "gui-turn-stalled") or now >= attack_lock_until then
             state.facing = direction == "right" and "Right" or "Left"
         end
         advance(0.01)
+        return { reason = "native_action_dispatched" }
     end,
     move = function(direction, seconds)
         if resume then
@@ -201,21 +203,31 @@ game = {
                 assert(resume_moves == 1, "recovery continued after losing control")
                 return { reason = "control_preempted" }
             end
+            if scenario == "resume-context" then
+                state.scene_generation = 2
+                return { reason = "native_action_dispatched" }
+            end
             if scenario == "resume-stalled" then
                 advance(seconds)
-                return
+                return { reason = "native_action_dispatched" }
             end
         end
         advance(seconds, direction == "left" or direction == "right")
-        if scenario == "stalled" then return end
+        if scenario == "context" then
+            state.scene_generation = 2
+            return { reason = "native_action_dispatched" }
+        end
+        if scenario == "stalled" then return { reason = "native_action_dispatched" } end
         if direction == "up" or direction == "down" then
             -- 原生边界：第一根绳梯不响应攀爬，另一根绳梯正常；不读取策略的边或平台图。
             if blocked_rope_x and math.abs(state.position.x - blocked_rope_x) <= 10 then
                 if not blocked_rope_contact then blocked_visits = blocked_visits + 1 end
                 blocked_rope_contact = true
-                return
+                return { reason = "native_action_dispatched" }
             end
-            if scenario == "rope-inertia" and math.abs(state.position.x - open_rope_x) > 10 then return end
+            if scenario == "rope-inertia" and math.abs(state.position.x - open_rope_x) > 10 then
+                return { reason = "native_action_dispatched" }
+            end
             assert(open_rope_x and math.abs(state.position.x - open_rope_x) <= 10, "rope approach was not aligned")
             if blocked_logs > 0 then assert(released_after_block, "blocked navigation did not release control") end
             rope_reached_at = rope_reached_at or now
@@ -234,12 +246,14 @@ game = {
             if not climbing then horizontal(direction, seconds) end
             if blocked_rope_x and math.abs(state.position.x - blocked_rope_x) > 10 then blocked_rope_contact = false end
         end
+        return { reason = "native_action_dispatched" }
     end,
     jump = function()
         assert(scenario == "rope-inertia", "unexpected jump in contract scene")
         advance(0.06)
         settled_jump = settled_jump or horizontal_velocity == 0
         state.position.y, landing_at = 170, now + 0.3
+        return { reason = "native_action_dispatched" }
     end,
     attack = function(seconds, direction, skill_id)
         if resume then assert(recovered and not climbing, "hunt attacked before confirming rope recovery") end
@@ -332,11 +346,17 @@ elseif scenario == "resume-stalled" then
 elseif scenario == "resume-preempted" then
     assert(not ok and failure:find("control_preempted"), tostring(failure))
     assert(resume_moves == 1 and #killed == 0, "recovery dispatched after control was preempted")
+elseif scenario == "resume-context" then
+    assert(not ok and failure:find("hunt_context_changed"), tostring(failure))
+    assert(resume_moves == 1 and #killed == 0, "recovery dispatched into another scene")
 elseif scenario == "resume-budget" then
     assert(not ok and failure:find("hunt_rope_recovery_budget"), tostring(failure))
     assert(now < 0.7 and #killed == 0, "rope recovery ignored the total hunting budget")
 elseif scenario == "stalled" then
     assert(not ok and failure:find("hunt_chase_stalled"), tostring(failure))
+    assert(#killed == 0)
+elseif scenario == "context" then
+    assert(not ok and failure:find("hunt_context_changed"), tostring(failure))
     assert(#killed == 0)
 elseif scenario == "gui-turn-stalled" then
     assert(not ok and failure:find("hunt_combat_progress_unconfirmed"), tostring(failure))
