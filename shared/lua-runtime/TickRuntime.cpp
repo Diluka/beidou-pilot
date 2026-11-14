@@ -300,6 +300,10 @@ struct TickRuntime::Impl {
         int game = LUA_NOREF;
         std::vector<std::pair<std::string, int>> domains;
         std::string id;
+        // Native package root for require(); empty keeps single-file loading.
+        std::string packageRoot;
+        // Modules actually resolved through require(): logical name and native file.
+        std::vector<std::pair<std::string, std::string>> modules;
         std::string status = "rejected", reason, error;
         std::string finalStatus;
         TickConfig config;
@@ -317,6 +321,8 @@ struct TickRuntime::Impl {
         std::size_t logBytes = 0;
 
         bool Active() const { return status == "running" && finalStatus.empty(); }
+
+        bool PackageMode() const { return !packageRoot.empty(); }
 
         bool Due(Clock::time_point now) const {
             return Active() && (!invoked || config.gear == TickGear::Native || now >= nextDue);
@@ -397,6 +403,68 @@ struct TickRuntime::Impl {
     }
 
     static Session& Self(lua_State* lua) { return **static_cast<Session**>(lua_getextraspace(lua)); }
+
+    // Package sessions keep the Lua stack trace of a failed call so require()
+    // failures and module runtime errors retain their source module and line.
+    static int Traceback(lua_State* lua) {
+        const char* message = lua_tostring(lua, 1);
+        std::string fallback;
+        if (message == nullptr) {
+            if (luaL_callmeta(lua, 1, "__tostring") && lua_type(lua, -1) == LUA_TSTRING)
+                message = lua_tostring(lua, -1);
+            else {
+                fallback = std::string("(error object is a ") + luaL_typename(lua, 1) + " value)";
+                message = fallback.c_str();
+            }
+        }
+        luaL_traceback(lua, lua, message, 1);
+        return 1;
+    }
+
+    // Wraps the native Lua file searcher without changing require() semantics:
+    // the same loader and extra value are returned, and the resolved source file
+    // is recorded so the session can report where each module came from.
+    static int TrackModule(lua_State* lua) {
+        lua_pushvalue(lua, lua_upvalueindex(1));
+        lua_pushvalue(lua, 1);
+        lua_call(lua, 1, 2);
+        if (lua_isfunction(lua, -2)) {
+            lua_Debug frame{};
+            lua_pushvalue(lua, -2);
+            if (lua_getinfo(lua, ">S", &frame) != 0 && frame.source != nullptr) {
+                const auto* name = lua_tostring(lua, 1);
+                if (name != nullptr)
+                    Self(lua).modules.emplace_back(name, frame.source[0] == '@' ? frame.source + 1 : frame.source);
+            }
+        }
+        return 2;
+    }
+
+    // Resolves require() inside this session against the package directory, then
+    // falls back to the environment's own module path instead of replacing it.
+    void OpenPackage(Session& session) {
+        auto* lua = session.lua;
+        lua_getglobal(lua, "package");
+        lua_getfield(lua, -1, "path");
+        const char* previous = lua_tostring(lua, -1);
+        const std::string path = session.packageRoot + "/?.lua;" + session.packageRoot + "/?/init.lua;"
+                                 + (previous != nullptr ? previous : "");
+        lua_pop(lua, 1);
+        lua_pushlstring(lua, path.data(), path.size());
+        lua_setfield(lua, -2, "path");
+        lua_getfield(lua, -1, "searchers");
+        lua_rawgeti(lua, -1, 2);
+        lua_pushcclosure(lua, TrackModule, 1);
+        lua_rawseti(lua, -2, 2);
+        lua_pop(lua, 2);
+    }
+
+    // Message handler for package sessions; zero means the call has no handler.
+    int PushErrorHandler(Session& session) {
+        if (!session.PackageMode()) return 0;
+        lua_pushcfunction(session.lua, Traceback);
+        return lua_gettop(session.lua);
+    }
 
     static void Budget(lua_State* lua, lua_Debug*) {
         auto& session = Self(lua);
@@ -992,34 +1060,45 @@ struct TickRuntime::Impl {
     Value StatusValue(const Session& session) const {
         const bool owned =
             actionOwner == &session || movementOwner == &session || session.directionFence || session.actionFence;
-        return Value::Object({{"id", session.id},
-                              {"status", session.status},
-                              {"reason", session.reason.empty() ? Value{} : Value(session.reason)},
-                              {"error", session.error.empty() ? Value{} : Value(session.error)},
-                              {"mode", "tick"},
-                              {"resumes", session.index},
-                              {"budget_yields", session.overruns},
-                              {"last_resume_us", session.lastUs},
-                              {"max_resume_us", session.maxUs},
-                              {"tasks", Value::Array()},
-                              {"control", Value::Object({{"owner", movementOwner != nullptr ? movementOwner->id : ""},
-                                                         {"pending", ""},
-                                                         {"from", ""},
-                                                         {"to", ""},
-                                                         {"reason", ""}})},
-                              {"control_released", !owned},
-                              {"tick", Value::Object({{"index", session.index},
-                                                      {"gear", static_cast<int>(session.config.gear)},
-                                                      {"time", session.time},
-                                                      {"delta", session.delta},
-                                                      {"scene_generation", session.generation},
-                                                      {"overrun", session.previousOverrun},
-                                                      {"overruns", session.overruns},
-                                                      {"budget_ms", session.config.budgetMs},
-                                                      {"overrun_policy", session.config.skipOverrun ? "skip" : "abort"},
-                                                      {"abort_commit", session.config.abortCommit},
-                                                      {"profile", ProfileValue()}})},
-                              {"player", Player()}});
+        auto status =
+            Value::Object({{"id", session.id},
+                           {"status", session.status},
+                           {"reason", session.reason.empty() ? Value{} : Value(session.reason)},
+                           {"error", session.error.empty() ? Value{} : Value(session.error)},
+                           {"mode", "tick"},
+                           {"resumes", session.index},
+                           {"budget_yields", session.overruns},
+                           {"last_resume_us", session.lastUs},
+                           {"max_resume_us", session.maxUs},
+                           {"tasks", Value::Array()},
+                           {"control", Value::Object({{"owner", movementOwner != nullptr ? movementOwner->id : ""},
+                                                      {"pending", ""},
+                                                      {"from", ""},
+                                                      {"to", ""},
+                                                      {"reason", ""}})},
+                           {"control_released", !owned},
+                           {"tick", Value::Object({{"index", session.index},
+                                                   {"gear", static_cast<int>(session.config.gear)},
+                                                   {"time", session.time},
+                                                   {"delta", session.delta},
+                                                   {"scene_generation", session.generation},
+                                                   {"overrun", session.previousOverrun},
+                                                   {"overruns", session.overruns},
+                                                   {"budget_ms", session.config.budgetMs},
+                                                   {"overrun_policy", session.config.skipOverrun ? "skip" : "abort"},
+                                                   {"abort_commit", session.config.abortCommit},
+                                                   {"profile", ProfileValue()}})},
+                           {"player", Player()}});
+        if (session.PackageMode()) {
+            // Only directory sessions expose package origin; single-file loading
+            // keeps its existing status shape.
+            auto modules = Value::Array();
+            for (const auto& module : session.modules)
+                modules.Add(Value::Object({{"name", module.first}, {"file", module.second}}));
+            status["module_root"] = Value(session.packageRoot);
+            status["modules"] = std::move(modules);
+        }
+        return status;
     }
 };
 
@@ -1031,6 +1110,11 @@ TickRuntime::~TickRuntime() {
 
 bool TickRuntime::Start(const std::string& scriptId, const std::string& source, std::uint32_t limitMs,
                         std::string& error) {
+    return StartPackage(scriptId, source, limitMs, std::string(), error);
+}
+
+bool TickRuntime::StartPackage(const std::string& scriptId, const std::string& source, std::uint32_t limitMs,
+                               const std::string& packageRoot, std::string& error) {
     auto& runtime = *impl;
     error.clear();
     if (runtime.updating) {
@@ -1050,6 +1134,7 @@ bool TickRuntime::Start(const std::string& scriptId, const std::string& source, 
     auto created = std::unique_ptr<Impl::Session>(new Impl::Session(runtime));
     auto& session = *created;
     session.id = scriptId;
+    session.packageRoot = packageRoot;
     runtime.sessions.push_back(std::move(created));
     auto reject = [&](const std::string& reason) {
         session.reason = reason;
@@ -1091,14 +1176,20 @@ bool TickRuntime::Start(const std::string& scriptId, const std::string& source, 
         return reject("lua_state_unavailable");
     }
     runtime.Open(session);
+    if (session.PackageMode()) runtime.OpenPackage(session);
     runtime.RefreshCore();
-    if (luaL_loadbufferx(session.lua, source.data(), source.size(), scriptId.c_str(), "t") != LUA_OK) {
+    // The handler stays below the entry chunk: lua_pcall always calls the
+    // function on top, and package errors keep their traceback.
+    const int msgh = runtime.PushErrorHandler(session);
+    const char* chunk = session.PackageMode() ? "@main.lua" : scriptId.c_str();
+    if (luaL_loadbufferx(session.lua, source.data(), source.size(), chunk, "t") != LUA_OK) {
         const auto* message = lua_tostring(session.lua, -1);
         error = message != nullptr ? message : "Lua load failed";
         return reject("script_load_error");
     }
     session.started = Clock::now();
-    const int loaded = lua_pcall(session.lua, 0, 1, 0);
+    const int loaded = lua_pcall(session.lua, 0, 1, msgh);
+    if (msgh != 0) lua_remove(session.lua, msgh);
     if (session.overran
         || std::chrono::duration<double, std::milli>(Clock::now() - session.started).count()
                >= session.config.budgetMs) {
@@ -1210,13 +1301,14 @@ void TickRuntime::Tick(bool sceneChanged) {
                                           {"overrun", session.previousOverrun}}));
             Protect(lua);
             lua_setfield(lua, backing, "tick");
+            const int msgh = runtime.PushErrorHandler(session);
             lua_rawgeti(lua, LUA_REGISTRYINDEX, session.main);
             lua_rawgeti(lua, LUA_REGISTRYINDEX, session.publicContext);
             const auto before = runtime.draft;
             runtime.current = &session;
             session.overran = false;
             session.started = Clock::now();
-            const int called = lua_pcall(lua, 1, 1, 0);
+            const int called = lua_pcall(lua, 1, 1, msgh);
             session.lastUs = std::chrono::duration<double, std::micro>(Clock::now() - session.started).count();
             runtime.luaTiming.Record(session.lastUs);
             session.maxUs = (std::max)(session.maxUs, session.lastUs);

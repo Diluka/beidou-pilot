@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -1808,6 +1809,110 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
         Check(native.delivered.size() == 2, "jump and attack intent must both reach the native consumer");
     }
 }
+
+// Directory package loading: the entry stays CLI-provided source while require()
+// resolves modules from the package root in the client's own filesystem form.
+void Packages() {
+    const auto root =
+        std::filesystem::temp_directory_path()
+        / ("beidou-tick-package-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(root);
+    const auto write = [&](const std::string& relative, const std::string& source) {
+        const auto path = root / relative;
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream stream(path, std::ios::binary);
+        stream << source;
+        Check(static_cast<bool>(stream), "write " + path.string());
+    };
+    write("layers/chain.lua", "local value = require(\"layers.value\")\nreturn {base = value.base + 1}\n");
+    write("layers/value.lua", "return {base = 41}\n");
+    {
+        NativeBoundary native;
+        TickRuntime runtime(native);
+        std::string error;
+        const auto entry = Source("local chain = require(\"layers.chain\")\n"
+                                  "local again = require(\"layers.chain\")\n"
+                                  "assert(again == chain, \"require_cache\")\n"
+                                  "function main(context)\n"
+                                  "    game.log(\"package_base=\" .. tostring(chain.base))\n"
+                                  "    return \"done\"\n"
+                                  "end\n");
+        const bool packageStarted = runtime.StartPackage("package-session", entry, 0, root.string(), error);
+        Check(packageStarted, "package start: " + error);
+        const auto status = runtime.CurrentStatus("package-session");
+        Check(Field(status, "module_root").Text() == root.string(),
+              "module_root must name the package directory: " + status.Dump());
+        const auto modules = Field(status, "modules");
+        Check(modules.Type() == Value::Kind::Array && modules.Elements().size() == 2,
+              "each cached module is reported once with its source: " + status.Dump());
+        Check(Field(modules.Elements()[0], "name").Text() == "layers.chain"
+                  && Field(modules.Elements()[0], "file").Text() == (root / "layers/chain.lua").string(),
+              "entry require must report the resolved module file: " + status.Dump());
+        Check(Field(modules.Elements()[1], "name").Text() == "layers.value"
+                  && Field(modules.Elements()[1], "file").Text() == (root / "layers/value.lua").string(),
+              "nested require must be tracked too: " + status.Dump());
+        Step(native, runtime);
+        StatusIs(runtime, "package-session", "completed", "script_returned");
+        Check(native.logs == std::vector<std::string>{"package-session:package_base=42"},
+              "required modules must execute in the session");
+
+        // Single-file loading keeps the exact previous status shape.
+        TickRuntime plain(native);
+        const bool plainStarted = plain.Start("plain-session", Source("function main() return \"done\" end"), 0, error);
+        Check(plainStarted, "single-file start: " + error);
+        const auto single = plain.CurrentStatus("plain-session");
+        Check(Field(single, "module_root").Type() == Value::Kind::Null
+                  && Field(single, "modules").Type() == Value::Kind::Null,
+              "single-file sessions must not project package fields: " + single.Dump());
+        Drain(native, plain, "plain-session", "completed", "script_returned");
+    }
+    write("lib/bad.lua", "return {\n    broken = ,\n}\n");
+    write("lib/boom.lua", "local value = 1\nerror(\"module_body_boom\")\n");
+    write("lib/raise.lua", "local M = {}\nfunction M.boom()\n    error(\"module_call_boom\")\nend\nreturn M\n");
+    {
+        NativeBoundary native;
+        TickRuntime runtime(native);
+        std::string error;
+        Check(!runtime.StartPackage("entry-compile", "-- @mode tick\nlocal broken = )\n", 0, root.string(), error),
+              "entry compile error must reject the session");
+        Check(error.find("main.lua:2:") != std::string::npos,
+              "package entry errors must name main.lua and its line: " + error);
+        Check(!runtime.StartPackage("missing", Source("local x = require(\"lib.missing\")\nfunction main() end\n"), 0,
+                                    root.string(), error),
+              "missing module must reject the session");
+        Check(error.find("module 'lib.missing' not found") != std::string::npos,
+              "missing module must be named: " + error);
+        Check(error.find("main.lua:3:") != std::string::npos,
+              "missing module keeps the require() caller line: " + error);
+        Check(error.find("stack traceback") != std::string::npos, "package errors keep a traceback: " + error);
+        Check(!runtime.StartPackage("compile", Source("local x = require(\"lib.bad\")\nfunction main() end\n"), 0,
+                                    root.string(), error),
+              "module compile error must reject the session");
+        Check(error.find("lib/bad.lua:2:") != std::string::npos,
+              "module compile errors must name the module file and line: " + error);
+        Check(!runtime.StartPackage("body", Source("local x = require(\"lib.boom\")\nfunction main() end\n"), 0,
+                                    root.string(), error),
+              "module body runtime error must reject the session");
+        Check(error.find("lib/boom.lua:2:") != std::string::npos && error.find("module_body_boom") != std::string::npos,
+              "module body errors must name the module file and line: " + error);
+        const auto entry = Source("local raise = require(\"lib.raise\")\n"
+                                  "function main(context)\n"
+                                  "    raise.boom()\n"
+                                  "    return \"done\"\n"
+                                  "end\n");
+        const bool errorStarted = runtime.StartPackage("tick-error", entry, 0, root.string(), error);
+        Check(errorStarted, "tick error start: " + error);
+        Drain(native, runtime, "tick-error", "cancelled", "script_error");
+        const auto failed = runtime.CurrentStatus("tick-error");
+        const auto message = Field(failed, "error").Text();
+        Check(message.find("lib/raise.lua:3:") != std::string::npos
+                  && message.find("module_call_boom") != std::string::npos
+                  && message.find("stack traceback") != std::string::npos,
+              "module errors during a tick must keep their module line and traceback: " + message);
+    }
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+}
 }
 
 int main(int argc, char** argv) {
@@ -1858,6 +1963,8 @@ int main(int argc, char** argv) {
         Reentrancy();
     else if (scenario == "profiling")
         Profiling();
+    else if (scenario == "packages")
+        Packages();
     else if (scenario == "motion")
         MotionObservations();
     else if (scenario == "held-skill-example") {

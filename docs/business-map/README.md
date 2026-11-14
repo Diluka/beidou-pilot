@@ -33,6 +33,7 @@ GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生
 | 名称、NPC 点击范围、地形和物品恢复类型查询 | 外部资源；[catalog.py](../../cli/beidou_pilot/catalog.py) | 静态查询和资料数据；缺资料保持未知，实时对象以现场观察为准 |
 | 查询本端领域、能力、快照及持续观察 | 游戏事实观察；[observations.py](../../cli/beidou_pilot/observations.py)、[snapshot.py](../../cli/beidou_pilot/snapshot.py)、[cli.py](../../cli/beidou_pilot/cli.py) | 观察操作和快照流程；无头任务仅登录快照，CLI 观察面与 Lua 状态面分别判断 |
 | 文件或源码运行、协作任务、版本替换和结果查询 | Lua 执行；[bridge.py](../../cli/beidou_pilot/bridge.py)、[task_management.py](../../cli/beidou_pilot/task_management.py)、[Runtime.cpp](../../shared/lua-runtime/Runtime.cpp) | 执行与任务管理流程；替换先编译，旧任务放键后安装新版本，等待失败时按现状继续 |
+| tick 目录脚本包按 require 装载模块 | Lua 执行；[cli.py](../../cli/beidou_pilot/cli.py)、[TickRuntime.cpp](../../shared/lua-runtime/TickRuntime.cpp)、[LUA_TICK_API.md](../LUA_TICK_API.md) | 包根由 CLI 发布、模块按源路径直读；会话可查实际装载来源，错误归属模块与行号，单文件行为不变 |
 | 取消、期限到达、错误及控制权交接 | Lua 执行；[Runtime.cpp](../../shared/lua-runtime/Runtime.cpp)、[TaskTransport.cpp](../../shared/lua-runtime/TaskTransport.cpp) | 所有权和效果边界；任务停止、会话取消、容器关闭分别拥有生命周期 |
 | 同层移动、单绳梯、单门户及有限战斗 | 有界行动；[travel.py](../../cli/beidou_pilot/travel.py)、[control_scripts.py](../../cli/beidou_pilot/control_scripts.py)、[shared/scripts](../../shared/scripts/) | 旅行与战斗流程；停级受转职节点约束，自动转职、连续路线与命中判定属于各自能力 |
 | 打开 NPC、推进对话、当前引用操作和窗口焦点 | 世界交互；[dialogs.py](../../cli/beidou_pilot/dialogs.py)、[ui.py](../../cli/beidou_pilot/ui.py) | 当前上下文与对话流程；任务、奖励与文本输入的选择由操作者确认 |

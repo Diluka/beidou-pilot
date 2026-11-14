@@ -107,6 +107,9 @@ struct ScriptSession {
 };
 
 std::vector<ScriptSession> scriptSessions;
+// 被拒绝的 tick 会话仍由共享运行时保留，但不进入 scriptSessions；
+// 单独投影，调用方才能看到模块缺失/编译错误的来源与行号。
+std::vector<MapleControl::Value> rejectedTickScripts;
 bool haveSkillResult = false;
 std::uint32_t lastSkillId = 0;
 int lastSkillResult = 0;
@@ -1269,6 +1272,7 @@ bool Publish(const MapleControl::State& state) {
     out << ",\"script\":" << (scriptSessions.empty() ? "null" : scriptSessions.back().status.Dump());
     auto scripts = MapleControl::Value::Array();
     for (const auto& session : scriptSessions) scripts.Add(session.status);
+    for (const auto& rejected : rejectedTickScripts) scripts.Add(rejected);
     out << ",\"scripts\":" << scripts.Dump();
     out << ",\"tick_profile\":" << tickRuntime.Profile().Dump();
     out << ",\"last_skill\":";
@@ -1409,8 +1413,27 @@ void ReadCommand() {
             sourceValid = static_cast<bool>(sourceFile);
         }
     }
+    // Optional directory package: the CLI publishes the require() root next to
+    // the entry source. Wine maps the container root to Z:, so the workspace
+    // path from the CLI is converted to this client process's own form.
+    std::string packageRoot;
+    {
+        std::ifstream packageFile(directory + "\\scripts\\" + scriptId + ".package", std::ios::binary);
+        if (packageFile) std::getline(packageFile, packageRoot);
+        if (!packageRoot.empty() && packageRoot.back() == '\r') packageRoot.pop_back();
+        if (!packageRoot.empty() && packageRoot.front() == '/') {
+            for (auto& character : packageRoot)
+                if (character == '/') character = '\\';
+            packageRoot.insert(0, "Z:");
+        }
+    }
     std::string error;
     const auto mode = sourceValid ? MapleControl::ParseScriptMode(source, error) : MapleControl::ScriptMode::Invalid;
+    if (!packageRoot.empty() && mode != MapleControl::ScriptMode::Tick) {
+        rejectedId = id;
+        rejectedReason = "package_requires_tick";
+        return;
+    }
     const bool busy = mode == MapleControl::ScriptMode::Coroutine
                           ? runtime.Running() || !adapter.Released()
                           : mode == MapleControl::ScriptMode::Tick && !tickRuntime.Running() && !tickAdapter.Released();
@@ -1424,10 +1447,11 @@ void ReadCommand() {
     // Preserve the last admitted coroutine status before Runtime.Start replaces
     // its single report, including when the new chunk is later rejected.
     RefreshScriptStatuses();
-    const bool started = mode == MapleControl::ScriptMode::Tick
-                             ? tickRuntime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
-                             : mode == MapleControl::ScriptMode::Coroutine
-                                   && runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error);
+    const bool started =
+        mode == MapleControl::ScriptMode::Tick
+            ? tickRuntime.StartPackage(scriptId, source, static_cast<std::uint32_t>(value), packageRoot, error)
+            : mode == MapleControl::ScriptMode::Coroutine
+                  && runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error);
     commandId = id;
     commandReason.clear();
     stopCommand = false;
@@ -1435,6 +1459,10 @@ void ReadCommand() {
         scriptCommand = false;
         commandStatus = "rejected";
         commandReason = !sourceValid ? "script_file_unavailable" : "script_load_error";
+        if (mode == MapleControl::ScriptMode::Tick) {
+            const auto rejected = tickRuntime.CurrentStatus(scriptId);
+            if (rejected.Type() != MapleControl::Value::Kind::Null) rejectedTickScripts.push_back(rejected);
+        }
     } else {
         scriptSessions.push_back({scriptId, mode, {}});
         RefreshScriptStatuses();

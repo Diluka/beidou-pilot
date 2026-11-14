@@ -204,8 +204,9 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 | `script run/start --library travel\|island-supply` | 显式装载旅行函数；Lua消费者在一次会话内调用已知路线并核对目的地 |
 | `navigate MAP_ID [--x X --to-y Y]` | 按本地门户资料自动计算到目的地图的路线，逐段场景内寻路、按上换图并核对落点；给出坐标时继续走到目的位置；`--plan-only` 只输出静态路线 |
 | `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
-| `script describe FILE` | 只读本地策略文件，输出 `main(context)`、mode、有效 tick 配置、声明参数和动态用法 |
+| `script describe FILE\|DIR` | 只读本地策略文件或目录脚本包，输出 `main(context)`、mode、有效 tick 配置、声明参数和动态用法 |
 | `script run/start FILE [策略参数]` | 带 `main(context)` 的文件按注释动态解析参数并接收场景上下文；按前导 mode 进入独立引擎；无入口的旧文件仍作为原始 chunk 运行 |
+| `script run/start DIR [策略参数]` | tick 目录脚本包：`DIR/main.lua` 为入口，其余 `.lua` 由入口按包内相对路径 `require`；状态可查实际装载模块，错误带模块与行号；不接收 `--library` |
 | `script run FILE`、`script run --code CODE` | 原生会话同步等待结果；`--code` 始终按原始源码执行，中断等待时脚本继续运行，持续模式显式声明 |
 | `script start FILE`、`script start --code CODE` | 原生受理后返回，脚本由客户端独立执行；返回实例、运行、请求与脚本身份 |
 | `script status [--session SCRIPT_ID]` | 只读全部会话 `scripts` 与最新 `script`，可按 ID 选择；tick 含调度和 player 状态 |
@@ -221,11 +222,11 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 
 [跨平台移动](../../shared/scripts/travel/walk_to.lua)只处理当前地图：按静态地形平台图计算最短平台路径，逐段执行走、跳台、落层与绳梯，落地后重新采样再规划。平台图由共用模块 [_terrain.lua](../../shared/scripts/travel/_terrain.lua) 构建：foothold 的竖直段作为墙，把平台切成不同可站立区间；绳索按沿途每层平台连接，绳底高于平台时按跳跃可及范围放宽。目标坐标必须落在平台范围内，`--plan-only` 只输出规划路径不输入；执行失败过的边在本次会话禁用并重新规划，对话窗口打开、身份或地图变化、HP低于安全比例、目标不在平台、平台图不可达或预算耗尽时明确失败，错误信息带地图、坐标、失败阶段和原因，不猜测结果。
 
-`--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。直接源码保持原样执行，不解析 `@option` 或注入策略上下文，但前导 `@mode/@tick.*` 仍校验并决定原生引擎。文件路径按容器内部解析；工作台整体已挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，每次调用读取当前 UTF-8 文件内容。带顶层 `main(context)` 的文件是策略入口，`script run/start FILE` 按声明校验参数并由所选引擎执行；其他旧 Lua 文件保持原始 chunk 路径。两种方式都可在已运行实例中提交，执行期限和精确取消规则相同，API 则按 mode 相互独立。`script status` 不接收源码或文件，可选 `--session SCRIPT_ID`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
+`--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。直接源码保持原样执行，不解析 `@option` 或注入策略上下文，但前导 `@mode/@tick.*` 仍校验并决定原生引擎。文件与目录路径按容器内部解析；工作台整体已挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，每次调用读取当前 UTF-8 文件内容。带顶层 `main(context)` 的文件是策略入口，`script run/start FILE` 按声明校验参数并由所选引擎执行；其他旧 Lua 文件保持原始 chunk 路径。`script run/start DIR` 是 tick 目录脚本包：`DIR/main.lua` 按同一策略规则解析和注入上下文，包内其他 `.lua` 文件由入口用原生 `require` 按相对路径装载，模块文件保持原位置、不复制进会话目录；GUI 与 headless 由原生各自把包根映射到本端文件系统。这些方式都可在已运行实例中提交，执行期限和精确取消规则相同，API 则按 mode 相互独立。`script status` 不接收源码或文件，可选 `--session SCRIPT_ID`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
 
 ### tick 脚本与并发会话
 
-省略 mode 或声明 `-- @mode coroutine` 使用冻结维护的旧协程环境；声明 `-- @mode tick` 使用独立的新引擎，按每会话频率档位到期调用 `main(context)`，通过 `context.state` 保留状态，通过 `context.game` 的独立只读领域观察，通过 `context.game.player` 提交即时意图。tick 没有旧 `game.state()/sleep/阻塞动作/任务` API，不混用两套环境。内置旅行、狩猎、恢复脚本未迁移；验证用 tick 文件独立装载，不改变内置脚本。
+省略 mode 或声明 `-- @mode coroutine` 使用冻结维护的旧协程环境；声明 `-- @mode tick` 使用独立的新引擎，按每会话频率档位到期调用 `main(context)`，通过 `context.state` 保留状态，通过 `context.game` 的独立只读领域观察，通过 `context.game.player` 提交即时意图。tick 没有旧 `game.state()/sleep/阻塞动作/任务` API，不混用两套环境。tick 入口可拆成目录脚本包，由包内 `require` 组织模块；coroutine 引擎不接收目录包，现有内置脚本装载方式不变。内置旅行、狩猎、恢复脚本未迁移；验证用 tick 文件独立装载，不改变内置脚本。
 
 ```lua
 -- @mode tick

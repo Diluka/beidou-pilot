@@ -2,13 +2,14 @@
 
 ## 执行入口
 
-用户策略使用 `script run FILE --seconds N` 或 `script run --code CODE --seconds N`，文件和源码二选一，需要持续运行时明确 `--continuous`。两种输入复用同一装载、身份核对、错误、取消与放键链，可在现有实例中执行，无需重启客户端。脚本按前导 `@mode` 选择独立的 coroutine 或 tick 引擎；coroutine 基础动作调用旧 `game` API，tick 即时操作使用 `context.game.player`。复合能力装载 `shared/scripts/` 的 Lua 文件，调用方传入业务参数，Python只处理参数、装载、显式取消与结果。
+用户策略使用 `script run FILE --seconds N`、`script run DIR --seconds N` 或 `script run --code CODE --seconds N`，文件/目录与源码二选一，需要持续运行时明确 `--continuous`。这些输入复用同一装载、身份核对、错误、取消与放键链，可在现有实例中执行，无需重启客户端。脚本按前导 `@mode` 选择独立的 coroutine 或 tick 引擎；coroutine 基础动作调用旧 `game` API，tick 即时操作使用 `context.game.player`。tick 入口可以提交目录脚本包：目录内固定 `main.lua` 为入口，其余文件按包内相对路径由入口用 Lua 原生 `require` 装载，装载器只把包目录交给会话，不复制模块文件。复合能力装载 `shared/scripts/` 的 Lua 文件，调用方传入业务参数，Python只处理参数、装载、显式取消与结果。
 
-带顶层 `main(context)` 的文件声明策略入口；`script run/start FILE` 从 Lua 注释读取选项合同、校验动态 CLI 参数，并由 CLI 注入本次地图与可用的静态地形。coroutine 按旧行为核对场景并调用一次入口；tick 返回 `{main=main,context=__beidou_context}` 供新引擎核对初始场景后按会话档位调用，不执行旧 `game.state()`；后续地图及场景代次变化由原生更新只读 `context.scene`，保留 `context.state` 和额外上下文，不通过 Python 逐图回填。`script describe FILE` 输出 mode、有效 tick 配置和动态参数用法。没有策略入口的旧文件继续作为原始 chunk 执行；tick 策略文件须有 `main(context)`。`--code` 不启用 `@option` 或上下文注入，但仍识别前导 `@mode/@tick.*`，由原生按源码声明分派。start 受理、状态查询与显式取消仍是同一组 CLI 操作。
+带顶层 `main(context)` 的文件声明策略入口；`script run/start FILE` 从 Lua 注释读取选项合同、校验动态 CLI 参数，并由 CLI 注入本次地图与可用的静态地形。coroutine 按旧行为核对场景并调用一次入口；tick 返回 `{main=main,context=__beidou_context}` 供新引擎核对初始场景后按会话档位调用，不执行旧 `game.state()`；后续地图及场景代次变化由原生更新只读 `context.scene`，保留 `context.state` 和额外上下文，不通过 Python 逐图回填。`script describe FILE|DIR` 输出 mode、有效 tick 配置和动态参数用法。没有策略入口的旧文件继续作为原始 chunk 执行；tick 策略入口须有 `main(context)`，目录脚本包的 `main.lua` 与单文件策略使用同一套声明和参数规则。`--code` 不启用 `@option` 或上下文注入，但仍识别前导 `@mode/@tick.*`，由原生按源码声明分派。目录脚本包只进入 tick 引擎，不接受 `--library`。start 受理、状态查询与显式取消仍是同一组 CLI 操作。
 
 ```bash
 private/workbenches/workbench /external/workbench script run --code 'game.log("你好，Lua")' --seconds 20
 private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
+private/workbenches/workbench /external/workbench script run /work/scripts/control-package --seconds 20
 private/workbenches/workbench /external/workbench script status
 ```
 
@@ -80,7 +81,7 @@ coroutine Lua 通过 `game.observe(domain)` 按需调用相同原生采集函数
 
 只读 `observation-request.txt/observation.json` 与动作/Lua的 `command.txt/state.json` 使用独立通道。响应核对请求ID、原生 `instance_id/run_id`、序号和采样年龄；实例名只选择工具会话，进程身份以 `instance_id/run_id` 为准。请求派发不覆盖活动 Lua。
 
-Lua 发布仍使用原有单行 `script` 操作和 UTF-8 源码文件，原生读取源码头决定引擎，不新增逐帧 CLI 操作。精确取消的单行格式为：
+Lua 发布仍使用原有单行 `script` 操作和 UTF-8 源码文件，原生读取源码头决定引擎，不新增逐帧 CLI 操作。目录脚本包在同一装载阶段额外发布 `<SCRIPT_ID>.package` 文件记录容器内包根；原生把包根交给该会话做 `require` 搜索，模块文件仍按调用方给出的源路径直接读取，不复制进桥目录。精确取消的单行格式为：
 
 ```text
 1 INSTANCE_ID SCENE_GENERATION REQUEST_ID cancel_script 0 SCRIPT_ID
@@ -88,7 +89,7 @@ Lua 发布仍使用原有单行 `script` 操作和 UTF-8 源码文件，原生�
 
 `stop 0` 保留全停语义；新桥 `cancel_script` 只停止对应 `script.id` 并确认其输入释放，不全局放键。没有 `scripts` 字段的旧后端仍按旧单会话合同先核对 ID，再回退 `stop`；旧桥装载 tick 则直接返回 `bridge_tick_unsupported`，不回退到旧引擎。
 
-`state.json` 保留 `script`（最新接纳会话）及稳定的旧字段，新增 `scripts` 数组，每项沿用 `id/status/reason/error/resumes/budget_yields/last_resume_us/max_resume_us/tasks/control` 并携带 `mode="tick"/"coroutine"` 和会话级 `control_released`。tick 额外有 `tick={index,time,delta,scene_generation,overrun,overruns,budget_ms,overrun_policy,abort_commit}` 与客户端共享 `player` 操作快照。`player` 只区分当前输入槽和已开始的原生动作，不暴露 `input_settled/control_released`；Lua直接返回done，由Runtime确认停止所属持续输入（持键路径包含真实释放），槽空不表示停止已确认。原始 `command` 只反映最近命令，不代表所有会话；CLI 等待按 `scriptId` 定位自己的会话，不能在其他命令更新 `command.id` 后失联。
+`state.json` 保留 `script`（最新接纳会话）及稳定的旧字段，新增 `scripts` 数组，每项沿用 `id/status/reason/error/resumes/budget_yields/last_resume_us/max_resume_us/tasks/control` 并携带 `mode="tick"/"coroutine"` 和会话级 `control_released`。tick 额外有 `tick={index,time,delta,scene_generation,overrun,overruns,budget_ms,overrun_policy,abort_commit}` 与客户端共享 `player` 操作快照；目录脚本包会话另有 `module_root`（本端原生包根）和 `modules`（实际装载模块的 `name/file` 列表），单文件会话没有这两个字段。包会话的模块缺失、编译或运行错误带来源模块与行号，错误保留 Lua traceback。`player` 只区分当前输入槽和已开始的原生动作，不暴露 `input_settled/control_released`；Lua直接返回done，由Runtime确认停止所属持续输入（持键路径包含真实释放），槽空不表示停止已确认。原始 `command` 只反映最近命令，不代表所有会话；CLI 等待按 `scriptId` 定位自己的会话，不能在其他命令更新 `command.id` 后失联。
 
 完成或取消的释放判断使用该会话的 `control_released`，不要求全局 `held_keys=[]`；全局仍可能包含其他 tick 或 coroutine 的合法持键。`bridge stop` 才要求全部会话停止及全局输入释放。旧后端没有多会话能力时仍保留原 command/held_keys 判定，未确认释放时报 `bridge_release_unconfirmed`。
 

@@ -650,6 +650,160 @@ class TickCliContract(unittest.TestCase):
                     self.assertEqual("invalid_bridge_state", invalid.exception.code)
                     self.assertEqual("原生桥的tick角色操作状态字段无效。", invalid.exception.message)
 
+    def package_directory(self, entry: str, modules: dict[str, str] | None = None) -> Path:
+        self.package_serial = getattr(self, "package_serial", 0) + 1
+        directory = self.files.root / ("policy-" + str(self.package_serial))
+        directory.mkdir()
+        (directory / "main.lua").write_text(entry, encoding="utf-8")
+        for name, source in (modules or {}).items():
+            path = directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(source, encoding="utf-8")
+        return directory
+
+    def test_directory_package_publishes_require_root_and_projects_loaded_modules(self) -> None:
+        directory = self.package_directory(
+            "-- @mode tick\n"
+            "-- @option[type=int,opt,default=2] ticks 观察次数\n"
+            'local lib = require("lib.value")\n'
+            'function main(context)\n    return "done"\nend\n',
+            {"lib/value.lua": "return {}\n"},
+        )
+        modules = [{"name": "lib.value", "file": str(directory.resolve() / "lib/value.lua")}]
+
+        def peer() -> list[str]:
+            request = self.files.command()
+            script = tick_state(request[6], stopped=True)
+            script.update(
+                status="completed",
+                reason="script_returned",
+                module_root=str(directory.resolve()),
+                modules=modules,
+            )
+            self.files.state.update(
+                script=script,
+                scripts=[script],
+                command={"id": request[3], "status": "completed", "reason": "script_returned"},
+            )
+            self.files.publish()
+            return request
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            native = pool.submit(peer)
+            code, report = self.cli("script", "run", str(directory), "--ticks", "4", "--seconds", ".3")
+            request = native.result(2)
+        self.assertEqual(code, 0)
+        self.assertEqual(request[4:6], ["script", "300"])
+        package = self.files.directory / "scripts" / (request[6] + ".package")
+        self.assertEqual(package.read_text(encoding="utf-8"), str(directory.resolve()) + "\n")
+        source = (self.files.directory / "scripts" / (request[6] + ".lua")).read_text(encoding="utf-8")
+        self.assertIn("__beidou_context", source, "目录入口按策略注入上下文")
+        self.assertIn('["ticks"]=4', source)
+        self.assertEqual(report["data"]["status"], "completed")
+        self.assertEqual(report["data"]["package_root"], str(directory.resolve()))
+        self.assertEqual(report["data"]["script_file"], str(directory / "main.lua"))
+        self.assertEqual(report["data"]["script"]["modules"], modules)
+
+    def test_rejected_package_reports_the_source_module_and_line(self) -> None:
+        directory = self.package_directory(
+            "-- @mode tick\n"
+            'local broken = require("lib.broken")\n'
+            'local function main(context)\n    return "done"\nend\n',
+            {"lib/broken.lua": "return {\n    missing = ,\n}\n"},
+        )
+        previous = tick_state("a" * 32)
+        self.files.state.update(script=previous, scripts=[previous])
+        self.files.publish()
+        error_text = (
+            "error loading module 'lib.broken' from file '" + str(directory.resolve() / "lib/broken.lua") + "':\n"
+            "\t" + str(directory.resolve() / "lib/broken.lua") + ":2: unexpected symbol near ','\n"
+            "stack traceback:\n\tmain.lua:4: in main chunk"
+        )
+
+        def peer() -> list[str]:
+            request = self.files.command()
+            rejected = tick_state(request[6], stopped=True)
+            rejected.update(
+                status="rejected",
+                reason="script_error",
+                error=error_text,
+                module_root=str(directory.resolve()),
+                modules=[],
+            )
+            self.files.state.update(
+                script=previous,
+                scripts=[previous, rejected],
+                rejected_command={"id": request[3], "status": "rejected", "reason": "script_load_error"},
+            )
+            self.files.publish()
+            return request
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            native = pool.submit(peer)
+            code, report = self.cli("script", "run", str(directory), "--seconds", ".3")
+            native.result(2)
+        self.assertEqual(code, 2)
+        self.assertEqual(report["error"]["code"], "bridge_command_rejected")
+        self.assertEqual(report["error"]["details"]["reason"], "script_load_error")
+        script = report["error"]["details"]["script"]
+        self.assertEqual(script["status"], "rejected")
+        self.assertEqual(script["error"], error_text)
+        self.assertEqual(script["module_root"], str(directory.resolve()))
+        self.assertEqual(script["modules"], [])
+
+    def test_directory_package_rejects_missing_entry_coroutine_and_library_before_publication(self) -> None:
+        empty = self.files.root / "empty"
+        empty.mkdir()
+        for arguments, code in (
+            (("script", "run", str(empty)), "script_package_entry_missing"),
+            (
+                (
+                    "script",
+                    "run",
+                    str(self.package_directory("function main(context)\nend\n")),
+                ),
+                "package_requires_tick",
+            ),
+            (
+                (
+                    "script",
+                    "run",
+                    str(self.package_directory('-- @mode tick\nfunction main(context)\n    return "done"\nend\n')),
+                    "--library",
+                    "travel",
+                ),
+                "usage",
+            ),
+        ):
+            with self.subTest(code=code):
+                result_code, report = self.cli(*arguments)
+                self.assertEqual(result_code, 2)
+                self.assertEqual(report["error"]["code"], code)
+                self.assertFalse((self.files.directory / "command.txt").exists())
+                self.assertFalse((self.files.directory / "scripts").exists())
+
+    def test_directory_package_describe_reports_usage_entry_and_tick_options(self) -> None:
+        directory = self.package_directory(
+            "-- @mode tick\n-- @option[type=int,opt,default=2] ticks 观察次数\nfunction main(context)\nend\n"
+        )
+        code, report = self.cli("script", "describe", str(directory))
+        self.assertEqual(code, 0)
+        data = report["data"]
+        self.assertEqual(data["file"], str(directory))
+        self.assertEqual(data["package_entry"], str(directory / "main.lua"))
+        self.assertEqual(data["mode"], "tick")
+        self.assertEqual(
+            data["usage"],
+            "beidou-pilot script run/start " + str(directory) + " [--ticks <int>] [--seconds N|--continuous]",
+        )
+        self.assertEqual([option["name"] for option in data["options"]], ["ticks"])
+
+    def test_package_root_must_be_an_absolute_container_path(self) -> None:
+        with self.assertRaises(ClientError) as invalid:
+            self.client.run_script(code=TICK_SOURCE, package_root="relative/path")
+        self.assertEqual("invalid_bridge_options", invalid.exception.code)
+        self.assertFalse((self.files.directory / "scripts").exists())
+
     def test_snapshot_validates_each_session_and_tick_state_at_the_boundary(self) -> None:
         valid = tick_state("a" * 32)
         cases = [

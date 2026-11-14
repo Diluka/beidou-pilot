@@ -13,7 +13,7 @@ private/workbenches/workbench /external/workbench script describe /work/scripts/
 private/workbenches/workbench /external/workbench script run /work/scripts/control-tick.lua --ticks 10 --seconds 20
 ```
 
-- 文件路径按容器内部解析，工作台读写挂到 `/work`；内置 Lua 随镜像版本固定。源码上限为1 MiB，只接受UTF-8文本，不接受预编译字节码。
+- 文件路径按容器内部解析，工作台读写挂到 `/work`；内置 Lua 随镜像版本固定。源码上限为1 MiB，只接受UTF-8文本，不接受预编译字节码。入口文件也可以是目录脚本包，见下文[目录脚本包与模块装载](#目录脚本包与模块装载)。
 - `script run` 同步等结果，`script start` 等原生受理。自定义执行默认30秒，`--seconds` 范围为 `0.001..4294967.295` 秒；显式 `--continuous` 表示无总期限。总期限与单次调用的 `budget_ms` 分开。
 - CLI 中断、等待超时或观察失败只结束等待，已发布任务继续运行。先用 `script status` 核对当前会话；取消用 `script cancel --session SCRIPT_ID` 并核对终态与放键，客户端关闭另用 `close`。
 - 文件与 `--code` 二选一。直接源码按调用方 shell 规则传为一个参数，保留引号、中文和换行，结果的 `script_file=null`；其入口形式与不注入参数的限制见下节。
@@ -41,6 +41,31 @@ end
 运行元数据只读取首段可执行代码之前的前导单行注释，允许空行、普通注释与尾部 `--` 说明；Lua 长注释内部不解释元数据。`@mode` 只接受小写 `tick/coroutine`，重复、未知 mode、未知或重复的 `@tick.*`、格式错误均在发布前拒绝；`@tick.*` 必须配合显式的 `@mode tick`。预算为正有限十进制毫秒数，支持小数，不接受符号、科学计数、NaN 或无穷；`overrun` 为 `abort/skip`，`abort_commit` 为小写 `true/false`。未配置时为 **第3档（30Hz）/ 100ms / abort / true**，单次预算与调用周期独立。
 
 策略文件仍采用唯一顶层 `main(context)` 和既有 `@option` 参数规则。CLI 注入 `options` 和初始 `scene` 身份锚点；原生 tick 引擎随后维护当前只读 `scene`，调用方已有的 `route` 等额外上下文按原规则保留。编译结果向新引擎返回 `{main=main, context=__beidou_context}`，不调用旧 `game.state()`，也不在装载阶段执行 `main`；初始 `scene` 身份由原生 tick 引擎核对。`--code` 保留原始源码、不注入策略参数，但同样读取前导 mode/config：应定义全局 `function main(context) ... end`，或显式返回含 `main/context` 的入口表。
+
+### 目录脚本包与模块装载
+
+tick 入口也可以是一个目录脚本包：`script run/start/describe DIR`，目录内固定以 `main.lua` 为入口，其他 `.lua` 文件按包内相对路径作为模块，由入口用 Lua 原生 `require` 装载。装载器只把包目录交给本会话做模块搜索，不复制或改写模块文件；包内脚本与镜像内置脚本、其他工作台脚本各自独立。
+
+```bash
+private/workbenches/workbench /external/workbench script run /work/scripts/travel-policy --seconds 20
+```
+
+```lua
+-- /work/scripts/travel-policy/main.lua
+-- @mode tick
+local terrain = require("lib.terrain")
+local guard = require("layers.self_preserve")
+local function main(context)
+    -- 责任链和模块职责由脚本组织，引擎只负责装载
+end
+```
+
+- 模块名是包内相对路径去掉 `.lua`、目录用 `.` 分隔：`lib/terrain.lua` → `require("lib.terrain")`；也接受 `lib/terrain/init.lua`。`require` 保持 Lua 原生语义，`package.loaded` 缓存使同一模块只执行一次并返回模块值。
+- 模块文件直接按提交的包目录读取，不复制进会话目录：headless 端使用同一容器路径（如 `/work/scripts/travel-policy`）；GUI 端由原生桥映射为 Wine 的 `Z:\work\...`。脚本只写包内相对名称、不写绝对路径，因此同一份入口与模块在两端都能装载，错误位置里的路径按本端原生形式显示。
+- 会话状态 `scripts[]` 中，包会话额外提供 `module_root`（本端原生包根）和 `modules`（按 `require` 顺序记录的实际装载模块，每项含 `name` 与解析到的源文件 `file`）。单文件 `script run FILE` 与 `--code` 不产生这两个字段，装载方式和行为保持不变。
+- 模块缺失、模块编译错误、模块装载或调用时的运行错误都带来源模块与行号：包入口 chunk 名固定为 `main.lua`，模块 chunk 名是实际解析到的源文件，错误文本保留 Lua `stack traceback`，可看到 `require` 调用行与模块内部位置。单文件与 `--code` 的错误文本保持原样。
+- 目录脚本包只支持 tick 引擎；coroutine 引擎保持冻结，不接收包根。`--library` 不适用于目录包，模块由入口自己按包内路径装载。
+- 包内目录结构、模块依赖清单和组装方式由写策略时决定，引擎不解析依赖声明；模块在入口第一次 `require` 时装载，加载失败按脚本错误结束会话。
 
 宿主每次更新都推进原生生命周期；`main` 按每会话工作频率档位到期调用，首次稳定帧立即调用，返回后统一提交差异供后续帧消费。GUI 使用 `ClientApplication::Update` 主循环渲染帧，无头使用 `Stage::update` 逻辑步进，不假设渲染与角色物理更新 1:1。
 
