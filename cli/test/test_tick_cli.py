@@ -20,7 +20,7 @@ from .test_bridge import BridgeFiles
 from .test_native_scripts import script_state
 
 
-TICK_SOURCE = "-- @mode tick\nfunction main(context) context.state.calls = (context.state.calls or 0) + 1 end\n"
+TICK_SOURCE = "-- @mode tick\nfunction main(context)\n    context.state.calls = (context.state.calls or 0) + 1\nend\n"
 
 
 def tick_state(script_id: str, *, stopped: bool = False) -> BridgeScript:
@@ -64,6 +64,8 @@ class TickCliContract(unittest.TestCase):
         self.files.state.update(script=None, scripts=[])
         self.files.publish()
         self.client = BridgeClient(self.files.root)
+        self.script_path = self.files.root / "tick.lua"
+        self.script_path.write_text(TICK_SOURCE, encoding="utf-8")
 
     def cli(self, *arguments: str) -> tuple[int, JsonObject]:
         output = io.StringIO()
@@ -115,7 +117,6 @@ class TickCliContract(unittest.TestCase):
                 "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mode": "tick",
                 "status": "completed", "reason": "script_returned", "error": null,
                 "resumes": 4, "budget_yields": 0, "last_resume_us": 12.5, "max_resume_us": 18.25,
-                "tasks": [], "control": {"owner": "", "pending": "", "from": "", "to": "", "reason": ""},
                 "control_released": true,
                 "tick": {
                     "index": 4, "gear": 4, "time": 1.5, "delta": 0.008, "scene_generation": 1,
@@ -312,7 +313,7 @@ class TickCliContract(unittest.TestCase):
         self.assertEqual(request, self.files.command())
 
     def test_run_releases_admission_locks_for_another_tick_start_and_targeted_cancel(self) -> None:
-        first_cli = self.start_cli("script", "run", "--code=" + TICK_SOURCE, "--continuous")
+        first_cli = self.start_cli("script", "run", str(self.script_path), "--continuous")
         first_request = self.files.command()
         first = tick_state(first_request[6])
         self.files.state.update(
@@ -322,7 +323,7 @@ class TickCliContract(unittest.TestCase):
             command={"id": first_request[3], "status": "running", "reason": None},
         )
         self.files.publish()
-        second_cli = self.start_cli("script", "start", "--code=" + TICK_SOURCE, "--continuous")
+        second_cli = self.start_cli("script", "start", str(self.script_path), "--continuous")
         second_request = self.files.command(first_request[3])
         self.assertEqual(["script", "0"], second_request[4:6])
         second = tick_state(second_request[6])
@@ -408,7 +409,7 @@ class TickCliContract(unittest.TestCase):
         self.assertEqual(request, self.files.command(), "受理后的错误报告不应取消或重放会话")
 
     def test_run_waits_for_draining_error_terminal_without_holding_admission_lock(self) -> None:
-        first_cli = self.start_cli("script", "run", "--code=" + TICK_SOURCE, "--continuous")
+        first_cli = self.start_cli("script", "run", str(self.script_path), "--continuous")
         first_request = self.files.command()
         first = tick_state(first_request[6])
         first.update(reason="tick_overrun", error="tick execution budget exceeded")
@@ -419,7 +420,7 @@ class TickCliContract(unittest.TestCase):
             command={"id": first_request[3], "status": "running", "reason": None},
         )
         self.files.publish()
-        second_cli = self.start_cli("script", "start", "--code=" + TICK_SOURCE, "--continuous")
+        second_cli = self.start_cli("script", "start", str(self.script_path), "--continuous")
         second_request = self.files.command(first_request[3])
         second = tick_state(second_request[6])
         self.files.state.update(
@@ -448,56 +449,6 @@ class TickCliContract(unittest.TestCase):
         self.assertEqual(
             (second["id"], [39]), (report["last_state"]["script"]["id"], report["last_state"]["held_keys"])
         )
-
-    def test_tick_and_coroutine_admit_independently_but_coroutine_stays_single_session(self) -> None:
-        existing = script_state("c" * 32, "running")
-        existing.update(mode="coroutine", control_released=False)
-        self.files.state.update(
-            script=existing,
-            scripts=[existing],
-            held_keys=[39],
-            command={"id": "other-command", "status": "running", "reason": None},
-        )
-        self.files.publish()
-        with self.assertRaises(ClientError) as busy:
-            self.client.run_script(code="game.sleep(1)", wait_for_start=True)
-        self.assertEqual("input_busy", busy.exception.code)
-
-        def peer() -> None:
-            request = self.files.command()
-            script = tick_state(request[6])
-            self.files.state.update(
-                script=script,
-                scripts=[existing, script],
-                command={"id": request[3], "status": "running", "reason": None},
-            )
-            self.files.publish()
-
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            native = pool.submit(peer)
-            report = self.client.run_script(code=TICK_SOURCE, wait_for_start=True)
-            native.result(2)
-        self.assertEqual(("tick", "running"), (report["mode"], report["status"]))
-        # 只剩tick会话时也允许建立一个coroutine会话。
-        tick = self.files.state["script"]
-        self.files.state["scripts"] = [tick]
-        previous = self.files.command()[3]
-        self.files.publish()
-
-        def coroutine_peer() -> None:
-            request = self.files.command(previous)
-            script = script_state(request[6], "running")
-            script.update(mode="coroutine", control_released=False)
-            self.files.state.update(
-                script=script, scripts=[tick, script], command={"id": request[3], "status": "running", "reason": None}
-            )
-            self.files.publish()
-
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            native = pool.submit(coroutine_peer)
-            report = self.client.run_script(code="game.sleep(1)", wait_for_start=True)
-            native.result(2)
-        self.assertEqual(("coroutine", "running"), (report["mode"], report["status"]))
 
     def test_cancel_file_targets_only_its_session_when_another_session_holds_keys(self) -> None:
         cancel_file = self.files.root / "cancel"
@@ -532,46 +483,16 @@ class TickCliContract(unittest.TestCase):
             ("running", [39]), (report["last_state"]["script"]["status"], report["last_state"]["held_keys"])
         )
 
-    def test_completed_coroutine_result_survives_a_newer_coroutine_admission(self) -> None:
-        def peer() -> list[str]:
-            request = self.files.command()
-            completed = script_state(request[6], "completed", "script_returned")
-            completed.update(mode="coroutine", control_released=True)
-            latest = script_state("b" * 32, "running")
-            latest.update(mode="coroutine", control_released=False)
-            self.files.state.update(
-                script=latest,
-                scripts=[completed, latest],
-                held_keys=[39],
-                command={"id": "newer-command", "status": "running", "reason": None},
-            )
-            self.files.publish()
-            return request
-
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            native = pool.submit(peer)
-            report = self.client.run_script(code="game.log('done')")
-            request = native.result(2)
-        self.assertEqual(
-            (request[3], request[6], "completed"), (report["request_id"], report["script"]["id"], report["status"])
-        )
-        self.assertEqual(
-            ("b" * 32, "running", [39]),
-            (
-                report["last_state"]["script"]["id"],
-                report["last_state"]["script"]["status"],
-                report["last_state"]["held_keys"],
-            ),
-        )
-
-    def test_old_single_session_bridge_never_falls_back_to_coroutine_for_tick(self) -> None:
-        del self.files.state["scripts"]
-        self.files.publish()
-        with self.assertRaises(ClientError) as unsupported:
-            self.client.run_script(code=TICK_SOURCE)
-        self.assertEqual("bridge_tick_unsupported", unsupported.exception.code)
-        self.assertFalse((self.files.directory / "scripts").exists())
-        self.assertFalse((self.files.directory / "command.txt").exists())
+    def test_batch_rejects_script_actions_that_need_file_preprocessing(self) -> None:
+        batch = self.files.root / "batch.json"
+        for words in (["script", "run", "/work/scripts/tick.lua"], ["script", "describe", "/work/tick.lua"]):
+            with self.subTest(words=words):
+                batch.write_text(json.dumps([words]))
+                code, report = self.cli("batch", "--file", str(batch))
+                self.assertEqual(2, code, report)
+                self.assertEqual("usage", report["error"]["code"])
+                self.assertEqual(0, report["error"]["details"]["index"])
+                self.assertFalse((self.files.directory / "command.txt").exists())
 
     def test_invalid_execution_config_does_not_copy_or_publish_a_script(self) -> None:
         with self.assertRaises(ClientError) as invalid:

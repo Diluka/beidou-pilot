@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #pragma once
 
-#include "Runtime.h"
+#include "Contract.h"
 
 #include <chrono>
 #include <functional>
+#include <memory>
 
 namespace MapleControl {
 
-// Native I/O only, with input ownership independent of the coroutine Adapter.
-// A held intent is not an execution queue. Native consumers implement its actual
-// press/hold/release behavior; the Lua scheduler never replays it every tick.
+// Native I/O only. A held intent is not an execution queue: native consumers
+// implement its actual press/hold/release behavior and the Lua scheduler never
+// replays it every tick.
 class TickAdapter : public Adapter {
 public:
     // ObserveDomain("terrain") is an internal, current-map static observation,
@@ -32,28 +33,29 @@ public:
     virtual const Action* ActiveAction() const = 0;
     // Clear action input without touching direction or interrupting native animation.
     virtual void ReleaseAction() = 0;
+    // Full input release, including the direction currently owned.
+    virtual void Release() = 0;
+    virtual bool Released() const = 0;
+    virtual bool ReleasePending() const = 0;
 };
-
-enum class ScriptMode { Coroutine, Tick, Invalid };
 
 // Decision cadence only; Native runs once per host update without throttling.
 enum class TickGear { TenHz = 1, TwentyHz = 2, ThirtyHz = 3, Native = 4 };
 
 struct TickConfig {
-    ScriptMode mode = ScriptMode::Coroutine;
     TickGear gear = TickGear::ThirtyHz;
     double budgetMs = 100;
     bool skipOverrun = false;
     bool abortCommit = true;
 };
 
-// Parse only file-level leading line comments (before executable Lua). Invalid
-// declarations, duplicates and tick settings on coroutine scripts are rejected.
+// Parse only file-level leading line comments (before executable Lua). Scripts
+// are tick scripts: an omitted @mode means tick, and any other mode is rejected.
+// Invalid declarations and duplicates are rejected.
 bool ParseTickConfig(const std::string& source, TickConfig& config, std::string& error);
-ScriptMode ParseScriptMode(const std::string& source, std::string& error);
 
 // Exactly one instance per client; multiple independent Lua states share this
-// instance's movement and action input intents. No Runtime state is used.
+// instance's movement and action input intents.
 class TickRuntime {
 public:
     // Scheduling time only. Execution budgets and profiling always use real time.
@@ -73,8 +75,8 @@ public:
     void CancelAll(const std::string& reason);
     bool Running() const;
 
-    // Null for an unknown id; otherwise old Status basic fields plus mode,
-    // control_released, tick and player. Statuses returns an admission-order array.
+    // Null for an unknown id; otherwise the tick session status. Statuses
+    // returns an admission-order array.
     Value CurrentStatus(const std::string& scriptId) const;
     Value Statuses() const;
 

@@ -68,8 +68,6 @@ public:
         state.monsters.push_back(monster);
     }
 
-    const char* Backend() const override { return "contract"; }
-
     const State& Observe() const override { return state; }
 
     Observation ObserveDomain(const std::string& domain) const override {
@@ -114,25 +112,6 @@ public:
 
     bool SupportsSkill() const override { return supportsSkills; }
 
-    // The coroutine adapter still owns Begin/Release. Tick must only change the
-    // desired input, leaving native admission and animation completion independent.
-    bool Begin(const Action& requested, std::string& error) override {
-        ++beginCalls;
-        if (!Released()) {
-            error = "native_action_busy";
-            return false;
-        }
-        requests.push_back(requested);
-        events.push_back("begin");
-        active = requested;
-        actionActive = legacyDelivery = true;
-        state.actionIdle = Fact::False;
-        result = {};
-        result.sessionId = requested.sessionId;
-        result.reason = "native_dispatched";
-        return true;
-    }
-
     bool SetActionIntent(const Action& requested, std::string&) override {
         ++intentCalls;
         const bool changed = desired.kind != requested.kind || desired.skillId != requested.skillId
@@ -162,7 +141,7 @@ public:
 
     void Release() override {
         ReleaseAction();
-        actionActive = legacyDelivery = false;
+        actionActive = false;
         state.actionIdle = Fact::True;
         if (!directions.empty()) {
             directions.clear();
@@ -213,11 +192,6 @@ public:
         if (state.positionKnown) state.character.SetPosition(state.x, state.y);
         ++state.sequence;
         if (advanceCharacter) ++state.characterUpdates;
-        if (legacyDelivery) {
-            delivered.push_back(active);
-            legacyDelivery = false;
-            result.dispatched = true;
-        }
         // A native consumer may admit the current held input when A finishes.
         // Clearing/replacing B removes it here; there is no history to replay.
         if (armed && allowStart && !actionActive) {
@@ -245,9 +219,9 @@ public:
     mutable std::map<std::string, int> queries;
     std::map<std::uint32_t, Observation> terrains;
     bool supportsItems = true, supportsSkills = true, rejectClear = false, nativeNpcDomain = true;
-    bool actionActive = false, legacyDelivery = false, advanceCharacter = true, armed = false, allowStart = true;
+    bool actionActive = false, advanceCharacter = true, armed = false, allowStart = true;
     bool startsAnimation = true;
-    int actionReleaseTicks = 0, directionTicks = 0, releases = 0, beginCalls = 0, intentCalls = 0;
+    int actionReleaseTicks = 0, directionTicks = 0, releases = 0, intentCalls = 0;
     Action desired, active;
     ActionResult result;
     std::vector<Action> requests, delivered;
@@ -291,14 +265,13 @@ void Drain(NativeBoundary& native, TickRuntime& runtime, const std::string& id, 
 void Declarations() {
     TickConfig config;
     std::string error;
-    Check(ParseScriptMode("function main() end", error) == ScriptMode::Coroutine, "default mode is coroutine");
+    Check(ParseTickConfig("function main() end", config, error), "an omitted @mode is a tick script: " + error);
     Check(
         ParseTickConfig(
             "\n -- title\n-- @mode tick -- description\n-- @tick.budget_ms .5\n-- @tick.overrun skip\n-- @tick.abort_commit false\nfunction main() end",
             config, error),
         error);
-    Check(config.mode == ScriptMode::Tick && config.budgetMs == .5 && config.skipOverrun && !config.abortCommit
-              && config.gear == TickGear::ThirtyHz,
+    Check(config.budgetMs == .5 && config.skipOverrun && !config.abortCommit && config.gear == TickGear::ThirtyHz,
           "decimal budgets and explicit policies must not be truncated; default decision gear is 3");
     for (int gear = 1; gear <= 4; ++gear)
         Check(ParseTickConfig("-- @mode tick\n-- @tick.gear " + std::to_string(gear) + " -- cadence", config, error)
@@ -306,14 +279,13 @@ void Declarations() {
               "each exact gear token must retain its selected value");
     for (const std::string& token : std::vector<std::string>{"", "0", "5", "01", "+1", "-1", "1.0", ".1", "1e0", "NaN",
                                                              "inf", "true", "1 2", "１", std::string(5000, '9')})
-        Check(ParseScriptMode("-- @mode tick\n-- @tick.gear " + token, error) == ScriptMode::Invalid,
+        Check(!ParseTickConfig("-- @mode tick\n-- @tick.gear " + token, config, error) && !error.empty(),
               "gear must be an exact supported ASCII token");
     const std::vector<std::string> invalid{"-- @mode unknown",
+                                           "-- @mode coroutine",
                                            "-- @mode tick\n-- @mode tick",
-                                           "-- @tick.gear 1",
                                            "-- @mode coroutine\n-- @tick.gear 1",
                                            "-- @mode tick\n-- @tick.gear 1\n-- @tick.gear 1",
-                                           "-- @tick.budget_ms 1",
                                            "-- @mode tick\n-- @tick.budget_ms 0",
                                            "-- @mode tick\n-- @tick.budget_ms -1",
                                            "-- @mode tick\n-- @tick.budget_ms 1e2",
@@ -326,18 +298,20 @@ void Declarations() {
                                            "-- @mode coroutine\n-- @tick.overrun abort",
                                            "-- @mode tick\n-- @tick.budget_ms 1\n-- @tick.budget_ms 2"};
     for (const auto& text : invalid)
-        Check(ParseScriptMode(text, error) == ScriptMode::Invalid && !error.empty(),
-              "must reject declaration: " + text);
-    Check(ParseScriptMode("--- @mode tick--说明\nfunction main() end", error) == ScriptMode::Tick,
-          "documentation-style line comments must select the same engine as the CLI");
-    Check(ParseScriptMode("---[[\n-- @mode tick\nfunction main() end", error) == ScriptMode::Tick,
+        Check(!ParseTickConfig(text, config, error) && !error.empty(), "must reject declaration: " + text);
+    Check(ParseTickConfig("--- @mode tick--说明\nfunction main() end", config, error),
+          "documentation-style line comments must select the tick engine as the CLI does");
+    Check(ParseTickConfig("---[[\n-- @mode tick\nfunction main() end", config, error),
           "three-dash comments are not Lua long comments");
-    Check(ParseScriptMode("local x = 1\n-- @mode tick", error) == ScriptMode::Coroutine,
-          "body comments cannot select the engine");
-    Check(ParseScriptMode("--[=[\n-- @mode tick\n]=]\n-- @mode coroutine\nreturn", error) == ScriptMode::Coroutine,
+    Check(ParseTickConfig("local x = 1\n-- @mode coroutine", config, error),
+          "body comments cannot select metadata; the omitted mode is still tick");
+    Check(ParseTickConfig("--[=[\n-- @mode tick\n]=]\n-- @mode tick\nreturn", config, error),
           "long-comment contents are not metadata");
-    Check(ParseScriptMode("local text = [[\n-- @mode tick\n]]", error) == ScriptMode::Coroutine,
+    Check(ParseTickConfig("local text = [[\n-- @mode coroutine\n]]", config, error),
           "Lua string contents are not metadata");
+    Check(ParseTickConfig("-- @tick.gear 1\n-- @tick.budget_ms 2.5", config, error) && config.gear == TickGear::TenHz
+              && config.budgetMs == 2.5,
+          "tick declarations without @mode are still tick scripts");
     Check(ParseTickConfig("-- @mode tick\n-- @tick.budget_ms 4294967296.25", config, error)
               && config.budgetMs == 4294967296.25,
           "large finite decimal budget must remain a double");
@@ -514,8 +488,8 @@ void CadenceLifecycle() {
         now += std::chrono::milliseconds(1);
         Step(native, runtime);
         Check(native.delivered.size() == 2 && native.ActiveAction()->skillId == 1001004
-                  && native.directions == std::vector<std::string>{"right"} && native.beginCalls == 0,
-              "native consumption advances held B without another Lua callback or Runtime Begin");
+                  && native.directions == std::vector<std::string>{"right"},
+              "native consumption advances held B without another Lua callback");
         runtime.Cancel("successor", "explicit_cancel");
         Step(native, runtime);
         Step(native, runtime);
@@ -621,6 +595,11 @@ return {main=main, context={options={distance=5}, route={50001}, scene={
               "must validate initial CLI scene identity: " + error);
     }
     Check(!runtime.Start("missing", Source("return {}"), 0, error), "missing entry must fail at admission");
+    Check(!runtime.Start("coroutine", "-- @mode coroutine\nfunction main() end", 0, error)
+              && error.find("invalid @mode") != std::string::npos,
+          "an explicit coroutine mode must be rejected at admission: " + error);
+    Check(Field(runtime.CurrentStatus("coroutine"), "status").Text() == "rejected",
+          "a rejected mode leaves only a rejected session status");
     Check(runtime.CurrentStatus("absent").Type() == Value::Kind::Null, "unknown session is null");
 }
 
@@ -808,7 +787,7 @@ end)lua",
     now = origin + std::chrono::milliseconds(300);
     Step(native, runtime);
     Drain(native, runtime, "scene-input", "completed", "script_returned");
-    Check(native.requests.size() == 2 && native.delivered.size() == 1 && native.beginCalls == 0
+    Check(native.requests.size() == 2 && native.delivered.size() == 1
               && TickField(runtime, "scene-input", "index").Number() == 4,
           "scene refresh must preserve route state without replaying withdrawn B after A ends");
 }
@@ -1014,8 +993,8 @@ function main(c)
 end
 )lua"));
     Step(native, runtime);
-    Check(native.requests.size() == 1 && native.requests[0].kind == ActionKind::Attack && native.beginCalls == 0,
-          "only the final action draft reaches the native intent boundary, never Begin");
+    Check(native.requests.size() == 1 && native.requests[0].kind == ActionKind::Attack,
+          "only the final action draft reaches the native intent boundary");
     Check(native.changes.size() == 1 && native.directions == std::vector<std::string>{"right"},
           "only the final directional draft is submitted");
     Check(native.events.front() == "logs", "native effects follow completion of the Lua entry");
@@ -1087,7 +1066,7 @@ void HeldIntents() {
         native.Complete();
         for (int i = 0; i < 4; ++i) Step(native, runtime);
         Check(native.intentCalls == 1 && native.requests.size() == 1 && native.delivered.size() == 1
-                  && native.beginCalls == 0 && native.desired.kind == input.kind,
+                  && native.desired.kind == input.kind,
               "holding or repeating the same Lua command must not replay native updates after animation completion");
         Check(native.directions == std::vector<std::string>{"right"} && native.changes.size() == 1,
               "pickup and item input, like attack and jump, must not pause persistent direction");
@@ -1120,7 +1099,7 @@ void HeldIntents() {
   end
 end)lua"));
     for (int i = 0; i < 8; ++i) Step(noAnimation, runtime);
-    Check(noAnimation.intentCalls == 1 && noAnimation.delivered.size() == 1 && noAnimation.beginCalls == 0,
+    Check(noAnimation.intentCalls == 1 && noAnimation.delivered.size() == 1,
           "a skill consumed without starting animation must not be reissued by Runtime while held");
     runtime.Cancel("no-animation", "explicit_cancel");
     Drain(noAnimation, runtime, "no-animation", "cancelled");
@@ -1173,8 +1152,7 @@ end
               && native.directions == std::vector<std::string>{"right"} && native.changes.size() == 1,
           "after A finishes only current C may start; withdrawn B must never be replayed");
     Drain(native, runtime, "actions", "completed", "script_returned");
-    Check(native.actionActive && native.desired.kind == ActionKind::Stop && native.directions.empty()
-              && native.beginCalls == 0,
+    Check(native.actionActive && native.desired.kind == ActionKind::Stop && native.directions.empty(),
           "stop clears direction and held action without interrupting C or waiting for animation");
 
     NativeBoundary replaced;
@@ -1329,7 +1307,7 @@ void Budgets() {
         Step(native, runtime);
         Check(native.requests.size() == (commit ? 1U : 0U) && native.delivered.empty(),
               "abort commit controls admission, not fabricated immediate dispatch");
-        Check(native.desired.kind == ActionKind::Stop && native.beginCalls == 0,
+        Check(native.desired.kind == ActionKind::Stop,
               "abort_commit admission must never leave a terminated session's action held");
         Drain(native, runtime, "abort", "cancelled", "tick_overrun");
         Check(native.delivered.empty(), "abort release before native consumption must not replay the committed input");
@@ -1480,39 +1458,6 @@ end)lua"));
               && Field(changing.CurrentStatus("scene"), "resumes").Number() == 5,
           "stable frames never replay old-scene B after the previous animation completes");
     changing.CancelAll("explicit_cancel");
-}
-
-void Isolation() {
-    NativeBoundary legacyIo, tickIo;
-    Runtime legacy(legacyIo);
-    TickRuntime tick(tickIo);
-    std::string error;
-    Check(legacy.Start("old", "assert(game.player==nil); game.move('left',5)", 0, error), error);
-    Start(
-        tick, "new",
-        Source(
-            "function main(c) assert(game.sleep==nil and game.move==nil and game.spawn==nil and game.observe==nil); if c.tick.index==1 then c.game.player.move('right') else error('tick failure') end end"));
-    legacyIo.Advance();
-    legacy.Tick();
-    Step(tickIo, tick);
-    Check(legacy.Running() && tick.Running() && legacyIo.requests.size() == 1 && tickIo.directions.size() == 1,
-          "both engines can independently own native I/O");
-    Step(tickIo, tick);
-    Drain(tickIo, tick, "new", "cancelled", "script_error");
-    Check(legacy.Running() && legacyIo.releases == 0 && legacyIo.actionActive,
-          "tick failure cannot release or cancel legacy input");
-    Start(tick, "survivor", Source("function main(c) if c.tick.index==1 then c.game.player.move('right') end end"));
-    Step(tickIo, tick);
-    legacy.Cancel("explicit_cancel");
-    Check(tick.Running() && tickIo.directions == std::vector<std::string>{"right"},
-          "legacy cancellation cannot touch tick lifecycle");
-    for (int i = 0; i < 4; ++i) {
-        legacyIo.Advance();
-        legacy.Tick();
-    }
-    Check(!legacy.Running(), "legacy keeps its existing release protocol");
-    tick.CancelAll("explicit_cancel");
-    Drain(tickIo, tick, "survivor", "cancelled");
 }
 
 void Reentrancy() {
@@ -1711,7 +1656,7 @@ void HeldSkillExample(const std::string& path) {
         StatusIs(runtime, "held-skill-example", "completed", "script_returned");
         Check(Field(runtime.CurrentStatus("held-skill-example"), "control_released").Boolean()
                   && TickField(runtime, "held-skill-example", "index").Number() == 4 && native.actionActive == animation
-                  && native.intentCalls == 2 && native.beginCalls == 0,
+                  && native.intentCalls == 2,
               "Runtime confirms release after done with or without an ongoing native animation");
     }
 }
@@ -1852,8 +1797,6 @@ int main(int argc, char** argv) {
         Budgets();
     else if (scenario == "lifecycle")
         Lifecycle();
-    else if (scenario == "isolation")
-        Isolation();
     else if (scenario == "reentrancy")
         Reentrancy();
     else if (scenario == "profiling")

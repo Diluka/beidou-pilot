@@ -31,7 +31,6 @@ class TickRuntimeContract(unittest.TestCase):
                 f"-I{lua}",
                 f"-I{root / 'shared/lua-runtime'}",
                 str(root / "shared/lua-runtime/TickRuntime.cpp"),
-                str(root / "shared/lua-runtime/Runtime.cpp"),
                 str(root / "shared/lua-runtime/Observation.cpp"),
                 str(root / "cli/test/tick_runtime_contract.cpp"),
                 *map(str, sorted(build.glob("*.o"))),
@@ -132,9 +131,6 @@ end
     def test_lifecycle_and_direction_release_require_native_confirmation(self) -> None:
         self.run_contract("lifecycle")
 
-    def test_old_and_new_engines_never_share_api_or_input_lifecycle(self) -> None:
-        self.run_contract("isolation")
-
     def test_native_callbacks_cannot_reenter_lua_or_invalidate_submission(self) -> None:
         self.run_contract("reentrancy")
 
@@ -148,7 +144,6 @@ end
         path = Path(__file__).resolve().parents[2] / "shared/scripts/examples/tick-held-skill.lua"
         source, metadata = read_strategy_file(path)
         self.assertIsNotNone(metadata)
-        self.assertEqual("tick", metadata.mode)
         header, body = split_script_header(source)
         source = header + "-- @tick.gear 4\n" + body
         scene = {"instance_id": "tick-contract", "character_id": 1, "map_id": 50000, "scene_generation": 1}
@@ -162,7 +157,6 @@ end
         path = Path(__file__).resolve().parents[2] / "shared/scripts/examples/tick-jump-attack.lua"
         source, metadata = read_strategy_file(path)
         self.assertIsNotNone(metadata)
-        self.assertEqual("tick", metadata.mode)
         self.assertEqual(3, metadata.execution.gear)
         # This behavior fixture advances native frames without wall-clock waits.
         header, body = split_script_header(source)

@@ -2,7 +2,7 @@
 #include "stdafx.h"
 #include "NativeObservation.h"
 #include "EventTransport.h"
-#include "Runtime.h"
+#include "Contract.h"
 
 #include <algorithm>
 #include <array>

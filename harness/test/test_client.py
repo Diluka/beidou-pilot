@@ -49,8 +49,8 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
             "seq": 1,
             "observed_at_ms": 0,
             "held_keys": [39],
-            "held_actions": ["right"],
             "script": {"id": "a" * 32, "status": "running"},
+            "scripts": [{"id": "a" * 32, "status": "running"}],
             "command": {"id": "request-a", "status": "running"},
         }
         self.path.write_text(json.dumps(self.state))
@@ -66,14 +66,14 @@ class ClientContract(unittest.IsolatedAsyncioTestCase):
             await self.client.script_status(),
         ):
             self.assertEqual(
-                ("native-alpha", "run-a", "a" * 32, "running", [39], ["right"]),
+                ("native-alpha", "run-a", "a" * 32, "running", [39], "a" * 32),
                 (
                     observation["instance_id"],
                     observation["run_id"],
                     observation["script"]["id"],
                     observation["command"]["status"],
                     observation["held_keys"],
-                    observation["held_actions"],
+                    observation["scripts"][0]["id"],
                 ),
             )
         observation = await GameClient(self.cli).observe()

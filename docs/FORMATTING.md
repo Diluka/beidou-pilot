@@ -43,9 +43,9 @@ C++ 默认在 `.h` 放接口声明与类型定义，在 `.cpp` 放普通非模�
 
 Python、Lua 按现有模块职责组织。harness 的 CLI、Controller、协议传输和客户端适配已经分工，共享 Runtime 的私有实现也有明确所有者；模块按职责拆分，单次使用的辅助函数保留在调用处。
 
-白名单以 [format.py](../tools/format.py) 为唯一来源。本批覆盖格式入口自身、近期 harness、任务管理、共享 Runtime、无头适配接线、GUI 原生输入/物品核心及直接合同；Lua 仅覆盖列入白名单的示例。未列入的历史 CLI、策略脚手架和上游改造文件保留周边惯例。
+白名单以 [format.py](../tools/format.py) 为唯一来源。本批覆盖格式入口自身、近期 harness、共享 tick Runtime、无头适配接线、GUI 原生输入/物品核心及直接合同；Lua 仅覆盖列入白名单的 tick 示例。未列入的历史 CLI 和上游改造文件保留周边惯例。
 
-装备接线整合只额外纳入实际触及的 `cli.py`、`control_scripts.py` 和 `test_unified_control.py`，不因此扩大到其余历史 CLI 文件。
+只把实际触及的 CLI 文件纳入白名单，不因此扩大到其余历史 CLI 文件。
 
 第三方原始源码、生成文件、Docker 安装文件、Shell 和 Makefile 不在本批自动整理范围。Shell 按模块保留周边写法：GUI 脚本的块缩进为两空格，harness 入口的块缩进为四空格，续行沿用各自现有形式；Makefile 命令行保留语法必需的 Tab。此范围外的文件按各自周边惯例维护。
 

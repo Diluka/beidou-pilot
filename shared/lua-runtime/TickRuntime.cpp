@@ -170,7 +170,6 @@ bool ParseTickConfig(const std::string& source, TickConfig& config, std::string&
     config = {};
     error.clear();
     std::set<std::string> seen;
-    bool hasTick = false;
     std::size_t position = 0;
     while (position < source.size()) {
         position = source.find_first_not_of(" \t\r\n\f\v", position);
@@ -213,11 +212,7 @@ bool ParseTickConfig(const std::string& source, TickConfig& config, std::string&
         if (comment != std::string::npos) value.resize(comment);
         value = Trim(value);
         if (key == "@mode") {
-            if (value == "tick")
-                config.mode = ScriptMode::Tick;
-            else if (value == "coroutine")
-                config.mode = ScriptMode::Coroutine;
-            else {
+            if (value != "tick") {
                 error = "invalid @mode: " + value;
                 return false;
             }
@@ -227,7 +222,6 @@ bool ParseTickConfig(const std::string& source, TickConfig& config, std::string&
                 return false;
             }
             config.gear = static_cast<TickGear>(value[0] - '0');
-            hasTick = true;
         } else if (key == "@tick.budget_ms") {
             double number = 0, fraction = 0.1;
             bool dot = false, digit = false, valid = !value.empty();
@@ -252,36 +246,24 @@ bool ParseTickConfig(const std::string& source, TickConfig& config, std::string&
                 return false;
             }
             config.budgetMs = number;
-            hasTick = true;
         } else if (key == "@tick.overrun") {
             if (value != "abort" && value != "skip") {
                 error = "@tick.overrun must be abort or skip";
                 return false;
             }
             config.skipOverrun = value == "skip";
-            hasTick = true;
         } else if (key == "@tick.abort_commit") {
             if (value != "true" && value != "false") {
                 error = "@tick.abort_commit must be true or false";
                 return false;
             }
             config.abortCommit = value == "true";
-            hasTick = true;
         } else {
             error = "unknown tick declaration: " + key;
             return false;
         }
     }
-    if (hasTick && config.mode != ScriptMode::Tick) {
-        error = "@tick declarations require @mode tick";
-        return false;
-    }
     return true;
-}
-
-ScriptMode ParseScriptMode(const std::string& source, std::string& error) {
-    TickConfig config;
-    return ParseTickConfig(source, config, error) ? config.mode : ScriptMode::Invalid;
 }
 
 struct TickRuntime::Impl {
@@ -1001,12 +983,6 @@ struct TickRuntime::Impl {
                               {"budget_yields", session.overruns},
                               {"last_resume_us", session.lastUs},
                               {"max_resume_us", session.maxUs},
-                              {"tasks", Value::Array()},
-                              {"control", Value::Object({{"owner", movementOwner != nullptr ? movementOwner->id : ""},
-                                                         {"pending", ""},
-                                                         {"from", ""},
-                                                         {"to", ""},
-                                                         {"reason", ""}})},
                               {"control_released", !owned},
                               {"tick", Value::Object({{"index", session.index},
                                                       {"gear", static_cast<int>(session.config.gear)},
@@ -1061,10 +1037,6 @@ bool TickRuntime::Start(const std::string& scriptId, const std::string& source, 
         return false;
     };
     if (!ParseTickConfig(source, session.config, error)) return reject("script_load_error");
-    if (session.config.mode != ScriptMode::Tick) {
-        error = "tick runtime requires @mode tick";
-        return reject("script_load_error");
-    }
     runtime.observed = runtime.adapter.Observe();
     if (!runtime.observed.ready || !runtime.observed.inGame) {
         error = "not_in_game";

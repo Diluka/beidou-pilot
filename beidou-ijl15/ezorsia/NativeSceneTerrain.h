@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #pragma once
 
-#include "Runtime.h"
+#include "Contract.h"
 
 namespace BeiDouBridge {
 // dataRoot is the explicitly mounted local IMG catalog, not the client cwd.

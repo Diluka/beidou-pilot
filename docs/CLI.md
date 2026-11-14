@@ -114,7 +114,8 @@ private/workbenches/workbench /external/workbench character result REQUEST_ID --
 | `inspect KIND [ID]` | 按需领域读数或静态资料 |
 | `watch --seconds N --interval N` | 持续只读状态，JSONL输出 |
 | `events read/watch` | 当前实例原生事件；由 GUI 同类通知气泡提供 |
-| `bridge status/script status` | 只读桥、动作和脚本状态 |
+| `bridge status/stop` | 只读桥状态，或停止全部脚本会话并释放输入 |
+| `stop` | 释放本实例遗留按键，等价于全停会话 |
 
 动作、脚本等客户端参数直接跟在命令后，属于客户端参数。比如 `script run FILE --seconds 20` 的文件路径按容器内部解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查。中断脚本 CLI 只结束等待，脚本取消另行显式 `script cancel --session`。
 
@@ -179,53 +180,29 @@ private/workbenches/workbench /external/gui-workbench notifications respond @not
 
 ## 动作与 Lua
 
+客户端只有 tick Lua 引擎。角色动作写在 UTF-8 Lua 文件中，由 `script describe/run/start` 提交；脚本入口只有文件，没有 CLI 动作命令。
+
 ```bash
-private/workbenches/workbench /external/workbench walk right --seconds 0.2
-private/workbenches/workbench /external/workbench script run --code 'game.log("你好，Lua"); game.sleep(0.1)' --seconds 20
-private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
-private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --continuous
-private/workbenches/workbench /external/workbench script start --code 'while true do game.sleep(1) end' --continuous
-private/workbenches/workbench /external/workbench script describe /work/scripts/hunt.lua
-private/workbenches/workbench /external/workbench script run /work/scripts/hunt.lua --mob-id 1001001 --skill-id 1001005 --seconds 60
+private/workbenches/workbench /external/workbench script describe /work/scripts/tick_observe.lua
+private/workbenches/workbench /external/workbench script run /work/scripts/tick_observe.lua --ticks 10 --seconds 20
+private/workbenches/workbench /external/workbench script start /work/scripts/tick_observe.lua --seconds 20
+private/workbenches/workbench /external/workbench script status
+private/workbenches/workbench /external/workbench script status --session SCRIPT_ID
 private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
 ```
 
 | 命令 | 支持与结果边界 |
 | --- | --- |
-| `walk DIR --seconds N`、`face DIR`、`jump` | 有界方向移动、朝向、跳跃尝试 |
-| `attack`、`pickup`、`use_item ID` | 原生尝试；`use_item` 的消耗和恢复由后续观察确认 |
-| `revive` | 无头发一次正常复活请求并确认同角色恢复；GUI 使用已识别死亡确认框；存活时跳过 |
-| `click REF` | 无头激活当前原生控件或NPC目标引用；GUI保留既有引用与桌面点击流程 |
-| `equip ITEM --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头普通装备；明确背包正槽和身上负槽，核对物品 ID 及实际替换结果 |
-| `unequip --slot SOURCE --to-slot TARGET [--seconds 3]` | 无头卸下普通装备；明确身上负槽和空背包正槽 |
-| `stats STAT COUNT`、`skills SKILL [COUNT]` | 明确属性/技能与点数；两端 Lua 原生逐点双确认，GUI 复用本端必要窗口；未知或部分结果保留现状，按最新状态继续 |
-| `move X`、`move X --to-y Y`、`climb X --to-y Y`、`portal NAME` | Lua执行同层对齐、单地图跨平台寻路、单根绳梯或单个门户；`move --to-y` 用静态平台图（走、跳台上升、落层、绳底跳抓）行进，竖直墙把平台切成不同区间，不支持跨地图自动选路 |
-| `hunt [MOB\|all]` | 单场景自主找怪、可达跨平台和连续战斗；支持 `--skill ID`、`--range N`、限时或 `--continuous` |
-| `script run/start --library travel\|island-supply` | 显式装载旅行函数；Lua消费者在一次会话内调用已知路线并核对目的地 |
-| `navigate MAP_ID [--x X --to-y Y]` | 按本地门户资料自动计算到目的地图的路线，逐段场景内寻路、按上换图并核对落点；给出坐标时继续走到目的位置；`--plan-only` 只输出静态路线 |
-| `use ITEM --count N`、`--until-hp N`、`--until-mp N` | 核对库存消耗与恢复；计数范围和组合以帮助/实际分类为准 |
-| `script describe FILE` | 只读本地策略文件，输出 `main(context)`、mode、有效 tick 配置、声明参数和动态用法 |
-| `script run/start FILE [策略参数]` | 带 `main(context)` 的文件按注释动态解析参数并接收场景上下文；按前导 mode 进入独立引擎；无入口的旧文件仍作为原始 chunk 运行 |
-| `script run FILE`、`script run --code CODE` | 原生会话同步等待结果；`--code` 始终按原始源码执行，中断等待时脚本继续运行，持续模式显式声明 |
-| `script start FILE`、`script start --code CODE` | 原生受理后返回，脚本由客户端独立执行；返回实例、运行、请求与脚本身份 |
-| `script status [--session SCRIPT_ID]` | 只读全部会话 `scripts` 与最新 `script`，可按 ID 选择；tick 含调度和 player 状态 |
-| `script cancel --session SCRIPT_ID` | 精确取消指定会话并等待所属输入释放，其他会话保持；旧后端无 `scripts` 时保留单会话 stop 兼容 |
-| `task add/replace/stop` | 向指定活动 coroutine 会话管理独立任务；不支持 tick，不取得整会话动作锁 |
-| `task result REQUEST_ID` | 只读查询已保留的任务管理结果，包括超时后补查的结果 |
-| `stop` | 无其他活动 coroutine 控制者时走旧动作路径清理遗留控制 |
-| `bridge stop` | 明确停止两个引擎的全部会话并释放输入；不等同于按 ID 取消 |
-| `key KEYS --seconds N` | 原版按键扩展；无头端按自身能力声明返回 |
-| `skill ID` | 原生技能请求；无头首批1001004/1001005，其他类型明确不支持 |
+| `script describe FILE` | 只读本地 tick 策略文件，输出 `main(context)`、有效 `@mode`/`@tick` 配置、声明参数和动态用法；不执行入口。 |
+| `script run FILE [策略参数]` | 客户端内同步等待会话终态；等待中断只结束 CLI 等待，已受理会话继续运行。 |
+| `script start FILE [策略参数]` | 原生受理后返回，脚本由客户端独立执行；返回实例、运行、请求与脚本身份。 |
+| `script status [--session SCRIPT_ID]` | 只读全部会话 `scripts` 与最新 `script`，可按 ID 选择；tick 会话含调度、动作与所属输入释放事实。 |
+| `script cancel --session SCRIPT_ID` | 精确取消指定会话并等待所属输入释放，其他会话保持。 |
+| `stop`、`bridge stop` | 停止全部会话并释放输入；`stop` 保留为释放遗留按键的轻量入口。 |
 
-[跨场景导航](../../shared/scripts/travel/navigate.lua)由 CLI 先在本地只读资料里按有向门户计算路线（`cli/beidou_pilot/world_map.py`），把每张地图的地形与门户坐标打包进调用上下文，再由客户端 Lua 逐段执行场景内寻路、按上换图和落点核对。脚本门户、出租车与飞艇等付费交通不进入静态路线；路线中某张地图没有自身地形时明确失败，不推断链接地图。失败原因区分无路线、路线过长、缺地形、门户坐标未知、换图后地图不符、门户未触发、场景内不可达与预算耗尽，信息带第几段、地图、门户与坐标。
+`script run/start` 只接受 UTF-8 Lua 文件，文件必须声明顶层 `main(context)` 函数，否则在发布前拒绝。运行期限用 `--seconds`（默认 30，范围 `0.001..4294967.295` 秒）或显式 `--continuous`；期限与单次回调的 `@tick.budget_ms` 独立。文件路径按容器内部解析；工作台整体挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，每次调用读取当前文件内容。脚本日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
 
-[跨平台移动](../../shared/scripts/travel/walk_to.lua)只处理当前地图：按静态地形平台图计算最短平台路径，逐段执行走、跳台、落层与绳梯，落地后重新采样再规划。平台图由共用模块 [_terrain.lua](../../shared/scripts/travel/_terrain.lua) 构建：foothold 的竖直段作为墙，把平台切成不同可站立区间；绳索按沿途每层平台连接，绳底高于平台时按跳跃可及范围放宽。目标坐标必须落在平台范围内，`--plan-only` 只输出规划路径不输入；执行失败过的边在本次会话禁用并重新规划，对话窗口打开、身份或地图变化、HP低于安全比例、目标不在平台、平台图不可达或预算耗尽时明确失败，错误信息带地图、坐标、失败阶段和原因，不猜测结果。
-
-`--code` 的值是完整 Lua 源码，按 shell 的引号规则作为一个参数传入；源码以 `--` 注释开头时使用 `--code='-- 注释…'` 的等号形式。直接源码保持原样执行，不解析 `@option` 或注入策略上下文，但前导 `@mode/@tick.*` 仍校验并决定原生引擎。文件路径按容器内部解析；工作台整体已挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，每次调用读取当前 UTF-8 文件内容。带顶层 `main(context)` 的文件是策略入口，`script run/start FILE` 按声明校验参数并由所选引擎执行；其他旧 Lua 文件保持原始 chunk 路径。两种方式都可在已运行实例中提交，执行期限和精确取消规则相同，API 则按 mode 相互独立。`script status` 不接收源码或文件，可选 `--session SCRIPT_ID`。源码模式的结果中 `script_file` 为 `null`；日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
-
-### tick 脚本与并发会话
-
-省略 mode 或声明 `-- @mode coroutine` 使用冻结维护的旧协程环境；声明 `-- @mode tick` 使用独立的新引擎，按每会话频率档位到期调用 `main(context)`，通过 `context.state` 保留状态，通过 `context.game` 的独立只读领域观察，通过 `context.game.player` 提交即时意图。tick 没有旧 `game.state()/sleep/阻塞动作/任务` API，不混用两套环境。内置旅行、狩猎、恢复脚本未迁移；验证用 tick 文件独立装载，不改变内置脚本。
+tick 引擎按每会话频率档位到期调用 `main(context)`，通过 `context.state` 保留跨调用状态，通过 `context.game` 的只读领域观察，通过 `context.game.player` 提交方向与动作意图；调用频率、预算、领域字段和动作槽语义以 [Tick Lua API](LUA_TICK_API.md#tick-环境) 为准。完整示例：
 
 ```lua
 -- @mode tick
@@ -236,25 +213,19 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 -- @option[type=int,default=5,min=1] ticks 观察次数
 local function main(context)
     context.state.calls = (context.state.calls or 0) + 1
+    local world = context.game.world
+    if not world.ready then return end
     if context.state.calls >= context.options.ticks then return "done" end
 end
 ```
 
 ```bash
-private/workbenches/workbench /external/workbench script describe /work/scripts/tick_observe.lua
-private/workbenches/workbench /external/workbench script start /work/scripts/tick_observe.lua --ticks 120 --continuous
-private/workbenches/workbench /external/workbench script status
-private/workbenches/workbench /external/workbench script status --session SCRIPT_ID
-private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
+private/workbenches/workbench /external/workbench script run /work/scripts/tick_observe.lua --ticks 120 --continuous
 ```
 
-mode/config 只读取文件级前导单行注释，Lua 长注释内部及正文中的伪声明不生效。未知/重复 mode 或 tick 配置、非法值、coroutine 中的 tick 配置均在发布前拒绝。`@tick.gear` 接受 `1/2/3/4`，分别为10Hz、20Hz、30Hz和本端原生更新不节流，默认第3档；不接受前导零或任意tick倍率。首次稳定回调立即执行，之后按绝对相位跳过过期周期，不突发补跑。频率仅限制Lua判断和无消费者core刷新，取消、期限、原生消费、后继槽及放键每宿主更新继续；调用时领域是该帧新事实。固定频率是目标而非严格最大延迟。默认单次预算 **100ms / abort / abort_commit=true**；预算接受正有限十进制毫秒数（可为小数），不接受符号、指数或非有限数。`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用，下一次 `context.tick.overrun=true`。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。完整字段、动作槽和领域说明见 [tick API](LUA_TICK_API.md#tick-环境)。
+`@mode` 可省略并视为 tick；`@tick.gear/budget_ms/overrun/abort_commit` 可单独或与显式 `@mode tick` 一起使用。`@mode` 其他值、未知或重复配置、非法值均在发布前拒绝。`@tick.gear` 接受 `1/2/3/4`，分别为 10Hz、20Hz、30Hz 和本端原生更新不节流，默认第 3 档；不接受前导零、符号或任意 tick 倍率。首次稳定回调立即执行，之后按绝对相位跳过过期周期，不突发补跑。固定频率是目标而非严格最大延迟。默认单次预算 **100ms / abort / abort_commit=true**；`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。
 
-CLI tick 编译只注入既有 `options/scene/route`，返回入口及上下文，不执行 main，也不调用旧 `game.state()`；初始静态 scene 身份由原生核对。直接 `--code` 的 tick 脚本自行定义全局 main 或返回入口表，不自动注入策略参数。buff 按本端可读能力；首版两端 `buffs` 为未知、`buffs_status=unsupported`，不伪造空列表。
-
-旧原生桥没有 `scripts` 能力时，tick 在发布前返回 `bridge_tick_unsupported`，不会回退到 coroutine 产生假成功。同客户端可追加多个 tick 会话，也可与一个 coroutine 会话并存。发布/受理时短暂持锁，`script run` 的终态等待不占整程动作锁；第二个 coroutine 仍返回 `input_busy`。多 tick 共享客户端唯一角色状态机，后写覆盖；动作忙时不同动作写入单个后继槽并返回 `false,"busy"`，后写覆盖排队项，动作完成后才执行，不形成无界队列。
-
-`script status` 保留最新接纳的 `script`，新增包含各会话的 `scripts`；每项保留旧基本状态并新增 `mode` 和会话级 `control_released`。tick 的 `tick` 展示有效gear、实际调用index/time/delta、场景代次、预算、超限策略及次数，`player` 展示共享角色动作状态；它不是角色 HP/buff。指定 `--session` 后 `script` 选择对应会话，`scripts` 仍保留全部会话。`command` 是最近命令，不能代替会话身份。精确取消只检查目标终态及所属输入释放，其他会话仍持键是正常事实；需要全部停止时显式 `bridge stop`。
+### 策略参数与状态
 
 策略选项写在入口附近的 Lua 注释中；类型支持 `int`、`number`、`string`、`boolean`。非布尔参数没有 `opt` 或 `default` 时必填，声明默认值后可省略。布尔参数未声明 `default` 时可省略且默认为 `true`；显式 `default=false` 时省略则为 `false`。`min`/`max` 用于数值范围，`choices=a|b` 限定候选值。默认值、正向 flag 和显式值按 `choices` 校验，`--no-flag` 作为无值负向开关直接传入 `false`，不因 `choices` 未列出 `false` 而拒绝。Lua 参数名中的下划线映射为 CLI 连字符：
 
@@ -265,102 +236,28 @@ CLI tick 编译只注入既有 `options/scene/route`，返回入口及上下文�
 -- @option[type=boolean] observe_only 仅观察；省略时默认 true
 -- @option[type=boolean,default=false] attack_enabled 默认关闭攻击
 local function main(context)
-    local map_id = context.scene.map_id
-    game.log("map=" .. tostring(map_id)
+    game.log("map=" .. tostring(context.scene.map_id)
         .. ", mob=" .. tostring(context.options.mob_id)
-        .. ", observe_only=" .. tostring(context.options.observe_only)
-        .. ", attack_enabled=" .. tostring(context.options.attack_enabled))
+        .. ", observe_only=" .. tostring(context.options.observe_only))
 end
 ```
 
-`script describe FILE` 显示动态参数帮助及有效默认值。布尔选项始终可省略：未显式声明 `default` 时默认 `true`，显式 `default=false` 时省略后为 `false`；裸 `--flag` 与 `--no-flag` 分别传入 `true`、`false`，也可显式写成 `--flag true|false`。默认值、正向 flag 和显式值按 `choices` 校验；负向 `--no-flag` 作为无值布尔开关直接传入 `false`，不因 `choices` 未列出 `false` 而拒绝。策略的 `context.options` 包含 CLI 值和声明默认值；`context.scene` 带有只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 及静态地形。`context.scene.terrain.status` 是 `available`、`unavailable` 或 `unsupported`；只有 `available` 时才提供有来源的 `footholds` 与 `ropes`。调用入口前会重新核对实例、角色、地图和场景代次；上下文过期时策略主体不运行。标准策略再次采样初始状态时也会与 `context.scene` 核对，避免预检后场景变化仍执行旧规划。动态角色状态继续通过 Lua API 查询。
+`script describe FILE` 显示动态参数帮助及有效默认值。策略的 `context.options` 包含 CLI 值和声明默认值；`context.scene` 带有只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 及静态地形，调用方已有的 `context.route` 按原规则保留。`context.scene.terrain.status` 是 `available`、`unavailable` 或 `unsupported`；只有 `available` 时才提供有来源的 `footholds` 与 `ropes`。换图与场景代次变化由原生 tick 引擎更新只读 `context.scene`，策略在 `context.state` 中管理自己的缓存。
 
-策略自有的时间预算声明为 `budget_seconds`（CLI `--budget-seconds`），与控制整个原生脚本生命周期的 `--seconds` / `--continuous` 分开。仓库内旅行、战斗和恢复策略都使用标准 `main(context)` 与 `@option`；旅行策略装载时自动组合其共用的 `_common.lua`。函数库及普通 chunk 仍保留各自原始用途。
+`script status` 保留最新接纳的 `script`，并列出全部会话 `scripts`；每项含 `mode`、状态、原因、会话级 `control_released`，tick 另含有效 gear、实际调用 index/time/delta、场景代次、预算、超限策略及共享 `player` 动作状态。`player` 只区分当前输入槽和已开始的原生动作，不是角色 HP/buff。指定 `--session` 后 `script` 选择对应会话，`scripts` 仍保留全部会话；`command` 是最近命令，不能代替会话身份。同一客户端可追加多个 tick 会话，共享唯一角色状态机，后写覆盖；精确取消只检查目标会话终态及所属输入释放，需要全部停止时显式 `stop` 或 `bridge stop`。
 
-`script run` 同步等待会话结果，`script start` 等待原生受理。两者在等待期间收到 Ctrl+C/SIGINT/SIGTERM 都只结束本次等待，不取消已发布的原生任务；等待超时或观察失败只结束 CLI 等待，任务是否停止以当前状态为准。先用 `script status` 核对当前原生身份、`script.id` 与任务，结果未确认时先观察再决定。取消须明确 `script cancel --session SCRIPT_ID`，并核对终态与放键；客户端关闭另用 `close`。原生执行期限、角色变化、断线和脚本自身错误等停止规则保留。coroutine 仍保留单会话约束，tick 可追加或与 coroutine 并存；任一活动 Lua 会话存在时普通窗口输入返回 `input_busy`；`--continuous` 显式给出，持续控制在原生 Runtime 内执行。
-
-在已有脚本会话中调整一项任务，先用 `script status` 取得 `script.id` 和该任务的 `revision`，再明确传给任务管理入口：
-
-```bash
-private/workbenches/workbench /external/workbench task add observer \
-  --session SCRIPT_ID --priority 0 --code 'while true do game.log("观察中"); game.sleep(1) end'
-private/workbenches/workbench /external/workbench task replace chase /work/scripts/chase.lua \
-  --session SCRIPT_ID --revision 2 --priority 10
-private/workbenches/workbench /external/workbench task stop chase \
-  --session SCRIPT_ID --revision 3
-private/workbenches/workbench /external/workbench task result REQUEST_ID
-```
-
-新增和替换必须提供 `--priority` 与文件或 `--code`，停止只提供任务名、`--session` 和预期 `--revision`。任务名是1至64字节的非NUL文本，可包含中文和空格；`main` 由整会话入口管理。新增使用会话内未占用的名称；替换为同名的新版本，分配新的 `revision`，旧版本历史仍可查看。停止已结束的当前版本返回 `changed=false`；旧版本请求返回版本不匹配，新版本保持运行。
-
-任务源码直接作为独立chunk运行，共享本次会话的全局变量和 `game` API，局部变量按各自 chunk 隔离。动作任务先 `game.acquire()`，取得控制后重新采样与规划；原会话中已有的动作逻辑也需遵守这一多任务约定。替换先编译，编译失败保留旧任务及其输入；编译成功后停止旧版本，确认其输入释放后安装新版本。任一任务运行后的Lua错误继续停止整个会话；替换作用于后续执行，已发生的副作用按实际记录。
-
-管理结果的 `completed` 表示任务已安装或指定版本已停止并完成其释放确认，实际游戏效果需另行观察；`control_released` 只针对被替换或停止的旧任务，其他任务仍可持有输入。`--timeout` 默认3秒，只限制本次管理等待。
-
-请求发布前，例如等待 `task.lock` 时，Ctrl+C/SIGTERM返回通用 `interrupted` 和退出码130，此时没有已发布的 `request_id`；等待管理锁超时返回 `task_management_busy`。请求发布后，等待结果超时返回 `task_result_unconfirmed`，Ctrl+C/SIGTERM返回 `task_request_interrupted` 和退出码130，这两种结果都保留已发布的 `request_id`。管理等待失败时整会话继续运行，请求按一次发布处理；已发布的请求可用 `task result` 查询最终结果，再决定后续操作。查询结果属于响应中记录的历史实例和会话，当前角色效果另行观察。
-
-移动和战斗参数只对当前场景有效。地形与恢复属性通过配置的只读原版 `Data/**/*.img` 和共享原生解析器读取；资料缺失或未支持时明确拒绝。`hunt` 根据当前位置在本场景连续寻找可达目标，允许正常换平台和空中攻击，地图或场景代次变化则停止。狩猎受成长节点限制。
-
-```bash
-private/workbenches/workbench /external/workbench hunt all --seconds 60
-private/workbenches/workbench /external/workbench hunt 100100 --continuous --hp-item 2000000
-private/workbenches/workbench /external/workbench hunt all --skill 1001004 --range 60 --seconds 30
-```
-
-`hunt` 默认普攻、全部怪物、60秒，`--bounds MIN MAX` 可限定横向区域，`--until-level` 指定停级，`--min-hp-ratio` 默认0.35。`--hp-item` 仅使用明确指定、库存已知的恢复品。技能必须已学且当前后端支持；无头首批仅支持战士 `1001004/1001005`，其他类型明确拒绝。狩猎不包含拾取或结束后撤退。攻击距离是策略接近参数，命中以实际战斗结果为准。无可确认的进展、不可通过的地形、生命下限或取消都有明确停止；原始日志保留所属实例，最终经验跨级时按等级与经验字段分别记录。
-
-`hunt` 接受 `--first-job magician|warrior|bowman|thief|pirate`，只为本次新手练级明确首转路线：魔法师默认停8级，战士、弓箭手、飞侠、海盗默认停10级。`--until-level` 可以更早停止；高于明确转职节点时仍停在该节点，例如 `--first-job magician --until-level 10` 实际停8级。达到或超过已知节点后返回 `advancement_due`，本次装载到此结束。已转职角色依据当前职业沿用30/70/120级节点，`--first-job` 只作用于新手角色。
-
-```bash
-private/workbenches/workbench /external/workbench hunt all --first-job magician --seconds 60
-```
-
-新手路线未知时，两端 `status`/`snapshot` 的 `advancement.level`、`due` 为 `null`，`candidates` 列出各路线节点，前次命令的选择不写入状态。没有路线也没有 `--until-level` 时，`hunt` 先停在8级检查点；到达后再次默认调用返回 `advancement_route_required`，要求明确路线或本次目标。检查点只表示本次调用的停级。未知路线下显式给出的 `--until-level` 按调用方目标执行，包括10级；调用方按养成计划选择边界。
-
-狩猎结果的 `requested_level` 是实际装载的停级，`advancement` 保留当前节点或未知候选，`stop_level_source` 区分 `advancement`、`first_job_checkpoint`、`until_level`。无适用节点且未明确停级时，`hunt` 不附加等级上限（`none`）。停级在Lua观察到等级达到或超过边界时生效；转职条件与加点由独立命令处理。
-
-已知路线可在一个有界 Lua 内复用，接口与适用起点见 [Lua 旅行函数库](LUA_COROUTINE_API.md#可选旅行函数库)。例如从50000东上层行进至相邻安全城镇：
-
-```bash
-private/workbenches/workbench /external/workbench script run --library island-supply --code 'local result = island_supply.to_town({seconds=30}); assert(result.arrived)' --seconds 35
-```
-
-`island_supply.to_field()` 从城镇西入口区域返回50000东下层。它只负责路线行进，购物、交任务、分配点数和战斗由各自命令完成。起点不符、有段未到达、意外转场或安全条件不足时停止，`route_failed` 保留 `arrived=false`、阶段和原因；原生动作错误同时保留最近的 `route_stage` 日志。成功返回表必须经过终点地图、区域和停止后的复采确认。CLI只组合源码，原生会话继续持有生命周期；`start`、等待中断及精确取消仍遵循同一规则。
-
-在已知绳梯附近接续 `hunt` 时，策略可在总预算内恢复到狩猎边界内的已知端点，通过实际横移和平台位置复采确认脱绳后再找怪。日志 `hunt_rope_recovery` / `hunt_rope_recovered` 区分恢复尝试和已确认恢复；无安全端点、候选不唯一、遇阻或预算不足会明确停止。此行为不依赖 GUI 未知的 `settled`，可恢复范围以当前地形事实为准。
-
-已知近距 `pt7` 脚本门户由原生 Up 输入走正常脚本门户请求，静态目标未知时保留未知，到达以在线地图和位置确认。通用路线规划与静态查询资料由各自的命令提供。
-
-无头 `use` 接受数字ID的200类药品和201类食品。两端普通200类药品均走Lua原生用药，快捷键绑定无关；按次数使用只依赖库存，带HP/MP目标时需要资料已知恢复类型。
-
-无头201类食品不带HP/MP目标时为明确单次消费，仅接受 `--count 1`（默认值），满HP/MP仍会提交一次。该路径只依赖库存；结果 `effect="consumption"`、`effect_confirmed=true` 表示库存已恰减一。前后HP/MP分别保留，观察到增长时 `recovery_confirmed=true`，未观察到增长时为 `null`，恢复效果以实际数值为准。`healing_metadata_known` 与 `metadata_unavailable` 说明静态恢复资料的已知范围。带HP/MP目标时沿用有界恢复流程，仍需资料已知恢复类型。
-
-`use_item ID` 及 `game.use_item(ID)` 只报告单次原生派发，食品消耗和恢复须由后续观察确认。GUI其他已支持恢复品保留背包工作流；203类传送卷仅支持GUI单次使用，不接受HP/MP目标。
-
-无头 `equip` 要求数字物品 ID、装备背包源正槽和身上目标负槽；Lua 先读取库存，核对该源槽仍是明确指定的物品。目标已有普通装备时，正常替换将其放回源槽。`unequip` 要求明确源负槽和空背包目标正槽。两者通过共享 Lua 发起一次正常装备请求，在无头原生更新中等待源、目的槽位对象变化。`--seconds` 默认3秒，范围为0.001至30秒；超时、取消、接管或换图保持未确认事实，请求按一次派发处理。随后先读取最新背包和身上槽位，再决定下一步。
-
-CLI 仅在脚本 `status="completed"` 且最终 `action_result.effect="confirmed"` 时返回 `confirmed=true`。脚本正常完成但槽位效果未知时，报 `equipment_change_unconfirmed`，错误详情保留本次结果；`cancelled` 等终态按实际终态返回。Python 只负责参数、Lua 装载/取消和终态投影，换装反馈由原生库存更新提供。
-
-原版 `equip ITEM` 保留原有 GUI 工作流，新增原生槽位参数供无头使用；`unequip` 由无头端的槽位参数提供。换装覆盖普通装备，强化、现金外观和其他装备操作按各自命令处理。
-
-`skill` 保留 `native_result`、`dispatched/skill_reason` 和未知效果，顶层 `reason` 继续表达脚本终态。原生数值含义随后端不同：无头枚举0表示准入，GUI保留原返回值，命中以实际战斗结果为准。需要停止活动脚本时，先读取当前 `script.id`，显式 `script cancel --session` 并等待终态和放键；其他动作命令在控制权释放后执行。脚本能力及效果判断见 [CONTROL](CONTROL.md)。
-
-无头 `snapshot` 与 `bridge status` 提供 `dead/revive_requestable`：死亡来自已就绪角色的原生 HP=0；读数不可用时保持未知。`revive_requestable` 表示客户端请求前置已满足，服务端许可由实际请求结果确认。无头 `revive` 通过共享 Lua 默认等待至多6秒，只有同角色 HP>0 且地图、位置有效才返回 `revived`；存活返回 `already_alive`，请求按一次执行。未确认返回 `revive_not_confirmed`，取消/断线保留实际结果；死亡观察只报告状态。参数化等待及脚本用法见 [Lua API](LUA_COROUTINE_API.md#无头正常复活)。
+动作设置返回受理，不代表技能已开始、命中或药效已发生；调用方以实际游戏事实核对结果。需要移动、战斗、用药等动作时写 tick Lua，不要把动作拆回 Python 逐帧控制。
 
 ## 无头控件交互
 
-先用 `snapshot` 观察 `interaction.page` 的正文和控件，再对选定控件执行一次 `click REF`；场景NPC的原生 `ref` 也使用同一激活入口。`REF` 必须替换为当前观察到的引用：
+无头端保留只读观察，不提供桌面输入入口：`snapshot` 与 `inspect` 返回当前 `interaction.page`、控件 `role/text/enabled/ref` 和场景 NPC 引用；`click`、`ui`、`equip`、`revive`、`hotkeys`、`bind`、`talk`、`dialog`、`shop`、`notifications` 等 GUI 命令在无头端统一返回 `unsupported_capability`。需要激活页面控件或 NPC 时使用原版 GUI 会话；无头端的任务接交等交互能力当前不提供，缺口见[能力边界](CLIENT_LIMITATIONS.md)。
 
 ```bash
 private/workbenches/workbench /external/workbench snapshot
-private/workbenches/workbench /external/workbench click CONTROL_REF
+private/workbenches/workbench /external/workbench inspect quests
 ```
 
-页面只有 `source/title/text/controls`，控件只有 `role/text/enabled/ref`。正文或控件未知时为 `null`，`enabled=null` 保持未知。引用由原生单点生产和验证；CLI 原样传递引用，失效引用按当前页面重新读取。`--double` 与坐标点击仅GUI可用。
-
-激活只报告控件处理或页面变化，任务完成、奖励和消费到账随后用当前交互页、`inspect quests`、背包及角色核对。服务端普通脚本页和客户端本地任务页使用同一入口。本地页只显示当前状态能证明的任务条目，先读取真实资料详情，再激活确认控件；资格未知时确认控件保持不可用。缺少原版 Quest IMG 只影响本地任务界面；任务接交由通用控件交互完成。
-
-任务观察已合并完整角色包与本端正常增量，`live_updates=true`，`live_update_kinds` 为 `not_started/started/completed`。原生观察保留原始进度串，关联语义未核实，`linked_progress=null`；持续观察由本端正常增量提供。
+页面只有 `source/title/text/controls`，控件只有 `role/text/enabled/ref`。正文或控件未知时为 `null`，`enabled=null` 保持未知。服务端普通脚本页和客户端本地任务页的激活由 GUI 端提供；本地页只显示当前状态能证明的任务条目。任务观察已合并完整角色包与本端正常增量，`live_updates=true`，`live_update_kinds` 为 `not_started/started/completed`。原生观察保留原始进度串，关联语义未核实时 `linked_progress=null`。
 
 ## 原版 GUI
 
@@ -384,17 +281,19 @@ GUI 容器在自身网络命名空间启用回环游戏端口 NAT，连接已核
 
 | 命令组 | 用途 |
 | --- | --- |
-| `talk TARGET`、`dialog` | 原版已有NPC桌面消费者；无头使用通用控件交互 |
-| `ui read/open/close/focus` | 已识别窗口和输入焦点；`ui close all`同时处理普通商店 |
-| `equip ITEM` | 普通唯一槽位走 Lua 并核对原生对象；多目标/特殊槽位保留既有 GUI 自动选择，不接受无头槽位参数 |
-| `hotkeys`、`bind`、`press` | 读取、拖放绑定和按已有物品/技能快捷键 |
-| `shop read/buy/sell/close` | 普通商店读取与指定买卖；数量框和关店按实际UI收尾 |
+| `talk TARGET`、`dialog` | 原版 NPC 对话与桌面消费者 |
+| `click REF` | 激活当前控件引用或桌面坐标；无头端返回 `unsupported_capability` |
+| `ui read` | 读取已识别窗口；窗口开关与焦点命令不再提供 |
+| `equip ITEM` | 普通唯一槽位走原版背包点击换装；无头端返回 `unsupported_capability` |
+| `hotkeys`、`bind` | 读取当前键位、拖放绑定物品或技能 |
+| `shop read/buy/sell/close` | 普通商店读取与指定买卖；数量框和关店按实际 UI 收尾 |
+| `revive` | 死亡时只操作已识别确认框一次并核对同角色恢复；无头端返回 `unsupported_capability` |
 | `screenshot [NAME]`、`record NAME` | 当前窗口截图或有界逐帧记录，不发游戏输入 |
 
-引用来自本次快照，换图、对话翻页、重登或目标变化后重新读取。任务/奖励、消费、加点和交易按一次派发处理；以当前完整正文和实际变化判断。GUI输入只允许一名明确操作者。
+引用来自本次快照，换图、对话翻页、重登或目标变化后重新读取。任务/奖励、消费和交易按一次派发处理；以当前完整正文和实际变化判断。GUI 输入只允许一名明确操作者。
 
 ## 有限批次
 
 `batch [--file PATH]` 接受非空JSON参数数组，先解析全部CLI参数，再顺序执行。批次绑定当前实例，嵌套 batch 按错误拒绝。进度写stderr，最终仍是单个JSON；批内watch收为最终状态。
 
-某一步抛错时立即停止，错误详情含从0开始的 `index`、此前 `completed` 和原始 `cause`，已发生效果按实际保留。子命令正常返回预算停止或取消状态时批次继续；批次用于编排无需中途决策的有限步骤，持续控制写Lua。
+某一步抛错时立即停止，错误详情含从0开始的 `index`、此前 `completed` 和原始 `cause`，已发生效果按实际保留。子命令正常返回预算停止或取消状态时批次继续；批次用于编排无需中途决策的有限步骤，持续控制写Lua。批次不接受 `script run/start/describe`（这些入口要先读取本地文件，CLI 在批次内返回 `usage`），`script status` 与 `script cancel` 可用。

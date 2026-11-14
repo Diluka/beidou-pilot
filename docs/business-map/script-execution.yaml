@@ -2,24 +2,24 @@ schemaVersion: 1
 map:
   id: script-execution
   title: Lua 脚本执行与控制权
-  summary: 在指定客户端实例中装载 Lua，管理会话、任务、控制权、期限与取消，并等待所属输入释放。
+  summary: 在指定客户端实例中装载 tick Lua，管理会话、调度、期限与取消，并等待所属输入释放。
 nodes:
   - id: script-execution
     kind: domain
     name: Lua 脚本执行
-    summary: 为脚本作者和外部消费者提供两端共用的执行生命周期；玩法判断由脚本决定，客户端容器生命周期由实例管理负责。
-    aliases: [Lua Runtime, 脚本调度, 任务执行]
+    summary: 为脚本作者和外部消费者提供两端共用的 tick 执行生命周期；玩法判断由脚本决定，客户端容器生命周期由实例管理负责。
+    aliases: [Lua Runtime, 脚本调度, tick 执行]
     anchors:
       - kind: directory
         value: shared/lua-runtime
-        description: 两端共享的脚本会话、任务调度与控制权实现。
+        description: 两端共享的 tick 脚本会话、调度与取消生命周期实现。
       - kind: document
         value: docs/CONTROL.md
         description: 脚本、输入释放、实例生命周期与游戏效果之间的契约。
   - id: script-execution.run
     kind: scenario
     name: 在现有实例运行 Lua
-    summary: 从文件或直接源码创建同一受信 Lua 会话；script run 同步等待终态，script start 仅等待原生受理后返回；等待方中断不自动取消，Runtime 始终拥有会话生命周期，客户端实例继续存在。策略文件和原始 Lua chunk 使用各自既定入口。
+    summary: 从文件或直接源码创建受信 tick 会话；script run 同步等待终态，script start 仅等待原生受理后返回；等待方中断不自动取消，Runtime 始终拥有会话生命周期，客户端实例继续存在。
     aliases: [script run, script start, 连续脚本, 脚本装载]
     anchors:
       - kind: symbol
@@ -31,41 +31,40 @@ nodes:
         value: BridgeClient.run_script
         description: 核对当前实例并提交源码；script run 等待结果，script start 仅等待原生受理。
       - kind: symbol
-        file: shared/lua-runtime/Runtime.cpp
-        value: Runtime::Start
-        description: 编译受信 Lua 并创建持有初始控制权的 main 任务。
+        file: shared/lua-runtime/TickRuntime.cpp
+        value: TickRuntime::Start
+        description: 编译受信 Lua 并创建独立会话，读取前导 @mode/@tick 配置。
       - kind: symbol
-        file: shared/lua-runtime/Runtime.cpp
-        value: Runtime::Tick
-        description: 调度会话任务，处理期限、身份变化、脚本错误与最终释放。
-  - id: script-execution.manage-task
-    kind: scenario
-    name: 调整活动会话中的任务
-    summary: 向指定 script.id 新增、替换或停止独立任务；替换先编译，成功后等待旧任务释放，再安装新 revision，管理等待失败不停止原会话。
-    aliases: [task add, task replace, task stop, 热更新]
+        file: shared/lua-runtime/TickRuntime.cpp
+        value: TickRuntime::Tick
+        description: 按会话档位调度入口，处理期限、身份变化、脚本错误与最终释放。
+  - id: script-execution.tick-scheduling
+    kind: capability
+    name: tick 调度与动作槽提交
+    summary: 每个会话按 @tick.gear 档位到期调用 main(context)，上下文状态跨调用保留；所有会话共享客户端唯一 player 状态机，回调返回后统一提交意图差异。慢帧跳过过期周期，不补跑旧判断。
+    aliases: ["@tick.gear", "@tick.budget_ms", "context.state", 动作槽]
     anchors:
       - kind: symbol
-        file: cli/beidou_pilot/task_management.py
-        value: change_task
-        description: 通过独立管理通道发布绑定实例、会话与预期任务版本的请求。
+        file: shared/lua-runtime/TickRuntime.cpp
+        value: TickRuntime::Tick
+        description: 依绝对周期相位调用到期入口，并在宿主帧内统一提交草稿。
+      - kind: document
+        value: docs/LUA_TICK_API.md
+        description: 档位、预算、overrun 策略、上下文与动作槽语义的公开合同。
       - kind: symbol
-        file: shared/lua-runtime/Runtime.cpp
-        value: Runtime::ManageTask
-        description: 核对会话和任务版本，先编译替换源码并按输入归属结束旧任务。
-      - kind: symbol
-        file: shared/lua-runtime/TaskTransport.cpp
-        value: TaskTransport::Tick
-        description: 核验原生身份和场景代次，保留请求结果，不从管理通道直接派发动作。
+        file: shared/lua-runtime/TickRuntime.h
+        value: TickConfig
+        description: 会话档位、预算和超限策略的解析结果。
   - id: script-execution.cancel
     kind: operation
     name: 取消脚本会话并释放输入
-    summary: 调用方可按精确 script.id 显式取消；原生期限、角色变化、离开游戏或脚本错误也会停止全部任务。确认所属输入释放后发布会话终态，不关闭客户端容器。
+    summary: 调用方可按精确 script.id 显式取消；原生期限、角色变化、离开游戏或脚本错误也会结束会话。确认所属输入释放后发布会话终态，不关闭客户端容器。
     aliases: ["script cancel --session", 精确脚本ID, 原生期限]
     anchors:
       - kind: symbol
-        file: shared/lua-runtime/Runtime.cpp
-        value: Runtime::Cancel
-        description: 将运行中的整个会话转入停止与释放路径。
+        file: shared/lua-runtime/TickRuntime.cpp
+        value: TickRuntime::Cancel
+        description: 结束目标会话并进入所属输入清理与释放确认路径。
       - kind: symbol
         file: cli/beidou_pilot/bridge.py
         value: BridgeClient._wait
@@ -74,171 +73,128 @@ nodes:
         file: cli/beidou_pilot/bridge.py
         value: BridgeClient.cancel_script
         description: 按当前 script.id 执行显式会话取消，拒绝不匹配的旧脚本并等待输入释放。
-  - id: script-execution.control
-    kind: capability
-    name: 任务协作与输入控制权
-    summary: 多任务共享本次 Lua 状态，观察可以交错执行，原生动作串行派发；高优先级可接管，旧任务失去派发资格，释放确认后新任务取得控制。
-    aliases: [优先级接管, 多任务, spawn, acquire]
-    anchors:
-      - kind: symbol
-        file: shared/lua-runtime/Runtime.cpp
-        value: Runtime::Impl::GrantControl
-        description: 按优先级请求交接，并等待原生释放后授予控制权。
-      - kind: symbol
-        file: shared/lua-runtime/Runtime.cpp
-        value: Runtime::Impl::FinishTask
-        description: 结束指定任务，仅释放它仍拥有的控制，保留其他任务生命周期。
   - id: script-execution.status
     kind: operation
-    name: 查询脚本与管理结果
-    summary: 只读查看会话、任务 revision、等待原因、控制权与保留的任务管理结果；查询历史响应不证明当前角色效果。
-    aliases: [script status, task result, 脚本状态]
+    name: 查询脚本会话
+    summary: 只读查看全部会话、最新会话、模式、终态、所属输入释放、tick 调度与共享 player 状态；查询历史响应不证明当前角色效果。
+    aliases: [script status, 脚本状态, control_released]
     anchors:
       - kind: symbol
         file: cli/beidou_pilot/bridge.py
         value: BridgeClient.snapshot
-        description: 读取当前登记会话的新鲜原生桥状态，包含脚本与控制权投影。
+        description: 读取当前登记会话的新鲜原生桥状态，包含脚本、tick 与 player 投影。
       - kind: symbol
-        file: cli/beidou_pilot/task_management.py
-        value: task_result
-        description: 按请求 ID 返回已保留的管理结果，供超时或中断后核对。
+        file: shared/lua-runtime/TickRuntime.cpp
+        value: TickRuntime::Statuses
+        description: 输出全部会话及其调度、动作与释放事实。
   - id: script-execution.session
     kind: data
-    name: 脚本会话与任务版本
-    summary: script.id 标识会话，任务名称和 revision 标识执行版本；主任务返回后子任务可继续，全部任务结束才结束会话。
-    aliases: [script.id, revision, main, 任务状态]
+    name: 脚本会话
+    summary: script.id 标识会话；每会话独立 Lua 状态与上下文，状态不跨会话恢复。全部结束路径清除该会话仍拥有的方向与动作输入，并报告会话级控制释放。
+    aliases: [script.id, context, control_released, 会话状态]
     anchors:
       - kind: file
-        value: shared/lua-runtime/Runtime.h
-        description: 会话状态、任务状态、任务变更与控制权报告的数据结构。
-  - id: script-execution.task-result
-    kind: data
-    name: 已保留的任务管理结果
-    summary: 每个 request_id 的管理响应保留所属实例、会话和任务版本；等待超时后的请求仍可查询，不自动重放。
-    aliases: [task-results, request_id, task_result_unconfirmed]
-    anchors:
-      - kind: symbol
-        file: shared/lua-runtime/TaskTransport.cpp
-        value: TaskTransport::Publish
-        description: 将管理请求的处理状态和身份写入专属结果文件。
-      - kind: file
-        value: cli/beidou_pilot/task_management.py
-        description: 读取、验证管理结果并报告已发布但尚未确认的请求。
+        value: shared/lua-runtime/TickRuntime.h
+        description: 会话状态、调度上下文和取消接口的数据结构。
   - id: script-execution.lua-api
     kind: interface
-    name: 统一 game Lua 接口
-    summary: 提供状态、能力、时间、日志、动作和任务协作；各端原生适配器落实能力差异，GUI 对话、商店和养成工作流尚无对应 Lua 接口。
-    aliases: [game API, game.state, game.capabilities]
+    name: tick Lua 接口
+    summary: 提供只读领域观察和 player 动作槽提交；各端原生适配器落实能力差异，窗口、对话、商店和养成工作流尚无对应 Lua 接口。
+    aliases: [game API, context.game, player 状态机]
     anchors:
       - kind: document
         value: docs/LUA_API.md
-        description: 公共 Lua 状态字段、参数、返回值、能力声明与错误语义的统一参考。
+        description: Lua 接口文档导航入口。
+      - kind: document
+        value: docs/LUA_TICK_API.md
+        description: 上下文、只读领域、运动观察、动作槽与错误语义的唯一参考。
       - kind: symbol
-        file: shared/lua-runtime/Runtime.cpp
-        value: Runtime::Start
-        description: 注册唯一一份公共 game 函数与按原样提供的 Lua 标准库。
+        file: shared/lua-runtime/TickRuntime.cpp
+        value: TickRuntime::Start
+        description: 注册只读领域与共享 player 状态机，并按原样提供 Lua 标准库。
   - id: script-execution.strategy-entry
     kind: interface
     name: main(context) 策略入口与参数合同
-    summary: 策略文件以唯一 main(context) 声明入口，并通过 @option 声明类型、默认值与约束；入口收到 context.options 与 context.scene。CLI 按声明校验动态参数并在发布前拒绝非法元数据或参数。未声明 default 的 boolean 省略时为 true，显式 default=false 时省略为 false；--no-flag 是无值负向开关，直接传入 false，不按 choices 拒绝。策略 budget_seconds 与通用 --seconds/--continuous 运行期限分离；普通 Lua chunk、--code 和辅助库/示例保留各自用途。
+    summary: 策略文件以唯一 main(context) 声明入口，并通过 @option 声明类型、默认值与约束；入口收到 context.options 与 context.scene。CLI 按声明校验动态参数并在发布前拒绝非法元数据或参数。未声明 default 的 boolean 省略时为 true，显式 default=false 时省略为 false；--no-flag 是无值负向开关，直接传入 false，不按 choices 拒绝。运行期限与 tick 回调预算分离；运行入口只有文件，文件须声明 main(context)。
     aliases: [main(context), "@option", 策略参数, script describe]
     anchors:
-      - kind: symbol
-        file: cli/beidou_pilot/strategies.py
-        value: parse_strategy
-        description: 识别唯一策略入口并校验文件级 @option 声明。
-      - kind: symbol
-        file: cli/beidou_pilot/strategies.py
-        value: parse_options
-        description: 校验动态参数、默认值、范围与 choices，并解析 boolean flag。
-      - kind: symbol
-        file: cli/beidou_pilot/strategies.py
-        value: compile_strategy
-        description: 将 options/scene 注入 context，并在调用 main 前核对当前身份与场景代次。
+      - kind: file
+        value: cli/beidou_pilot/cli.py
+        description: 解析 script describe/run/start 的动态参数与入口形式。
       - kind: document
-        value: docs/LUA_API.md
+        value: docs/LUA_TICK_API.md
         description: 面向策略作者说明入口、参数、默认值和场景上下文。
   - id: script-execution.effect-boundary
     kind: invariant
     name: 执行终态与游戏效果分别确认
-    summary: 请求接受、输入派发、输入释放、动作收束与游戏效果分别判断；completed、held_keys 为空或原生调用非零均不能单独证明到达、命中、掉落或恢复。
-    aliases: [效果未知, control_released, dispatched, 不自动重放]
+    summary: 请求接受、输入派发、输入释放、动作收束与游戏效果分别判断；completed、control_released 或原生调用非零均不能单独证明到达、命中、掉落或恢复。
+    aliases: [效果未知, dispatched, 不自动重放]
     anchors:
       - kind: document
         value: docs/CONTROL.md
         description: 规定动作结果各层事实与未确认释放时的返回边界。
-      - kind: file
-        value: cli/test/test_native_scripts.py
-        description: 离线覆盖取消等待释放、脚本错误与采样停止后的未知释放结果。
+      - kind: document
+        value: docs/LUA_TICK_API.md
+        description: player 动作槽和终态释放的公开语义。
   - id: script-execution.trusted-source
     kind: invariant
     name: 仅执行受信脚本
-    summary: Lua 环境按 Lua 原样提供标准库并限制日志和指令预算；不提供 CPU 或内存隔离，脚本必须受信。
-    aliases: [受信 Lua, 指令预算, 标准库原样提供]
+    summary: tick 环境按 Lua 原样提供标准库并限制单次调用预算；不提供 CPU 或内存隔离，脚本必须受信。
+    aliases: [受信 Lua, 调用预算, 标准库原样提供]
     anchors:
       - kind: symbol
-        file: shared/lua-runtime/Runtime.cpp
-        value: Runtime::Start
-        description: 创建 Lua 状态、注册标准库和公共 game 函数。
+        file: shared/lua-runtime/TickRuntime.cpp
+        value: TickRuntime::Start
+        description: 创建 Lua 状态、注册标准库和只读领域。
       - kind: document
         value: docs/LUA_TICK_API.md
-        description: 说明 tick 指令预算、标准库提供及受信脚本前提。
-      - kind: document
-        value: docs/LUA_COROUTINE_API.md
-        description: 说明 coroutine 指令让出预算、标准库提供及受信脚本前提。
+        description: 说明 tick 调用预算、标准库提供及受信脚本前提。
 relations:
   - {from: script-execution.run, type: part_of, to: script-execution, summary: 脚本装载和整会话运行归执行领域。}
-  - {from: script-execution.manage-task, type: part_of, to: script-execution, summary: 活动任务的新增替换和停止归执行领域。}
+  - {from: script-execution.tick-scheduling, type: part_of, to: script-execution, summary: 档位调度与动作草稿提交归执行领域。}
   - {from: script-execution.cancel, type: part_of, to: script-execution, summary: 会话停止和所属输入释放归执行领域。}
-  - {from: script-execution.control, type: part_of, to: script-execution, summary: 任务间的控制权交接由共享执行契约决定。}
-  - {from: script-execution.status, type: part_of, to: script-execution, summary: 执行状态和管理反馈查询归执行领域。}
-  - {from: script-execution.session, type: part_of, to: script-execution, summary: 执行领域定义会话和任务版本的生命周期。}
-  - {from: script-execution.task-result, type: part_of, to: script-execution, summary: 执行领域保存任务管理请求的处理事实。}
-  - {from: script-execution.lua-api, type: part_of, to: script-execution, summary: 公共 Lua 接口由共享运行时统一定义。}
+  - {from: script-execution.status, type: part_of, to: script-execution, summary: 执行状态查询归执行领域。}
+  - {from: script-execution.session, type: part_of, to: script-execution, summary: 执行领域定义会话的生命周期。}
+  - {from: script-execution.lua-api, type: part_of, to: script-execution, summary: 公共 Lua 接口由共享 tick 运行时统一定义。}
   - {from: script-execution.effect-boundary, type: part_of, to: script-execution, summary: 执行领域限定终态与效果的解释。}
   - {from: script-execution.trusted-source, type: part_of, to: script-execution, summary: 执行领域拥有脚本环境和预算边界。}
   - {from: script-execution.strategy-entry, type: part_of, to: script-execution, summary: 声明式策略参数和 main(context) 输入由统一脚本入口校验。}
   - {from: script-execution.run, type: consumes, to: client-session.cli, summary: 调用方通过固定实例的统一 CLI 提交脚本。}
-  - {from: script-execution.run, type: publishes, to: script-execution.lua-api, summary: 为本会话中的 Lua 源码开放统一 game 接口。}
+  - {from: script-execution.run, type: publishes, to: script-execution.lua-api, summary: 为本会话中的 Lua 源码开放只读领域与 player 状态机。}
   - {from: script-execution.run, type: consumes, to: script-execution.strategy-entry, summary: 策略文件经统一运行入口消费 main(context)/@option 调用方合同。}
   - {from: script-execution.run, type: reads, to: game-observation.facts, summary: 依据当前原生角色与场景事实调度和停止会话。}
-  - {from: script-execution.run, type: reads, to: game-resources.catalog, summary: 仅策略文件场景预检读取本地静态地形；普通 Lua chunk 与 --code 不依赖该资料。地形所有权仍属资源域。}
-  - {from: script-execution.run, type: writes, to: script-execution.session, summary: 创建会话和 main 任务并更新其执行终态。}
-  - {from: script-execution.run, type: invokes, to: script-execution.cancel, summary: 期限或外部取消等停止原因进入整会话释放路径。}
+  - {from: script-execution.run, type: writes, to: script-execution.session, summary: 创建会话并更新其执行终态。}
+  - {from: script-execution.run, type: invokes, to: script-execution.cancel, summary: 期限或外部取消等停止原因进入会话释放路径。}
   - {from: script-execution.run, type: constrained_by, to: client-session.identity, summary: 会话和取消均绑定当前原生实例与运行身份。}
-  - {from: script-execution.run, type: constrained_by, to: script-execution.trusted-source, summary: 只在受信源码与运行预算边界内执行。}
+  - {from: script-execution.run, type: constrained_by, to: script-execution.trusted-source, summary: 只在受信源码与调用预算边界内执行。}
   - {from: script-execution.run, type: constrained_by, to: script-execution.effect-boundary, summary: 运行结束仅报告执行事实，游戏目标需另外观察。}
-  - {from: script-execution.manage-task, type: reads, to: script-execution.session, summary: 请求绑定 script.id，替换和停止核对预期 revision。}
-  - {from: script-execution.manage-task, type: writes, to: script-execution.session, summary: 管理请求改变指定任务版本，不夺取整会话动作锁。}
-  - {from: script-execution.manage-task, type: writes, to: script-execution.task-result, summary: 保存每个管理请求的处理状态和所属身份。}
-  - {from: script-execution.manage-task, type: constrained_by, to: client-session.identity, summary: 不向其他实例、运行或已变化场景安装旧任务。}
-  - {from: script-execution.manage-task, type: constrained_by, to: script-execution.effect-boundary, summary: 任务安装成功和旧任务释放不代表游戏副作用可回滚。}
-  - {from: script-execution.cancel, type: writes, to: script-execution.session, summary: 停止全部任务并在释放后更新会话终态。}
+  - {from: script-execution.tick-scheduling, type: consumes, to: script-execution.lua-api, summary: 调度只消费 tick 上下文与共享 player 动作槽。}
+  - {from: script-execution.tick-scheduling, type: constrained_by, to: script-execution.trusted-source, summary: 单次调用预算限制入口执行时间。}
+  - {from: script-execution.cancel, type: writes, to: script-execution.session, summary: 停止会话并在释放后更新终态。}
   - {from: script-execution.cancel, type: constrained_by, to: client-session.identity, summary: 不向后继实例或其他控制者补发旧取消。}
-  - {from: script-execution.control, type: publishes, to: script-execution.lua-api, summary: 通过 spawn、acquire、cancel 和 tasks 提供任务协作。}
-  - {from: script-execution.status, type: reads, to: script-execution.session, summary: 读取任务版本、等待原因和控制权状态。}
-  - {from: script-execution.status, type: reads, to: script-execution.task-result, summary: 查询已发布管理请求的保留反馈。}
+  - {from: script-execution.status, type: reads, to: script-execution.session, summary: 读取会话状态、调度与所属输入释放事实。}
+  - {from: script-execution.lua-api, type: constrained_by, to: script-execution.effect-boundary, summary: 动作槽设置与原生已开始动作分别解释。}
 flows:
   - id: script-execution.run.flow
     name: 从提交 Lua 到等待或显式停止
-    summary: 同一 Runtime 管理会话；`script run` 同步等待终态，`script start` 原生受理后返回。等待中断不等于脚本取消，且所有结束路径仍须核对身份、终态与输入释放。
+    summary: 同一 tick Runtime 管理会话；`script run` 同步等待终态，`script start` 原生受理后返回。等待中断不等于脚本取消，且所有结束路径仍须核对身份、终态与输入释放。
     scenario: script-execution.run
     startsAt: submit
     steps:
       - {id: submit, kind: action, name: 向当前实例提交受信 Lua, summary: 核对当前实例和脚本能力，准备受信源码并请求创建会话。, concept: script-execution.run}
-      - {id: admitted, kind: decision, name: Runtime 能否接受会话, summary: 当前身份、控制权、脚本能力与源码决定是否受理。}
-      - {id: refused, kind: outcome, name: 拒绝并保留原因, summary: 忙碌、身份不符、能力缺失或源码错误不构成脚本成功。}
-      - {id: execute, kind: action, name: Runtime 调度任务与所属动作, summary: Runtime 拥有会话；任务按优先级和等待状态协作，主任务返回后子任务可继续。, concept: script-execution.control}
+      - {id: admitted, kind: decision, name: Runtime 能否接受会话, summary: 当前身份、tick 脚本能力与源码决定是否受理；多 tick 会话可并存。}
+      - {id: refused, kind: outcome, name: 拒绝并保留原因, summary: 身份不符、能力缺失或源码错误不构成脚本成功。}
+      - {id: execute, kind: action, name: Runtime 按档位调度入口, summary: Runtime 拥有会话；入口按 @tick.gear 到期读领域并写动作草稿，返回后统一提交差异。, concept: script-execution.tick-scheduling}
       - {id: wait-mode, kind: decision, name: 调用方选择何种等待模式, summary: 两种命令复用同一原生会话，但 CLI 等待边界不同。}
-      - {id: wait-result, kind: decision, name: 同步等待如何结束, summary: run 等原生终态；明确 cancel_file 触发停止，CLI 超时或中断只终止等待。}
+      - {id: wait-result, kind: decision, name: 同步等待如何结束, summary: run 等原生终态；CLI 超时或中断只终止等待。}
       - {id: wait-interrupted, kind: action, name: 重新观察当前会话, summary: CLI 等待结束后查询 script status，并核对相同实例和 script.id；不自动取消也不重放。, concept: script-execution.status}
       - {id: post-wait, kind: decision, name: 当前会话状态是否可确认, summary: 区分匹配脚本仍运行、已达终态或身份/新鲜度不足。}
       - {id: wait-unknown, kind: outcome, name: 保留未确认的等待结果, summary: 状态身份或新鲜度无法确认时不发送旧取消、不重放脚本，并报告结果未确认。, concept: script-execution.status}
       - {id: async-return, kind: action, name: 异步受理后返回, summary: start 不等待最终终态，返回脚本身份与当前状态；如果仍在运行，Runtime 继续持有。}
-      - {id: async-control, kind: decision, name: 调用方后续如何控制活动会话, summary: 可观察并保留运行中的任务，或按精确 script.id 发出明确取消。}
-      - {id: async-active, kind: outcome, name: 脚本继续由 Runtime 持有, summary: 调用方离开或继续观察不停止任务；任务后续仍可通过状态查询和明确取消核对。}
-      - {id: ending, kind: decision, name: 会话因何结束, summary: 全部任务正常返回，或期限、身份变化、离开游戏、明确取消与错误触发停止。}
-      - {id: cancel, kind: action, name: 停止全部任务, summary: 不再派发旧动作，开始释放该会话仍拥有的输入。, concept: script-execution.cancel}
+      - {id: async-control, kind: decision, name: 调用方后续如何控制活动会话, summary: 可观察并保留运行中的会话，或按精确 script.id 发出明确取消。}
+      - {id: async-active, kind: outcome, name: 脚本继续由 Runtime 持有, summary: 调用方离开或继续观察不停止会话；后续仍可通过状态查询和明确取消核对。}
+      - {id: ending, kind: decision, name: 会话因何结束, summary: 入口正常返回 done，或期限、身份变化、离开游戏、明确取消与错误触发停止。}
+      - {id: cancel, kind: action, name: 停止会话, summary: 不再消费旧草稿，开始释放该会话仍拥有的方向与动作输入。, concept: script-execution.cancel}
       - {id: release, kind: action, name: 等待所属输入释放, summary: 正常结束和停止均须完成原生释放，容器继续运行。}
       - {id: confirmed, kind: decision, name: 是否确认对应终态和释放, summary: CLI 核验请求身份与新鲜状态，不以空按键列表单独断言成功。}
       - {id: returned, kind: outcome, name: 返回已确认的执行结果, summary: 保留正常完成、取消或脚本错误事实；游戏效果另行观察。}
@@ -259,32 +215,9 @@ flows:
       - {from: post-wait, to: ending, when: 同一脚本已达原生终态}
       - {from: post-wait, to: async-control, when: 同一脚本仍由 Runtime 持有}
       - {from: post-wait, to: wait-unknown, when: 状态身份或新鲜度不足以确认}
-      - {from: wait-result, to: cancel, when: 调用方通过 cancel_file 明确请求取消}
-      - {from: ending, to: release, when: 全部任务正常结束}
+      - {from: ending, to: release, when: 入口正常结束}
       - {from: ending, to: cancel, when: 期限或原生身份、场景、错误要求停止}
       - {from: cancel, to: release}
       - {from: release, to: confirmed}
       - {from: confirmed, to: returned, when: 身份终态与释放已确认}
       - {from: confirmed, to: unconfirmed, when: 身份或新鲜采样不足以确认}
-  - id: script-execution.manage-task.flow
-    name: 活动任务变更与结果核对
-    summary: 管理通道以会话和任务版本为边界；编译拒绝保留旧任务，已发布但未确认的请求保留查询入口。
-    scenario: script-execution.manage-task
-    startsAt: request
-    steps:
-      - {id: request, kind: action, name: 发布指定任务变更, summary: 明确会话、任务名和适用的预期版本，使用独立管理通道。, concept: script-execution.manage-task}
-      - {id: valid, kind: decision, name: 请求身份和版本是否匹配, summary: 拒绝失效会话、旧版本、保留任务名、重复名称和变化的场景。}
-      - {id: rejected, kind: outcome, name: 拒绝变更, summary: 保存请求原因，不把错误请求作用于其他任务版本。}
-      - {id: change, kind: action, name: 编译并执行任务变更, summary: 新增和替换先编译；替换或停止按旧任务归属释放，不直接派发游戏输入。}
-      - {id: result, kind: decision, name: 本次管理得到何种结果, summary: 区分成功、源码或会话拒绝，以及调用方等待结束后的未知结果。}
-      - {id: applied, kind: outcome, name: 指定任务变更已完成, summary: 新任务已安装或旧版本已停止并确认其释放；其他任务仍可运行。}
-      - {id: preserved, kind: outcome, name: 变更未安装并保留原因, summary: 编译失败保留旧任务；会话结束或场景改变可取消尚未安装的替换。}
-      - {id: pending, kind: outcome, name: 结果待按请求 ID 查询, summary: 超时或中断不停止整会话、不自动重放，使用保留 request_id 查询最终处理事实。, concept: script-execution.status}
-    transitions:
-      - {from: request, to: valid}
-      - {from: valid, to: rejected, when: 身份版本或任务规则不满足}
-      - {from: valid, to: change, when: 请求可处理}
-      - {from: change, to: result}
-      - {from: result, to: applied, when: 收到对应 completed 结果}
-      - {from: result, to: preserved, when: 收到编译拒绝或会话取消结果}
-      - {from: result, to: pending, when: 请求已发布但等待超时或中断}

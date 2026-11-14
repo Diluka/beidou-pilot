@@ -111,7 +111,7 @@ class GuiMotionContract(unittest.TestCase):
         source.write_text(
             "\n".join(
                 [
-                    '#include "Runtime.h"',
+                    '#include "Contract.h"',
                     "#include <array>",
                     "#include <iostream>",
                     "#include <sstream>",

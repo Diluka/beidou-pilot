@@ -1,4 +1,4 @@
-"""读取 Lua 策略注释，并为原生入口准备已校验的调用参数。"""
+"""读取 tick Lua 脚本注释，并为原生入口准备已校验的调用参数与上下文。"""
 
 from dataclasses import dataclass
 import json
@@ -29,8 +29,6 @@ _RESERVED_FLAGS = {
     "--version",
     "--help",
     "--session",
-    "--library",
-    "--code",
     "--seconds",
     "--continuous",
 }
@@ -55,7 +53,6 @@ class StrategyOption:
 
 @dataclass(frozen=True)
 class ScriptExecution:
-    mode: Literal["coroutine", "tick"] = "coroutine"
     budget_ms: float = 100
     overrun: Literal["abort", "skip"] = "abort"
     abort_commit: bool = True
@@ -66,10 +63,6 @@ class ScriptExecution:
 class StrategyMetadata:
     options: tuple[StrategyOption, ...]
     execution: ScriptExecution = ScriptExecution()
-
-    @property
-    def mode(self) -> Literal["coroutine", "tick"]:
-        return self.execution.mode
 
 
 def _script_header(source: str) -> tuple[int, list[tuple[int, str]]]:
@@ -103,7 +96,7 @@ def split_script_header(source: str) -> tuple[str, str]:
 
 
 def parse_script_execution(source: str) -> ScriptExecution:
-    """文件和直接源码共用的前导 @mode/@tick 配置边界。"""
+    """读取文件前导的 tick 运行配置；唯一引擎是 tick，未声明 @mode 时按 tick 处理。"""
     _, comments = _script_header(source)
     declared: dict[str, str] = {}
     for line_number, line in comments:
@@ -117,11 +110,8 @@ def parse_script_execution(source: str) -> ScriptExecution:
         if key not in {"mode", "tick.gear", "tick.budget_ms", "tick.overrun", "tick.abort_commit"} or key in declared:
             raise _invalid_metadata(f"脚本运行配置未知或重复：@{key}。", line_number)
         declared[key] = value
-    mode = declared.get("mode", "coroutine")
-    if mode not in {"coroutine", "tick"}:
-        raise _invalid_metadata("@mode 只接受 coroutine 或 tick。")
-    if mode != "tick" and any(key.startswith("tick.") for key in declared):
-        raise _invalid_metadata("@tick 配置仅适用于显式声明 @mode tick 的脚本。")
+    if declared.get("mode", "tick") != "tick":
+        raise _invalid_metadata("@mode 只接受 tick；coroutine 引擎已退役。")
     budget = declared.get("tick.budget_ms", "100")
     if not re.fullmatch(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", budget):
         raise _invalid_metadata("@tick.budget_ms 须为正有限十进制数。")
@@ -137,7 +127,7 @@ def parse_script_execution(source: str) -> ScriptExecution:
     gear = declared.get("tick.gear", "3")
     if gear not in _TICK_GEARS:
         raise _invalid_metadata("@tick.gear 只接受 1、2、3 或 4。")
-    return ScriptExecution(mode, budget_ms, overrun, abort_commit == "true", _TICK_GEARS[gear])
+    return ScriptExecution(budget_ms, overrun, abort_commit == "true", _TICK_GEARS[gear])
 
 
 def _invalid_metadata(message: str, line: int | None = None) -> ClientError:
@@ -235,17 +225,13 @@ def _parse_option(attributes: str, name: str, description: str, line: int) -> St
     )
 
 
-def parse_strategy(source: str) -> StrategyMetadata | None:
-    """仅接受文件级 main(context) 声明；普通 Lua 文件继续按原始 chunk 执行。"""
+def parse_strategy(source: str) -> StrategyMetadata:
+    """只接受声明顶层 main(context) 入口的 tick 脚本；raw chunk 一律拒绝。"""
     execution = parse_script_execution(source)
     lines = source.splitlines()
-    marked = execution.mode == "tick" or any(_OPTION_MARKER.match(line) for line in lines)
     entry_lines = [line_number for line_number, line in enumerate(lines, 1) if _ENTRY.fullmatch(line)]
-    has_entry = bool(entry_lines)
-    if not marked and not has_entry:
-        return None
-    if not has_entry:
-        raise _invalid_metadata("策略必须声明顶层 main(context) 入口。")
+    if not entry_lines:
+        raise _invalid_metadata("Lua脚本必须声明顶层 main(context) 入口；raw chunk 已退役。")
     if len(entry_lines) > 1:
         raise _invalid_metadata("策略只能声明一个 main(context) 入口。", entry_lines[1])
 
@@ -372,17 +358,13 @@ def describe_strategy(path: Path, metadata: StrategyMetadata) -> JsonObject:
     return {
         "file": str(path),
         "entry": "main(context)",
-        "mode": metadata.mode,
-        "tick": (
-            {
-                "gear": metadata.execution.gear,
-                "budget_ms": metadata.execution.budget_ms,
-                "overrun": metadata.execution.overrun,
-                "abort_commit": metadata.execution.abort_commit,
-            }
-            if metadata.mode == "tick"
-            else None
-        ),
+        "mode": "tick",
+        "tick": {
+            "gear": metadata.execution.gear,
+            "budget_ms": metadata.execution.budget_ms,
+            "overrun": metadata.execution.overrun,
+            "abort_commit": metadata.execution.abort_commit,
+        },
         "usage": usage,
         "options": options,
     }
@@ -426,71 +408,27 @@ def _lua_literal(value: JsonValue) -> str:
 
 
 def compile_strategy(source: str, options: JsonObject, scene: JsonObject, extra: JsonObject | None = None) -> str:
+    """把 tick 脚本包装为返回 {main,context} 入口表的源码。"""
     values: JsonObject = {"options": options, "scene": scene}
     if extra:
         values.update(extra)
     context = _lua_literal(values)
-    execution = parse_script_execution(source)
-    if execution.mode == "tick":
-        header, body = split_script_header(source)
-        return (
-            header
-            + ("\n" if header and not header.endswith("\n") else "")
-            + f"local __beidou_context = {context}\ndo\n"
-            + body
-            + '\nif type(main) ~= "function" then error("strategy_entry_missing") end\n'
-            + "return {main=main,context=__beidou_context}\nend\n"
-        )
+    header, body = split_script_header(source)
     return (
-        f"local __beidou_context = {context}\n"
-        "local __beidou_state = game.state()\n"
-        "if not (__beidou_state.ready and __beidou_state.instance_id == __beidou_context.scene.instance_id "
-        "and __beidou_state.character and __beidou_state.character.id == __beidou_context.scene.character_id "
-        "and __beidou_state.map_id == __beidou_context.scene.map_id "
-        "and __beidou_state.scene_generation == __beidou_context.scene.scene_generation) then\n"
-        '    error("strategy_scene_context_stale")\n'
-        "end\n"
-        "do\n"
-        + source
+        header
+        + ("\n" if header and not header.endswith("\n") else "")
+        + f"local __beidou_context = {context}\ndo\n"
+        + body
         + '\nif type(main) ~= "function" then error("strategy_entry_missing") end\n'
-        + "return main(__beidou_context)\nend\n"
+        + "return {main=main,context=__beidou_context}\nend\n"
     )
 
 
-# 内置策略按需拼接的辅助文件；顺序即依赖顺序，_move 依赖 _terrain 的图与 _common 的动作检查。
-_TRAVEL_COMMON = {"move_to.lua", "climb_to.lua", "enter_portal.lua", "walk_to.lua", "navigate.lua"}
-_TRAVEL_TERRAIN = {"walk_to.lua", "navigate.lua"}
-_TRAVEL_MOVE = {"walk_to.lua", "navigate.lua"}
-
-
-def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata | None]:
-    shared = Path(__file__).resolve().parents[2] / "shared/scripts"
-    directory = shared / "travel"
-    resolved = path.resolve()
+def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata]:
     try:
         source = path.read_bytes().decode("utf-8")
-        helpers: list[str] = []
-        if resolved.parent == directory.resolve():
-            if resolved.name in _TRAVEL_COMMON:
-                helpers.append("_common.lua")
-            if resolved.name in _TRAVEL_TERRAIN:
-                helpers.append("_terrain.lua")
-            if resolved.name in _TRAVEL_MOVE:
-                helpers.append("_move.lua")
-        elif resolved.parent == (shared / "combat").resolve() and resolved.name == "hunt.lua":
-            helpers.append("_terrain.lua")
-        if helpers:
-            header, body = split_script_header(source)
-            source = (
-                header
-                + ("\n" if header and not header.endswith("\n") else "")
-                + "".join((directory / helper).read_text(encoding="utf-8") + "\n" for helper in helpers)
-                + body
-            )
     except (OSError, UnicodeError) as error:
         raise ClientError(
-            "invalid_script_file",
-            "无法读取UTF-8 Lua策略或其辅助文件，未发布执行请求。",
-            {"path": str(path), "reason": str(error)},
+            "invalid_script_file", "无法读取UTF-8 Lua脚本，未发布执行请求。", {"path": str(path), "reason": str(error)}
         ) from error
     return source, parse_strategy(source)

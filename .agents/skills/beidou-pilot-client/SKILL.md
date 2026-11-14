@@ -56,11 +56,11 @@ beidou-pilot --json inspect inventory
 beidou-pilot --json bridge status
 ```
 
-支持范围以本端 `capabilities` 和返回结果为准。未知资料保留未知，未支持能力明确报告；不从另一后端或服务器补造客户端事实。命令参数查 [CLI](../../../docs/CLI.md)，Lua 状态、动作和错误查 [Lua API](../../../docs/LUA_API.md)。
+支持范围以本端 `capabilities` 和返回结果为准。未知资料保留未知，未支持能力明确报告；不从另一后端或服务器补造客户端事实。命令参数查 [CLI](../../../docs/CLI.md)，Lua 入口、只读领域、动作槽与错误查 [Tick Lua API](../../../docs/LUA_TICK_API.md)。
 
 ## 执行和取消 Lua
 
-长期任务优先使用原生 `script start`，由客户端独立执行。保留返回的 `script.id`，按该会话查询和显式取消。`LUA_PATH` 是当前运行环境可读取的 UTF-8 Lua 文件路径。
+角色动作与持续脚本都写 tick Lua 文件。长期脚本优先使用原生 `script start`，由客户端独立执行；保留返回的 `script.id`，按该会话查询和显式取消。`LUA_PATH` 是当前运行环境可读取、含顶层 `main(context)` 的 UTF-8 Lua 文件路径。
 
 ```bash
 beidou-pilot --json script start LUA_PATH --seconds 20
@@ -69,13 +69,21 @@ beidou-pilot --json script cancel --session SCRIPT_ID
 beidou-pilot --json bridge status
 ```
 
-- 有界执行使用 `--seconds N`；操作者明确选择长期持续任务时使用 `script start LUA_PATH --continuous`。原生受理后 CLI 返回，任务继续执行；LLM 暂停、停止、退出和结束事件监听均不隐式取消。
-- 取消只针对匹配的当前 `script.id`。核对同一 `instance_id/run_id` 的终态与 `held_keys=[]`；旧会话 ID 只对应历史脚本。活动 Lua 占有本实例输入，其他动作遇到 `input_busy` 时先确认控制者。
+- 有界执行使用 `--seconds N`；操作者明确选择长期持续脚本时使用 `script start LUA_PATH --continuous`。原生受理后 CLI 返回，脚本继续执行；LLM 暂停、停止、退出和结束事件监听均不隐式取消。
+- 取消只针对匹配的当前 `script.id`。核对同一 `instance_id/run_id` 的终态与会话级 `control_released`；全局 `held_keys` 可能仍包含其他会话的合法持键。旧会话 ID 只对应历史脚本。活动 Lua 期间普通 GUI 输入遇到 `input_busy` 时先确认控制者。
 - `script run` 同步等待结果。`run/start` 等待期间收到 Ctrl+C/SIGINT/SIGTERM 只结束 CLI 等待；已发布任务继续由原生执行，两端语义相同。等待超时或陈旧观察错误时，任务是否受理与停止以当前状态为准。先用 `script status` 核对当前任务与身份，不重放 `start`；主动取消使用 `script cancel --session`，再核对终态和放键。
-- Lua 可直接通过 `--code` 提供，与文件输入互斥。例如：
+- `script run/start` 只接受文件。文件是使用 tick API 的 UTF-8 Lua，例如：
+
+```lua
+-- @mode tick
+local function main(context)
+    if context.tick.index == 1 then context.game.log("观察开始") end
+    if context.tick.index >= 5 then return "done" end
+end
+```
 
 ```bash
-beidou-pilot --json script run --code 'game.log("观察开始"); game.sleep(0.1)' --seconds 5
+beidou-pilot --json script run /work/scripts/observe-tick.lua --seconds 5
 ```
 
 脚本受理、完成、放键和真实游戏效果分别核对，依据实际位置、HP/MP、库存或任务等事实判断。结果不明先观察，尤其不重放消费、奖励、加点和交易。脚本结束或取消会保留客户端。客户端关闭是另一项明确操作：`close` 返回 `host_lifecycle_required`，交由实例生命周期管理方关闭并核对退出；LLM 退出与客户端关闭分别执行。危险区域的有界任务结束后，先核对角色安全状态；需要移动至安全位置或关闭时，分别明确执行。

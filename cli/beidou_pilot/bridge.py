@@ -55,25 +55,6 @@ class RejectedCommand(TypedDict):
     reason: str
 
 
-class BridgeTask(TypedDict):
-    name: str
-    revision: NotRequired[int]
-    priority: int
-    status: Literal["running", "waiting", "completed", "cancelled"]
-    wait: Literal["none", "sleep", "action", "raw_keys", "release", "control"]
-    reason: str | None
-    error: str | None
-
-
-BridgeControl = TypedDict("BridgeControl", {
-    "owner": str | None,
-    "pending": str | None,
-    "from": str | None,
-    "to": str | None,
-    "reason": str | None,
-})
-
-
 class BridgeTick(TypedDict):
     index: int
     gear: TickGear
@@ -115,12 +96,10 @@ class BridgeScript(TypedDict):
     budget_yields: int
     last_resume_us: float
     max_resume_us: float
-    tasks: NotRequired[list[BridgeTask]]
-    control: NotRequired[BridgeControl]
-    mode: NotRequired[Literal["coroutine", "tick"]]
-    control_released: NotRequired[bool]
-    tick: NotRequired[BridgeTick]
-    player: NotRequired[BridgePlayer]
+    mode: Literal["tick"]
+    control_released: bool
+    tick: BridgeTick
+    player: BridgePlayer
 
 
 class BridgeMonster(TypedDict):
@@ -133,13 +112,6 @@ class BridgeMonster(TypedDict):
     hp_percent: NotRequired[int | None]
     hp_sequence: NotRequired[int | None]
     hp_source: NotRequired[str | None]
-
-
-class NativeSkillResult(TypedDict):
-    skill_id: int
-    native_result: int
-    dispatched: NotRequired[bool]
-    reason: NotRequired[str | None]
 
 
 class BridgeSnapshot(TypedDict):
@@ -160,24 +132,19 @@ class BridgeSnapshot(TypedDict):
     input_events: int
     script: NotRequired[BridgeScript | None]
     scripts: NotRequired[list[BridgeScript]]
-    last_skill: NotRequired[NativeSkillResult | None]
     monsters: NotRequired[list[BridgeMonster] | None]
     capabilities: NotRequired[dict[str, bool] | None]
-    held_actions: NotRequired[list[str]]
     facing: NotRequired[Literal["Left", "Right"] | None]
     dead: NotRequired[bool | None]
     revive_requestable: NotRequired[bool | None]
 
 
 def script_by_id(state: BridgeSnapshot, script_id: str) -> BridgeScript | None:
-    """新桥按会话数组定位；旧桥只暴露当前单会话。"""
-    if "scripts" in state:
-        return next((script for script in state["scripts"] if script["id"] == script_id), None)
-    script = state.get("script")
-    return script if script is not None and script["id"] == script_id else None
+    """按会话数组定位 tick 脚本。"""
+    return next((script for script in state.get("scripts", []) if script["id"] == script_id), None)
 
 
-def _validate_script(script: object, *, require_mode: bool = False) -> None:
+def _validate_script(script: object) -> None:
     if (not isinstance(script, dict) or not isinstance(script.get("id"), str)
             or script.get("status") not in ("running", "completed", "cancelled", "rejected")
             or any(field not in script or (script[field] is not None and not isinstance(script[field], str))
@@ -186,51 +153,32 @@ def _validate_script(script: object, *, require_mode: bool = False) -> None:
                    for field in ("resumes", "budget_yields"))
             or any(type(script.get(field)) not in (int, float) or not math.isfinite(script[field])
                    or script[field] < 0 for field in ("last_resume_us", "max_resume_us"))
-            or ((require_mode or "mode" in script) and script.get("mode") not in ("coroutine", "tick"))
-            or ("control_released" in script and type(script["control_released"]) is not bool)):
+            or script.get("mode") != "tick"
+            or type(script.get("control_released")) is not bool):
         raise ClientError("invalid_bridge_state", "原生桥的脚本执行状态字段无效。")
-    if "tasks" in script:
-        tasks = script["tasks"]
-        if (not isinstance(tasks, list) or any(not isinstance(task, dict)
-                or not isinstance(task.get("name"), str) or not task["name"]
-                or ("revision" in task and (type(task["revision"]) is not int or task["revision"] <= 0))
-                or type(task.get("priority")) is not int or not -0x80000000 <= task["priority"] <= 0x7FFFFFFF
-                or task.get("status") not in ("running", "waiting", "completed", "cancelled")
-                or task.get("wait") not in ("none", "sleep", "action", "raw_keys", "release", "control")
-                or any(field not in task or (task[field] is not None and not isinstance(task[field], str))
-                       for field in ("reason", "error")) for task in tasks)):
-            raise ClientError("invalid_bridge_state", "原生桥的Lua任务状态字段无效。")
-    if "control" in script:
-        control = script["control"]
-        if (not isinstance(control, dict) or any(field not in control
-                or (control[field] is not None and not isinstance(control[field], str))
-                for field in ("owner", "pending", "from", "to", "reason"))):
-            raise ClientError("invalid_bridge_state", "原生桥的Lua控制权字段无效。")
-    if script.get("mode") == "tick":
-        tick, player = script.get("tick"), script.get("player")
-        if (not isinstance(tick, dict)
-                or type(tick.get("gear")) is not int or tick["gear"] not in (1, 2, 3, 4)
-                or any(type(tick.get(field)) is not int or tick[field] < 0
-                       for field in ("index", "scene_generation", "overruns"))
-                or any(type(tick.get(field)) not in (int, float) or not math.isfinite(tick[field])
-                       or tick[field] < 0 for field in ("time", "delta", "budget_ms"))
-                or tick["budget_ms"] <= 0 or tick.get("overrun_policy") not in ("abort", "skip")
-                or any(type(tick.get(field)) is not bool for field in ("overrun", "abort_commit"))
-                or type(script.get("control_released")) is not bool):
-            raise ClientError("invalid_bridge_state", "原生桥的tick调度字段无效。")
-        if (not isinstance(player, dict) or player.get("phase") not in ("idle", "running", "unknown")
-                or "moving" not in player or player["moving"] not in (None, "left", "right", "up", "down")
-                or any(field not in player or player[field] not in (None, "jump", "attack", "skill", "use_item", "pickup")
-                       for field in ("action", "input_action"))
-                or any(not isinstance(player.get(field), str) for field in ("reason", "effect"))
-                or "busy" not in player or (player["busy"] is not None and type(player["busy"]) is not bool)
-                or type(player.get("dispatched")) is not bool
-                or any(field in player and (type(player[field]) is not int or not 1 <= player[field] <= 0x7FFFFFFF)
-                       for field in ("input_skill_id", "input_item_id", "skill_id", "item_id"))
-                or not isinstance(player.get("held"), list)
-                or any(key not in ("left", "right", "up", "down", "jump", "attack", "skill", "use_item", "pickup")
-                       for key in player["held"])):
-            raise ClientError("invalid_bridge_state", "原生桥的tick角色操作状态字段无效。")
+    tick, player = script.get("tick"), script.get("player")
+    if (not isinstance(tick, dict)
+            or type(tick.get("gear")) is not int or tick["gear"] not in (1, 2, 3, 4)
+            or any(type(tick.get(field)) is not int or tick[field] < 0
+                   for field in ("index", "scene_generation", "overruns"))
+            or any(type(tick.get(field)) not in (int, float) or not math.isfinite(tick[field])
+                   or tick[field] < 0 for field in ("time", "delta", "budget_ms"))
+            or tick["budget_ms"] <= 0 or tick.get("overrun_policy") not in ("abort", "skip")
+            or any(type(tick.get(field)) is not bool for field in ("overrun", "abort_commit"))):
+        raise ClientError("invalid_bridge_state", "原生桥的tick调度字段无效。")
+    if (not isinstance(player, dict) or player.get("phase") not in ("idle", "running", "unknown")
+            or "moving" not in player or player["moving"] not in (None, "left", "right", "up", "down")
+            or any(field not in player or player[field] not in (None, "jump", "attack", "skill", "use_item", "pickup")
+                   for field in ("action", "input_action"))
+            or any(not isinstance(player.get(field), str) for field in ("reason", "effect"))
+            or "busy" not in player or (player["busy"] is not None and type(player["busy"]) is not bool)
+            or type(player.get("dispatched")) is not bool
+            or any(field in player and (type(player[field]) is not int or not 1 <= player[field] <= 0x7FFFFFFF)
+                   for field in ("input_skill_id", "input_item_id", "skill_id", "item_id"))
+            or not isinstance(player.get("held"), list)
+            or any(key not in ("left", "right", "up", "down", "jump", "attack", "skill", "use_item", "pickup")
+                   for key in player["held"])):
+        raise ClientError("invalid_bridge_state", "原生桥的tick角色操作状态字段无效。")
 
 
 def require_input_idle(bridge: "BridgeClient", instance_id: str, run_id: str) -> None:
@@ -319,17 +267,10 @@ class BridgeClient:
             if not isinstance(raw["scripts"], list):
                 raise ClientError("invalid_bridge_state", "原生桥的脚本会话列表无效。")
             for script in raw["scripts"]:
-                _validate_script(script, require_mode=True)
+                _validate_script(script)
             ids = [script["id"] for script in raw["scripts"]]
             if len(ids) != len(set(ids)):
                 raise ClientError("invalid_bridge_state", "原生桥的脚本会话ID重复。")
-        if "last_skill" in raw and raw["last_skill"] is not None:
-            skill = raw["last_skill"]
-            if not isinstance(skill, dict) or any(type(skill.get(field)) is not int
-                                                  for field in ("skill_id", "native_result")) or (
-                    "dispatched" in skill and type(skill["dispatched"]) is not bool) or (
-                    "reason" in skill and skill["reason"] is not None and not isinstance(skill["reason"], str)):
-                raise ClientError("invalid_bridge_state", "原生桥的技能调用结果字段无效。")
         if "capabilities" in raw and raw["capabilities"] is not None and (
                 not isinstance(raw["capabilities"], dict)
                 or any(type(value) is not bool for value in raw["capabilities"].values())):
@@ -347,9 +288,6 @@ class BridgeClient:
                     or "name" not in monster or (monster["name"] is not None and not isinstance(monster["name"], str))
                     or type(monster.get("active")) is not bool for monster in monsters)):
                 raise ClientError("invalid_bridge_state", "原生桥的怪物观察字段无效。")
-        if "held_actions" in raw and (not isinstance(raw["held_actions"], list)
-                or any(not isinstance(action, str) for action in raw["held_actions"])):
-            raise ClientError("invalid_bridge_state", "原生桥的语义输入状态字段无效。")
         for monster in raw.get("monsters") or []:
             percent, sequence, source = (monster.get(field) for field in ("hp_percent", "hp_sequence", "hp_source"))
             if (percent is not None and (type(percent) is not int or not 0 <= percent <= 100)
@@ -479,14 +417,12 @@ class BridgeClient:
                 raise ClientError("bridge_command_rejected", "原生桥拒绝了本次请求。", details)
             script = script_by_id(state, script_id) if script_id is not None else None
             if state["seq"] > before["seq"]:
-                if script_id is not None and script is not None:
-                    if (script["status"] != "running"
-                            or wait_for_start and (script["error"] is None or script.get("mode") == "tick")):
+                if script_id is not None:
+                    if script is not None and (script["status"] != "running" or wait_for_start):
                         return state
-                elif (script_id is None and command["id"] == request_id
+                elif (command["id"] == request_id
                       and (command["status"] in ("completed", "cancelled")
-                           or wait_for_start and command["status"] == "running"
-                           and state.get("script") is not None and state["script"]["error"] is None)):
+                           or wait_for_start and command["status"] == "running")):
                     return state
             if cancel_file is not None and cancel_file.exists():
                 return None
@@ -511,31 +447,23 @@ class BridgeClient:
                                "script_status": script["status"] if script is not None else None})
         return state
 
-    def _ready_state(self, mode: Literal["coroutine", "tick"] = "coroutine") -> BridgeSnapshot:
+    def _ready_state(self) -> BridgeSnapshot:
         state = self.snapshot()
         if not state["ready"]:
             raise ClientError("bridge_not_ready", "原生桥当前没有可操作的游戏角色。")
-        if "scripts" in state:
-            if mode == "coroutine" and any(item["status"] == "running" and item["mode"] == "coroutine"
-                                          for item in state["scripts"]):
-                raise ClientError("input_busy", "coroutine引擎仍有活动脚本会话。")
-        elif state["command"]["status"] == "running" or state["held_keys"]:
-            raise ClientError("input_busy", "原生桥仍有未完成动作或未释放按键。")
+        if not isinstance(state.get("scripts"), list):
+            raise ClientError("bridge_tick_unsupported", "当前原生桥未提供tick引擎，未发布脚本请求。")
         return state
 
     def _execute(self, before: BridgeSnapshot, action: str, argument: int, values: list[str],
                  timeout: float | None, cancel_file: Path | None = None,
                  poll_interval: float = 0.01,
-                 wait_for_start: bool = False, script_id: str | None = None) -> tuple[BridgeSnapshot, str | None, bool]:
+                 wait_for_start: bool = False, script_id: str = "") -> tuple[BridgeSnapshot, str | None, bool]:
         if cancel_file is not None and cancel_file.exists():
             return before, None, True
         request_id = self._publish(before, action, argument, values)
         # 等待进程不拥有原生任务；中断或观察失败不改变已发布任务。
         result = self._wait(before, request_id, timeout, cancel_file, poll_interval, wait_for_start, script_id)
-        if (result is not None and "scripts" not in result
-                and result["held_keys"] and result["command"]["status"] != "running"):
-            raise ClientError("bridge_release_unconfirmed", "动作已结束，但原生桥按键尚未释放。",
-                              {"request_id": request_id, "held_keys": result["held_keys"]})
         if result is None:
             state, _ = self._cancel(before, script_id, 2)
             return state, request_id, True
@@ -553,7 +481,7 @@ class BridgeClient:
             raise ClientError("invalid_bridge_options", "脚本时限须为正数且不超过4294967.295秒；持续执行使用None。")
         try:
             source = path.read_bytes() if path is not None else cast(str, code).encode("utf-8")
-            execution = parse_script_execution(source.decode("utf-8"))
+            parse_script_execution(source.decode("utf-8"))
         except (OSError, UnicodeError) as error:
             raise ClientError("invalid_script_file" if path is not None else "invalid_script_source",
                               "无法准备UTF-8 Lua脚本，未发布执行请求。",
@@ -563,11 +491,7 @@ class BridgeClient:
         if wait_seconds is None:
             wait_seconds = 3 if wait_for_start else seconds + 2 if seconds is not None else None
         with admission_control or nullcontext(), self._control():
-            before = self._ready_state(execution.mode)
-            if "script" not in before:
-                raise ClientError("bridge_script_unsupported", "当前DLL未提供Lua脚本能力，未发布脚本请求。")
-            if execution.mode == "tick" and "scripts" not in before:
-                raise ClientError("bridge_tick_unsupported", "当前原生桥未提供tick引擎，未发布或回退到旧引擎。")
+            before = self._ready_state()
             script_id = uuid.uuid4().hex
             try:
                 scripts = self.directory / "scripts"
@@ -600,7 +524,7 @@ class BridgeClient:
             raise ClientError("invalid_bridge_state", "脚本状态与本次脚本身份不符。",
                               {"request_id": request_id, "script_id": script_id})
         if script is not None and script["status"] != "running":
-            released = script.get("control_released") if "scripts" in state else not state["held_keys"]
+            released = script.get("control_released")
             if released is not True:
                 raise ClientError("bridge_release_unconfirmed", "脚本已结束，但所属输入释放尚未确认。",
                                   {"request_id": request_id, "script_id": script_id,
@@ -608,7 +532,7 @@ class BridgeClient:
         cancelled = locally_cancelled or script is not None and script["status"] == "cancelled"
         report: JsonObject = {
             "source": "client-native-bridge", "instance_id": state["instance_id"], "run_id": state["run_id"],
-            "request_id": request_id, "script_id": script_id, "mode": execution.mode,
+            "request_id": request_id, "script_id": script_id, "mode": "tick",
             "script_file": str(path) if path is not None else None, "seconds": seconds, "continuous": seconds is None,
             "status": "cancelled" if cancelled else script["status"] if script is not None else state["command"]["status"],
             "cancelled": cancelled,
@@ -622,10 +546,7 @@ class BridgeClient:
             raise ClientError("bridge_script_error", message, report)
         return report
 
-    def _cancel(self, before: BridgeSnapshot, script_id: str | None, timeout: float) -> tuple[BridgeSnapshot, str]:
-        if "scripts" not in before or script_id is None:
-            state = self._stop(before, timeout)
-            return state, cast(str, state["command"]["id"])
+    def _cancel(self, before: BridgeSnapshot, script_id: str, timeout: float) -> tuple[BridgeSnapshot, str]:
         request_id = self._publish(before, "cancel_script", 0, [script_id])
         state = self._wait(before, request_id, timeout, script_id=script_id)
         assert state is not None
@@ -649,9 +570,7 @@ class BridgeClient:
                 raise ClientError("script_session_mismatch", "当前Lua会话与指定脚本不符，未发送取消。",
                                   {"script_id": script_id,
                                    "current_script_id": current["id"] if current is not None else None})
-            released = (script.get("control_released") if "scripts" in before
-                        else before["command"]["status"] != "running" and not before["held_keys"])
-            already_stopped = script["status"] != "running" and released is True
+            already_stopped = script["status"] != "running" and script.get("control_released") is True
             state, request_id = (before, None) if already_stopped else self._cancel(before, script_id, timeout)
             return {"source": "client-native-bridge", "instance_id": state["instance_id"], "run_id": state["run_id"],
                     "request_id": request_id, "script_id": script_id,

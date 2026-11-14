@@ -2,11 +2,9 @@
 #pragma once
 
 #include "Observation.h"
-#include "Allocation.h"
 
 #include <array>
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,22 +12,10 @@ namespace MapleControl {
 
 // Unknown is kept separate from a known false value in both Lua and host results.
 enum class Fact { Unknown, False, True };
-enum class ActionKind {
-    Move,
-    Face,
-    Jump,
-    Attack,
-    Pickup,
-    UseItem,
-    Stop,
-    Equip,
-    Unequip,
-    Revive,
-    Activate,
-    AllocateAp,
-    AllocateSp,
-    Window
-};
+
+// Native player inputs owned by the tick engine. Movement is a held-input
+// direction, not an action; every other kind is a held action intent.
+enum class ActionKind { Jump, Attack, UseItem, Pickup, Stop };
 
 struct Character : MovableObject {
     std::uint32_t id = 0;
@@ -101,7 +87,7 @@ struct State {
     std::uint32_t mapId = 0;
     bool characterKnown = false;
     Character character;
-    // Frozen coroutine snapshot projection; entity-owned motion is on character.
+    // Snapshot projection of the local player's current native position.
     bool positionKnown = false;
     double x = 0;
     double y = 0;
@@ -136,14 +122,8 @@ struct State {
 
 struct Action {
     ActionKind kind = ActionKind::Stop;
-    std::string direction; // Move: left/right/up/down; Face: left/right; Attack: optional left/right.
-    std::uint32_t durationMs = 0;
     std::uint32_t itemId = 0;
     std::uint32_t skillId = 0; // Attack: zero holds the ordinary attack input, otherwise request one skill.
-    int sourceSlot = 0;
-    int destinationSlot = 0;
-    std::string reference;
-    AllocationRequest allocation;
     std::string sessionId;
 };
 
@@ -162,18 +142,14 @@ struct ActionResult {
     std::string reason;
     bool skillRequested = false;
     SkillResult skill;
-    Value allocation;
-    Value ui;
-    Value equipment;
     std::string sessionId;
 };
 
-// Each host supplies only native execution and its current state. The Lua
+// Each host supplies only native execution and its current state. The tick
 // scheduler, state projection and public semantic API are compiled once per host.
 class Adapter {
 public:
     virtual ~Adapter() = default;
-    virtual const char* Backend() const = 0;
     virtual const State& Observe() const = 0;
 
     virtual Observation ObserveDomain(const std::string&) const {
@@ -181,104 +157,11 @@ public:
     }
 
     virtual bool Supports(ActionKind kind) const = 0;
-    virtual bool Begin(const Action& action, std::string& error) = 0;
-    virtual ActionResult Result() const = 0;
-    virtual void Release() = 0;
-    virtual bool Released() const = 0;
-    virtual bool ReleasePending() const = 0;
-    virtual bool Logs(const std::string& scriptId, const std::vector<std::string>& lines) = 0;
-
-    virtual bool SupportsRawKeys() const { return false; }
-
-    virtual bool RawKeys(const std::vector<std::string>&, std::uint32_t, std::string& error) {
-        error = "unsupported: raw_keys";
-        return false;
-    }
 
     virtual bool SupportsSkill() const { return false; }
 
-    virtual bool SupportsMonsterHpPercent() const { return false; }
-
-    virtual bool Skill(std::uint32_t, SkillResult&, std::string& error) {
-        error = "unsupported: skill";
-        return false;
-    }
-};
-
-struct TaskStatus {
-    std::string name;
-    std::uint64_t revision = 0;
-    int priority = 0;
-    std::string status;
-    std::string wait;
-    std::string reason;
-    std::string error;
-};
-
-enum class TaskOperation { Add, Replace, Stop };
-
-struct TaskChange {
-    std::string requestId;
-    std::string scriptId;
-    std::string name;
-    TaskOperation operation = TaskOperation::Add;
-    std::uint64_t expectedRevision = 0;
-    int priority = 0;
-    std::string source;
-};
-
-struct TaskChangeResult {
-    std::string requestId;
-    std::string scriptId;
-    std::string name;
-    std::string status;
-    std::string reason;
-    std::string error;
-    std::uint64_t revision = 0;
-    bool changed = false;
-    bool controlReleased = false;
-};
-
-struct ControlStatus {
-    std::string owner;
-    std::string pending;
-    std::string from;
-    std::string to;
-    std::string reason;
-};
-
-struct Status {
-    std::string id;
-    std::string status;
-    std::string reason;
-    std::string error;
-    std::uint64_t resumes = 0;
-    std::uint64_t budgetYields = 0;
-    double lastResumeUs = 0;
-    double maxResumeUs = 0;
-    std::vector<TaskStatus> tasks;
-    ControlStatus control;
-};
-
-class Runtime {
-public:
-    explicit Runtime(Adapter& adapter);
-    ~Runtime();
-    Runtime(const Runtime&) = delete;
-    Runtime& operator=(const Runtime&) = delete;
-
-    bool Start(const std::string& scriptId, const std::string& source, std::uint32_t limitMs, std::string& error);
-    // Call after the host has updated native state and key-release facts.
-    void Tick(bool sceneChanged = false);
-    void Cancel(const std::string& reason);
-    TaskChangeResult ManageTask(const TaskChange& change);
-    const TaskChangeResult* CurrentTaskChange() const;
-    bool Running() const;
-    const Status* CurrentStatus() const;
-
-private:
-    struct Impl;
-    std::unique_ptr<Impl> impl;
+    virtual ActionResult Result() const = 0;
+    virtual bool Logs(const std::string& scriptId, const std::vector<std::string>& lines) = 0;
 };
 
 }

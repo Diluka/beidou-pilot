@@ -16,7 +16,7 @@ BASE_INSTRUCTIONS = "你是专用游戏角色的决策 AI。依据本实例的�
 GAME_INSTRUCTIONS = """使用 beidou-pilot-client 技能，通过 shell 调用本容器的 beidou-pilot CLI。
 LLM 是可选旁路，客户端任务独立运行。持续任务通过原生 script start 启动，不靠常驻 shell 或模型回合维持。
 每次接入和恢复先读取当前 script、command、held_keys 和游戏快照，再根据现有任务决定下一步。
-已有脚本或命令 running 时只观察和汇报，不重复 start、replace、cancel 或抢占；任务接管或取消必须由用户明确要求。
+已有脚本或命令 running 时只观察和汇报，不重复 start、cancel 或抢占；任务接管或取消必须由用户明确要求。
 pause、stop、退出和重连只影响 LLM 调度，不取消脚本、关闭客户端或清理后台 shell。需要取消任务或关闭客户端时使用明确命令。
 持续动作、战斗和等待交给现有 Lua，不做逐帧模型控制。动作后核对实际结果，接受请求不等于游戏效果。
 未知事实保留未知。需越界或协助才用 request_user_input 向开发 AI 询问。遵守既有养成方案，不试验性分配永久点数或消耗稀缺资源。
@@ -36,7 +36,7 @@ OBSERVATION_TOOLS: list[JsonObject] = [
     {
         "type": "function",
         "name": "game_script_status",
-        "description": "读取所属实例的 Lua、任务、控制权、持键及最近执行结果。",
+        "description": "读取所属实例的 tick Lua 会话、持键及最近执行结果。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
 ]

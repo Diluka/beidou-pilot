@@ -8,7 +8,7 @@
 | `Headless image build` | Ubuntu 24.04，使用 `docker/headless/Dockerfile` 构建包含共享 CLI、Lua 与原生客户端的无头镜像 |
 | `Game AI harness contract` | 先构建无头客户端 base，再派生包含固定 Codex、harness 和专用技能的镜像；验证无认证的真实 app-server、直接 CLI shell、只读工具、询问与续接合同 |
 
-客户端测试与无头构建从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库；其中 Lua 任务合同使用 runner 自带的 `gcc/g++` 编译真实共享 Runtime 和固定 Lua 源码，适配器只模拟原生输入与释放边界。无头镜像的编译器只放在 builder，运行层由 Bookworm 包管理器安装 Python 和原生运行依赖。两个客户端镜像安装同一份 CLI 与内置 Lua，离线测试与 CI 内部镜像构建使用当前检出的提交，构建输入固定为当前检出。harness 合同全程离线，使用无认证假端点。
+客户端测试与无头构建从当前提交检出源码并递归初始化固定版本子模块。Python 测试只使用标准库；其中 tick Lua 合同使用 runner 自带的 `gcc/g++` 编译真实共享 tick Runtime 和固定 Lua 源码，适配器只模拟原生输入与释放边界。无头镜像的编译器只放在 builder，运行层由 Bookworm 包管理器安装 Python 和原生运行依赖。两个客户端镜像安装同一份 CLI 与内置 Lua，离线测试与 CI 内部镜像构建使用当前检出的提交，构建输入固定为当前检出。harness 合同全程离线，使用无认证假端点。
 
 [Windows 桥工作流](../.github/workflows/agent-bridge.yml) 另在 PR、`main` 推送和手动触发时执行 `Windows bridge build`。它在 Windows 2022 / VS2022 中从固定 Detours 源码构建 x86 库及桥 DLL，并上传含来源清单、日志和许可证的 `maple-agent-bridge-win32` 工件。构建与下载说明见[桥构建文档](../beidou-ijl15/docs/agent-bridge-build.md)。
 

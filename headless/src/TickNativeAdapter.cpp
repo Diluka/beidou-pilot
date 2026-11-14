@@ -11,10 +11,6 @@
 
 TickNativeAdapter::TickNativeAdapter(SharedLuaAdapter& owner) : host(owner) {}
 
-const char* TickNativeAdapter::Backend() const {
-    return "headless";
-}
-
 const MapleControl::State& TickNativeAdapter::Observe() const {
     return host.Observe();
 }
@@ -52,8 +48,7 @@ MapleControl::Observation TickNativeAdapter::ObserveDomain(const std::string& do
 
 bool TickNativeAdapter::Supports(MapleControl::ActionKind kind) const {
     using Kind = MapleControl::ActionKind;
-    return kind == Kind::Move || kind == Kind::Stop || kind == Kind::Jump || kind == Kind::Attack
-           || kind == Kind::Pickup || kind == Kind::UseItem;
+    return kind == Kind::Jump || kind == Kind::Attack || kind == Kind::Pickup || kind == Kind::UseItem;
 }
 
 bool TickNativeAdapter::SupportsSkill() const {
@@ -87,10 +82,6 @@ bool TickNativeAdapter::SetHeldKeys(const std::vector<std::string>& keys, std::s
 
 bool TickNativeAdapter::HeldKeysSettled() const {
     return !movementChanged || currentTick > movementTick;
-}
-
-bool TickNativeAdapter::Begin(const MapleControl::Action& action, std::string& error) {
-    return SetActionIntent(action, error);
 }
 
 bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std::string& error) {
@@ -221,11 +212,11 @@ void TickNativeAdapter::Advance(std::uint64_t nativeTick, bool sceneChanged) {
         moveSequence = combat.get_move_sequence();
         const auto skillId = static_cast<std::uint32_t>(combat.get_last_move());
         const auto source = combat.get_last_move_input();
-        const bool owned = intent.kind == Kind::Attack && intent.skillId == skillId
-                           && ((skillId != 0 && source == ms::Combat::MoveInput::HeldSkill)
-                               || (skillId == 0 && source == ms::Combat::MoveInput::HeldKey
-                                   && std::find(host.heldActions.begin(), host.heldActions.end(), ms::KeyAction::ATTACK)
-                                          == host.heldActions.end()));
+        const bool owned =
+            intent.kind == Kind::Attack && intent.skillId == skillId
+            && ((skillId != 0 && source == ms::Combat::MoveInput::HeldSkill)
+                || (skillId == 0 && source == ms::Combat::MoveInput::HeldKey
+                    && std::find(actionKeys.begin(), actionKeys.end(), ms::KeyAction::ATTACK) != actionKeys.end()));
         // This identity comes from an admitted native dispatch, not the desired
         // slot. A replacement B cannot turn an unfinished native A into B.
         if (player.is_attacking()) {
@@ -235,7 +226,7 @@ void TickNativeAdapter::Advance(std::uint64_t nativeTick, bool sceneChanged) {
             if (owned) activeAction.sessionId = intent.sessionId;
             nativeActive = true;
         }
-        // A direct/coroutine move can be the global current action, but is not
+        // A direct native move can be the global current action, but is not
         // evidence that this tick owner's input was dispatched.
         if (owned) {
             result.dispatched = true;

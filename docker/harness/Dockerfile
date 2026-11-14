@@ -35,7 +35,7 @@ COPY harness/beidou_game_ai/ /opt/beidou-game-ai/harness/beidou_game_ai/
 COPY .agents/skills/beidou-pilot-client/ /game/.agents/skills/beidou-pilot-client/
 COPY .agents/skills/beidou-game-guide/ /game/.agents/skills/beidou-game-guide/
 COPY README.md /game/README.md
-COPY docs/CLI.md docs/LUA_API.md docs/LUA_COROUTINE_API.md docs/LUA_TICK_API.md docs/TICK_FREQUENCY.md docs/PLAY_GUIDE.md docs/HARNESS.md /game/docs/
+COPY docs/CLI.md docs/LUA_API.md docs/LUA_TICK_API.md docs/TICK_FREQUENCY.md docs/PLAY_GUIDE.md docs/HARNESS.md /game/docs/
 COPY docs/CONTROL.md docs/ARCHITECTURE.md docs/CLIENT_LIMITATIONS.md /game/docs/
 COPY docker/harness/README.md /game/docker/harness/README.md
 RUN ln -s /opt/beidou-game-ai/harness/game-ai /usr/local/bin/beidou-game-ai \

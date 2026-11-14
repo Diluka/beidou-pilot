@@ -6,17 +6,15 @@
 
 class SharedLuaAdapter;
 
-// A second native input owner, not a wrapper around the coroutine adapter's
-// Begin/Release lifecycle. Both owners meet only at the physical key boundary.
+// The tick engine's native input owner. The adapter only changes the desired
+// native input and reports settled facts; native consumers own actual play.
 class TickNativeAdapter final : public MapleControl::TickAdapter {
 public:
     explicit TickNativeAdapter(SharedLuaAdapter& host);
-    const char* Backend() const override;
     const MapleControl::State& Observe() const override;
     MapleControl::Observation ObserveDomain(const std::string& domain) const override;
     bool Supports(MapleControl::ActionKind kind) const override;
     bool SupportsSkill() const override;
-    bool Begin(const MapleControl::Action& action, std::string& error) override;
     bool SetActionIntent(const MapleControl::Action& action, std::string& error) override;
     const MapleControl::Action* ActiveAction() const override;
     bool ActionIntentSettled() const override;

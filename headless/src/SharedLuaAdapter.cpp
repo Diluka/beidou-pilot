@@ -4,11 +4,7 @@
 #include "LoginState.h"
 
 #include "Character/Player.h"
-#include "Character/SkillId.h"
 #include "Constants.h"
-#include "Data/EquipData.h"
-#include "Data/JobData.h"
-#include "Data/SkillData.h"
 #include "Gameplay/Stage.h"
 #include "Gameplay/MapleMap/MapChars.h"
 #include "Gameplay/MapleMap/Mob.h"
@@ -17,7 +13,6 @@
 #include "Gameplay/MapleMap/MesoDrop.h"
 #include "IO/KeyType.h"
 #include "Net/Session.h"
-#include "Net/Packets/InventoryPackets.h"
 #include "Net/Packets/PlayerPackets.h"
 #include "Net/Packets/GameplayPackets.h"
 #include "Net/Packets/NpcInteractionPackets.h"
@@ -87,39 +82,10 @@ Json MotionDocument(const MapleControl::MovableObject& object) {
     return Json::parse(object.MotionDocument().Dump());
 }
 
-Json ScriptDocument(const MapleControl::Status* script) {
-    if (script == nullptr) return nullptr;
-    Json tasks = Json::array();
-    for (const auto& task : script->tasks)
-        tasks.push_back({{"name", task.name},
-                         {"revision", task.revision},
-                         {"priority", task.priority},
-                         {"status", task.status},
-                         {"wait", task.wait},
-                         {"reason", task.reason.empty() ? Json(nullptr) : Json(task.reason)},
-                         {"error", task.error.empty() ? Json(nullptr) : Json(task.error)}});
-    const auto& control = script->control;
-    return {{"id", script->id},
-            {"status", script->status},
-            {"reason", script->reason.empty() ? Json(nullptr) : Json(script->reason)},
-            {"error", script->error.empty() ? Json(nullptr) : Json(script->error)},
-            {"resumes", script->resumes},
-            {"budget_yields", script->budgetYields},
-            {"last_resume_us", script->lastResumeUs},
-            {"max_resume_us", script->maxResumeUs},
-            {"tasks", std::move(tasks)},
-            {"control",
-             {{"owner", control.owner.empty() ? Json(nullptr) : Json(control.owner)},
-              {"pending", control.pending.empty() ? Json(nullptr) : Json(control.pending)},
-              {"from", control.from.empty() ? Json(nullptr) : Json(control.from)},
-              {"to", control.to.empty() ? Json(nullptr) : Json(control.to)},
-              {"reason", control.reason.empty() ? Json(nullptr) : Json(control.reason)}}}};
-}
 }
 
 SharedLuaAdapter::SharedLuaAdapter(std::filesystem::path bridgeDirectory, std::string registeredRun)
-    : directory(std::move(bridgeDirectory)), runId(std::move(registeredRun)), tickAdapter(*this), runtime(*this),
-      taskTransport(directory.string(), runId),
+    : directory(std::move(bridgeDirectory)), runId(std::move(registeredRun)), tickAdapter(*this),
       questInteraction(
           interaction, [this](const QuestRequest& request, std::string& error) { return RequestQuest(request, error); },
           [this](std::uint32_t objectId, std::int32_t npcId, std::string& error) {
@@ -128,10 +94,6 @@ SharedLuaAdapter::SharedLuaAdapter(std::filesystem::path bridgeDirectory, std::s
       tickRuntime(tickAdapter) {
     state.instanceId = std::to_string(getpid()) + "-" + std::to_string(UnixMs()) + "-" + std::to_string(MonotonicMs());
     if (!directory.empty()) std::filesystem::create_directories(directory);
-}
-
-const char* SharedLuaAdapter::Backend() const {
-    return "headless";
 }
 
 const MapleControl::State& SharedLuaAdapter::Observe() const {
@@ -144,106 +106,15 @@ MapleControl::Observation SharedLuaAdapter::ObserveDomain(const std::string& dom
     return observation;
 }
 
-bool SharedLuaAdapter::Supports(MapleControl::ActionKind kind) const {
-    return kind != MapleControl::ActionKind::Window;
-}
-
-bool SharedLuaAdapter::SupportsSkill() const {
-    return true;
-}
-
-bool SharedLuaAdapter::SupportsMonsterHpPercent() const {
-    return true;
-}
-
-bool SharedLuaAdapter::Skill(std::uint32_t id, MapleControl::SkillResult& skill, std::string& error) {
-    if (id != 1001004 && id != 1001005) {
-        error = "unsupported: skill_type";
-        return false;
-    }
-    if (!state.ready || state.character.values[6] == 0) {
-        error = "state_unavailable_or_dead";
-        return false;
-    }
-    if (!Released()) {
-        error = "action_in_progress";
-        return false;
-    }
-    using Move = ms::SpecialMove;
-    const auto reason = ms::Stage::get().get_combat().use_move(static_cast<std::int32_t>(id));
-    skill.nativeResult = static_cast<int>(reason);
-    skill.dispatched = reason == Move::FBR_NONE;
-    switch (reason) {
-    case Move::FBR_NONE:
-        skill.reason = "skill_dispatched";
-        break;
-    case Move::FBR_WEAPONTYPE:
-        skill.reason = "native_skill_weapon_mismatch";
-        break;
-    case Move::FBR_HPCOST:
-        skill.reason = "native_skill_insufficient_hp";
-        break;
-    case Move::FBR_MPCOST:
-        skill.reason = "native_skill_insufficient_mp";
-        break;
-    case Move::FBR_BULLETCOST:
-        skill.reason = "native_skill_insufficient_ammunition";
-        break;
-    case Move::FBR_COOLDOWN:
-        skill.reason = "native_skill_cooldown";
-        break;
-    case Move::FBR_NOT_LEARNED:
-        skill.reason = "native_skill_not_learned";
-        break;
-    case Move::FBR_JOB:
-        skill.reason = "native_skill_job_mismatch";
-        break;
-    case Move::FBR_ATTACKING:
-        skill.reason = "native_attacking";
-        break;
-    case Move::FBR_CLIMBING:
-        skill.reason = "native_climbing";
-        break;
-    case Move::FBR_SITTING:
-        skill.reason = "native_sitting";
-        break;
-    case Move::FBR_NO_WEAPON:
-        skill.reason = "native_no_weapon";
-        break;
-    case Move::FBR_SKILL_STATE:
-        skill.reason = "native_skill_state_not_allowed";
-        break;
-    case Move::FBR_OTHER:
-        skill.reason = "native_skill_not_allowed";
-        break;
-    }
-    lastSkill = LastSkill{id, skill};
-    return true;
-}
-
-MapleControl::ActionResult SharedLuaAdapter::Result() const {
-    return result;
-}
-
-bool SharedLuaAdapter::Released() const {
-    return !active && !releasePending;
-}
-
-bool SharedLuaAdapter::ReleasePending() const {
-    return releasePending;
-}
-
 bool SharedLuaAdapter::Running() const {
-    return runtime.Running() || tickRuntime.Running();
+    return tickRuntime.Running();
 }
 
 void SharedLuaAdapter::Cancel(const std::string& reason) {
-    runtime.Cancel(reason);
     tickRuntime.CancelAll(reason);
 }
 
 void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
-    currentTick = nativeTick;
     ++state.sequence;
     state.observedAtMs = UnixMs();
     state.sceneGeneration = ms::headless_state().map_generation;
@@ -307,7 +178,6 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
                               static_cast<std::uint32_t>(stats.get_exp())};
     state.character.known.fill(true);
     state.dead = state.character.values[6] == 0 ? Fact::True : Fact::False;
-    state.reviveRequestable = state.dead == Fact::True && Released() ? Fact::True : Fact::False;
     state.x = pos.x();
     state.y = pos.y();
     state.facingLeft = !player.getflip();
@@ -501,6 +371,14 @@ void SharedLuaAdapter::CaptureInteraction() {
     }
 }
 
+std::string SharedLuaAdapter::EquipmentReference(const ms::Equip* item) const {
+    if (item == nullptr) return {};
+    std::ostringstream out;
+    out << state.instanceId << ':' << state.character.id << ':' << state.sceneGeneration << ':' << std::hex
+        << reinterpret_cast<std::uintptr_t>(item);
+    return out.str();
+}
+
 bool SharedLuaAdapter::OpenNpc(std::int32_t objectId, std::int32_t npcId, std::string& error) {
     const auto& dialogue = ms::headless_state().dialogue;
     if (dialogue.open || dialogue.response_pending || interaction.CurrentPage() != nullptr) {
@@ -567,311 +445,9 @@ bool SharedLuaAdapter::RespondNpc(std::uint64_t revision, std::int8_t response, 
     return true;
 }
 
-MapleControl::AllocationFacts SharedLuaAdapter::AllocationFacts() const {
-    MapleControl::AllocationFacts facts;
-    facts.instanceId = state.instanceId;
-    facts.characterId = state.character.id;
-    facts.sceneGeneration = state.sceneGeneration;
-    facts.job = state.character.values[1];
-    if (!state.ready || !state.characterKnown || state.character.values[6] == 0 || !allocationRequest) return facts;
-    facts.known = true;
-    const auto& request = *allocationRequest;
-    auto& player = ms::Stage::get().get_player();
-    const auto& stats = player.get_stats();
-    for (unsigned index = 0; index < 4; ++index) facts.attributes[index] = state.character.values[2 + index];
-    if (!request.skill) {
-        facts.points = state.character.values[10];
-        facts.value = facts.attributes[MapleControl::Allocation::AttributeIndex(request.stat)];
-        return facts;
-    }
-    facts.points = state.character.values[11];
-    const auto& skills = player.get_skills();
-    const auto learnedLevel = skills.get_level(request.skillId);
-    if (learnedLevel < 0) {
-        facts.known = false;
-        return facts;
-    }
-    facts.value = learnedLevel;
-    const auto& job = stats.get_job();
-    // Beginner skills use derived SP; other job families may use separate books.
-    // Only the original adventurer SP pool is established by these native facts.
-    if (facts.job < 100 || facts.job >= 600 || request.skillId / 10000 == 0) {
-        facts.refusal = "unsupported: allocation_sp_pool";
-        return facts;
-    }
-    if (!job.can_use(request.skillId)) {
-        facts.refusal = "skill_job_mismatch";
-        return facts;
-    }
-    const auto& listed = ms::JobData::get(request.skillId / 10000).get_skills();
-    if (std::find(listed.begin(), listed.end(), request.skillId) == listed.end()) {
-        facts.refusal = "skill_not_in_job_data";
-        return facts;
-    }
-    const auto& data = ms::SkillData::get(request.skillId);
-    const auto nativeMaximum = data.get_masterlevel();
-    const auto learnedMaximum = skills.get_masterlevel(request.skillId);
-    if (nativeMaximum <= 0 || learnedMaximum < 0) {
-        facts.refusal = "skill_limit_unavailable";
-        return facts;
-    }
-    facts.maximum = learnedMaximum > 0 ? std::min(nativeMaximum, learnedMaximum) : nativeMaximum;
-    if (data.is_invisible() && learnedMaximum == 0) facts.refusal = "skill_not_unlocked";
-    if (request.skillId == ms::SkillId::ANGEL_BLESSING) facts.refusal = "skill_not_allocatable";
-    for (const auto& required : data.get_reqskills()) {
-        if (required.first <= 0 || required.second <= 0) {
-            facts.refusal = "skill_requirements_unavailable";
-            break;
-        }
-        if (skills.get_level(required.first) < required.second) {
-            facts.refusal = "skill_prerequisite_not_met";
-            break;
-        }
-    }
-    return facts;
-}
-
-void SharedLuaAdapter::CaptureAllocation() {
-    result.allocation = allocation.Report();
-    result.dispatched = allocation.Dispatched();
-    result.effect = allocation.Confirmed() ? "confirmed" : "unknown";
-    result.reason = allocation.Reason();
-}
-
-std::string SharedLuaAdapter::EquipmentReference(const ms::Equip* item) const {
-    if (item == nullptr) return {};
-    std::ostringstream out;
-    out << state.instanceId << ':' << state.character.id << ':' << state.sceneGeneration << ':' << std::hex
-        << reinterpret_cast<std::uintptr_t>(item);
-    return out.str();
-}
-
-bool SharedLuaAdapter::Begin(const MapleControl::Action& action, std::string& error) {
-    using Kind = MapleControl::ActionKind;
-    if (!Supports(action.kind)) {
-        error = "unsupported: window";
-        return false;
-    }
-    if (action.kind == Kind::Stop) {
-        Release();
-        result.sessionId = action.sessionId;
-        return true;
-    }
-    if (!state.ready || (action.kind != Kind::Revive && state.character.values[6] == 0)) {
-        error = "state_unavailable_or_dead";
-        return false;
-    }
-    if (!Released()) {
-        error = "action_in_progress";
-        return false;
-    }
-    auto& stage = ms::Stage::get();
-    auto& player = stage.get_player();
-    result = {};
-    result.sessionId = action.sessionId;
-    result.reason = "native_action_dispatched";
-    if (action.kind == Kind::AllocateAp || action.kind == Kind::AllocateSp) {
-        allocationRequest = action.allocation;
-        allocation.Start(*allocationRequest, AllocationFacts());
-        CaptureAllocation();
-        active = allocation.Active();
-        // Dispatch follows command/task cancellation and another current-facts check.
-        result.controlReleased = !active;
-        if (!active) allocationRequest.reset();
-        return true;
-    } else if (action.kind == Kind::Activate) {
-        if (!interaction.Activate(action.reference, {state.instanceId, state.character.id, state.sceneGeneration},
-                                  error))
-            return false;
-        result.reason = "control_activated";
-    } else if (action.kind == Kind::Revive) {
-        if (state.character.values[6] > 0) {
-            result.effect = "confirmed";
-            result.reason = "already_alive";
-            result.controlReleased = true;
-            result.settled = state.settled;
-            return true;
-        }
-        // The verified server handles death only when target_id != -1; zero selects its normal return map.
-        // The wheel flag stays false. Map arrival can precede the server HP update.
-        ms::ChangeMapPacket(true, 0, "", false).dispatch();
-        reviveCharacter = state.character.id;
-        result.reason = "revive_requested";
-    } else if (action.kind == Kind::Face) {
-        player.set_direction(action.direction == "right");
-    } else if (action.kind == Kind::UseItem) {
-        if (action.itemId / 10000 != 200 && action.itemId / 10000 != 201) {
-            error = "unsupported: ordinary potion or food required";
-            return false;
-        }
-        if (player.get_inventory().get_total_item_count(action.itemId) <= 0) {
-            error = "item_not_in_inventory";
-            return false;
-        }
-        player.use_item(action.itemId);
-        result.reason = "item_use_requested";
-    } else if (action.kind == Kind::Equip || action.kind == Kind::Unequip) {
-        const bool equipping = action.kind == Kind::Equip;
-        const auto& inventory = player.get_inventory();
-        const int backpackSlot = equipping ? action.sourceSlot : action.destinationSlot;
-        const int equippedSignedSlot = equipping ? action.destinationSlot : action.sourceSlot;
-        if (equippedSignedSlot < -ms::EquipSlot::BELT) {
-            error = "unsupported: ordinary_equipment_slot_required";
-            return false;
-        }
-        const int equippedSlot = -equippedSignedSlot;
-        if (backpackSlot > inventory.get_slotmax(ms::InventoryType::EQUIP)) {
-            error = "equipment_backpack_slot_out_of_range";
-            return false;
-        }
-        const auto source = inventory.get_equip(equipping ? ms::InventoryType::EQUIP : ms::InventoryType::EQUIPPED,
-                                                equipping ? backpackSlot : equippedSlot);
-        const auto destination = inventory.get_equip(equipping ? ms::InventoryType::EQUIPPED : ms::InventoryType::EQUIP,
-                                                     equipping ? equippedSlot : backpackSlot);
-        if (!source) {
-            error = "equipment_source_missing";
-            return false;
-        }
-        if (!action.reference.empty() && action.reference != EquipmentReference(source.get())) {
-            error = "equipment_reference_expired";
-            return false;
-        }
-        if (!equipping && destination) {
-            error = "equipment_destination_occupied";
-            return false;
-        }
-        const auto& data = ms::EquipData::get(source->get_item_id());
-        if (!data.is_valid() || data.get_itemdata().is_cashitem() || data.get_eqslot() == ms::EquipSlot::NONE) {
-            error = "unsupported: ordinary_equipment_required";
-            return false;
-        }
-        const bool ringSlot = data.get_eqslot() == ms::EquipSlot::RING1
-                              && (equippedSlot == ms::EquipSlot::RING1 || equippedSlot == ms::EquipSlot::RING2
-                                  || equippedSlot == ms::EquipSlot::RING3 || equippedSlot == ms::EquipSlot::RING4);
-        if (equippedSlot != data.get_eqslot() && !ringSlot) {
-            error = "equipment_slot_mismatch";
-            return false;
-        }
-        if (player.get_look().get_alerted()) {
-            error = "equipment_change_while_alerted";
-            return false;
-        }
-        if (equipping) {
-            if (destination && ms::EquipData::get(destination->get_item_id()).get_itemdata().is_cashitem()) {
-                error = "unsupported: ordinary_equipment_required";
-                return false;
-            }
-            const auto& stats = player.get_stats();
-            const auto gender = data.get_itemdata().get_gender();
-            if ((gender == 0 && stats.get_female()) || (gender == 1 && !stats.get_female())) {
-                error = "equipment_gender_requirement";
-                return false;
-            }
-            const auto job = stats.get_job().get_id() / 100;
-            const auto requiredJob = data.get_reqstat(ms::MapleStat::JOB);
-            const bool allowedJob =
-                requiredJob == 0 || ((requiredJob == 1 || requiredJob == 3) && (job == 1 || job >= 20))
-                || ((requiredJob == 2 || requiredJob == 3) && job == 2) || (requiredJob == 4 && job == 3)
-                || (requiredJob == 8 && job == 4) || (requiredJob == 16 && job == 5);
-            if (!allowedJob) {
-                error = "equipment_job_requirement";
-                return false;
-            }
-            if (data.get_reqstat(ms::MapleStat::LEVEL) > stats.get_stat(ms::MapleStat::LEVEL)) {
-                error = "equipment_level_requirement";
-                return false;
-            }
-            for (const auto& [base, total] : std::array{std::pair{ms::MapleStat::STR, ms::EquipStat::STR},
-                                                        std::pair{ms::MapleStat::DEX, ms::EquipStat::DEX},
-                                                        std::pair{ms::MapleStat::INT, ms::EquipStat::INT},
-                                                        std::pair{ms::MapleStat::LUK, ms::EquipStat::LUK}}) {
-                if (data.get_reqstat(base) > stats.get_total(total)) {
-                    error = "equipment_attribute_requirement";
-                    return false;
-                }
-            }
-        }
-        equipmentChange = EquipmentChange{action.sourceSlot, action.destinationSlot, source.get(),
-                                          destination.get(), state.character.id,     state.sceneGeneration};
-        if (equipping)
-            ms::EquipItemPacket(backpackSlot, static_cast<ms::EquipSlot::Id>(equippedSlot)).dispatch();
-        else {
-            // EQUIPPED is an internal container (7); MOVE_ITEM uses EQUIP and a negative source slot.
-            ms::MoveItemPacket(ms::InventoryType::EQUIP, action.sourceSlot, backpackSlot, 1).dispatch();
-        }
-        result.reason = "equipment_change_requested";
-    } else {
-        ms::KeyAction::Id key = ms::KeyAction::LENGTH;
-        if (action.kind == Kind::Move) {
-            if (action.direction == "left")
-                key = ms::KeyAction::LEFT;
-            else if (action.direction == "right")
-                key = ms::KeyAction::RIGHT;
-            else if (action.direction == "up")
-                key = ms::KeyAction::UP;
-            else if (action.direction == "down")
-                key = ms::KeyAction::DOWN;
-        } else if (action.kind == Kind::Jump)
-            key = ms::KeyAction::JUMP;
-        else if (action.kind == Kind::Attack) {
-            if (!action.direction.empty()) player.set_direction(action.direction == "right");
-            if (action.skillId != 0) {
-                result.skillRequested = true;
-                if (!Skill(action.skillId, result.skill, error)) return false;
-                result.reason = result.skill.reason;
-            } else if (action.direction.empty() && !player.can_attack()) {
-                result.controlReleased = true;
-                result.settled = state.settled;
-                result.reason = "native_attack_not_allowed";
-                return true;
-            } else {
-                key = ms::KeyAction::ATTACK;
-            }
-            if (!action.direction.empty())
-                heldActions.push_back(action.direction == "left" ? ms::KeyAction::LEFT : ms::KeyAction::RIGHT);
-        } else if (action.kind == Kind::Pickup)
-            key = ms::KeyAction::PICKUP;
-        if (key == ms::KeyAction::LENGTH && !(action.kind == Kind::Attack && action.skillId != 0)) {
-            error = "unsupported: action";
-            return false;
-        }
-        if (key != ms::KeyAction::LENGTH) heldActions.push_back(key);
-        SyncKeys();
-    }
-    result.dispatched = !result.skillRequested || result.skill.dispatched || !heldActions.empty();
-    result.controlReleased = false;
-    active = true;
-    actionUntilMs = MonotonicMs() + action.durationMs;
-    if (heldActions.empty() && !equipmentChange && !reviveCharacter && action.kind != Kind::Attack) ApplyRelease();
-    return true;
-}
-
-void SharedLuaAdapter::ApplyRelease() {
-    if (allocationRequest) {
-        allocation.Cancel(AllocationFacts(), MonotonicMs());
-        CaptureAllocation();
-        allocationRequest.reset();
-    }
-    heldActions.clear();
-    SyncKeys();
-    if (equipmentChange && result.reason == "equipment_change_requested")
-        result.reason = "equipment_confirmation_stopped";
-    equipmentChange.reset();
-    if (reviveCharacter && result.reason == "revive_requested") result.reason = "revive_confirmation_stopped";
-    reviveCharacter.reset();
-    active = false;
-    releasePending = true;
-    releaseTick = currentTick;
-}
-
-void SharedLuaAdapter::Release() {
-    ApplyRelease();
-}
-
 void SharedLuaAdapter::SyncKeys() {
     const auto tickKeys = tickAdapter.Keys();
-    std::set<ms::KeyAction::Id> desired(heldActions.begin(), heldActions.end());
-    desired.insert(tickKeys.begin(), tickKeys.end());
+    const std::set<ms::KeyAction::Id> desired(tickKeys.begin(), tickKeys.end());
     for (const auto key : physicalKeys) {
         if (desired.count(key) == 0) {
             ms::Stage::get().send_key(ms::KeyType::ACTION, key, false);
@@ -884,34 +460,19 @@ void SharedLuaAdapter::SyncKeys() {
             ++inputEvents;
         }
     }
-    physicalKeys = std::move(desired);
+    physicalKeys = desired;
 }
 
 Json SharedLuaAdapter::ScriptState(const std::string& id) const {
     const auto tick = tickRuntime.CurrentStatus(id);
-    if (tick.Type() != MapleControl::Value::Kind::Null) return Json::parse(tick.Dump());
-    const auto* script = runtime.CurrentStatus();
-    if (script == nullptr || script->id != id) {
-        const auto previous = std::find_if(scriptHistory.begin(), scriptHistory.end(),
-                                           [&id](const Json& entry) { return entry["id"] == id; });
-        return previous == scriptHistory.end() ? Json(nullptr) : *previous;
-    }
-    auto document = ScriptDocument(script);
-    document["mode"] = "coroutine";
-    document["control_released"] = !runtime.Running() && Released();
-    return document;
+    return tick.Type() == MapleControl::Value::Kind::Null ? Json(nullptr) : Json::parse(tick.Dump());
 }
 
 Json SharedLuaAdapter::ScriptsDocument() const {
-    auto scripts = Json::parse(tickRuntime.Statuses().Dump());
-    const auto* script = runtime.CurrentStatus();
-    for (const auto& previous : scriptHistory)
-        if (script == nullptr || previous["id"] != script->id) scripts.push_back(previous);
-    if (script != nullptr) scripts.push_back(ScriptState(script->id));
-    return scripts;
+    return Json::parse(tickRuntime.Statuses().Dump());
 }
 
-void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
+void SharedLuaAdapter::ReadCommand() {
     if (directory.empty()) return;
     const auto path = directory / "command.txt";
     std::ifstream input(path);
@@ -964,18 +525,13 @@ void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
     commandReason.clear();
     if (operation == "stop") {
         Cancel("stopped");
-        Release();
         tickAdapter.Release();
         scriptCommand = false;
         commandScriptId.clear();
         return;
     }
     if (operation == "cancel_script") {
-        const auto* script = runtime.CurrentStatus();
-        if (script != nullptr && script->id == scriptId)
-            runtime.Cancel("stopped");
-        else
-            tickRuntime.Cancel(scriptId, "stopped");
+        tickRuntime.Cancel(scriptId, "stopped");
         commandScriptId = scriptId;
         scriptCommand = true;
         return;
@@ -994,30 +550,10 @@ void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
             sourceValid = static_cast<bool>(sourceFile);
         }
     }
+    // The tick runtime owns mode validation: an explicit non-tick @mode is
+    // rejected there, and an omitted @mode means tick.
     std::string error;
-    const auto mode = sourceValid ? MapleControl::ParseScriptMode(source, error) : MapleControl::ScriptMode::Invalid;
-    const bool busy =
-        mode == MapleControl::ScriptMode::Coroutine && (runtime.Running() || !Released() || externalActionBusy);
-    if (busy) {
-        rejectedId = id;
-        rejectedReason = "busy";
-        commandStatus = "rejected";
-        commandReason = "busy";
-        scriptCommand = false;
-        return;
-    }
-    if (mode == MapleControl::ScriptMode::Coroutine) {
-        const auto* previous = runtime.CurrentStatus();
-        if (previous != nullptr
-            && std::none_of(scriptHistory.begin(), scriptHistory.end(),
-                            [previous](const Json& entry) { return entry["id"] == previous->id; }))
-            scriptHistory.push_back(ScriptState(previous->id));
-    }
-    const bool started = mode == MapleControl::ScriptMode::Tick
-                             ? tickRuntime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
-                         : mode == MapleControl::ScriptMode::Coroutine
-                             ? runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
-                             : false;
+    const bool started = sourceValid && tickRuntime.Start(scriptId, source, static_cast<std::uint32_t>(value), error);
     if (!started) {
         scriptCommand = false;
         commandStatus = "rejected";
@@ -1028,77 +564,15 @@ void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
     }
 }
 
-void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
+void SharedLuaAdapter::Tick(std::uint64_t nativeTick) {
     const auto generation = state.sceneGeneration;
     Capture(nativeTick);
     const bool changed = generation != state.sceneGeneration;
-    // Read the just-consumed native input before the coroutine owner's timeout
-    // can change the key union and erase the dispatch's ownership evidence.
+    // Read the just-consumed native input before the scheduler can change the
+    // key union and erase the dispatch's ownership evidence.
     tickAdapter.Advance(nativeTick, changed);
-    if (releasePending && nativeTick > releaseTick) {
-        releasePending = false;
-        result.controlReleased = true;
-        result.settled = state.settled;
-    }
-    if (active && reviveCharacter) {
-        if (!state.ready || state.character.id != *reviveCharacter) {
-            result.reason = "revive_context_changed";
-            ApplyRelease();
-        } else if (state.dead == Fact::False && state.mapKnown && state.positionKnown) {
-            result.effect = "confirmed";
-            result.reason = "revive_confirmed";
-            ApplyRelease();
-        } else if (MonotonicMs() >= actionUntilMs) {
-            result.reason = "revive_not_confirmed";
-            ApplyRelease();
-        }
-    } else if (active && equipmentChange) {
-        const auto& change = *equipmentChange;
-        if (!state.ready || state.character.values[6] == 0 || state.character.id != change.characterId
-            || state.sceneGeneration != change.sceneGeneration) {
-            result.reason = "equipment_context_changed";
-            ApplyRelease();
-        } else {
-            const auto& inventory = ms::Stage::get().get_player().get_inventory();
-            const bool equipping = change.sourceSlot > 0;
-            const auto source = inventory.get_equip(equipping ? ms::InventoryType::EQUIP : ms::InventoryType::EQUIPPED,
-                                                    equipping ? change.sourceSlot : -change.sourceSlot);
-            const auto destination =
-                inventory.get_equip(equipping ? ms::InventoryType::EQUIPPED : ms::InventoryType::EQUIP,
-                                    equipping ? -change.destinationSlot : change.destinationSlot);
-            if (destination.get() == change.source && source.get() == change.destination) {
-                result.effect = "confirmed";
-                result.reason = "equipment_change_confirmed";
-                ApplyRelease();
-            } else if (MonotonicMs() >= actionUntilMs) {
-                result.reason = "equipment_not_confirmed";
-                ApplyRelease();
-            }
-        }
-    } else if (active && !allocationRequest
-               && (changed || !state.ready || state.character.values[6] == 0 || MonotonicMs() >= actionUntilMs))
-        ApplyRelease();
-    ReadCommand(externalActionBusy);
-    runtime.Tick(changed);
+    ReadCommand();
     tickRuntime.Tick(changed);
-    if (!taskTransport.Tick(runtime, state)) runtime.Cancel("task_result_write_failed");
-    if (active && allocationRequest) {
-        if (allocation.Tick(AllocationFacts(), MonotonicMs())) {
-            const auto request = *allocationRequest;
-            if (request.skill)
-                ms::SpendSpPacket(request.skillId).dispatch();
-            else {
-                const auto stat = request.stat == "strength"       ? ms::MapleStat::STR
-                                  : request.stat == "dexterity"    ? ms::MapleStat::DEX
-                                  : request.stat == "intelligence" ? ms::MapleStat::INT
-                                                                   : ms::MapleStat::LUK;
-                ms::SpendApPacket(stat).dispatch();
-            }
-            ++inputEvents;
-        }
-        CaptureAllocation();
-        if (!allocation.Active()) ApplyRelease();
-    }
     if (scriptCommand) {
         const auto script = ScriptState(commandScriptId);
         if (!script.is_null() && script["status"] != "running" && script.value("control_released", false)) {
@@ -1107,7 +581,7 @@ void SharedLuaAdapter::Tick(std::uint64_t nativeTick, bool externalActionBusy) {
             scriptCommand = false;
         }
     }
-    if (!scriptCommand && commandStatus == "running" && Released() && tickAdapter.Released() && !Running()) {
+    if (!scriptCommand && commandStatus == "running" && tickAdapter.Released() && !Running()) {
         commandStatus = "completed";
         commandReason = "stopped";
     }
@@ -1392,17 +866,12 @@ void SharedLuaAdapter::ReadObservation() {
 
 void SharedLuaAdapter::Shutdown() {
     Cancel("session_closing");
-    ApplyRelease();
     tickAdapter.Shutdown();
     // The process is leaving the native game: no successor script can reuse its controls.
-    releasePending = false;
-    result.controlReleased = true;
-    result.settled = Fact::Unknown;
     state.ready = state.inGame = false;
     state.dead = state.reviveRequestable = Fact::Unknown;
     state.observedAtMs = UnixMs();
     ++state.sequence;
-    runtime.Tick();
     tickRuntime.Tick();
     if (scriptCommand) {
         const auto script = ScriptState(commandScriptId);
@@ -1443,7 +912,6 @@ Json SharedLuaAdapter::StateDocument() const {
         {"revive_requestable", FactValue(state.reviveRequestable)},
         {"map_id", state.mapKnown ? Json(state.mapId) : Json(nullptr)},
         {"held_keys", Json::array()},
-        {"held_actions", Json::array()},
         {"command",
          {{"id", commandId.empty() ? Json(nullptr) : Json(commandId)},
           {"status", commandStatus},
@@ -1454,73 +922,15 @@ Json SharedLuaAdapter::StateDocument() const {
         {"script", ScriptState(latestScriptId)},
         {"scripts", ScriptsDocument()},
         {"tick_profile", Json::parse(tickRuntime.Profile().Dump())},
-        {"last_skill", nullptr},
         {"input_events", inputEvents},
         {"capabilities",
          {{"move", true},
-          {"face", true},
           {"jump", true},
           {"attack", true},
-          {"attack_move", true},
           {"pickup", true},
           {"use_item", true},
-          {"equip", true},
-          {"unequip", true},
-          {"revive", true},
-          {"activate", true},
-          {"allocate_ap", true},
-          {"allocate_sp", true},
-          {"window", false},
           {"stop", true},
-          {"raw_keys", false},
-          {"skill", true},
-          {"monster_hp_percent", true}}},
-        {"action_result",
-         {{"dispatched", result.dispatched},
-          {"control_released", result.controlReleased},
-          {"settled", FactValue(result.settled)},
-          {"effect", result.effect},
-          {"reason", result.reason}}}};
-    if (result.allocation.Type() != MapleControl::Value::Kind::Null)
-        document["action_result"]["allocation"] = Json::parse(result.allocation.Dump());
-    if (!result.sessionId.empty()) document["action_result"]["session_id"] = result.sessionId;
-    if (lastSkill)
-        document["last_skill"] = {{"skill_id", lastSkill->id},
-                                  {"native_result", lastSkill->result.nativeResult},
-                                  {"dispatched", lastSkill->result.dispatched},
-                                  {"reason", lastSkill->result.reason}};
-    if (result.skillRequested) {
-        document["action_result"]["skill_dispatched"] = result.skill.dispatched;
-        document["action_result"]["skill_native_result"] = result.skill.nativeResult;
-        document["action_result"]["skill_reason"] = result.skill.reason;
-    }
-    for (const auto key : physicalKeys) {
-        switch (key) {
-        case ms::KeyAction::LEFT:
-            document["held_actions"].push_back("Left");
-            break;
-        case ms::KeyAction::RIGHT:
-            document["held_actions"].push_back("Right");
-            break;
-        case ms::KeyAction::UP:
-            document["held_actions"].push_back("Up");
-            break;
-        case ms::KeyAction::DOWN:
-            document["held_actions"].push_back("Down");
-            break;
-        case ms::KeyAction::ATTACK:
-            document["held_actions"].push_back("Attack");
-            break;
-        case ms::KeyAction::JUMP:
-            document["held_actions"].push_back("Jump");
-            break;
-        case ms::KeyAction::PICKUP:
-            document["held_actions"].push_back("Pickup");
-            break;
-        default:
-            break;
-        }
-    }
+          {"skill", true}}}};
     document["character"] = nullptr;
     if (state.characterKnown) {
         Json character = MotionDocument(state.character);

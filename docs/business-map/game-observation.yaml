@@ -60,10 +60,9 @@ nodes:
     summary: 各适配器在所属客户端提供实际支持的观察领域；无头任务来自完整包快照，不声明实时增量。
     aliases: [原生采集, 领域响应]
     anchors:
-      - kind: symbol
-        file: headless/src/SharedLuaAdapter.cpp
-        value: SharedLuaAdapter::ObservationData
-        description: 提供无头stage、scene、inventory、character和quests，明确未入图及不支持状态。
+      - kind: file
+        value: headless/src/SharedLuaAdapter.cpp
+        description: 提供无头 stage、scene、inventory、character 和 quests，明确未入图及不支持状态。
       - kind: symbol
         file: beidou-ijl15/ezorsia/NativeObservation.cpp
         value: NativeObservation::Tick
@@ -78,10 +77,9 @@ nodes:
         file: cli/beidou_pilot/observations.py
         value: NativeObserver.metadata
         description: 为领域结果保留客户端来源、实例、run_id、采样时间与镜像身份。
-      - kind: symbol
-        file: headless/src/SharedLuaAdapter.cpp
-        value: SharedLuaAdapter::ObservationData
-        description: 无头任务明确source为character_data_snapshot、live_updates为false及未覆盖语义。
+      - kind: file
+        value: headless/src/SharedLuaAdapter.cpp
+        description: 无头任务明确 source 为 character_data_snapshot、live_updates 为 false 及未覆盖语义。
   - id: game-observation.references
     kind: data
     name: 当前快照短引用
@@ -101,9 +99,8 @@ nodes:
       - kind: file
         value: cli/beidou_pilot/observations.py
         description: 定义原生状态、领域请求及响应的消费者协议与身份校验。
-      - kind: symbol
-        file: headless/src/SharedLuaAdapter.cpp
-        value: SharedLuaAdapter::ReadObservation
+      - kind: file
+        value: headless/src/SharedLuaAdapter.cpp
         description: 无头端核验原生实例并发布带请求及运行身份的只读领域响应。
       - kind: file
         value: cli/test/test_native_observations.py

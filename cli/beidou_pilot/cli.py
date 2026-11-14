@@ -15,9 +15,9 @@ from typing import Iterator, cast
 from .backend import Backend, ClientError, JsonObject
 from .catalog import Catalog
 from . import dialogs
-from .rules import FIRST_JOB_LEVELS, advancement
+from .rules import advancement
 from .snapshot import collect, format_snapshot
-from .strategies import compile_strategy, describe_strategy, parse_options, parse_script_execution, read_strategy_file
+from .strategies import compile_strategy, describe_strategy, parse_options, read_strategy_file
 from . import __version__
 
 
@@ -40,7 +40,7 @@ def parser() -> Parser:
         help="核对本容器后端，默认MAPLE_BACKEND",
     )
     common.add_argument("--instance", default=argparse.SUPPRESS, help="核对本容器实例名，默认MAPLE_INSTANCE")
-    p = Parser(prog="beidou-pilot", description="北斗客户端：登录、状态观察、Lua脚本与游戏操作。", parents=[common])
+    p = Parser(prog="beidou-pilot", description="北斗客户端：登录、状态观察、tick Lua脚本与GUI操作。", parents=[common])
     p.add_argument("--version", action="version", version="beidou-pilot " + __version__)
     sub = p.add_subparsers(dest="command", required=True, parser_class=Parser)
 
@@ -69,47 +69,22 @@ def parser() -> Parser:
     command("doctor", "检查本地运行条件与读取能力，不启动客户端")
     q = command("bridge", "读取原生桥状态，或停止桥持有的按键")
     q.add_argument("action", choices=["status", "stop"], nargs="?", default="status")
-    q = command("script", "在客户端内运行Lua控制脚本，或只读当前脚本状态", allow_abbrev=False)
+    q = command("script", "运行tick Lua脚本，或只读当前脚本状态", allow_abbrev=False)
     q.add_argument("action", choices=["run", "start", "status", "cancel", "describe"])
     q.add_argument("--session", help="cancel必须指定script.id；status可按script.id查询指定会话")
-    q.add_argument("--library", choices=["travel", "island-supply"], help="为run/start显式装载公共Lua函数")
-    source = q.add_mutually_exclusive_group()
-    source.add_argument("file", type=Path, nargs="?", help="受信UTF-8 Lua文件")
-    source.add_argument("--code", help="直接执行受信Lua源码，与文件输入互斥")
+    q.add_argument("file", type=Path, nargs="?", help="声明main(context)入口的tick Lua文件")
     duration = q.add_mutually_exclusive_group()
     duration.add_argument("--seconds", type=float, default=30, help="客户端内脚本时限，默认30秒")
     duration.add_argument(
         "--continuous", action="store_true", help="明确持续执行；结束等待保留任务，取消须script cancel"
     )
-    q = command("task", "向活动Lua会话新增、替换或停止独立任务，或查询管理结果")
-    q.add_argument("action", choices=["add", "replace", "stop", "result"])
-    q.add_argument("name", help="任务名称；result操作填写管理request_id")
-    source = q.add_mutually_exclusive_group()
-    source.add_argument("file", type=Path, nargs="?", help="任务主体的UTF-8 Lua文件")
-    source.add_argument("--code", help="任务主体的直接Lua源码")
-    q.add_argument("--session", help="script status中的script.id")
-    q.add_argument("--revision", type=int, help="替换或停止的预期任务revision")
-    q.add_argument("--priority", type=int, help="新增或替换任务的优先级")
-    q.add_argument("--timeout", type=float, default=3, help="管理结果等待秒数，不改变会话期限")
-    q = command("skill", "通过Lua调用本后端支持的原生技能，分别报告派发与原始返回值")
-    q.add_argument("id", type=int)
     q = command("open", "完成本容器登录并确认已有角色入图")
     q.add_argument("--server", type=Path, help="本实例对应的服务器配置")
     q.add_argument("--account", type=Path, required=True, help="已有账号和角色的 0600 配置")
     q.add_argument("--timeout", type=float, default=90)
     command("close", "提示通过宿主工作台生命周期入口关闭本容器")
-    q = command("walk", "原生语义移动；方向与有界时间")
-    q.add_argument("direction", choices=["left", "right", "up", "down"])
-    q.add_argument("--seconds", type=float, default=0.3)
-    q = command("face", "原生朝向动作，允许伴随少量位置变化")
-    q.add_argument("direction", choices=["left", "right"])
-    command("jump", "尝试一次原生跳跃")
-    command("attack", "尝试一次普通攻击，命中另行确认")
-    command("pickup", "尝试近距离拾取，库存与金币结果另行确认")
-    q = command("use_item", "按物品ID尝试原生使用；按客户端能力准入")
-    q.add_argument("id", type=int)
     command("stop", "显式释放当前客户端遗留控制")
-    command("revive", "请求一次本端正常复活并核对恢复；存活时跳过")
+    command("revive", "GUI端请求一次正常复活并核对恢复；存活时跳过")
     q = command("snapshot", "场景、角色、对话与可操作引用")
     q.add_argument("--all", action="store_true", help="含画外实体")
     q.add_argument("-i", "--interactive", action="store_true", help="简洁列出NPC/对话/掉落")
@@ -148,77 +123,20 @@ def parser() -> Parser:
     q.add_argument("--button", type=int, help="respond必须指定当前气泡实际存在的control_id")
     q = command("batch", "从JSON文件或stdin执行一组CLI命令，任一步失败立即停止")
     q.add_argument("--file", type=Path)
-    q = command("key", "通过Lua按住并释放原版客户端按键")
-    q.add_argument("keys", nargs="+")
-    q.add_argument("--seconds", type=float, default=0.15, help="单次按住0.05～30秒，结束后释放")
-    q = command("move", "客户端内Lua按实际坐标移动；给出--to-y时跨平台寻路")
-    q.add_argument("x", type=int)
-    q.add_argument("--to-y", type=int, help="目标世界高度；给出后按平台图跨层移动")
-    q.add_argument("--seconds", type=float, default=20)
-    q.add_argument("--tolerance", type=int, default=8)
-    q.add_argument("--plan-only", action="store_true", help="只输出平台路径，不移动")
-    q = command("climb", "对齐绳梯并爬到指定世界y")
-    q.add_argument("x", type=int)
-    q.add_argument("--to-y", type=int, required=True)
-    q.add_argument("--seconds", type=float, default=20)
-    q = command("portal", "按当前地图门户名正常靠近并进入")
-    q.add_argument("name")
-    q.add_argument("--seconds", type=float, default=20)
-    q = command("navigate", "按目的地图从本地门户资料算路并逐段换图")
-    q.add_argument("map_id", type=int, help="目的地图 ID")
-    q.add_argument("--x", type=int, help="目的地图内目标水平坐标")
-    q.add_argument("--to-y", type=int, help="目的地图内目标世界高度；与--x同时给出时继续走到该坐标")
-    q.add_argument("--seconds", type=float, default=120, help="整体导航时间预算，1至600秒")
-    q.add_argument("--plan-only", action="store_true", help="只输出静态路线，不移动")
-    q = command("ui", "读取/打开/关闭已识别窗口，或恢复场景焦点")
-    q.add_argument("action", choices=["read", "open", "close", "focus"], default="read", nargs="?")
-    q.add_argument("window", nargs="?", choices=["inventory", "stats", "skills", "shop", "all"])
-    q = command("equip", "装备背包中的物品，并核对身上负槽")
+    q = command("ui", "只读当前已识别窗口与场景焦点")
+    q.add_argument("action", choices=["read"], default="read", nargs="?")
+    q = command("equip", "按GUI背包路径装备物品，并核对身上负槽")
     q.add_argument("item")
-    q.add_argument("--slot", type=int, help="无头：明确装备背包源正槽")
-    q.add_argument("--to-slot", type=int, help="无头：明确身上目的负槽")
-    q.add_argument("--seconds", type=float, default=3, help="无头换装确认期限，默认3秒")
-    q = command("unequip", "无头正常卸下指定身上装备到空背包槽，并核对结果")
-    q.add_argument("--slot", type=int, required=True, help="身上源负槽")
-    q.add_argument("--to-slot", type=int, required=True, help="装备背包目的正槽，必须为空")
-    q.add_argument("--seconds", type=float, default=3, help="换装确认期限，默认3秒")
-    q = command("use", "正常使用消费品，核对数量与实际恢复")
-    q.add_argument("item")
-    q.add_argument("--count", type=int, default=1)
-    q.add_argument("--until-hp", type=int)
-    q.add_argument("--until-mp", type=int)
-    q.add_argument("--seconds", type=float)
-    q = command("stats", "向明确基础属性分配AP，逐点核对目标与剩余点数")
-    q.add_argument("stat", choices=["str", "dex", "int", "luk"])
-    q.add_argument("count", type=int)
-    q = command("skills", "向明确技能分配SP，逐点核对技能等级与剩余点数")
-    q.add_argument("skill", type=int)
-    q.add_argument("count", type=int, nargs="?", default=1)
     command("hotkeys", "读取客户端当前键位及快捷栏映射")
     q = command("bind", "正常拖动技能或物品到指定快捷键，并核对映射")
     q.add_argument("kind", choices=["item", "skill"])
     q.add_argument("id", type=int)
     q.add_argument("key")
-    q = command("press", "按当前绑定的物品或技能键，不臆测命中")
-    q.add_argument("kind", choices=["item", "skill"])
-    q.add_argument("id", type=int)
     q = command("shop", "读取当前普通商店商品，并执行已指定的买卖")
     q.add_argument("action", choices=["read", "buy", "sell", "close"], default="read", nargs="?")
     q.add_argument("item", nargs="?", type=int)
     q.add_argument("--count", type=int, default=1)
     q.add_argument("--slot", type=int)
-    q = command("hunt", "当前单一场景内自主找怪、换层和连续攻击；场景变化即停止")
-    q.add_argument("mob", nargs="?", default="all", help="怪物名称、模板ID或all（默认全部怪物）")
-    q.add_argument("--skill", type=int, help="指定已学且本后端支持的技能ID；省略时使用普攻")
-    q.add_argument("--range", type=float, default=60, dest="attack_range", help="接近目标的攻击距离，默认60")
-    duration = q.add_mutually_exclusive_group()
-    duration.add_argument("--seconds", type=float, default=60, help="狩猎期限，默认60秒")
-    duration.add_argument("--continuous", action="store_true", help="持续到明确取消或安全停止；Ctrl+C只结束等待")
-    q.add_argument("--bounds", type=int, nargs=2, metavar=("MIN", "MAX"), help="限定本场景横向狩猎范围")
-    q.add_argument("--until-level", type=int, help="到达指定等级停止；仍受当前转职节点限制")
-    q.add_argument("--first-job", choices=FIRST_JOB_LEVELS, help="本次新手练级的首转路线；magician停8级，其余停10级")
-    q.add_argument("--min-hp-ratio", type=float, default=0.35, help="HP安全下限比例，默认0.35")
-    q.add_argument("--hp-item", type=int, help="低HP时使用的明确回血物品ID，不自动买药")
     q = command("screenshot", "保存原图及游戏裁剪，不直接向会话加载图片")
     q.add_argument("name", nargs="?")
     q = command("record", "有界采集当前游戏画面与逐帧时间戳，不发送输入")
@@ -317,35 +235,16 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "doctor",
         "bridge",
         "script",
-        "task",
-        "skill",
         "open",
         "close",
         "snapshot",
         "watch",
         "events",
         "inspect",
-        "click",
-        "walk",
-        "face",
-        "jump",
-        "attack",
-        "pickup",
-        "use_item",
-        "revive",
         "stop",
-        "move",
-        "climb",
-        "portal",
-        "hunt",
         "batch",
-        "use",
-        "equip",
-        "unequip",
-        "stats",
-        "skills",
     }:
-        raise ClientError("unsupported_capability", "该客户端尚未提供这个窗口、原始按键或玩法接口。", {"command": cmd})
+        raise ClientError("unsupported_capability", "无头端尚未提供这个窗口、原始按键或GUI输入接口。", {"command": cmd})
     if (
         backend.name == "beidou"
         and cmd
@@ -355,11 +254,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             "dialog",
             "ui",
             "equip",
-            "use",
-            "stats",
-            "skills",
             "bind",
-            "press",
             "shop",
             "notifications",
         }
@@ -370,8 +265,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
         if (bridge.directory / "state.json").exists():
             state = bridge.snapshot()
-            scripts = state.get("scripts", [state["script"]] if state.get("script") is not None else [])
-            script = next((item for item in scripts if item["status"] == "running"), None)
+            script = next((item for item in state.get("scripts", []) if item["status"] == "running"), None)
             if script is not None:
                 raise ClientError(
                     "input_busy",
@@ -445,35 +339,20 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
         return cast(JsonObject, bridge.stop() if args.action == "stop" else bridge.snapshot())
-    if cmd == "skill":
-        from .control_scripts import skill
-
-        return skill(backend, args.id)
     if cmd == "script":
-        if args.library is not None and args.action not in {"run", "start"}:
-            raise ClientError("usage", "--library仅用于script run/start。")
         if args.action == "cancel":
-            if args.session is None or args.file is not None or args.code is not None:
-                raise ClientError("usage", "script cancel需要--session，不接收Lua文件或源码。")
+            if args.session is None or args.file is not None:
+                raise ClientError("usage", "script cancel需要--session，不接收Lua文件。")
             from .bridge import BridgeClient
 
             bridge = BridgeClient(backend.root, backend.name, backend.instance)
             return bridge.cancel_script(args.session, admission_control=control(backend, "script cancel"))
         if args.session is not None and args.action != "status":
             raise ClientError("usage", "--session仅用于script cancel/status。")
-        if args.action == "describe":
-            if args.file is None or args.code is not None or args.library is not None:
-                raise ClientError("usage", "script describe需要一个已声明main(context)的Lua文件。")
-            if args.strategy_metadata is None:
-                raise ClientError(
-                    "strategy_metadata_missing", "Lua文件未声明main(context)策略入口。", {"path": str(args.file)}
-                )
-            return describe_strategy(args.file, args.strategy_metadata)
         if args.action == "status":
-            if args.file is not None or args.code is not None:
-                raise ClientError("usage", "script status不接收脚本文件或源码。")
+            if args.file is not None:
+                raise ClientError("usage", "script status不接收脚本文件。")
             from .bridge import BridgeClient
-
             from .bridge import script_by_id
 
             bridge = BridgeClient(backend.root, backend.name, backend.instance)
@@ -489,7 +368,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                     )
             report: JsonObject = {
                 "source": "client-native-bridge",
-                "supported": "script" in state,
+                "supported": "scripts" in state,
                 "instance_id": state["instance_id"],
                 "run_id": state["run_id"],
                 "script": cast(JsonObject | None, script),
@@ -499,50 +378,22 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             if "scripts" in state:
                 report["scripts"] = cast(list[JsonObject], state["scripts"])
             return report
-        if args.file is None and args.code is None:
-            raise ClientError("usage", "script run/start需要UTF-8本地Lua文件或--code源码。")
+        if args.file is None:
+            raise ClientError("usage", "script run/start需要UTF-8本地Lua文件。")
         from .bridge import BridgeClient
+        from .strategy_scene import scene_context
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
-        consumer_file = args.file
-        if args.strategy_metadata is not None:
-            from .strategy_scene import scene_context
-
-            scene = scene_context(backend.root, bridge.snapshot())
-            source = cast(str, args.strategy_source)
-            if args.library is not None:
-                from .script_libraries import with_library
-
-                source = with_library(args.library, None, source)
-            code = compile_strategy(source, args.strategy_options, scene)
-            report = bridge.run_script(
-                None,
-                seconds=None if args.continuous else args.seconds,
-                code=code,
-                wait_for_start=args.action == "start",
-                admission_control=control(backend, "script " + args.action),
-            )
-            report = {**report, "script_file": str(consumer_file), "policy_entry": "main(context)"}
-        else:
-            code = args.code
-            if args.file is not None:
-                code = cast(str, args.strategy_source)
-            if args.library is not None:
-                from .script_libraries import with_library
-
-                code = with_library(args.library, None, code)
-            report = bridge.run_script(
-                None,
-                seconds=None if args.continuous else args.seconds,
-                code=code,
-                wait_for_start=args.action == "start",
-                admission_control=control(backend, "script " + args.action),
-            )
-            if consumer_file is not None:
-                report = {**report, "script_file": str(consumer_file)}
-        if args.library is not None:
-            return {**report, "library": args.library, "consumer_file": str(consumer_file) if consumer_file else None}
-        return report
+        scene = scene_context(bridge.snapshot())
+        code = compile_strategy(cast(str, args.strategy_source), args.strategy_options, scene)
+        report = bridge.run_script(
+            None,
+            seconds=None if args.continuous else args.seconds,
+            code=code,
+            wait_for_start=args.action == "start",
+            admission_control=control(backend, "script " + args.action),
+        )
+        return {**report, "script_file": str(args.file), "policy_entry": "main(context)"}
     if cmd == "notifications":
         from .notifications import read_notifications, respond
 
@@ -553,38 +404,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         if args.reference is None or args.button is None:
             raise ClientError("usage", "notifications respond需要当前引用和--button CONTROL_ID。")
         return respond(backend, args.reference, args.button)
-    if cmd == "task":
-        from .task_management import change_task, task_result
-
-        if args.action == "result":
-            if any(value is not None for value in (args.file, args.code, args.session, args.revision, args.priority)):
-                raise ClientError("usage", "task result只接收管理request_id与公共选项。")
-            return task_result(backend, args.name)
-        if args.session is None:
-            raise ClientError("usage", "任务管理需要--session明确目标script.id。")
-        if args.action in {"add", "replace"}:
-            if args.file is None and args.code is None or args.priority is None:
-                raise ClientError("usage", "新增或替换任务需要Lua文件或--code，以及--priority。")
-        elif args.file is not None or args.code is not None or args.priority is not None:
-            raise ClientError("usage", "task stop不接收源码或优先级。")
-        if (
-            args.action == "add"
-            and args.revision is not None
-            or args.action in {"replace", "stop"}
-            and args.revision is None
-        ):
-            raise ClientError("usage", "新增任务不接收--revision；替换或停止需要预期--revision。")
-        return change_task(
-            backend,
-            args.action,
-            args.name,
-            script_id=args.session,
-            expected_revision=args.revision,
-            priority=args.priority or 0,
-            path=args.file,
-            code=args.code,
-            timeout=args.timeout,
-        )
     if cmd == "open":
         from .profile import load_profile
 
@@ -615,16 +434,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         return opened
     if cmd == "close":
         raise ClientError("host_lifecycle_required", "请通过宿主工作台入口 close 关闭并确认所属容器退出。")
-    if cmd in {"walk", "face", "jump", "attack", "pickup", "use_item"}:
-        from .control_scripts import action
-
-        return action(
-            backend,
-            "move" if cmd == "walk" else cmd,
-            direction=getattr(args, "direction", None),
-            seconds=getattr(args, "seconds", 0.3),
-            item_id=getattr(args, "id", None),
-        )
     if cmd == "stop":
         from .bridge import BridgeClient
 
@@ -683,14 +492,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             raise ClientError("usage", "dialog select需要文字、索引或当前引用。")
         return dialogs.act(backend, args.action, args.selector)
     if cmd == "click":
-        if backend.name == "headless":
-            if args.y is not None or args.double:
-                raise ClientError("unsupported_capability", "无头端只激活当前原生控件引用，不提供桌面坐标或双击。")
-            from .control_scripts import _lua_literal, run_source
-
-            report = run_source(backend, "game.activate(" + _lua_literal(args.target) + ")\n", 3)
-            state = cast(JsonObject, report["last_state"])
-            return {**report, "action": "activate", "action_result": state["action_result"]}
         if args.y is not None:
             return backend.desktop(
                 [{"action": "double-click" if args.double else "click", "x": int(args.target), "y": args.y}]
@@ -711,19 +512,27 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
 
             if target["inventory_type"] == 1:
                 return items.equip(backend, cast(int, target["item_id"]))
-            return items.use(backend, cast(int, target["item_id"]))
-        raise ClientError("unsupported_click", "这个引用用于观察；请使用对应的战斗或拾取命令。", {"target": target})
+            raise ClientError(
+                "unsupported_capability", "GUI 物品引用只保留换装；消耗品使用已退役。", {"item_id": target["item_id"]}
+            )
+        raise ClientError("unsupported_click", "这个引用只用于观察；当前没有对应输入命令。", {"target": target})
     if cmd == "batch":
         raw = json.loads(args.file.read_text()) if args.file else json.load(sys.stdin)
         if not isinstance(raw, list) or not raw:
-            raise ClientError("usage", 'batch需要非空JSON命令数组，例如[["status"],["move",100]]。')
+            raise ClientError("usage", 'batch需要非空JSON命令数组，例如[["status"],["snapshot"]]。')
         commands = []
         for index, words in enumerate(raw):
             if not isinstance(words, list) or not words or not all(type(v) in (str, int, float) for v in words):
                 raise ClientError("usage", "每项命令须为字符串/数字参数数组。", {"index": index})
             parsed = parser().parse_args([str(v) for v in words])
             if parsed.command == "batch":
-                raise ClientError("usage", "batch不支持嵌套；持续控制请使用Lua脚本。", {"index": index})
+                raise ClientError("usage", "batch不支持嵌套；持续控制请使用tick脚本。", {"index": index})
+            if parsed.command == "script" and parsed.action in {"run", "start", "describe"}:
+                raise ClientError(
+                    "usage",
+                    "batch不执行需要先读文件的script动作；请独立运行script " + parsed.action + "。",
+                    {"index": index},
+                )
             if (
                 getattr(parsed, "root", backend.root).resolve() != backend.root
                 or getattr(parsed, "backend", backend.name) != backend.name
@@ -747,108 +556,20 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 ) from error
             completed.append({"command": parsed.command, "result": concise(result) if result is not None else None})
         return {"status": "completed", "steps": completed}
-    if cmd == "key":
-        from .control_scripts import press_keys
-
-        return press_keys(backend, args.keys, seconds=args.seconds)
-    if cmd == "navigate":
-        from . import navigation
-
-        return navigation.navigate(
-            backend, args.map_id, x=args.x, y=args.to_y, seconds=args.seconds, plan_only=args.plan_only
-        )
-    if cmd in ("move", "climb", "portal"):
-        if cmd == "move":
-            if args.to_y is None:
-                if args.plan_only:
-                    raise ClientError("usage", "--plan-only需要同时给出--to-y。")
-                from .control_scripts import move_to_x
-
-                return move_to_x(backend, args.x, seconds=args.seconds, tolerance=args.tolerance)
-            from . import travel
-
-            return travel.walk_to(
-                backend, args.x, args.to_y, seconds=args.seconds, plan_only=args.plan_only, tolerance=args.tolerance
-            )
-        from . import travel
-
-        if cmd == "climb":
-            return travel.climb(backend, args.x, args.to_y, seconds=args.seconds)
-        return travel.portal(backend, args.name, seconds=args.seconds)
     if cmd == "ui":
-        from .control_scripts import window
-
-        if args.action == "read":
-            return backend.read("ui")
-        if args.action == "focus":
-            return window(backend, "game")
-        if args.window is None:
-            raise ClientError("usage", "ui open/close需要窗口名。")
-        if args.window == "all":
-            if args.action != "close":
-                raise ClientError("usage", "all仅用于ui close。")
-            from .shop import close_shop
-
-            closed_shop = close_shop(backend)
-            return {
-                "shop": closed_shop,
-                "windows": [window(backend, w, False) for w in ("skills", "stats", "inventory")],
-            }
-        if args.window == "shop":
-            if args.action != "close":
-                raise ClientError("usage", "商店通过talk商人打开；ui close shop可关闭。")
-            from .shop import close_shop
-
-            return close_shop(backend)
-        return window(backend, args.window, args.action == "open")
-    if cmd == "unequip" or cmd == "equip" and backend.name == "headless":
-        from .control_scripts import change_equipment
-
-        if backend.name != "headless":
-            raise ClientError("unsupported_capability", "该客户端尚未提供明确槽位的原生卸下操作。")
-        if cmd == "equip":
-            if args.slot is None or args.to_slot is None:
-                raise ClientError("usage", "无头 equip 需要 --slot 明确背包源槽和 --to-slot 明确身上目的槽。")
-            if not args.item.isdecimal():
-                raise ClientError("usage", "无头 equip 需要数字物品ID，并同时指定实际背包槽。")
-        return change_equipment(
-            backend,
-            args.slot,
-            args.to_slot,
-            unequip=cmd == "unequip",
-            item_id=int(args.item) if cmd == "equip" else None,
-            seconds=args.seconds,
-        )
-    if cmd in ("equip", "use"):
-        if cmd == "equip" and (args.slot is not None or args.to_slot is not None or args.seconds != 3):
-            raise ClientError(
-                "unsupported_capability", "GUI equip 沿用物品选择与窗口流程；明确原生槽位参数仅支持无头端。"
-            )
-        if backend.name == "headless" and not args.item.isdecimal():
-            raise ClientError("unsupported_capability", "无头端use需要数字物品ID。")
+        return backend.read("ui")
+    if cmd == "equip":
+        if backend.name != "beidou":
+            raise ClientError("unsupported_capability", "equip 仅保留GUI背包换装路径；无头端不提供。")
         from . import items
 
-        item = resolve_item(backend, args.item)
-        if cmd == "equip":
-            return items.equip(backend, item)
-        return items.use(
-            backend, item, count=args.count, until_hp=args.until_hp, until_mp=args.until_mp, seconds=args.seconds
-        )
-    if cmd in ("stats", "skills"):
-        from .control_scripts import allocate
-
-        if args.count < 1:
-            raise ClientError("usage", "点数必须为正整数。")
-        attributes = {"str": "strength", "dex": "dexterity", "int": "intelligence", "luk": "luck"}
-        return allocate(backend, attributes[args.stat] if cmd == "stats" else args.skill, args.count)
-    if cmd in ("hotkeys", "bind", "press"):
+        return items.equip(backend, resolve_item(backend, args.item))
+    if cmd in ("hotkeys", "bind"):
         from . import hotkeys
 
         if cmd == "hotkeys":
             return hotkeys.read_hotkeys(backend)
-        if cmd == "bind":
-            return (hotkeys.bind_item if args.kind == "item" else hotkeys.bind_skill)(backend, args.id, args.key)
-        return hotkeys.press_bound(backend, args.kind, args.id)
+        return (hotkeys.bind_item if args.kind == "item" else hotkeys.bind_skill)(backend, args.id, args.key)
     if cmd == "shop":
         from . import shop
 
@@ -862,21 +583,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             shop.buy(backend, args.item, args.count)
             if args.action == "buy"
             else shop.sell(backend, args.item, args.count, slot=args.slot)
-        )
-    if cmd == "hunt":
-        from .hunting import hunt
-
-        return hunt(
-            backend,
-            args.mob,
-            seconds=None if args.continuous else args.seconds,
-            skill_id=args.skill,
-            attack_range=args.attack_range,
-            bounds=tuple(args.bounds) if args.bounds is not None else None,
-            stop_level=args.until_level,
-            first_job=args.first_job,
-            min_hp_ratio=args.min_hp_ratio,
-            hp_item_id=args.hp_item,
         )
     if cmd == "screenshot":
         name = args.name or datetime.now(timezone.utc).strftime("shot-%Y%m%dT%H%M%S-") + str(os.getpid())
@@ -928,26 +634,18 @@ def main(argv: list[str] | None = None) -> int:
         args.strategy_metadata = None
         args.strategy_source = None
         args.strategy_options = {}
-        if args.command == "script" and args.action in {"run", "start", "describe"} and args.file is not None:
+        if args.command == "script" and args.action in {"run", "start", "describe"}:
+            if args.file is None:
+                raise ClientError("usage", "script " + args.action + " 需要UTF-8 Lua文件。")
             args.strategy_source, args.strategy_metadata = read_strategy_file(args.file)
-            if args.strategy_metadata is not None and args.action in {"run", "start"}:
+            if args.action in {"run", "start"}:
                 args.strategy_options = parse_options(args.strategy_metadata, unrecognized)
                 unrecognized = []
-            elif args.action == "describe" and args.strategy_metadata is None:
-                raise ClientError(
-                    "strategy_metadata_missing", "Lua文件未声明main(context)策略入口。", {"path": str(args.file)}
-                )
-            elif unrecognized:
-                raise ClientError("usage", "该Lua文件未声明动态策略参数：" + " ".join(unrecognized))
-        if args.command == "script" and args.action in {"run", "start"} and args.code is not None:
-            parse_script_execution(args.code)
-        if args.command == "script" and args.action == "describe" and args.file is None:
-            raise ClientError("usage", "script describe需要一个Lua策略文件。")
         if unrecognized:
             raise ClientError("usage", "unrecognized arguments: " + " ".join(unrecognized))
         if args.command == "script" and args.action == "describe":
-            if args.library is not None or args.session is not None or args.continuous or args.seconds != 30:
-                raise ClientError("usage", "script describe只接收策略文件和通用选择选项。")
+            if args.session is not None or args.continuous or args.seconds != 30:
+                raise ClientError("usage", "script describe只接收Lua文件和通用选择选项。")
             data = describe_strategy(cast(Path, args.file), args.strategy_metadata)
             print(
                 json.dumps(
@@ -994,7 +692,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.command == "close":
             result = dispatch(backend, args)
-        elif args.command in {"task", "script"} and not readonly or args.command == "events" and args.action == "watch":
+        elif args.command == "script" and not readonly or args.command == "events" and args.action == "watch":
             previous_handler = signal.signal(signal.SIGTERM, signal.default_int_handler)
             try:
                 result = dispatch(backend, args)
@@ -1032,7 +730,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             file=sys.stdout if json_output else sys.stderr,
         )
-        return 130 if error.code == "task_request_interrupted" else 2
+        return 2
     except json.JSONDecodeError as error:
         print(
             json.dumps({"ok": False, "error": {"code": "invalid_json", "message": error.msg}}, ensure_ascii=False),

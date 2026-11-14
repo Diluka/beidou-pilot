@@ -1,12 +1,12 @@
-"""读取真实快捷键绑定，并通过普通键盘使用已绑定的物品和技能。"""
+"""读取真实快捷键绑定，并通过普通拖动绑定物品或技能。"""
 
 import time
 from typing import cast
 
 from .backend import Backend, ClientError, JsonObject
 from .engines.character import CharacterSnapshot
-from .engines.hotkeys import Binding, BindingKind, HotkeysSnapshot
-from .ui import click_window, focus_game, open_window, read_ui
+from .engines.hotkeys import BindingKind, HotkeysSnapshot
+from .ui import click_window, open_window, read_ui
 
 
 BINDING_TYPES: dict[BindingKind, int] = {"skill": 1, "item": 2}
@@ -18,30 +18,6 @@ def read_hotkeys(backend: Backend) -> HotkeysSnapshot:
         raise ClientError("hotkeys_unavailable", "当前快捷键读数不可用。",
                           {"unavailable": snapshot["unavailable"]})
     return snapshot
-
-
-def find_binding(backend: Backend, kind: BindingKind, identifier: int) -> Binding | None:
-    return next((binding for binding in read_hotkeys(backend)["bindings"]
-                 if binding["type"] == BINDING_TYPES[kind] and binding["id"] == identifier), None)
-
-
-def press_bound(backend: Backend, kind: BindingKind, identifier: int) -> JsonObject:
-    """派发一次普通按键；物品消耗或技能效果由调用方按业务读数确认。"""
-    binding = find_binding(backend, kind, identifier)
-    if binding is None:
-        raise ClientError("hotkey_not_bound", "该物品或技能尚未绑定快捷键。",
-                          {"kind": kind, "id": identifier})
-    key = binding["key"]
-    if key is None:
-        raise ClientError("hotkey_input_unverified", "该扫描码尚未确认普通键盘输入名称。",
-                          {"key_code": binding["key_code"]})
-    focus_game(backend)
-    from .control_scripts import press_keys
-
-    press_keys(backend, [key], seconds=0.08)
-    return {"kind": kind, "id": identifier, "key": key,
-            "key_code": binding["key_code"], "dispatched": True,
-            "effect_confirmed": False}
 
 
 def bind_item(backend: Backend, item_id: int, key: str) -> JsonObject:
