@@ -74,6 +74,35 @@ nodes:
         file: cli/beidou_pilot/bridge.py
         value: BridgeClient.cancel_script
         description: 按当前 script.id 执行显式会话取消，拒绝不匹配的旧脚本并等待输入释放。
+  - id: script-execution.tick-package
+    kind: interface
+    name: tick 目录脚本包与模块装载协议
+    summary: tick 入口可以提交目录脚本包，目录内固定 main.lua 为入口，其余 Lua 文件由入口用原生 require 按包内相对路径装载。CLI 只为该会话发布包根，原生把它加入 require 搜索但不复制模块文件；会话状态记录实际装载模块的来源，模块缺失、编译和运行错误带来源模块与行号，单文件入口与 --code 保持原有装载方式和行为。
+    aliases: [目录脚本包, main.lua, require, module_root, modules]
+    anchors:
+      - kind: symbol
+        file: cli/beidou_pilot/cli.py
+        value: main
+        description: 识别目录入口并校验 tick 策略要求，再按单文件策略规则注入上下文与参数。
+      - kind: symbol
+        file: cli/beidou_pilot/bridge.py
+        value: BridgeClient.run_script
+        description: 在发布源码的同一装载阶段写出包根文件，不复制模块源文件。
+      - kind: symbol
+        file: shared/lua-runtime/TickRuntime.cpp
+        value: TickRuntime::StartPackage
+        description: 把包根加入会话 require 搜索，跟踪实际装载模块并保留包会话的 Lua traceback。
+      - kind: symbol
+        file: headless/src/SharedLuaAdapter.cpp
+        value: SharedLuaAdapter::ReadCommand
+        description: 读取可选包根并交给 tick 引擎；无头端按同一容器路径直接读取模块源文件。
+      - kind: symbol
+        file: beidou-ijl15/ezorsia/AgentBridge.cpp
+        value: ReadCommand
+        description: GUI 原生桥把容器包根映射为 Wine 的 Z 盘路径后交给同一共享运行时。
+      - kind: document
+        value: docs/LUA_TICK_API.md
+        description: 面向脚本作者说明目录包组织、require 语义、模块来源与错误归属。
   - id: script-execution.control
     kind: capability
     name: 任务协作与输入控制权
@@ -201,6 +230,7 @@ relations:
   - {from: script-execution.run, type: consumes, to: client-session.cli, summary: 调用方通过固定实例的统一 CLI 提交脚本。}
   - {from: script-execution.run, type: publishes, to: script-execution.lua-api, summary: 为本会话中的 Lua 源码开放统一 game 接口。}
   - {from: script-execution.run, type: consumes, to: script-execution.strategy-entry, summary: 策略文件经统一运行入口消费 main(context)/@option 调用方合同。}
+  - {from: script-execution.run, type: consumes, to: script-execution.tick-package, summary: tick 目录脚本包经统一运行入口消费包根与 main.lua 装载协议。}
   - {from: script-execution.run, type: reads, to: game-observation.facts, summary: 依据当前原生角色与场景事实调度和停止会话。}
   - {from: script-execution.run, type: reads, to: game-resources.catalog, summary: 仅策略文件场景预检读取本地静态地形；普通 Lua chunk 与 --code 不依赖该资料。地形所有权仍属资源域。}
   - {from: script-execution.run, type: writes, to: script-execution.session, summary: 创建会话和 main 任务并更新其执行终态。}

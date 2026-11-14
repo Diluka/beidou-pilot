@@ -17,7 +17,14 @@ from .catalog import Catalog
 from . import dialogs
 from .rules import FIRST_JOB_LEVELS, advancement
 from .snapshot import collect, format_snapshot
-from .strategies import compile_strategy, describe_strategy, parse_options, parse_script_execution, read_strategy_file
+from .strategies import (
+    compile_strategy,
+    describe_strategy,
+    parse_options,
+    parse_script_execution,
+    read_strategy_entry,
+    read_strategy_file,
+)
 from . import __version__
 
 
@@ -74,7 +81,7 @@ def parser() -> Parser:
     q.add_argument("--session", help="cancel必须指定script.id；status可按script.id查询指定会话")
     q.add_argument("--library", choices=["travel", "island-supply"], help="为run/start显式装载公共Lua函数")
     source = q.add_mutually_exclusive_group()
-    source.add_argument("file", type=Path, nargs="?", help="受信UTF-8 Lua文件")
+    source.add_argument("file", type=Path, nargs="?", help="受信UTF-8 Lua文件，或含 main.lua 入口的目录脚本包")
     source.add_argument("--code", help="直接执行受信Lua源码，与文件输入互斥")
     duration = q.add_mutually_exclusive_group()
     duration.add_argument("--seconds", type=float, default=30, help="客户端内脚本时限，默认30秒")
@@ -500,11 +507,14 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 report["scripts"] = cast(list[JsonObject], state["scripts"])
             return report
         if args.file is None and args.code is None:
-            raise ClientError("usage", "script run/start需要UTF-8本地Lua文件或--code源码。")
+            raise ClientError("usage", "script run/start需要UTF-8本地Lua文件、目录脚本包或--code源码。")
         from .bridge import BridgeClient
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
         consumer_file = args.file
+        package = args.script_package
+        package_root = str(cast(Path, package).resolve()) if package is not None else None
+        entry_file = cast(Path, package) / "main.lua" if package is not None else consumer_file
         if args.strategy_metadata is not None:
             from .strategy_scene import scene_context
 
@@ -519,10 +529,11 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 None,
                 seconds=None if args.continuous else args.seconds,
                 code=code,
+                package_root=package_root,
                 wait_for_start=args.action == "start",
                 admission_control=control(backend, "script " + args.action),
             )
-            report = {**report, "script_file": str(consumer_file), "policy_entry": "main(context)"}
+            report = {**report, "script_file": str(entry_file), "policy_entry": "main(context)"}
         else:
             code = args.code
             if args.file is not None:
@@ -535,11 +546,12 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 None,
                 seconds=None if args.continuous else args.seconds,
                 code=code,
+                package_root=package_root,
                 wait_for_start=args.action == "start",
                 admission_control=control(backend, "script " + args.action),
             )
-            if consumer_file is not None:
-                report = {**report, "script_file": str(consumer_file)}
+            if entry_file is not None:
+                report = {**report, "script_file": str(entry_file)}
         if args.library is not None:
             return {**report, "library": args.library, "consumer_file": str(consumer_file) if consumer_file else None}
         return report
@@ -928,8 +940,20 @@ def main(argv: list[str] | None = None) -> int:
         args.strategy_metadata = None
         args.strategy_source = None
         args.strategy_options = {}
+        args.script_package = None
         if args.command == "script" and args.action in {"run", "start", "describe"} and args.file is not None:
-            args.strategy_source, args.strategy_metadata = read_strategy_file(args.file)
+            if args.file.is_dir():
+                args.script_package = args.file
+                entry = args.file / "main.lua"
+                if not entry.is_file():
+                    raise ClientError(
+                        "script_package_entry_missing",
+                        "目录脚本包缺少入口 main.lua，未发布执行请求。",
+                        {"path": str(args.file)},
+                    )
+                args.strategy_source, args.strategy_metadata = read_strategy_entry(entry)
+            else:
+                args.strategy_source, args.strategy_metadata = read_strategy_file(args.file)
             if args.strategy_metadata is not None and args.action in {"run", "start"}:
                 args.strategy_options = parse_options(args.strategy_metadata, unrecognized)
                 unrecognized = []
@@ -939,16 +963,33 @@ def main(argv: list[str] | None = None) -> int:
                 )
             elif unrecognized:
                 raise ClientError("usage", "该Lua文件未声明动态策略参数：" + " ".join(unrecognized))
+            if args.script_package is not None:
+                if args.library is not None:
+                    raise ClientError("usage", "目录脚本包不接收--library，模块由入口按包内路径自己装载。")
+                execution = (
+                    args.strategy_metadata.execution
+                    if args.strategy_metadata is not None
+                    else parse_script_execution(cast(str, args.strategy_source))
+                )
+                if execution.mode != "tick":
+                    raise ClientError(
+                        "package_requires_tick",
+                        "目录脚本包当前只支持 @mode tick 入口。",
+                        {"path": str(args.script_package)},
+                    )
         if args.command == "script" and args.action in {"run", "start"} and args.code is not None:
             parse_script_execution(args.code)
         if args.command == "script" and args.action == "describe" and args.file is None:
-            raise ClientError("usage", "script describe需要一个Lua策略文件。")
+            raise ClientError("usage", "script describe需要一个Lua策略文件或目录脚本包。")
         if unrecognized:
             raise ClientError("usage", "unrecognized arguments: " + " ".join(unrecognized))
         if args.command == "script" and args.action == "describe":
             if args.library is not None or args.session is not None or args.continuous or args.seconds != 30:
                 raise ClientError("usage", "script describe只接收策略文件和通用选择选项。")
-            data = describe_strategy(cast(Path, args.file), args.strategy_metadata)
+            entry = cast(Path, args.file)
+            if args.script_package is not None:
+                entry = cast(Path, args.script_package) / "main.lua"
+            data = describe_strategy(entry, args.strategy_metadata, package_root=args.script_package)
             print(
                 json.dumps(
                     {

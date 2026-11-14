@@ -1409,8 +1409,27 @@ void ReadCommand() {
             sourceValid = static_cast<bool>(sourceFile);
         }
     }
+    // Optional directory package: the CLI publishes the require() root next to
+    // the entry source. Wine maps the container root to Z:, so the workspace
+    // path from the CLI is converted to this client process's own form.
+    std::string packageRoot;
+    {
+        std::ifstream packageFile(directory + "\\scripts\\" + scriptId + ".package", std::ios::binary);
+        if (packageFile) std::getline(packageFile, packageRoot);
+        if (!packageRoot.empty() && packageRoot.back() == '\r') packageRoot.pop_back();
+        if (!packageRoot.empty() && packageRoot.front() == '/') {
+            for (auto& character : packageRoot)
+                if (character == '/') character = '\\';
+            packageRoot.insert(0, "Z:");
+        }
+    }
     std::string error;
     const auto mode = sourceValid ? MapleControl::ParseScriptMode(source, error) : MapleControl::ScriptMode::Invalid;
+    if (!packageRoot.empty() && mode != MapleControl::ScriptMode::Tick) {
+        rejectedId = id;
+        rejectedReason = "package_requires_tick";
+        return;
+    }
     const bool busy = mode == MapleControl::ScriptMode::Coroutine
                           ? runtime.Running() || !adapter.Released()
                           : mode == MapleControl::ScriptMode::Tick && !tickRuntime.Running() && !tickAdapter.Released();
@@ -1424,10 +1443,11 @@ void ReadCommand() {
     // Preserve the last admitted coroutine status before Runtime.Start replaces
     // its single report, including when the new chunk is later rejected.
     RefreshScriptStatuses();
-    const bool started = mode == MapleControl::ScriptMode::Tick
-                             ? tickRuntime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
-                             : mode == MapleControl::ScriptMode::Coroutine
-                                   && runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error);
+    const bool started =
+        mode == MapleControl::ScriptMode::Tick
+            ? tickRuntime.StartPackage(scriptId, source, static_cast<std::uint32_t>(value), packageRoot, error)
+            : mode == MapleControl::ScriptMode::Coroutine
+                  && runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error);
     commandId = id;
     commandReason.clear();
     stopCommand = false;

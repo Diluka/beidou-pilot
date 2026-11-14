@@ -65,7 +65,14 @@ public:
 
     // Chunk returns { main = function, context = table }, or defines global main.
     // Initialization is budgeted too. limitMs == 0 means no session deadline.
+    // Single-file loading: the entry chunk is the whole session, unchanged.
     bool Start(const std::string& scriptId, const std::string& source, std::uint32_t limitMs, std::string& error);
+    // Directory package: the entry chunk stays the CLI-provided source, while
+    // require() resolves modules from packageRoot in this end's native form.
+    // Module sources and resolved files stay visible in the session status.
+    // Package sessions keep Lua tracebacks so module/require errors retain lines.
+    bool StartPackage(const std::string& scriptId, const std::string& source, std::uint32_t limitMs,
+                      const std::string& packageRoot, std::string& error);
     // Call every host update after native state/action-completion facts advance.
     // Cadence gates main/core reads only, never lifecycle, input release or drain.
     void Tick(bool sceneChanged = false);

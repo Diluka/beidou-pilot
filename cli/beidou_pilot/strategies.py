@@ -338,7 +338,7 @@ def parse_options(metadata: StrategyMetadata, arguments: list[str]) -> JsonObjec
     return parsed
 
 
-def describe_strategy(path: Path, metadata: StrategyMetadata) -> JsonObject:
+def describe_strategy(path: Path, metadata: StrategyMetadata, package_root: Path | None = None) -> JsonObject:
     options: list[JsonObject] = []
     for option in metadata.options:
         value: JsonObject = {
@@ -357,7 +357,8 @@ def describe_strategy(path: Path, metadata: StrategyMetadata) -> JsonObject:
         if option.choices is not None:
             value["choices"] = list(option.choices)
         options.append(value)
-    usage = "beidou-pilot script run/start " + str(path)
+    target = path if package_root is None else package_root
+    usage = "beidou-pilot script run/start " + str(target)
     for option in metadata.options:
         if option.type == "boolean":
             part = f"{option.flag}|--no-{option.name.replace('_', '-')}"
@@ -369,8 +370,8 @@ def describe_strategy(path: Path, metadata: StrategyMetadata) -> JsonObject:
                 part = f"[{part}]"
         usage += " " + part
     usage += " [--seconds N|--continuous]"
-    return {
-        "file": str(path),
+    result: JsonObject = {
+        "file": str(target),
         "entry": "main(context)",
         "mode": metadata.mode,
         "tick": (
@@ -386,6 +387,9 @@ def describe_strategy(path: Path, metadata: StrategyMetadata) -> JsonObject:
         "usage": usage,
         "options": options,
     }
+    if package_root is not None:
+        result["package_entry"] = str(path)
+    return result
 
 
 def _lua_string(value: str) -> str:
@@ -463,23 +467,36 @@ _TRAVEL_TERRAIN = {"walk_to.lua", "navigate.lua"}
 _TRAVEL_MOVE = {"walk_to.lua", "navigate.lua"}
 
 
+def read_strategy_entry(path: Path) -> tuple[str, StrategyMetadata | None]:
+    """读取入口文件本身；目录脚本包的入口不拼接内置辅助文件。"""
+    try:
+        source = path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ClientError(
+            "invalid_script_file",
+            "无法读取UTF-8 Lua入口，未发布执行请求。",
+            {"path": str(path), "reason": str(error)},
+        ) from error
+    return source, parse_strategy(source)
+
+
 def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata | None]:
     shared = Path(__file__).resolve().parents[2] / "shared/scripts"
     directory = shared / "travel"
     resolved = path.resolve()
-    try:
-        source = path.read_bytes().decode("utf-8")
-        helpers: list[str] = []
-        if resolved.parent == directory.resolve():
-            if resolved.name in _TRAVEL_COMMON:
-                helpers.append("_common.lua")
-            if resolved.name in _TRAVEL_TERRAIN:
-                helpers.append("_terrain.lua")
-            if resolved.name in _TRAVEL_MOVE:
-                helpers.append("_move.lua")
-        elif resolved.parent == (shared / "combat").resolve() and resolved.name == "hunt.lua":
+    source, metadata = read_strategy_entry(path)
+    helpers: list[str] = []
+    if resolved.parent == directory.resolve():
+        if resolved.name in _TRAVEL_COMMON:
+            helpers.append("_common.lua")
+        if resolved.name in _TRAVEL_TERRAIN:
             helpers.append("_terrain.lua")
-        if helpers:
+        if resolved.name in _TRAVEL_MOVE:
+            helpers.append("_move.lua")
+    elif resolved.parent == (shared / "combat").resolve() and resolved.name == "hunt.lua":
+        helpers.append("_terrain.lua")
+    if helpers:
+        try:
             header, body = split_script_header(source)
             source = (
                 header
@@ -487,10 +504,10 @@ def read_strategy_file(path: Path) -> tuple[str, StrategyMetadata | None]:
                 + "".join((directory / helper).read_text(encoding="utf-8") + "\n" for helper in helpers)
                 + body
             )
-    except (OSError, UnicodeError) as error:
-        raise ClientError(
-            "invalid_script_file",
-            "无法读取UTF-8 Lua策略或其辅助文件，未发布执行请求。",
-            {"path": str(path), "reason": str(error)},
-        ) from error
-    return source, parse_strategy(source)
+        except (OSError, UnicodeError) as error:
+            raise ClientError(
+                "invalid_script_file",
+                "无法读取UTF-8 Lua策略或其辅助文件，未发布执行请求。",
+                {"path": str(path), "reason": str(error)},
+            ) from error
+    return source, metadata

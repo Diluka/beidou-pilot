@@ -994,8 +994,24 @@ void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
             sourceValid = static_cast<bool>(sourceFile);
         }
     }
+    // Optional directory package: the CLI publishes the require() root next to
+    // the entry source; module files stay where the caller wrote them.
+    std::string packageRoot;
+    {
+        std::ifstream packageFile(directory / "scripts" / (scriptId + ".package"), std::ios::binary);
+        if (packageFile) std::getline(packageFile, packageRoot);
+        if (!packageRoot.empty() && packageRoot.back() == '\r') packageRoot.pop_back();
+    }
     std::string error;
     const auto mode = sourceValid ? MapleControl::ParseScriptMode(source, error) : MapleControl::ScriptMode::Invalid;
+    if (!packageRoot.empty() && mode != MapleControl::ScriptMode::Tick) {
+        rejectedId = id;
+        rejectedReason = "package_requires_tick";
+        commandStatus = "rejected";
+        commandReason = "package_requires_tick";
+        scriptCommand = false;
+        return;
+    }
     const bool busy =
         mode == MapleControl::ScriptMode::Coroutine && (runtime.Running() || !Released() || externalActionBusy);
     if (busy) {
@@ -1013,11 +1029,12 @@ void SharedLuaAdapter::ReadCommand(bool externalActionBusy) {
                             [previous](const Json& entry) { return entry["id"] == previous->id; }))
             scriptHistory.push_back(ScriptState(previous->id));
     }
-    const bool started = mode == MapleControl::ScriptMode::Tick
-                             ? tickRuntime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
-                         : mode == MapleControl::ScriptMode::Coroutine
-                             ? runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
-                             : false;
+    const bool started =
+        mode == MapleControl::ScriptMode::Tick
+            ? tickRuntime.StartPackage(scriptId, source, static_cast<std::uint32_t>(value), packageRoot, error)
+        : mode == MapleControl::ScriptMode::Coroutine
+            ? runtime.Start(scriptId, source, static_cast<std::uint32_t>(value), error)
+            : false;
     if (!started) {
         scriptCommand = false;
         commandStatus = "rejected";

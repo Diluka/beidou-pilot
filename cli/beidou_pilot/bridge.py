@@ -106,6 +106,11 @@ class BridgePlayer(TypedDict):
     item_id: NotRequired[int]
 
 
+class BridgeModule(TypedDict):
+    name: str
+    file: str
+
+
 class BridgeScript(TypedDict):
     id: str
     status: Literal["running", "completed", "cancelled", "rejected"]
@@ -121,6 +126,8 @@ class BridgeScript(TypedDict):
     control_released: NotRequired[bool]
     tick: NotRequired[BridgeTick]
     player: NotRequired[BridgePlayer]
+    module_root: NotRequired[str]
+    modules: NotRequired[list[BridgeModule]]
 
 
 class BridgeMonster(TypedDict):
@@ -231,6 +238,13 @@ def _validate_script(script: object, *, require_mode: bool = False) -> None:
                 or any(key not in ("left", "right", "up", "down", "jump", "attack", "skill", "use_item", "pickup")
                        for key in player["held"])):
             raise ClientError("invalid_bridge_state", "原生桥的tick角色操作状态字段无效。")
+        if "module_root" in script or "modules" in script:
+            modules = script.get("modules")
+            if (not isinstance(script.get("module_root"), str) or not script["module_root"]
+                    or not isinstance(modules, list)
+                    or any(not isinstance(module, dict) or not isinstance(module.get("name"), str) or not module["name"]
+                           or not isinstance(module.get("file"), str) or not module["file"] for module in modules)):
+                raise ClientError("invalid_bridge_state", "原生桥的脚本模块来源字段无效。")
 
 
 def require_input_idle(bridge: "BridgeClient", instance_id: str, run_id: str) -> None:
@@ -543,11 +557,15 @@ class BridgeClient:
 
     def run_script(self, path: Path | None = None, seconds: float | None = 30, timeout: float | None = None,
                    cancel_file: Path | None = None, *, code: str | None = None,
+                   package_root: str | None = None,
                    wait_for_start: bool = False,
                    admission_control: AbstractContextManager[None] | None = None) -> JsonObject:
         """执行受信Lua；锁只保护发布/受理，终态等待不拥有原生会话。"""
         if (path is None) == (code is None):
             raise ClientError("invalid_bridge_options", "Lua文件与直接源码须且只能提供一项。")
+        if package_root is not None and (
+                not package_root.startswith("/") or "\n" in package_root or "\r" in package_root):
+            raise ClientError("invalid_bridge_options", "目录脚本包根须为容器内绝对路径。")
         if (seconds is not None and not 0.001 <= seconds <= 0xFFFFFFFF / 1000
                 or timeout is not None and (not math.isfinite(timeout) or not timeout > 0)):
             raise ClientError("invalid_bridge_options", "脚本时限须为正数且不超过4294967.295秒；持续执行使用None。")
@@ -558,6 +576,8 @@ class BridgeClient:
             raise ClientError("invalid_script_file" if path is not None else "invalid_script_source",
                               "无法准备UTF-8 Lua脚本，未发布执行请求。",
                               {"path": str(path) if path is not None else None, "reason": str(error)}) from error
+        if package_root is not None and execution.mode != "tick":
+            raise ClientError("package_requires_tick", "目录脚本包只支持tick引擎，未发布执行请求。")
         started = time.monotonic()
         wait_seconds = timeout
         if wait_seconds is None:
@@ -576,6 +596,11 @@ class BridgeClient:
                 with temporary.open("xb") as handle:
                     handle.write(source)
                 temporary.replace(scripts / (script_id + ".lua"))
+                if package_root is not None:
+                    temporary = scripts / (script_id + ".package.tmp")
+                    with temporary.open("xb") as handle:
+                        handle.write((package_root + "\n").encode("utf-8"))
+                    temporary.replace(scripts / (script_id + ".package"))
             except OSError as error:
                 raise ClientError("invalid_script_file" if path is not None else "invalid_script_source",
                                   "无法准备UTF-8 Lua脚本，未发布执行请求。",
@@ -609,7 +634,8 @@ class BridgeClient:
         report: JsonObject = {
             "source": "client-native-bridge", "instance_id": state["instance_id"], "run_id": state["run_id"],
             "request_id": request_id, "script_id": script_id, "mode": execution.mode,
-            "script_file": str(path) if path is not None else None, "seconds": seconds, "continuous": seconds is None,
+            "script_file": str(path) if path is not None else None, "package_root": package_root,
+            "seconds": seconds, "continuous": seconds is None,
             "status": "cancelled" if cancelled else script["status"] if script is not None else state["command"]["status"],
             "cancelled": cancelled,
             "reason": "cancel_requested" if locally_cancelled else script["reason"] if script is not None else None,

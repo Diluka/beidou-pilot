@@ -141,6 +141,9 @@ end
     def test_profile_counts_idle_active_and_transition_frames_without_sampling_when_idle(self) -> None:
         self.run_contract("profiling")
 
+    def test_directory_package_modules_load_with_sources_and_line_attribution(self) -> None:
+        self.run_contract("packages")
+
     def test_motion_facts_and_reference_capabilities_are_fresh_read_only_and_unknown_when_missing(self) -> None:
         self.run_contract("motion")
 
