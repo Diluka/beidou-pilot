@@ -490,6 +490,12 @@ class BridgeClient:
                                        else command["reason"], "held_keys": state["held_keys"]}
                 if "script" in state:
                     details["script"] = cast(JsonObject | None, state["script"])
+                # 被拒绝的脚本会话不会成为最新接纳会话，但仍保留在 scripts
+                # 中；按本次 script_id 投影它，调用方才能看到模块与行号等错误。
+                if script_id is not None and "scripts" in state:
+                    rejected_script = script_by_id(state, script_id)
+                    if rejected_script is not None:
+                        details["script"] = rejected_script
                 raise ClientError("bridge_command_rejected", "原生桥拒绝了本次请求。", details)
             script = script_by_id(state, script_id) if script_id is not None else None
             if state["seq"] > before["seq"]:

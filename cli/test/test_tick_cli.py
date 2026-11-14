@@ -704,6 +704,53 @@ class TickCliContract(unittest.TestCase):
         self.assertEqual(report["data"]["script_file"], str(directory / "main.lua"))
         self.assertEqual(report["data"]["script"]["modules"], modules)
 
+    def test_rejected_package_reports_the_source_module_and_line(self) -> None:
+        directory = self.package_directory(
+            "-- @mode tick\n"
+            'local broken = require("lib.broken")\n'
+            'local function main(context)\n    return "done"\nend\n',
+            {"lib/broken.lua": "return {\n    missing = ,\n}\n"},
+        )
+        previous = tick_state("a" * 32)
+        self.files.state.update(script=previous, scripts=[previous])
+        self.files.publish()
+        error_text = (
+            "error loading module 'lib.broken' from file '" + str(directory.resolve() / "lib/broken.lua") + "':\n"
+            "\t" + str(directory.resolve() / "lib/broken.lua") + ":2: unexpected symbol near ','\n"
+            "stack traceback:\n\tmain.lua:4: in main chunk"
+        )
+
+        def peer() -> list[str]:
+            request = self.files.command()
+            rejected = tick_state(request[6], stopped=True)
+            rejected.update(
+                status="rejected",
+                reason="script_error",
+                error=error_text,
+                module_root=str(directory.resolve()),
+                modules=[],
+            )
+            self.files.state.update(
+                script=previous,
+                scripts=[previous, rejected],
+                rejected_command={"id": request[3], "status": "rejected", "reason": "script_load_error"},
+            )
+            self.files.publish()
+            return request
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            native = pool.submit(peer)
+            code, report = self.cli("script", "run", str(directory), "--seconds", ".3")
+            native.result(2)
+        self.assertEqual(code, 2)
+        self.assertEqual(report["error"]["code"], "bridge_command_rejected")
+        self.assertEqual(report["error"]["details"]["reason"], "script_load_error")
+        script = report["error"]["details"]["script"]
+        self.assertEqual(script["status"], "rejected")
+        self.assertEqual(script["error"], error_text)
+        self.assertEqual(script["module_root"], str(directory.resolve()))
+        self.assertEqual(script["modules"], [])
+
     def test_directory_package_rejects_missing_entry_coroutine_and_library_before_publication(self) -> None:
         empty = self.files.root / "empty"
         empty.mkdir()
