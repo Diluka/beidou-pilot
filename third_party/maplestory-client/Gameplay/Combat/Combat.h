@@ -26,6 +26,8 @@
 #include "../../Character/Player.h"
 #include "../../Template/TimedQueue.h"
 
+#include <optional>
+
 namespace ms
 {
 	class Combat
@@ -40,8 +42,19 @@ namespace ms
 		// Current native flights only: no queued effects, IDs or damage claims.
 		std::vector<MotionSample> get_projectile_motions() const;
 
-		// Make the player use a special move
-		SpecialMove::ForbidReason use_move(int32_t move_id);
+		enum class MoveInput { Direct, HeldKey, HeldSkill };
+		// Make the player use a special move and retain its native input source.
+		SpecialMove::ForbidReason use_move(int32_t move_id, MoveInput input = MoveInput::Direct);
+
+		// One current semantic input, independent of keyboard shortcut mappings.
+		// Animated moves repeat only after the native action lock has completed.
+		// A successful no-action move consumes this hold once, until it changes.
+		void hold_move(std::optional<int32_t> move_id);
+		void update_held_move();
+		// Successful dispatch facts, not the desired input or an animation lock.
+		uint64_t get_move_sequence() const;
+		int32_t get_last_move() const;
+		MoveInput get_last_move_input() const;
 
 		// Add an attack to the attack queue
 		void push_attack(const AttackResult& attack);
@@ -87,6 +100,11 @@ namespace ms
 
 		std::unordered_map<int32_t, Skill> skills;
 		RegularAttack regularattack;
+		std::optional<int32_t> held_move;
+		bool held_move_consumed = false;
+		uint64_t move_sequence = 0;
+		int32_t last_move = 0;
+		MoveInput last_move_input = MoveInput::Direct;
 
 		TimedQueue<AttackResult> attackresults;
 		TimedQueue<BulletEffect> bulleteffects;

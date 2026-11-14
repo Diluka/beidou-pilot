@@ -78,6 +78,7 @@ namespace ms
 		set_position(pos.x(), pos.y());
 		underwater = uw;
 		keysdown.clear();
+		held_item = 0;
 		attacking = false;
 		ladder = nullptr;
 		nullstate.update_state(*this);
@@ -136,13 +137,45 @@ namespace ms
 			look.remove_equip(EquipSlot::by_id(slot));
 	}
 
-	void Player::use_item(int32_t itemid)
+	bool Player::use_item(int32_t itemid)
 	{
 		InventoryType::Id type = InventoryType::by_item_id(itemid);
 
 		if (int16_t slot = inventory.find_item(type, itemid))
 			if (type == InventoryType::Id::USE)
+			{
 				UseItemPacket(slot, itemid).dispatch();
+				return true;
+			}
+		return false;
+	}
+
+	void Player::hold_item(int32_t itemid)
+	{
+		held_item = itemid;
+	}
+
+	void Player::update_held_item(std::chrono::steady_clock::time_point now)
+	{
+		if (held_item == 0 || now < next_held_item || inventory.get_total_item_count(held_item) <= 0)
+			return;
+
+		if (use_item(held_item))
+		{
+			next_held_item = now + std::chrono::milliseconds(100);
+			last_held_item = held_item;
+			++held_item_sequence;
+		}
+	}
+
+	uint64_t Player::get_held_item_sequence() const
+	{
+		return held_item_sequence;
+	}
+
+	int32_t Player::get_last_held_item() const
+	{
+		return last_held_item;
 	}
 
 	void Player::draw(Layer::Id layer, double viewx, double viewy, float alpha) const

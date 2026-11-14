@@ -42,15 +42,14 @@ def tick_state(script_id: str, *, stopped: bool = False) -> BridgeScript:
         },
         player={
             "moving": None if stopped else "right",
+            "input_action": None,
             "action": None,
             "phase": "idle",
             "busy": False,
             "held": [] if stopped else ["right"],
-            "pending_action": None,
             "reason": "",
             "effect": "unknown",
             "dispatched": False,
-            "control_released": stopped,
         },
     )
     return script
@@ -108,6 +107,209 @@ class TickCliContract(unittest.TestCase):
         code, report = self.cli("script", "status", "--session", "c" * 32)
         self.assertEqual((2, "script_session_mismatch"), (code, report["error"]["code"]))
         self.assertFalse((self.files.directory / "command.txt").exists())
+
+    def test_snapshot_and_status_consume_sanitized_native_terminal_scripts(self) -> None:
+        # 按当前共享Runtime投影维护的脱敏结构；身份、计数和时间固定化，不保留运行原件。
+        native_script = json.loads(
+            """{
+                "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mode": "tick",
+                "status": "completed", "reason": "script_returned", "error": null,
+                "resumes": 4, "budget_yields": 0, "last_resume_us": 12.5, "max_resume_us": 18.25,
+                "tasks": [], "control": {"owner": "", "pending": "", "from": "", "to": "", "reason": ""},
+                "control_released": true,
+                "tick": {
+                    "index": 4, "gear": 4, "time": 1.5, "delta": 0.008, "scene_generation": 1,
+                    "overrun": false, "overruns": 0, "budget_ms": 100,
+                    "overrun_policy": "abort", "abort_commit": true,
+                    "profile": {
+                        "scope": "runtime_lifetime", "host_tick_calls": 4,
+                        "active_frames": 4, "reentrant_tick_calls": 0,
+                        "tick": {"samples": 4, "total_us": 80, "max_us": 30},
+                        "observe": {"samples": 4, "total_us": 8, "max_us": 3},
+                        "refresh_core": {"samples": 4, "total_us": 40, "max_us": 15},
+                        "lua": {"samples": 4, "total_us": 25, "max_us": 18.25}
+                    }
+                },
+                "player": {
+                    "moving": null, "input_action": null, "action": null,
+                    "phase": "idle", "busy": false, "held": [], "reason": "native_jump_input_consumed",
+                    "effect": "unknown", "dispatched": true
+                }
+            }"""
+        )
+        for backend, status, reason, player_reason, dispatched in (
+            ("headless", "completed", "script_returned", "native_jump_input_consumed", True),
+            ("beidou", "cancelled", "time_limit", "", False),
+        ):
+            with self.subTest(backend=backend):
+                self.files.register(backend)
+                script = deepcopy(native_script)
+                script.update(status=status, reason=reason)
+                script["player"].update(reason=player_reason, dispatched=dispatched)
+                self.files.state.update(
+                    script=script,
+                    scripts=[script],
+                    command={"id": "native-command", "status": status, "reason": reason},
+                )
+                self.files.publish()
+                with patch.dict(os.environ, self.files.environment):
+                    state = BridgeClient(self.files.root, backend).snapshot()
+                    code, report = self.cli("script", "status", "--session", script["id"])
+                self.assertEqual(script, state["script"])
+                self.assertEqual([script], state["scripts"])
+                for projected in (state["script"], state["scripts"][0]):
+                    self.assertNotIn("input_settled", projected["player"])
+                    self.assertNotIn("control_released", projected["player"])
+                    self.assertTrue(projected["control_released"])
+                self.assertEqual((0, script), (code, report["data"]["script"]))
+                self.assertFalse((self.files.directory / "command.txt").exists())
+
+    def test_snapshot_keeps_held_input_separate_from_current_native_action(self) -> None:
+        for player in (
+            {"input_action": "skill", "input_skill_id": 1001004, "action": "attack", "held": ["right", "skill"]},
+            {
+                "input_action": "use_item",
+                "input_item_id": 2000000,
+                "action": "skill",
+                "skill_id": 1001004,
+                "held": ["right", "use_item"],
+            },
+            {"input_action": None, "action": "skill", "skill_id": 1001004, "held": ["right"]},
+        ):
+            with self.subTest(player=player):
+                script = tick_state("a" * 32)
+                script["player"].update(player, phase="running", busy=True)
+                self.files.state.update(script=script, scripts=[script])
+                self.files.publish()
+                self.assertEqual(script["player"], self.client.snapshot()["scripts"][0]["player"])
+
+    def test_snapshot_accepts_each_native_semantic_action(self) -> None:
+        for action in ("jump", "attack", "skill", "use_item", "pickup"):
+            with self.subTest(action=action):
+                script = tick_state("a" * 32)
+                script["player"].update(
+                    input_action=action, action=action, held=["right", action], phase="running", busy=True
+                )
+                if action == "skill":
+                    script["player"].update(input_skill_id=1001004, skill_id=1001004)
+                elif action == "use_item":
+                    script["player"].update(input_item_id=2000000, item_id=2000000)
+                self.files.state.update(script=script, scripts=[script])
+                self.files.publish()
+                self.assertEqual(script["player"], self.client.snapshot()["script"]["player"])
+
+    def test_snapshot_accepts_held_input_before_native_action_starts_or_idle_is_known(self) -> None:
+        for phase, busy in (("idle", False), ("unknown", None)):
+            with self.subTest(phase=phase):
+                script = tick_state("a" * 32)
+                script["player"].update(
+                    input_action="skill",
+                    input_skill_id=1001004,
+                    held=["right", "skill"],
+                    phase=phase,
+                    busy=busy,
+                )
+                self.files.state.update(script=script, scripts=[script])
+                self.files.publish()
+                self.assertEqual(script["player"], self.client.snapshot()["script"]["player"])
+
+    def test_run_completes_after_input_release_while_native_animation_continues(self) -> None:
+        def peer() -> list[str]:
+            request = self.files.command()
+            script = tick_state(request[6], stopped=True)
+            script.update(status="completed", reason="script_returned")
+            script["player"].update(action="skill", skill_id=1001004, phase="running", busy=True)
+            self.files.state.update(
+                script=script,
+                scripts=[script],
+                command={"id": request[3], "status": "completed", "reason": "script_returned"},
+            )
+            self.files.publish()
+            return request
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            native = pool.submit(peer)
+            report = self.client.run_script(code=TICK_SOURCE)
+            request = native.result(2)
+        self.assertEqual((request[6], "completed"), (report["script_id"], report["status"]))
+        self.assertTrue(report["script"]["control_released"])
+        self.assertEqual(("skill", True), (report["script"]["player"]["action"], report["script"]["player"]["busy"]))
+        self.assertEqual(request, self.files.command(), "终态后的动画不应触发取消或重放")
+
+    def test_terminal_session_still_requires_own_release_when_shared_player_is_idle(self) -> None:
+        for operation in ("run", "cancel"):
+            with self.subTest(operation=operation):
+                target = tick_state("a" * 32)
+                self.files.state.update(
+                    script=target if operation == "cancel" else None,
+                    scripts=[target] if operation == "cancel" else [],
+                )
+                previous = self.files.state["command"]["id"]
+                self.files.publish()
+
+                def peer() -> list[str]:
+                    request = self.files.command(previous)
+                    script = tick_state(request[6], stopped=True)
+                    script.update(status="completed" if operation == "run" else "cancelled", control_released=False)
+                    self.files.state.update(
+                        script=script,
+                        scripts=[script],
+                        command={"id": request[3], "status": "completed", "reason": None},
+                    )
+                    self.files.publish()
+                    return request
+
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    native = pool.submit(peer)
+                    with self.assertRaises(ClientError) as unconfirmed:
+                        if operation == "run":
+                            self.client.run_script(code=TICK_SOURCE)
+                        else:
+                            self.client.cancel_script(target["id"])
+                    request = native.result(2)
+                self.assertEqual("bridge_release_unconfirmed", unconfirmed.exception.code)
+                self.assertFalse(unconfirmed.exception.details["script"]["control_released"])
+                player = unconfirmed.exception.details["script"]["player"]
+                self.assertIsNone(player["input_action"])
+                self.assertEqual([], player["held"])
+                self.assertNotIn("input_settled", player)
+                self.assertNotIn("control_released", player)
+                self.assertEqual(request, self.files.command())
+
+    def test_cancel_confirms_only_session_release_while_shared_player_keeps_another_input(self) -> None:
+        target, sibling = tick_state("a" * 32), tick_state("b" * 32)
+        player = deepcopy(target["player"])
+        player.update(
+            input_action="use_item",
+            input_item_id=2000000,
+            action="skill",
+            skill_id=1001004,
+            phase="running",
+            busy=True,
+            held=["right", "use_item"],
+        )
+        target["player"] = deepcopy(player)
+        sibling["player"] = deepcopy(player)
+        self.files.state.update(script=sibling, scripts=[target, sibling], held_keys=[39])
+        self.files.publish()
+
+        def peer() -> list[str]:
+            request = self.files.command()
+            target.update(status="cancelled", reason="stop_requested", control_released=True)
+            self.files.state["command"] = {"id": request[3], "status": "completed", "reason": None}
+            self.files.publish()
+            return request
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            native = pool.submit(peer)
+            report = self.client.cancel_script(target["id"])
+            request = native.result(2)
+        self.assertEqual(["cancel_script", "0", target["id"]], request[4:])
+        self.assertEqual(("cancelled", True, [39]), (report["status"], report["control_released"], report["held_keys"]))
+        self.assertEqual(player, report["script"]["player"])
+        self.assertNotIn("control_released", report["script"]["player"])
+        self.assertEqual("already_stopped", self.client.cancel_script(target["id"])["status"])
+        self.assertEqual(request, self.files.command())
 
     def test_run_releases_admission_locks_for_another_tick_start_and_targeted_cancel(self) -> None:
         first_cli = self.start_cli("script", "run", "--code=" + TICK_SOURCE, "--continuous")
@@ -386,6 +588,67 @@ class TickCliContract(unittest.TestCase):
                 self.files.state.update(script=script, scripts=[script])
                 self.files.publish()
                 self.assertEqual(gear, self.client.snapshot()["scripts"][0]["tick"]["gear"])
+
+    def test_snapshot_keeps_positive_int32_input_and_actual_ids(self) -> None:
+        for field, action_field, action in (
+            ("input_skill_id", "input_action", "skill"),
+            ("input_item_id", "input_action", "use_item"),
+            ("skill_id", "action", "skill"),
+            ("item_id", "action", "use_item"),
+        ):
+            for identifier in (1, 0x7FFFFFFF):
+                with self.subTest(field=field, identifier=identifier):
+                    script = tick_state("a" * 32)
+                    script["player"].update({field: identifier, action_field: action})
+                    self.files.state.update(script=script, scripts=[script])
+                    self.files.publish()
+                    self.assertEqual(identifier, self.client.snapshot()["script"]["player"][field])
+
+    def test_snapshot_rejects_malformed_input_and_action_fields_in_both_script_projections(self) -> None:
+        valid = tick_state("a" * 32)
+        player = valid["player"]
+        cases = [
+            {**player, "phase": "releasing"},
+            {**player, "phase": None},
+            {**player, "busy": 1},
+            {**player, "busy": "unknown"},
+            {**player, "dispatched": 0},
+            {**player, "moving": "sideways"},
+            {**player, "held": "skill"},
+            {**player, "held": ["cast"]},
+            {**player, "held": [None]},
+            {**player, "reason": None},
+            {**player, "effect": True},
+            *[
+                {key: value for key, value in player.items() if key != field}
+                for field in ("input_action", "action", "busy", "dispatched")
+            ],
+            *[
+                {**player, field: value}
+                for field in ("action", "input_action")
+                for value in ("cast", "stop", 1, False, [], {})
+            ],
+            *[
+                {**player, field: value}
+                for field in ("input_skill_id", "input_item_id", "skill_id", "item_id")
+                for value in (True, 0, -1, 0x80000000, 1.0, "1", None)
+            ],
+            # 旧形状不能靠pending_action冒充新的输入意图字段。
+            {key: value for key, value in {**player, "pending_action": None}.items() if not key.startswith("input_")},
+        ]
+        for projection in ("script", "scripts"):
+            for malformed in cases:
+                with self.subTest(projection=projection, player=malformed):
+                    script = dict(valid, player=malformed)
+                    self.files.state.update(
+                        script=script if projection == "script" else None,
+                        scripts=[script] if projection == "scripts" else [],
+                    )
+                    self.files.publish()
+                    with self.assertRaises(ClientError) as invalid:
+                        self.client.snapshot()
+                    self.assertEqual("invalid_bridge_state", invalid.exception.code)
+                    self.assertEqual("原生桥的tick角色操作状态字段无效。", invalid.exception.message)
 
     def test_snapshot_validates_each_session_and_tick_state_at_the_boundary(self) -> None:
         valid = tick_state("a" * 32)

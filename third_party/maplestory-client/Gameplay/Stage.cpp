@@ -176,11 +176,15 @@ namespace ms
 				check_seats();
 
 			if (player.is_key_down(KeyAction::Id::ATTACK))
-				combat.use_move(0);
+				combat.use_move(0, Combat::MoveInput::HeldKey);
+
+			combat.update_held_move();
 
 			if (player.is_key_down(KeyAction::Id::PICKUP))
 				check_drops();
 		}
+
+		player.update_held_item(std::chrono::steady_clock::now());
 
 		if (player.is_invincible())
 			return;
@@ -202,6 +206,8 @@ namespace ms
 
 	void Stage::stop_actions()
 	{
+		combat.hold_move(std::nullopt);
+		player.hold_item(0);
 		for (auto action : { KeyAction::LEFT, KeyAction::RIGHT, KeyAction::UP, KeyAction::DOWN,
 			KeyAction::ATTACK, KeyAction::JUMP, KeyAction::PICKUP, KeyAction::SIT })
 			player.send_action(action, false);

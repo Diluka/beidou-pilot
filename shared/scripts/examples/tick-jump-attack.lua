@@ -1,7 +1,7 @@
 -- @mode tick
 -- @option[type=string,default=right,choices=left|right] direction 移动方向
 
--- 连续移动跳砍：先助跑，再保持方向跳起，空中攻击一次，落地后停止。
+-- 连续移动跳砍：先助跑，再保持方向跳起，空中普攻并撤下保持，落地后停止。
 -- 请从有足够空间的同高平地起步，装备可普攻的武器，且没有其他脚本控制角色。
 -- 本例不寻路、不选怪、不保证命中，也不处理斜坡、台阶、绳梯或落层。
 local function main(context)
@@ -33,18 +33,27 @@ local function main(context)
         and character.on_ground == false
         and character.y ~= nil
         and character.y < state.ground_y
-        and not player.status().busy
+        and character.action_idle == true
     then
-        -- Y向下增大；已离开原平地且起跳输入已释放，才接空中普攻。
+        -- Y向下增大；原生动作已知空闲且已离开原平地，才接空中普攻。
         -- 此阶段不依赖速度/能力参考，缺失它们不应阻断这次攻击。
         assert(player.attack())
-        state.phase = "landing" -- 只提交一次。
+        state.phase = "attack_input" -- 只设置一次，保持由原生消费者处理。
+    elseif state.phase == "attack_input" then
+        local input = player.status()
+        if input.action == "attack" and input.dispatched then
+            -- 当前原生动作确为普攻且已派发才撤下，不把上次跳跃反馈当成普攻。
+            -- 撤下槽不表示已放键，已经发生的攻击动画仍自然播放。
+            -- 低频观察可能错过原生重复边界，本例不承诺精确出手次数。
+            assert(player.skill(nil))
+            state.phase = "landing"
+        end
     elseif state.phase == "landing" and character.on_ground == true then
-        player.move(nil) -- 全程只在这里清方向，不用 stop 打断跳跃腾空动作槽。
+        player.move(nil) -- 只在落地后清方向，不用物理静止替代落地。
         state.phase = "stopping"
     elseif state.phase == "stopping" and velocity and movement and math.abs(velocity.x) < movement.max_speed * 0.01 then
         context.game.log("tick_jump_attack: landing observed; movement stopped")
-        -- done后运行时继续收尾已提交动作，确认所属输入释放后发布完成。
+        -- 会话结束会清除所属输入；此时动作意图已显式撤下。
         return "done"
     end
 

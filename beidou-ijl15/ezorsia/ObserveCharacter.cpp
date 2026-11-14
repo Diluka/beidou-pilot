@@ -2,6 +2,7 @@
 #include "stdafx.h"
 #include "NativeObservation.h"
 #include "NativeMotion.h"
+#include "NativeActionState.h"
 
 #include <algorithm>
 #include <array>
@@ -117,12 +118,21 @@ Value Character() {
         {"source", "client-native-observation"}, {"readonly", true},
         {"mesos", Value{}}, {"mesos_checksum_valid", false}, {"skills", Value::Object()},
         {"skills_complete", false}, {"read_seconds", 0},
-        {"velocity", Value{}}, {"movement", Value{}}, {"on_ground", Value{}},
+        {"velocity", Value{}}, {"movement", Value{}}, {"on_ground", Value{}}, {"action_idle", Value{}},
         {"not_covered", StringArray({"skill_names", "skill_requirements", "skill_effects",
             "skill_expirations", "master_level_when_absent_from_client_records"})}
     });
     const auto character = CurrentCharacter();
     result["character_id"] = U32(character);
+    try {
+        const auto action = BeiDouBridge::ReadNativeActionState(U32(0x00BEBF98),
+            [](std::uintptr_t address, std::uint32_t& value) { value = U32(address); return true; });
+        if (action.idle != MapleControl::Fact::Unknown)
+            result["action_idle"] = action.idle == MapleControl::Fact::True;
+        else
+            unavailable.Add("native local one-time action layout is unavailable");
+    }
+    catch (const ReadError& error) { unavailable.Add(error.what()); }
     try {
         const auto motion = NativeMotion::Capture(U32(0x00BEBF98));
         result["velocity"] = motion.velocity.Document();

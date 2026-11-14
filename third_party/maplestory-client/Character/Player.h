@@ -32,6 +32,8 @@
 #include "../Gameplay/MapleMap/Layer.h"
 #include "../Gameplay/MapleMap/MapInfo.h"
 
+#include <chrono>
+
 namespace ms
 {
 	class Player : public Playable, public Char
@@ -59,7 +61,13 @@ namespace ms
 		// Change the equipment at the specified slot and recalculate stats
 		void change_equip(int16_t slot);
 		// Use the item from the player's inventory with the given id
-		void use_item(int32_t itemid);
+		bool use_item(int32_t itemid);
+		// A held potion/food input has no native animation or repeat limiter.
+		// Only this consumer is rate-limited; changing/clearing it keeps the limit.
+		void hold_item(int32_t itemid);
+		void update_held_item(std::chrono::steady_clock::time_point now);
+		uint64_t get_held_item_sequence() const;
+		int32_t get_last_held_item() const;
 
 		// Return if the player is attacking
 		bool is_attacking() const;
@@ -171,5 +179,9 @@ namespace ms
 		TimedBool climb_cooldown;
 
 		bool underwater;
+		int32_t held_item = 0;
+		uint64_t held_item_sequence = 0;
+		int32_t last_held_item = 0;
+		std::chrono::steady_clock::time_point next_held_item;
 	};
 }

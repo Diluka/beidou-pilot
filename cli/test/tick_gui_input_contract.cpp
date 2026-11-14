@@ -58,6 +58,8 @@ struct Boundary {
         Flush(tick.movement);
         Flush(tick.action);
         tick.MovementFlushed(User, updates, false);
+        if (tick.DispatchPending() && tick.action.Dispatched()) tick.TakeDispatch(updates);
+        tick.ActionFlushed(User, updates, false);
     }
 
     void Update(bool characterStep = true) {
@@ -185,8 +187,10 @@ void TickReleaseFence() {
     Check(!native.tick.HeldKeysSettled(), "render-only frame acknowledged movement");
     native.Update();
     Check(native.tick.HeldKeysSettled() && native.tick.Released(), "held movement incorrectly occupies action slot");
-    native.tick.action.Request(Keys({Attack}), 60, User, 0);
-    native.tick.actionWindow = true;
+    MapleControl::Action attack;
+    attack.kind = MapleControl::ActionKind::Attack;
+    native.tick.SetIntent(attack, User);
+    native.tick.action.Request(Keys({Attack}), 0, User, 0);
     native.FlushTick();
     Check(!native.tick.Released(), "active action was reported released");
     native.tick.Release(User);
@@ -254,8 +258,9 @@ const MapleControl::Value& Field(const MapleControl::Value& object, const std::s
 }
 
 // The shared runtime is real. Only the Windows memory/ABI boundary is replaced.
-// Like AgentBridge, Begin queues an independent request and delivery happens
-// strictly after Runtime.Tick, never on the Lua stack or in Begin.
+// Like AgentBridge, SetActionIntent replaces the current input; consumption
+// happens strictly after Runtime.Tick, never on the Lua stack. Terminal cleanup
+// may withdraw the final intent before the native boundary consumes it.
 class DeferredNativeAdapter final : public MapleControl::TickAdapter {
 public:
     DeferredNativeAdapter() {
@@ -265,6 +270,7 @@ public:
         state.character.values[6] = 100;
         state.character.known.fill(true);
         state.sceneGeneration = 1;
+        state.actionIdle = MapleControl::Fact::True;
     }
 
     const char* Backend() const override { return "gui-tick-contract"; }
@@ -278,31 +284,28 @@ public:
 
     bool SupportsSkill() const override { return true; }
 
-    bool Begin(const MapleControl::Action& request, std::string&) override {
-        input.result = {};
-        input.itemResult = request.kind == MapleControl::ActionKind::UseItem;
-        if (input.itemResult) {
-            input.item.Request({User, 1, 0x1234, 2, request.itemId});
-        } else {
-            input.action.Request(Keys(request.skillId == 0 ? std::initializer_list<unsigned>{Attack}
-                                                           : std::initializer_list<unsigned>{}),
-                                 60, User, frame);
-            input.actionWindow = true;
-            input.actionUntil = frame + 2;
-            if (request.skillId != 0) {
-                BeiDouBridge::NativeSkillUse::Skill skill;
-                skill.skillId = request.skillId;
-                skill.character = skill.user = User;
-                skill.sceneGeneration = 1;
-                skill.inputEpoch = input.action.Epoch();
-                skill.deadline = frame + 2;
-                input.skill.Request(skill);
-                input.result.skillRequested = true;
-                input.result.skill = input.skill.Result();
-            }
+    bool Begin(const MapleControl::Action& request, std::string& error) override {
+        return SetActionIntent(request, error);
+    }
+
+    bool SetActionIntent(const MapleControl::Action& request, std::string& error) override {
+        if (request.kind == MapleControl::ActionKind::Attack && BeiDouBridge::IsNativeKeyDownSkill(request.skillId)) {
+            input.ReleaseAction();
+            error = "unsupported: native_keydown_skill_release";
+            return false;
         }
+        if (!input.SetIntent(request, User)) return true;
+        const bool key = request.kind == MapleControl::ActionKind::Jump
+                         || request.kind == MapleControl::ActionKind::Pickup
+                         || (request.kind == MapleControl::ActionKind::Attack && request.skillId == 0);
+        input.action.Request(Keys(key ? std::initializer_list<unsigned>{Attack} : std::initializer_list<unsigned>{}), 0,
+                             User, frame);
         return true;
     }
+
+    const MapleControl::Action* ActiveAction() const override { return input.ActiveAction(); }
+
+    bool ActionIntentSettled() const override { return input.ActionIntentSettled(); }
 
     bool SetHeldKeys(const std::vector<std::string>& names, std::string&) override {
         NativeKeyInput::Mask held{};
@@ -330,41 +333,99 @@ public:
         ++frame;
         ++state.sequence;
         input.Observe(User, User, frame, false);
-        input.ExpireAction(frame);
+        input.ObserveAction(nativeAction);
+        state.actionIdle = nativeAction.idle;
         runtime.Tick();
+        const auto beforeKeys = nativeAction;
         for (auto* source : {&input.movement, &input.action})
             source->Flush(
                 [&](unsigned key, bool down, std::uint64_t epoch) {
                     return keys.Deliver(*source, key, down, epoch, [&](unsigned physicalKey, bool physicalDown) {
                         edges.emplace_back(physicalKey, physicalDown);
-                        if (physicalDown) ++keyDowns;
+                        if (physicalDown) {
+                            ++keyDowns;
+                            if (source == &input.action && input.Intent().kind == MapleControl::ActionKind::Attack
+                                && input.Intent().skillId == 0 && ordinaryAttackAllowed)
+                                nativeAction = {MapleControl::Fact::False, 17};
+                        }
                         return true;
                     });
                 },
                 [&] { return frame; });
         input.MovementFlushed(User, frame, false);
-        input.item.Consume(User, 1, 0x1234, [&](const BeiDouBridge::NativeItemUse::Item&) { ++itemCalls; });
+        const auto& intent = input.Intent();
+        input.RepeatDue(frame, repeatSettings);
+        if (input.DispatchPending()) {
+            if (intent.kind == MapleControl::ActionKind::UseItem) {
+                if (input.ItemDispatchAllowed(frame)) {
+                    const auto request = input.TakeDispatch(frame);
+                    input.item.Request({User, 1, 0x1234, 2, request.itemId});
+                }
+            } else if (intent.kind == MapleControl::ActionKind::Attack && intent.skillId != 0 && input.action.Released()
+                       && input.HeldKeysSettled()
+                       && (!input.Dispatched() || nativeAction.idle == MapleControl::Fact::True)) {
+                const auto request = input.TakeDispatch(frame);
+                BeiDouBridge::NativeSkillUse::Skill skill;
+                skill.skillId = request.skillId;
+                skill.character = skill.user = User;
+                skill.sceneGeneration = 1;
+                skill.inputEpoch = input.action.Epoch();
+                skill.deadline = 10000;
+                input.skill.Request(skill);
+                input.result.skillRequested = true;
+                input.result.skill = input.skill.Result();
+            } else if (input.action.Dispatched()
+                       && (!input.Dispatched() || intent.kind != MapleControl::ActionKind::Attack
+                           || nativeAction.idle == MapleControl::Fact::True)) {
+                const bool initial = !input.Dispatched();
+                const auto before = initial ? beforeKeys : nativeAction;
+                const auto request = input.TakeDispatch(frame);
+                if (!initial) {
+                    edges.emplace_back(Attack, true);
+                    ++keyDowns;
+                    if (ordinaryAttackAllowed) nativeAction = {MapleControl::Fact::False, 17};
+                }
+                input.NativeStarted(request, input.IntentRevision(), before, nativeAction, true);
+            }
+        }
+        input.ConsumeItem(User, 1, 0x1234, frame, [&](const BeiDouBridge::NativeItemUse::Item& item) {
+            ++itemCalls;
+            itemEntries.emplace_back(item.itemId, frame);
+        });
         if (input.skill.Pending()) {
             BeiDouBridge::NativeSkillUse::Context context;
             context.character = context.user = User;
             context.sceneGeneration = 1;
             context.inputEpoch = input.action.Epoch();
             context.now = frame;
-            input.skill.Consume(context, [&](std::uint32_t, int& nativeResult, std::string&) {
+            const auto request = intent;
+            const auto before = nativeAction;
+            input.skill.Consume(context, [&](std::uint32_t id, int& nativeResult, std::string&) {
                 ++skillCalls;
-                nativeResult = 1;
+                skillEntries.emplace_back(id, frame);
+                nativeResult = skillAllowed ? 1 : 0;
+                if (nativeResult != 0 && skillStartsAction) nativeAction = {MapleControl::Fact::False, 17};
                 return true;
             });
             input.result.skill = input.skill.Result();
+            input.NativeStarted(request, input.IntentRevision(), before, nativeAction,
+                                input.result.skill.nativeResultKnown && input.result.skill.nativeResult != 0,
+                                input.result.skill.nativeResultKnown);
         }
+        input.ActionFlushed(User, frame, false);
     }
 
     NativeTickInput input;
     NativeKeyUnion keys{&input.movement, &input.action};
     MapleControl::State state;
     std::uint64_t frame = 0;
+    BeiDouBridge::NativeActionState nativeAction{MapleControl::Fact::True, -1};
+    BeiDouBridge::NativeRepeatSettings repeatSettings;
+    bool skillAllowed = true, skillStartsAction = false, ordinaryAttackAllowed = false;
     unsigned itemCalls = 0, skillCalls = 0, keyDowns = 0;
     std::vector<std::pair<unsigned, bool>> edges;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> itemEntries;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> skillEntries;
 };
 
 void ActionOwnerCancellation() {
@@ -382,7 +443,6 @@ void ActionOwnerCancellation() {
     native.Advance(runtime);
     Check(native.input.action.Held()[Attack] && native.input.movement.Held()[Right],
           "fixtures did not own action and movement");
-    native.input.actionUntil = 100; // cancellation, not ordinary pulse expiry, must release this action
     const auto edgeCount = native.edges.size();
     runtime.Cancel("attacker", "cancelled");
     for (unsigned frame = 0; frame < 5; ++frame) native.Advance(runtime);
@@ -394,6 +454,139 @@ void ActionOwnerCancellation() {
           "cancelled action did not acknowledge its own release");
     runtime.CancelAll("cleanup");
     for (unsigned frame = 0; frame < 5; ++frame) native.Advance(runtime);
+}
+
+void HeldIntentUpdates() {
+    DeferredNativeAdapter native;
+    MapleControl::TickRuntime runtime(native);
+    std::string error;
+    Check(runtime.Start("held", "-- @mode tick\n-- @tick.gear 4\nfunction main(c) c.game.player.skill(1001004) end",
+                        1000, error),
+          error.c_str());
+    for (unsigned frame = 0; frame < 10; ++frame) native.Advance(runtime);
+    Check(native.skillCalls == 1 && native.input.HasIntent() && native.input.ActionIntentSettled(),
+          "same held skill was replayed or failed to settle after native consumption");
+    runtime.CancelAll("cleanup");
+    for (unsigned frame = 0; frame < 5; ++frame) native.Advance(runtime);
+    Check(!native.input.HasIntent() && native.input.Released() && native.skillCalls == 1,
+          "cancel retained a historical held skill");
+
+    DeferredNativeAdapter replaced;
+    MapleControl::TickRuntime replacementRuntime(replaced);
+    Check(replacementRuntime.Start("replace", R"lua(-- @mode tick
+-- @tick.gear 4
+function main(c)
+    c.state.step = (c.state.step or 0) + 1
+    if c.state.step == 1 then c.game.player.attack()
+    elseif c.state.step == 2 then c.game.player.skill(2001002)
+    elseif c.state.step == 3 then c.game.player.skill(nil) end
+end
+)lua",
+                                   1000, error),
+          error.c_str());
+    for (unsigned frame = 0; frame < 10; ++frame) replaced.Advance(replacementRuntime);
+    Check(replaced.skillCalls == 0 && replaced.keyDowns == 1 && !replaced.input.HasIntent(),
+          "withdrawn B was replayed after the old ordinary action key release");
+    Check(replaced.edges == std::vector<std::pair<unsigned, bool>>{{Attack, true}, {Attack, false}},
+          "replacement/clear manufactured stale action down edges");
+    replacementRuntime.CancelAll("cleanup");
+    for (unsigned frame = 0; frame < 5; ++frame) replaced.Advance(replacementRuntime);
+}
+
+void RejectedAttackRecovery() {
+    for (const bool useSkill : {false, true}) {
+        DeferredNativeAdapter native;
+        native.repeatSettings = {true, 250, 33};
+        native.skillAllowed = false;
+        native.skillStartsAction = true;
+        MapleControl::TickRuntime runtime(native);
+        std::string error;
+        const auto source = std::string("-- @mode tick\n-- @tick.gear 4\nfunction main(c) if not c.state.sent then ")
+                            + (useSkill ? "c.game.player.skill(1001004)" : "c.game.player.attack()")
+                            + "; c.state.sent=true end end";
+        Check(runtime.Start("recover", source, 1000, error), error.c_str());
+        for (unsigned frame = 0; frame < 100; ++frame) native.Advance(runtime);
+        Check((useSkill ? native.skillCalls : native.keyDowns) == 1,
+              "unstarted native attack was replayed before real repeat delay");
+        const auto first = useSkill ? native.skillEntries.front().second : 1;
+        native.skillAllowed = native.ordinaryAttackAllowed =
+            true; // Native MP/admission recovers; Lua does not rewrite.
+        while (native.frame < first + 249) native.Advance(runtime);
+        Check((useSkill ? native.skillCalls : native.keyDowns) == 1,
+              "condition recovery bypassed native first-repeat setting");
+        native.Advance(runtime);
+        Check((useSkill ? native.skillCalls : native.keyDowns) == 2 && native.input.ActiveAction(),
+              "persistent rejected input never recovered after native admission became legal");
+        if (useSkill)
+            Check(native.skillEntries.back().second == first + 250,
+                  "skill retry did not enter the native boundary at its real first-repeat time");
+        runtime.CancelAll("cleanup");
+        for (unsigned frame = 0; frame < 5; ++frame) native.Advance(runtime);
+    }
+
+    DeferredNativeAdapter noLock;
+    noLock.repeatSettings = {true, 250, 33};
+    MapleControl::TickRuntime noLockRuntime(noLock);
+    std::string error;
+    Check(noLockRuntime.Start("no-lock",
+                              "-- @mode tick\n-- @tick.gear 4\nfunction main(c) if not c.state.sent then "
+                              "c.game.player.skill(1001004); c.state.sent=true end end",
+                              1000, error),
+          error.c_str());
+    for (unsigned frame = 0; frame < 600; ++frame) noLock.Advance(noLockRuntime);
+    Check(noLock.skillCalls == 1, "successful no-lock hold was retried like a rejected skill");
+    noLockRuntime.CancelAll("cleanup");
+    for (unsigned frame = 0; frame < 5; ++frame) noLock.Advance(noLockRuntime);
+
+    DeferredNativeAdapter cleared;
+    cleared.repeatSettings = {true, 250, 33};
+    cleared.skillAllowed = false;
+    MapleControl::TickRuntime clearedRuntime(cleared);
+    Check(clearedRuntime.Start("clear-retry",
+                               "-- @mode tick\n-- @tick.gear 4\nfunction main(c) "
+                               "c.state.n=(c.state.n or 0)+1; if c.state.n==1 then c.game.player.skill(1001004) "
+                               "elseif c.state.n==3 then c.game.player.skill(nil) end end",
+                               1000, error),
+          error.c_str());
+    for (unsigned frame = 0; frame < 10; ++frame) cleared.Advance(clearedRuntime);
+    cleared.skillAllowed = true;
+    for (unsigned frame = 0; frame < 600; ++frame) cleared.Advance(clearedRuntime);
+    Check(cleared.skillCalls == 1 && !cleared.input.HasIntent(),
+          "withdrawn B retried after its native condition recovered");
+    clearedRuntime.CancelAll("cleanup");
+    for (unsigned frame = 0; frame < 5; ++frame) cleared.Advance(clearedRuntime);
+}
+
+void PotionIntentChurn() {
+    DeferredNativeAdapter native;
+    MapleControl::TickRuntime runtime(native);
+    std::string error;
+    Check(runtime.Start("potions", R"lua(-- @mode tick
+-- @tick.gear 4
+function main(c)
+    c.state.step = (c.state.step or 0) + 1
+    local step = c.state.step
+    if step == 1 or step == 103 or step == 105 then c.game.player.use_item(2000000)
+    elseif step == 2 or step == 5 or step == 202 then c.game.player.use_item(2000001)
+    elseif step == 3 or step == 102 then c.game.player.skill(nil)
+    elseif step == 4 or step == 104 then c.game.player.attack() end
+end
+)lua",
+                        1000, error),
+          error.c_str());
+    for (unsigned frame = 0; frame < 202; ++frame) native.Advance(runtime);
+    Check(native.itemEntries
+              == std::vector<std::pair<std::uint32_t, std::uint64_t>>{{2000000, 1}, {2000001, 101}, {2000000, 201}},
+          "Lua potion replacement/clear/ordinary action churn reset the actual native-use guard");
+    Check(native.input.Intent().itemId == 2000001 && native.input.DispatchPending(),
+          "protected replacement potion was not retained as the current replaceable input");
+    runtime.Cancel("potions", "cancel_during_potion_protection");
+    for (unsigned frame = 0; frame < 5; ++frame) native.Advance(runtime);
+    Check(!runtime.Running() && native.input.Released() && native.itemCalls == 3
+              && Field(runtime.CurrentStatus("potions"), "control_released").Boolean(),
+          "potion protection delayed cancellation/release or replayed cancelled medicine");
+    for (unsigned frame = 0; frame < 110; ++frame) native.Advance(runtime);
+    Check(native.itemCalls == 3, "cancelled potion was delivered after protection elapsed");
 }
 
 void DeferredFinish(bool overrun) {
@@ -415,10 +608,9 @@ void DeferredFinish(bool overrun) {
             Check(Field(status, "status").Text() == (overrun ? "cancelled" : "completed"),
                   "deferred final action changed session outcome");
             if (overrun) Check(Field(status, "reason").Text() == "tick_overrun", "lost tick budget failure reason");
-            const auto expected = commit ? 1u : 0u;
-            Check(
-                native.itemCalls + native.skillCalls + native.keyDowns == expected,
-                "committed final action was cancelled before real deferred dispatch, replayed, or discard dispatched");
+            const auto expected = 0u;
+            Check(native.itemCalls + native.skillCalls + native.keyDowns == expected,
+                  "terminal held intent was replayed after its owner had already stopped");
             Check(native.input.Result().effect == "unknown", "deferred dispatch fabricated a game effect");
         }
     }
@@ -442,6 +634,12 @@ int main(int argc, char** argv) {
         ItemAndSkillSlots();
     else if (test == "action-owner-cancel")
         ActionOwnerCancellation();
+    else if (test == "held-updates")
+        HeldIntentUpdates();
+    else if (test == "attack-recovery")
+        RejectedAttackRecovery();
+    else if (test == "potion-churn")
+        PotionIntentChurn();
     else if (test == "deferred-done")
         DeferredFinish(false);
     else if (test == "deferred-overrun")

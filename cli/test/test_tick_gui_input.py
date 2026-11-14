@@ -63,10 +63,19 @@ class TickGuiInputContract(unittest.TestCase):
     def test_cancelled_action_owner_does_not_pulse_another_sessions_movement(self) -> None:
         subprocess.run([str(self.executable), "action-owner-cancel"], check=True, timeout=10)
 
-    def test_final_tick_action_is_consumed_once_after_lua_returns_done(self) -> None:
+    def test_same_held_skill_is_idempotent_and_withdrawn_replacement_never_replays(self) -> None:
+        subprocess.run([str(self.executable), "held-updates"], check=True, timeout=10)
+
+    def test_rejected_native_attack_recovers_without_lua_rewrite_and_clear_prevents_retry(self) -> None:
+        subprocess.run([str(self.executable), "attack-recovery"], check=True, timeout=10)
+
+    def test_lua_potion_churn_cannot_reset_actual_native_guard_or_delay_cancel(self) -> None:
+        subprocess.run([str(self.executable), "potion-churn"], check=True, timeout=10)
+
+    def test_done_withdraws_held_intent_before_deferred_native_consumption(self) -> None:
         subprocess.run([str(self.executable), "deferred-done"], check=True, timeout=10)
 
-    def test_tick_budget_abort_drains_only_committed_deferred_actions(self) -> None:
+    def test_tick_budget_abort_withdraws_committed_and_uncommitted_held_intents(self) -> None:
         subprocess.run([str(self.executable), "deferred-overrun"], check=True, timeout=10)
 
     def test_windows_project_compiles_shared_tick_engine(self) -> None:

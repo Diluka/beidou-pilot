@@ -55,7 +55,7 @@ class TickRuntimeContract(unittest.TestCase):
     def test_absolute_phase_actual_callback_time_and_missed_periods_inside_main(self) -> None:
         self.run_contract("cadence-phase")
 
-    def test_native_pending_cancel_deadline_release_and_scene_advance_when_main_is_not_due(self) -> None:
+    def test_native_consumption_cancel_deadline_release_and_scene_advance_when_main_is_not_due(self) -> None:
         self.run_contract("cadence-lifecycle")
 
     def test_entry_context_state_return_values_and_initial_identity(self) -> None:
@@ -66,6 +66,9 @@ class TickRuntimeContract(unittest.TestCase):
 
     def test_scene_is_shared_across_gears_without_reading_during_transition_or_replaying_input(self) -> None:
         self.run_contract("scene-cadence")
+
+    def test_new_scene_replanning_preserves_native_a_and_never_replays_withdrawn_input_b(self) -> None:
+        self.run_contract("scene-held-intents")
 
     def test_scene_reports_missing_reference_error_and_wrong_map_without_old_geometry(self) -> None:
         self.run_contract("scene-unavailable")
@@ -111,8 +114,14 @@ end
     def test_only_the_final_draft_causes_native_input_and_intents_persist(self) -> None:
         self.run_contract("draft")
 
-    def test_action_slot_idempotence_last_queue_and_pause_resume(self) -> None:
+    def test_held_inputs_persist_and_same_value_never_represses_or_replays_native_updates(self) -> None:
+        self.run_contract("held-intents")
+
+    def test_busy_native_a_accepts_b_and_withdrawn_b_is_never_replayed_before_c(self) -> None:
         self.run_contract("actions")
+
+    def test_busy_and_action_idle_preserve_native_true_false_and_unknown_independent_of_intent(self) -> None:
+        self.run_contract("idle-facts")
 
     def test_multiple_states_share_one_machine_and_cancel_only_owned_input(self) -> None:
         self.run_contract("sessions")
@@ -134,6 +143,20 @@ end
 
     def test_motion_facts_and_reference_capabilities_are_fresh_read_only_and_unknown_when_missing(self) -> None:
         self.run_contract("motion")
+
+    def test_held_skill_example_returns_done_and_runtime_confirms_release_without_waiting_for_animation(self) -> None:
+        path = Path(__file__).resolve().parents[2] / "shared/scripts/examples/tick-held-skill.lua"
+        source, metadata = read_strategy_file(path)
+        self.assertIsNotNone(metadata)
+        self.assertEqual("tick", metadata.mode)
+        header, body = split_script_header(source)
+        source = header + "-- @tick.gear 4\n" + body
+        scene = {"instance_id": "tick-contract", "character_id": 1, "map_id": 50000, "scene_generation": 1}
+        compiled = self.executable.parent / "tick-held-skill-compiled.lua"
+        compiled.write_text(
+            compile_strategy(source, {"skill_id": 1001004, "hold_seconds": 0.1}, scene), encoding="utf-8"
+        )
+        subprocess.run([str(self.executable), "held-skill-example", str(compiled)], check=True, timeout=10)
 
     def test_moving_jump_attack_example_holds_direction_until_landing(self) -> None:
         path = Path(__file__).resolve().parents[2] / "shared/scripts/examples/tick-jump-attack.lua"

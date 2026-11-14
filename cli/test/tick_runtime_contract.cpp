@@ -54,6 +54,7 @@ public:
         state.character.name = "contract";
         state.character.known.fill(true);
         state.character.values[6] = 100;
+        state.actionIdle = Fact::True;
         state.monstersKnown = true;
         Monster monster;
         monster.objectId = 7;
@@ -113,26 +114,56 @@ public:
 
     bool SupportsSkill() const override { return supportsSkills; }
 
+    // The coroutine adapter still owns Begin/Release. Tick must only change the
+    // desired input, leaving native admission and animation completion independent.
     bool Begin(const Action& requested, std::string& error) override {
+        ++beginCalls;
         if (!Released()) {
             error = "native_action_busy";
             return false;
         }
         requests.push_back(requested);
         events.push_back("begin");
-        actionActive = pendingDelivery = true;
+        active = requested;
+        actionActive = legacyDelivery = true;
+        state.actionIdle = Fact::False;
         result = {};
-        result.dispatched = false;
         result.sessionId = requested.sessionId;
         result.reason = "native_dispatched";
-        if (onBegin) onBegin();
         return true;
     }
+
+    bool SetActionIntent(const Action& requested, std::string&) override {
+        ++intentCalls;
+        const bool changed = desired.kind != requested.kind || desired.skillId != requested.skillId
+                             || desired.itemId != requested.itemId;
+        desired = requested;
+        if (!changed) return true;
+        armed = desired.kind != ActionKind::Stop;
+        actionReleaseTicks = 2; // Native acknowledgement, not the animation timer.
+        result.controlReleased = false;
+        if (armed) {
+            requests.push_back(requested);
+            events.push_back("intent");
+            if (onIntent) onIntent();
+        } else {
+            ++releases;
+            events.push_back("release_action");
+            if (onRelease) onRelease();
+        }
+        return true;
+    }
+
+    bool ActionIntentSettled() const override { return actionReleaseTicks == 0; }
+
+    const Action* ActiveAction() const override { return actionActive ? &active : nullptr; }
 
     ActionResult Result() const override { return result; }
 
     void Release() override {
         ReleaseAction();
+        actionActive = legacyDelivery = false;
+        state.actionIdle = Fact::True;
         if (!directions.empty()) {
             directions.clear();
             directionTicks = 1;
@@ -142,15 +173,18 @@ public:
     void ReleaseAction() override {
         ++releases;
         events.push_back("release_action");
-        actionActive = pendingDelivery = false;
+        desired = {};
+        armed = false;
         actionReleaseTicks = 2;
         result.controlReleased = false;
         if (onRelease) onRelease();
     }
 
-    bool Released() const override { return !actionActive && actionReleaseTicks == 0; }
+    bool Released() const override {
+        return !actionActive && desired.kind == ActionKind::Stop && ActionIntentSettled();
+    }
 
-    bool ReleasePending() const override { return actionReleaseTicks != 0; }
+    bool ReleasePending() const override { return !ActionIntentSettled(); }
 
     bool SetHeldKeys(const std::vector<std::string>& keys, std::string& error) override {
         if (rejectClear && keys.empty()) {
@@ -179,18 +213,31 @@ public:
         if (state.positionKnown) state.character.SetPosition(state.x, state.y);
         ++state.sequence;
         if (advanceCharacter) ++state.characterUpdates;
-        if (actionActive && pendingDelivery) {
-            delivered.push_back(requests.back());
-            pendingDelivery = false;
+        if (legacyDelivery) {
+            delivered.push_back(active);
+            legacyDelivery = false;
             result.dispatched = true;
         }
+        // A native consumer may admit the current held input when A finishes.
+        // Clearing/replacing B removes it here; there is no history to replay.
+        if (armed && allowStart && !actionActive) {
+            active = desired;
+            armed = false;
+            actionActive = startsAnimation;
+            if (startsAnimation) state.actionIdle = Fact::False;
+            delivered.push_back(active);
+            result.dispatched = true;
+            result.sessionId = active.sessionId;
+            result.reason = "native_dispatched";
+        }
         if (directionTicks > 0) --directionTicks;
-        if (actionReleaseTicks > 0 && --actionReleaseTicks == 0) result.controlReleased = true;
+        if (actionReleaseTicks > 0 && --actionReleaseTicks == 0)
+            result.controlReleased = desired.kind == ActionKind::Stop;
     }
 
     void Complete() {
         actionActive = false;
-        result.controlReleased = true;
+        state.actionIdle = Fact::True;
         result.reason = "native_completed";
     }
 
@@ -198,13 +245,15 @@ public:
     mutable std::map<std::string, int> queries;
     std::map<std::uint32_t, Observation> terrains;
     bool supportsItems = true, supportsSkills = true, rejectClear = false, nativeNpcDomain = true;
-    bool actionActive = false, pendingDelivery = false, advanceCharacter = true;
-    int actionReleaseTicks = 0, directionTicks = 0, releases = 0;
+    bool actionActive = false, legacyDelivery = false, advanceCharacter = true, armed = false, allowStart = true;
+    bool startsAnimation = true;
+    int actionReleaseTicks = 0, directionTicks = 0, releases = 0, beginCalls = 0, intentCalls = 0;
+    Action desired, active;
     ActionResult result;
     std::vector<Action> requests, delivered;
     std::vector<std::vector<std::string>> changes;
     std::vector<std::string> directions, events, logs;
-    std::function<void()> onBegin, onRelease, onLogs;
+    std::function<void()> onIntent, onRelease, onLogs;
     std::function<void(const std::string&)> onDomain;
 };
 
@@ -448,29 +497,31 @@ void CadenceLifecycle() {
         NativeBoundary native;
         auto now = origin;
         TickRuntime runtime(native, [&] { return now; });
-        Start(runtime, "owner",
-              Source("function main(c) c.game.player.move('right'); c.game.player.attack() end", TickGear::TenHz));
+        Start(
+            runtime, "owner",
+            Source(
+                "function main(c) if c.tick.index==1 then c.game.player.move('right'); c.game.player.attack() end end",
+                TickGear::TenHz));
         Step(native, runtime);
-        Start(runtime, "queued",
-              Source("function main(c) c.game.player.pickup(); return 'done' end", TickGear::TwentyHz));
+        now += std::chrono::milliseconds(1);
+        Start(runtime, "successor",
+              Source("function main(c) if c.tick.index==1 then assert(c.game.player.skill(1001004)) end end",
+                     TickGear::TwentyHz));
         Step(native, runtime);
-        StatusIs(runtime, "queued", "running", "script_returned");
-        Check(native.requests.size() == 1 && native.delivered.size() == 1,
-              "fixture must occupy a native slot before queuing a draining successor");
+        Check(native.delivered.size() == 1 && native.delivered[0].skillId == 0 && native.desired.skillId == 1001004,
+              "non-due A remains active while a new session replaces its input with B");
         native.Complete();
+        now += std::chrono::milliseconds(1);
         Step(native, runtime);
-        Check(native.requests.size() == 2 && native.requests.back().kind == ActionKind::Pickup
-                  && native.directions.empty(),
-              "a non-due frame must poll completion and start the queued action, pausing movement");
+        Check(native.delivered.size() == 2 && native.ActiveAction()->skillId == 1001004
+                  && native.directions == std::vector<std::string>{"right"} && native.beginCalls == 0,
+              "native consumption advances held B without another Lua callback or Runtime Begin");
+        runtime.Cancel("successor", "explicit_cancel");
         Step(native, runtime);
-        Check(native.delivered.size() == 2, "the queued action must reach the next native consumer exactly once");
-        native.Complete();
         Step(native, runtime);
-        StatusIs(runtime, "queued", "completed", "script_returned");
-        Check(native.directions == std::vector<std::string>{"right"}
-                  && TickField(runtime, "owner", "index").Number() == 1
-                  && TickField(runtime, "queued", "index").Number() == 1,
-              "non-due drain must finish and restore persistent movement without replaying either main");
+        StatusIs(runtime, "successor", "cancelled", "explicit_cancel");
+        Check(native.actionActive && native.ActionIntentSettled() && native.desired.kind == ActionKind::Stop,
+              "a non-due cancelled session waits for input release, not its already-started animation");
         native.rejectClear = true;
         runtime.Cancel("owner", "explicit_cancel");
         Step(native, runtime);
@@ -483,29 +534,29 @@ void CadenceLifecycle() {
         Step(native, runtime);
         StatusIs(runtime, "owner", "cancelled", "explicit_cancel");
         Check(Field(runtime.CurrentStatus("owner"), "control_released").Boolean()
-                  && TickField(runtime, "owner", "index").Number() == 1 && native.requests.size() == 2
+                  && TickField(runtime, "owner", "index").Number() == 1
+                  && TickField(runtime, "successor", "index").Number() == 1
                   && Field(Field(runtime.Profile(), "refresh_core"), "samples").Number() == 2,
-              "native release confirmation and final status must progress without waiting for cadence");
+              "release and final status progress without another main or core read");
     }
     {
         NativeBoundary native;
         auto now = origin;
         TickRuntime runtime(native, [&] { return now; });
-        Start(runtime, "deadline",
-              Source("function main(c) c.game.player.attack(); return 'done' end", TickGear::TenHz), 20);
+        Start(runtime, "deadline", Source("function main(c) c.game.player.attack() end", TickGear::TenHz), 20);
         Step(native, runtime);
-        StatusIs(runtime, "deadline", "running", "script_returned");
-        now += std::chrono::milliseconds(20); // Before the next 100ms decision.
+        now += std::chrono::milliseconds(20);
         Step(native, runtime);
         StatusIs(runtime, "deadline", "running", "time_limit");
-        Check(native.releases == 1, "a non-due total deadline must interrupt a returned main's native drain");
+        Check(native.desired.kind == ActionKind::Stop && native.actionActive,
+              "a non-due deadline clears held input without interrupting the native animation");
         Step(native, runtime);
         Step(native, runtime);
         StatusIs(runtime, "deadline", "cancelled", "time_limit");
         Check(Field(runtime.CurrentStatus("deadline"), "control_released").Boolean()
                   && TickField(runtime, "deadline", "index").Number() == 1
                   && Field(Field(runtime.Profile(), "refresh_core"), "samples").Number() == 1,
-              "deadline cancellation must terminate after native release, without another main/core read");
+              "deadline cancellation terminates on native release, without waiting for main or animation");
     }
     {
         NativeBoundary native;
@@ -513,22 +564,26 @@ void CadenceLifecycle() {
         TickRuntime runtime(native, [&] { return now; });
         Start(runtime, "scene",
               Source(R"lua(function main(c)
-  if c.tick.index==1 then c.game.player.move('right')
-  else assert(c.game.world.scene_generation==2 and c.game.scene.map_id==50000) end
+  if c.tick.index==1 then c.game.player.move('right'); c.game.player.attack()
+  else assert(c.game.world.scene_generation==2 and c.game.scene.map_id==50000)
+       assert(c.game.player.status().input_action==nil) end
 end)lua",
                      TickGear::TenHz));
         Step(native, runtime);
         now += std::chrono::milliseconds(1);
-        ++native.state.sceneGeneration; // Same map ID, different native scene lifetime.
+        ++native.state.sceneGeneration;
         Step(native, runtime);
+        native.Complete();
         Step(native, runtime);
-        Check(native.directions.empty() && TickField(runtime, "scene", "index").Number() == 1
+        Check(native.directions.empty() && native.desired.kind == ActionKind::Stop
+                  && TickField(runtime, "scene", "index").Number() == 1
                   && Field(Field(runtime.Profile(), "refresh_core"), "samples").Number() == 1,
-              "non-due scene changes must release movement immediately, not wait for or refresh Lua");
+              "non-due same-map scene changes clear direction and action without refreshing Lua");
         now = origin + std::chrono::milliseconds(100);
         Step(native, runtime);
-        Check(native.directions.empty() && TickField(runtime, "scene", "index").Number() == 2,
-              "the next due callback must read the new same-map scene without replaying old intent");
+        Check(native.directions.empty() && native.requests.size() == 1 && native.delivered.size() == 1
+                  && TickField(runtime, "scene", "index").Number() == 2,
+              "the next due callback sees the new scene without replaying old input");
         StatusIs(runtime, "scene", "running");
     }
 }
@@ -683,6 +738,79 @@ end)lua",
           "the next stable consumer must replace a transition-invalidated scene without replay");
     runtime.CancelAll("explicit_cancel");
     Step(native, runtime);
+}
+
+void SceneHeldIntents() {
+    using Clock = std::chrono::steady_clock;
+    const auto origin = Clock::time_point(std::chrono::seconds(100));
+    auto now = origin;
+    NativeBoundary native;
+    native.terrains[50000] = Terrain(50000, 10);
+    native.terrains[50001] = Terrain(50001, 20);
+    TickRuntime runtime(native, [&] { return now; });
+    Start(runtime, "scene-input",
+          Source(R"lua(function main(c)
+  local p, s = c.game.player, c.scene
+  local status = p.status()
+  assert(s.map_id==c.game.world.map_id and s.scene_generation==c.tick.scene_generation)
+  assert(s.terrain.status=='available')
+  c.state.calls=(c.state.calls or 0)+1
+  if c.tick.index==1 then
+    assert(s.map_id==50000 and s.terrain.footholds[1].x1==10)
+    c.state.first=s
+    p.move('up'); p.skill(1001004)
+  else
+    assert(c.state.calls==c.tick.index and s.map_id==50001 and s.terrain.footholds[1].x1==20)
+    assert(c.state.first.map_id==50000 and c.state.first.scene_generation==1)
+    assert(c.state.first.terrain.footholds[1].x1==10)
+    if c.tick.index==2 then
+      assert(status.input_action==nil and status.moving==nil)
+      assert(status.busy==true and status.skill_id==1001004)
+      p.move('left'); p.skill(1001005)
+    elseif c.tick.index==3 then
+      assert(status.input_skill_id==1001005 and status.skill_id==1001004)
+      p.skill(nil); p.move(nil)
+    else
+      assert(status.input_action==nil and status.action==nil and status.busy==false)
+      return 'done'
+    end
+  end
+end)lua",
+                 TickGear::TenHz));
+    Step(native, runtime);
+    now = origin + std::chrono::milliseconds(8);
+    Step(native, runtime);
+    Check(native.delivered.size() == 1 && native.active.skillId == 1001004,
+          "the external native consumer must establish A before the scene changes");
+    native.state.mapId = 50001;
+    ++native.state.sceneGeneration;
+    now = origin + std::chrono::milliseconds(16);
+    Step(native, runtime);
+    Check(native.desired.kind == ActionKind::Stop && native.directions.empty() && native.actionActive
+              && native.active.skillId == 1001004 && native.queries["terrain"] == 1,
+          "a non-due scene transition must withdraw input, not rewrite A or read terrain");
+    now = origin + std::chrono::milliseconds(100);
+    Step(native, runtime);
+    Check(native.queries["terrain"] == 2 && native.desired.skillId == 1001005
+              && native.directions == std::vector<std::string>{"left"} && native.active.skillId == 1001004,
+          "new-map planning may hold B while native A remains independently busy");
+    now = origin + std::chrono::milliseconds(108);
+    Step(native, runtime);
+    now = origin + std::chrono::milliseconds(200);
+    Step(native, runtime);
+    Check(native.desired.kind == ActionKind::Stop && native.directions.empty() && native.actionActive,
+          "withdrawing new-map B must not interrupt native A");
+    now = origin + std::chrono::milliseconds(208);
+    Step(native, runtime);
+    native.Complete(); // Only the native boundary decides that A has ended.
+    now = origin + std::chrono::milliseconds(216);
+    Step(native, runtime);
+    now = origin + std::chrono::milliseconds(300);
+    Step(native, runtime);
+    Drain(native, runtime, "scene-input", "completed", "script_returned");
+    Check(native.requests.size() == 2 && native.delivered.size() == 1 && native.beginCalls == 0
+              && TickField(runtime, "scene-input", "index").Number() == 4,
+          "scene refresh must preserve route state without replaying withdrawn B after A ends");
 }
 
 void SceneUnavailable() {
@@ -858,29 +986,141 @@ void Draft() {
     Start(runtime, "draft", Source(R"lua(
 function main(c)
   local p=c.game.player
+  local public=p.status()
+  assert(public.input_settled==nil and public.control_released==nil and p.clear_action==nil)
+  for key in pairs(public) do assert(key~='input_settled' and key~='control_released') end
   if c.tick.index==1 then
     p.move('left'); p.move('right'); p.move('left'); p.move('right')
-    p.jump(); p.pickup(); p.attack(); c.game.log('draft complete')
+    assert(p.jump()); assert(p.status().input_action=='jump')
+    assert(p.skill(1001004))
+    local s=p.status(); assert(s.input_action=='skill' and s.input_skill_id==1001004 and s.skill_id==nil)
+    assert(p.use_item(2000000))
+    s=p.status(); assert(s.input_action=='use_item' and s.input_item_id==2000000 and s.input_skill_id==nil)
+    assert(p.pickup()); assert(p.attack())
+    s=p.status(); assert(s.input_action=='attack' and s.action==nil and s.busy==false)
+    assert(s.pending_action==nil and s.input_item_id==nil)
+    c.game.log('draft complete')
   elseif c.tick.index==2 then p.move('right'); assert(p.attack())
-  elseif c.tick.index==3 then p.move(nil)
-  elseif c.tick.index==4 then p.stop(); p.move('left'); p.stop()
-  elseif c.tick.index==5 then return 'done' end
+  elseif c.tick.index==3 then
+    assert(p.skill(nil))
+    local s=p.status(); assert(s.input_action==nil and s.action=='attack' and s.moving=='right')
+  elseif c.tick.index==4 then p.move(nil)
+  elseif c.tick.index==5 then
+    p.move('left'); p.pickup(); assert(p.stop()); assert(p.status().input_action==nil)
+  elseif c.tick.index==6 then return 'done' end
 end
 )lua"));
     Step(native, runtime);
-    Check(native.requests.size() == 1 && native.requests[0].kind == ActionKind::Attack,
-          "only final action draft is dispatched");
+    Check(native.requests.size() == 1 && native.requests[0].kind == ActionKind::Attack && native.beginCalls == 0,
+          "only the final action draft reaches the native intent boundary, never Begin");
     Check(native.changes.size() == 1 && native.directions == std::vector<std::string>{"right"},
-          "only final directional draft is submitted");
-    Check(native.events.front() == "logs", "native effects must follow completion of the Lua entry");
+          "only the final directional draft is submitted");
+    Check(native.events.front() == "logs", "native effects follow completion of the Lua entry");
     Step(native, runtime);
-    Check(native.requests.size() == 1 && native.changes.size() == 1, "repeated intents must not replay input");
+    Check(native.intentCalls == 1 && native.changes.size() == 1, "same-value drafts must not resend native input");
     Step(native, runtime);
-    Check(native.directions.empty(), "move(nil) clears persistent input");
+    Check(native.desired.kind == ActionKind::Stop && native.directions == std::vector<std::string>{"right"}
+              && native.actionActive,
+          "skill(nil) removes the held action, preserving direction and already-started animation");
+    Step(native, runtime);
+    Check(native.directions.empty(), "move(nil) clears persistent direction");
     Step(native, runtime);
     Check(native.requests.size() == 1 && native.releases == 1 && native.directions.empty(),
-          "stop discards all earlier draft commands");
+          "stop discards earlier action and movement drafts without extra native edges");
     Drain(native, runtime, "draft", "completed");
+    Check(native.actionActive, "script completion must not interrupt native animation");
+}
+
+void HeldIntents() {
+    struct InputCase {
+        const char* command;
+        const char* name;
+        ActionKind kind;
+        std::uint32_t skillId;
+        std::uint32_t itemId;
+    };
+
+    for (const auto& input : {InputCase{"jump()", "jump", ActionKind::Jump, 0, 0},
+                              InputCase{"attack()", "attack", ActionKind::Attack, 0, 0},
+                              InputCase{"pickup()", "pickup", ActionKind::Pickup, 0, 0},
+                              InputCase{"skill(1001004)", "skill", ActionKind::Attack, 1001004, 0},
+                              InputCase{"skill(1)", "skill", ActionKind::Attack, 1, 0},
+                              InputCase{"skill(2147483647)", "skill", ActionKind::Attack, 2147483647, 0},
+                              InputCase{"use_item(2000000)", "use_item", ActionKind::UseItem, 0, 2000000}}) {
+        NativeBoundary native;
+        TickRuntime runtime(native);
+        Start(runtime, "hold",
+              Source("function main(c) local p=c.game.player; if c.tick.index==1 then "
+                     "p.move('right'); assert(p."
+                     + std::string(input.command) + ") elseif c.tick.index==3 then assert(p." + input.command
+                     + ") elseif c.tick.index==8 then assert(p.skill(nil)) "
+                       "elseif c.tick.index==9 then assert(p.skill(nil)); return 'done' end end"));
+        Step(native, runtime);
+        Check(native.requests.size() == 1 && native.desired.kind == input.kind
+                  && native.desired.skillId == input.skillId && native.desired.itemId == input.itemId,
+              std::string("one setting must establish held ") + input.name);
+        const auto submitted = Field(runtime.CurrentStatus("hold"), "player");
+        Check(Field(submitted, "input_action").Text() == input.name && Field(submitted, "phase").Text() == "idle"
+                  && !Field(submitted, "busy").Boolean(),
+              "held input is independent of an idle native action phase");
+        for (const auto& projection : {submitted, Field(runtime.Statuses().Elements().front(), "player")})
+            for (const auto& member : projection.Members())
+                Check(member.first != "input_settled" && member.first != "control_released",
+                      "both bridge player projections must omit internal input/release handshakes");
+        Step(native, runtime);
+        Step(native, runtime);
+        const auto status = Field(runtime.CurrentStatus("hold"), "player");
+        Check(Field(status, "input_action").Text() == input.name && Field(status, "action").Text() == input.name
+                  && native.actionActive,
+              "held input and the independently started native action must both be observable");
+        if (input.skillId != 0)
+            Check(Field(status, "skill_id").Number() == input.skillId
+                      && Field(status, "input_skill_id").Number() == input.skillId,
+                  "actual and held skill metadata must be independently projected");
+        if (input.itemId != 0)
+            Check(Field(status, "item_id").Number() == input.itemId
+                      && Field(status, "input_item_id").Number() == input.itemId,
+                  "actual and held item metadata must be independently projected");
+        native.Complete();
+        for (int i = 0; i < 4; ++i) Step(native, runtime);
+        Check(native.intentCalls == 1 && native.requests.size() == 1 && native.delivered.size() == 1
+                  && native.beginCalls == 0 && native.desired.kind == input.kind,
+              "holding or repeating the same Lua command must not replay native updates after animation completion");
+        Check(native.directions == std::vector<std::string>{"right"} && native.changes.size() == 1,
+              "pickup and item input, like attack and jump, must not pause persistent direction");
+        const auto idle = Field(runtime.CurrentStatus("hold"), "player");
+        Check(Field(idle, "input_action").Text() == input.name && Field(idle, "action").Type() == Value::Kind::Null
+                  && !Field(idle, "busy").Boolean() && Field(idle, "phase").Text() == "idle",
+              "held input cannot manufacture a busy native phase after actual animation completion");
+        Step(native, runtime);
+        Check(native.desired.kind == ActionKind::Stop && native.intentCalls == 2 && !native.ActionIntentSettled()
+                  && native.directions == std::vector<std::string>{"right"},
+              "skill(nil) must withdraw every action kind while preserving direction, before release is confirmed");
+        Step(native, runtime);
+        StatusIs(runtime, "hold", "running");
+        Check(native.intentCalls == 2 && !Field(runtime.CurrentStatus("hold"), "control_released").Boolean(),
+              "same nil must not repeat native release, and done must wait on its original native fence");
+        Drain(native, runtime, "hold", "completed", "script_returned");
+        Check(native.directions.empty() && native.delivered.size() == 1,
+              "completion must release direction without replaying withdrawn input");
+    }
+    NativeBoundary noAnimation;
+    noAnimation.startsAnimation = false;
+    TickRuntime runtime(noAnimation);
+    Start(runtime, "no-animation", Source(R"lua(function main(c)
+  local p=c.game.player
+  if c.tick.index==1 then assert(p.skill(1001004))
+  elseif c.tick.index>=3 then
+    local s=p.status()
+    assert(s.input_action=='skill' and s.input_skill_id==1001004 and s.action==nil)
+    assert(s.dispatched and s.busy==false and s.phase=='idle')
+  end
+end)lua"));
+    for (int i = 0; i < 8; ++i) Step(noAnimation, runtime);
+    Check(noAnimation.intentCalls == 1 && noAnimation.delivered.size() == 1 && noAnimation.beginCalls == 0,
+          "a skill consumed without starting animation must not be reissued by Runtime while held");
+    runtime.Cancel("no-animation", "explicit_cancel");
+    Drain(noAnimation, runtime, "no-animation", "cancelled");
 }
 
 void Actions() {
@@ -889,126 +1129,186 @@ void Actions() {
     Start(runtime, "actions", Source(R"lua(
 function main(c)
   local p=c.game.player; local i=c.tick.index
-  if i==1 then p.move('right'); assert(p.attack())
-  elseif i==2 then local ok,r=p.jump(); assert(not ok and r=='busy'); assert(p.attack())
-  elseif i==3 then p.jump(); local ok,r=p.use_item(2000000); assert(not ok and r=='busy')
-  elseif i==4 then assert(p.attack())
-  elseif i==5 then p.jump(); p.pickup()
-  elseif i==8 then local s=p.status(); assert(s.action=='pickup' and s.busy and s.moving=='right' and #s.held==1)
-  elseif i==9 then local s=p.status(); assert(not s.busy and s.effect=='unknown')
-  elseif i==10 then p.stop()
-  elseif i==11 then return 'done' end
+  if i==1 then p.move('right'); assert(p.skill(1001004))
+  elseif i==2 then
+    assert(p.use_item(2000000))
+    local s=p.status()
+    assert(s.input_action=='use_item' and s.input_item_id==2000000 and s.input_skill_id==nil)
+    assert(s.action=='skill' and s.skill_id==1001004 and s.item_id==nil and s.busy==true)
+    assert(s.pending_action==nil)
+  elseif i==3 then
+    assert(c.game.character.action_idle==nil)
+    assert(p.use_item(2000000)); assert(p.skill(nil))
+    local s=p.status(); assert(s.input_action==nil and s.input_item_id==nil and s.action=='skill' and s.busy==true)
+    assert(s.moving=='right')
+  elseif i==4 then assert(p.jump()); assert(p.pickup())
+  elseif i==5 then
+    local s=p.status(); assert(s.action=='pickup' and s.input_action=='pickup' and s.skill_id==nil)
+    assert(s.moving=='right')
+  elseif i==6 then
+    assert(p.stop()); local s=p.status(); assert(s.input_action==nil and s.action=='pickup')
+  elseif i==7 then return 'done' end
 end
 )lua"));
-    for (int i = 1; i <= 5; ++i) {
-        Step(native, runtime);
-        Check(native.requests.size() == 1, "busy submissions and current-action idempotence cannot replay");
-        const auto pending = Field(Field(runtime.CurrentStatus("actions"), "player"), "pending_action");
-        if (i == 2 || i == 4)
-            Check(pending.Type() == Value::Kind::Null, "last idempotent current action clears conflicting draft/queue");
-        if (i == 3) Check(pending.Text() == "use_item", "only last busy action is queued");
-        if (i == 5) Check(pending.Text() == "pickup", "queue is a single last-write slot");
-    }
-    native.result.controlReleased = true; // key-up consumed, animation still busy
     Step(native, runtime);
-    Check(Field(Field(runtime.CurrentStatus("actions"), "player"), "held").Elements().size() == 1,
-          "busy animation must not fabricate an attack key after native key-up");
-    native.Complete();
-    // The queued pickup begins at the end of this frame; inspect it next frame.
     Step(native, runtime);
-    Check(native.requests.size() == 2 && native.requests.back().kind == ActionKind::Pickup && native.directions.empty(),
-          "queued pickup starts once and pauses movement");
-    Step(native, runtime); // next-frame status observes the queued pickup
+    StatusIs(runtime, "actions", "running");
+    Check(native.requests.size() == 2 && native.delivered.size() == 1 && native.ActiveAction()->skillId == 1001004
+              && native.desired.itemId == 2000000,
+          "busy A must accept B as held input while keeping A's actual metadata");
+    native.state.actionIdle = Fact::Unknown;
+    Step(native, runtime);
+    Check(native.actionActive && native.desired.kind == ActionKind::Stop,
+          "clearing B must not interrupt A or leave deferred B armed");
+    Step(native, runtime);
+    Check(native.requests.size() == 3 && native.desired.kind == ActionKind::Pickup
+              && native.ActiveAction()->skillId == 1001004,
+          "the last draft C replaces B without replacing the native A animation");
     native.Complete();
     Step(native, runtime);
-    Check(native.directions == std::vector<std::string>{"right"}, "completion automatically restores movement intent");
-    Step(native, runtime);
-    Drain(native, runtime, "actions", "completed");
+    Check(native.delivered.size() == 2 && native.delivered.back().kind == ActionKind::Pickup
+              && native.directions == std::vector<std::string>{"right"} && native.changes.size() == 1,
+          "after A finishes only current C may start; withdrawn B must never be replayed");
+    Drain(native, runtime, "actions", "completed", "script_returned");
+    Check(native.actionActive && native.desired.kind == ActionKind::Stop && native.directions.empty()
+              && native.beginCalls == 0,
+          "stop clears direction and held action without interrupting C or waiting for animation");
 
-    NativeBoundary completion;
-    TickRuntime completing(completion);
-    Start(completing, "done-item", Source("function main(c) c.game.player.use_item(2000000); return 'done' end"));
-    Step(completion, completing);
-    StatusIs(completing, "done-item", "running", "script_returned");
-    Check(completion.releases == 0 && completion.delivered.empty(),
-          "normal done cannot cancel a deferred native submission");
-    Step(completion, completing);
-    Check(completion.delivered.size() == 1 && Field(completing.CurrentStatus("done-item"), "resumes").Number() == 1,
-          "draining performs actual native delivery without invoking Lua again");
-    completion.Complete();
-    Drain(completion, completing, "done-item", "completed");
-    Start(completing, "cancel-drain", Source("function main(c) c.game.player.use_item(2000000); return 'done' end"));
-    Step(completion, completing);
-    completing.Cancel("cancel-drain", "explicit_cancel");
-    Drain(completion, completing, "cancel-drain", "cancelled", "explicit_cancel");
-    Check(completion.delivered.size() == 1, "explicit cancellation interrupts draining before native delivery");
+    NativeBoundary replaced;
+    TickRuntime replacing(replaced);
+    Start(replacing, "replace", Source(R"lua(function main(c)
+  local p=c.game.player
+  if c.tick.index==1 then assert(p.attack())
+  elseif c.tick.index==2 then assert(p.use_item(2000000))
+  elseif c.tick.index==3 then assert(p.skill(1001004)) end
+end)lua"));
+    Step(replaced, replacing);
+    Step(replaced, replacing);
+    Step(replaced, replacing);
+    Check(replaced.ActiveAction()->skillId == 0 && replaced.desired.skillId == 1001004,
+          "direct B-to-C replacement must leave actual A unchanged");
+    replaced.Complete();
+    Step(replaced, replacing);
+    Check(replaced.delivered.size() == 2 && replaced.delivered.back().skillId == 1001004,
+          "directly replaced B must never be dispatched when A finishes");
+    replacing.Cancel("replace", "explicit_cancel");
+    Drain(replaced, replacing, "replace", "cancelled");
 
     NativeBoundary unsupported;
     unsupported.supportsSkills = unsupported.supportsItems = false;
     TickRuntime other(unsupported);
-    Start(
-        other, "unsupported",
-        Source(
-            "function main(c) local p=c.game.player; local ok,r=p.skill(1001004); assert(not ok and r=='unsupported'); ok,r=p.use_item(2000000); assert(not ok and r=='unsupported'); return 'done' end"));
+    Start(other, "unsupported", Source(R"lua(function main(c)
+  local p=c.game.player
+  assert(p.attack())
+  local ok,r=p.skill(1001004); assert(not ok and r=='unsupported')
+  ok,r=p.use_item(2000000); assert(not ok and r=='unsupported')
+  assert(p.status().input_action=='attack')
+  ok,r=p.skill(nil); assert(ok and r==nil and p.status().input_action==nil)
+  return 'done'
+end)lua"));
     Step(unsupported, other);
     StatusIs(other, "unsupported", "completed");
     Check(unsupported.requests.empty(), "unsupported inputs have no native side effects");
     for (const auto& bad :
-         {"p.move('LEFT')", "p.move(1)", "p.skill(0)", "p.skill('1')", "p.use_item(2147483648)", "p.jump(1)"}) {
+         {"p.move('LEFT')", "p.move(1)", "p.skill()", "p.skill(nil, 1)", "p.skill(1, nil)", "p.skill(0)", "p.skill(-1)",
+          "p.skill(2147483648)", "p.skill(1.5)", "p.skill('1')", "p.skill(false)", "p.skill({})", "p.use_item(nil)",
+          "p.use_item(2147483648)", "p.jump(1)", "p.stop(1)"}) {
         const auto id = "invalid-" + std::to_string(other.Statuses().Elements().size());
         Start(other, id, Source("function main(c) local p=c.game.player; " + std::string(bad) + " end"));
         Step(unsupported, other);
         StatusIs(other, id, "cancelled", "script_error");
     }
-    NativeBoundary skill;
-    TickRuntime skills(skill);
-    Start(skills, "skill", Source("function main(c) if c.tick.index==1 then c.game.player.skill(1001004) end end"));
-    Step(skill, skills);
-    Check(skill.requests.size() == 1 && skill.requests[0].kind == ActionKind::Attack
-              && skill.requests[0].skillId == 1001004,
-          "skill shares the action slot but preserves its native skill id");
+}
+
+void IdleFacts() {
+    NativeBoundary native;
+    native.allowStart = false; // Native admission is external to draft acceptance.
+    native.state.actionIdle = Fact::Unknown;
+    TickRuntime runtime(native);
+    Start(runtime, "idle", Source(R"lua(
+function main(c)
+  local p=c.game.player; local idle=c.game.character.action_idle
+  if c.tick.index==1 then
+    assert(idle==nil and p.status().busy==nil)
+    assert(p.attack())
+    local s=p.status(); assert(s.input_action=='attack' and s.action==nil and s.busy==nil)
+  elseif c.tick.index==2 then assert(idle==true and p.status().busy==false)
+  elseif c.tick.index==3 then
+    assert(idle==false and p.status().busy==true and p.status().action==nil)
+    assert(p.skill(1001004))
+    local s=p.status(); assert(s.input_action=='skill' and s.input_skill_id==1001004)
+    assert(p.skill(nil)); s=p.status(); assert(s.input_action==nil and s.input_skill_id==nil and s.busy==true)
+  elseif c.tick.index==4 then
+    assert(idle==nil and p.status().busy==nil)
+    assert(p.skill(nil)); assert(p.status().busy==nil)
+  elseif c.tick.index==5 then return 'done' end
+end
+)lua"));
+    Step(native, runtime);
+    native.state.actionIdle = Fact::True;
+    Step(native, runtime);
+    native.state.actionIdle = Fact::False;
+    Step(native, runtime);
+    native.state.actionIdle = Fact::Unknown;
+    Step(native, runtime);
+    Drain(native, runtime, "idle", "completed");
+    Check(native.delivered.empty(), "held intent alone must not manufacture an actual native action");
+    Check(Field(Field(runtime.CurrentStatus("idle"), "player"), "busy").Type() == Value::Kind::Null,
+          "unknown native idle must remain null in host status, never a fabricated false");
 }
 
 void Sessions() {
     NativeBoundary native;
     TickRuntime runtime(native);
-    Start(
-        runtime, "a",
-        Source(
-            "function main(c) count=(count or 0)+1; assert(count==c.tick.index and c.game.inventory.status=='ok'); if count==1 then c.game.player.move('left'); c.game.player.attack() end end"));
-    Start(
-        runtime, "b",
-        Source(
-            "function main(c) count=(count or 0)+1; assert(count==c.tick.index and c.game.inventory.status=='ok'); if count==1 then c.game.player.move('right') end end"));
+    Start(runtime, "a", Source(R"lua(function main(c)
+  count=(count or 0)+1; assert(count==c.tick.index and c.game.inventory.status=='ok')
+  if count==1 then c.game.player.move('left'); c.game.player.attack() end
+end)lua"));
+    Start(runtime, "b", Source(R"lua(function main(c)
+  count=(count or 0)+1; assert(count==c.tick.index and c.game.inventory.status=='ok')
+  if count==1 then c.game.player.move('right') end
+end)lua"));
     native.queries.clear();
     Step(native, runtime);
-    Check(native.queries["inventory"] == 1, "low-frequency samples are reused across all Lua states in one host tick");
+    Check(native.queries["inventory"] == 1, "low-frequency samples are shared across independent Lua states");
     Check(native.requests.size() == 1 && native.changes.size() == 1 && native.directions[0] == "right",
-          "independent Lua states share one frame-final state machine, in admission order");
+          "independent Lua states share frame-final input in admission order");
+    Step(native, runtime);
     runtime.Cancel("absent", "explicit_cancel");
     runtime.Cancel("b", "explicit_cancel");
-    Check(native.releases == 0 && native.actionActive,
-          "cancelling movement owner cannot release another session's action");
-    StatusIs(runtime, "b", "running");
-    Start(runtime, "c", Source("function main(c) if c.tick.index==1 then c.game.player.move('down') end end"));
+    Check(native.releases == 0 && native.actionActive && native.desired.sessionId == "a",
+          "cancelling a direction owner must not release another session's action input");
+    Start(runtime, "c", Source(R"lua(function main(c)
+  if c.tick.index==1 then c.game.player.move('down'); assert(c.game.player.skill(1001004)) end
+end)lua"));
     Step(native, runtime);
     StatusIs(runtime, "b", "cancelled", "explicit_cancel");
-    Check(native.directions == std::vector<std::string>{"down"},
-          "new session can take movement without waiting for empty keys");
-    Start(runtime, "queued", Source("function main(c) if c.tick.index==1 then c.game.player.jump() end end"));
-    Step(native, runtime);
-    runtime.Cancel("queued", "explicit_cancel");
-    Check(native.releases == 0 && native.requests.size() == 1,
-          "cancelling a queue owner neither releases nor replays another action");
+    Check(native.directions == std::vector<std::string>{"down"} && native.desired.sessionId == "c",
+          "a later session replaces direction and action independently of the old native A");
     const auto directionChanges = native.changes.size();
+    const auto actionUpdates = native.intentCalls;
     runtime.Cancel("a", "explicit_cancel");
-    Check(native.releases == 1 && native.directions == std::vector<std::string>{"down"}
-              && native.changes.size() == directionChanges && native.directionTicks == 0,
-          "cancelling the action owner cannot emit directional edges for another session");
     Drain(native, runtime, "a", "cancelled", "explicit_cancel");
-    Check(native.requests.size() == 1, "cancelled pending action is never dispatched");
+    Check(native.intentCalls == actionUpdates && native.releases == 0
+              && native.directions == std::vector<std::string>{"down"} && native.changes.size() == directionChanges
+              && native.desired.sessionId == "c" && native.ActiveAction()->sessionId == "a",
+          "old-session cancellation must not clear the successor B or interrupt already-started A");
+    native.Complete();
+    Step(native, runtime);
+    Check(native.delivered.size() == 2 && native.delivered.back().sessionId == "c",
+          "native consumption after A finishes uses only the successor's current input");
+    Start(runtime, "d",
+          Source("function main(c) if c.tick.index==1 then assert(c.game.player.skill(1001004)) end end"));
+    Step(native, runtime);
     runtime.Cancel("c", "explicit_cancel");
     Drain(native, runtime, "c", "cancelled");
+    Check(native.desired.sessionId == "d" && native.desired.skillId == 1001004 && native.requests.size() == 2
+              && native.delivered.size() == 2 && native.directions.empty(),
+          "same-value input transfers ownership without re-pressing; cancelling its old owner cannot release it");
+    runtime.Cancel("d", "explicit_cancel");
+    Drain(native, runtime, "d", "cancelled");
+    Check(native.desired.kind == ActionKind::Stop && native.actionActive,
+          "the final owner releases input without waiting for animation completion");
     std::string error;
     Check(!runtime.Start("a", Source("function main() end"), 0, error) && error == "script_session_exists",
           "retained ids cannot silently replace a prior session");
@@ -1026,15 +1326,10 @@ void Budgets() {
         Step(native, runtime);
         Check(native.requests.size() == (commit ? 1U : 0U) && native.delivered.empty(),
               "abort commit controls admission, not fabricated immediate dispatch");
-        if (commit) {
-            StatusIs(runtime, "abort", "running", "tick_overrun");
-            Check(native.releases == 0, "abort_commit true cannot erase an action before the next native frame");
-            Step(native, runtime);
-            Check(native.delivered.size() == 1,
-                  "committed action must actually reach the native consumer exactly once");
-            native.Complete();
-        }
+        Check(native.desired.kind == ActionKind::Stop && native.beginCalls == 0,
+              "abort_commit admission must never leave a terminated session's action held");
         Drain(native, runtime, "abort", "cancelled", "tick_overrun");
+        Check(native.delivered.empty(), "abort release before native consumption must not replay the committed input");
         Check(native.directions.empty()
                   && Field(Field(runtime.CurrentStatus("abort"), "tick"), "overruns").Number() == 1,
               "abort releases input and records its own budget overrun");
@@ -1095,12 +1390,12 @@ void Lifecycle() {
     StatusIs(runtime, "release", "running");
     Step(native, runtime);
     StatusIs(runtime, "release", "cancelled", "explicit_cancel");
-    Check(native.releases == 0, "directional release uses its own consumption fence, not whole-adapter action release");
+    Check(native.releases == 0, "direction release uses its own consumption fence, not action release");
 
     for (const auto& change : {"instance", "character", "left"}) {
         NativeBoundary io;
         TickRuntime engine(io);
-        Start(engine, change, Source("function main(c) c.game.player.move('right') end"));
+        Start(engine, change, Source("function main(c) c.game.player.move('right'); c.game.player.attack() end"));
         Step(io, engine);
         if (std::string(change) == "instance")
             io.state.instanceId = "other";
@@ -1113,38 +1408,74 @@ void Lifecycle() {
               std::string(change) == "instance"    ? "instance_changed"
               : std::string(change) == "character" ? "character_changed"
                                                    : "left_game");
+        Check(io.desired.kind == ActionKind::Stop && io.directions.empty(),
+              "identity or game loss clears both owned direction and action");
     }
-    NativeBoundary pending;
-    TickRuntime draining(pending);
-    Start(draining, "active", Source("function main(c) if c.tick.index==1 then c.game.player.attack() end end"));
-    Step(pending, draining);
-    Start(draining, "queued-done", Source("function main(c) c.game.player.use_item(2000000); return 'done' end"), 20);
-    Step(pending, draining);
-    StatusIs(draining, "queued-done", "running", "script_returned");
-    Check(pending.requests.size() == 1, "returned session retains its own pending action behind the occupied slot");
-    pending.Complete();
-    Step(pending, draining);
-    Check(pending.requests.size() == 2 && pending.requests.back().kind == ActionKind::UseItem,
-          "draining session's queued one-shot must execute after the previous owner completes");
-    // Deadline remains authoritative while a returned entry drains native work.
-    std::this_thread::sleep_for(std::chrono::milliseconds(21));
-    Step(pending, draining);
-    Drain(pending, draining, "queued-done", "cancelled", "time_limit");
-    Check(pending.releases == 1, "session deadline can interrupt an already returned entry's native drain");
-    draining.CancelAll("explicit_cancel");
+    for (const auto& ending : {"done", "error", "abort"}) {
+        NativeBoundary io;
+        TickRuntime engine(io);
+        const auto endingCode = std::string(ending) == "done"    ? "return 'done'"
+                                : std::string(ending) == "error" ? "error('failed')"
+                                                                 : "while true do end";
+        Start(engine, ending,
+              Source(std::string("-- @tick.budget_ms 1\nfunction main(c) if c.tick.index==1 then ")
+                     + "c.game.player.move('right'); c.game.player.attack() else " + endingCode + " end end"));
+        Step(io, engine);
+        Step(io, engine); // A starts before main terminates: release must not erase it.
+        Check(io.actionActive && io.desired.kind == ActionKind::Stop && !io.ActionIntentSettled(),
+              "all completion paths clear held input and wait for native acknowledgement, not animation");
+        Drain(io, engine, ending, std::string(ending) == "done" ? "completed" : "cancelled",
+              std::string(ending) == "done"    ? "script_returned"
+              : std::string(ending) == "error" ? "script_error"
+                                               : "tick_overrun");
+        Check(io.actionActive && io.delivered.size() == 1 && io.directions.empty(),
+              "terminal publication must neither wait for nor interrupt an already-started action");
+        Check(!engine.Running() && Field(Field(engine.CurrentStatus(ending), "player"), "busy").Boolean(),
+              "a terminal session may still observe an actual native animation");
+        io.Complete(); // No Runtime Tick: historical status must read fresh native facts.
+        const auto idle = Field(engine.CurrentStatus(ending), "player");
+        Check(!Field(idle, "busy").Boolean() && Field(idle, "phase").Text() == "idle"
+                  && Field(idle, "action").Type() == Value::Kind::Null,
+              "native animation completion must refresh busy/phase even after every session is terminal");
+        io.state.actionIdle = Fact::Unknown;
+        const auto unknown = Field(engine.CurrentStatus(ending), "player");
+        Check(Field(unknown, "busy").Type() == Value::Kind::Null && Field(unknown, "phase").Text() == "unknown",
+              "a historical status must preserve a newly unknown idle fact without running Lua again");
+    }
+    for (const bool cancel : {false, true}) {
+        NativeBoundary io;
+        TickRuntime engine(io);
+        Start(engine, "before-consume",
+              Source(std::string("function main(c) c.game.player.use_item(2000000); ")
+                     + (cancel ? "end" : "return 'done' end")));
+        Step(io, engine);
+        if (cancel) engine.Cancel("before-consume", "explicit_cancel");
+        Drain(io, engine, "before-consume", cancel ? "cancelled" : "completed");
+        io.Complete();
+        for (int i = 0; i < 3; ++i) Step(io, engine);
+        Check(io.desired.kind == ActionKind::Stop && io.delivered.empty(),
+              "ending before native consumption cannot preserve or later replay a held input");
+    }
 
     NativeBoundary scene;
     TickRuntime changing(scene);
-    Start(changing, "scene", Source("function main(c) if c.tick.index==1 then c.game.player.move('right') end end"));
+    Start(changing, "scene", Source(R"lua(function main(c)
+  if c.tick.index==1 then c.game.player.move('right'); c.game.player.attack()
+  elseif c.tick.index==2 then assert(c.game.player.use_item(2000000)) end
+end)lua"));
     Step(scene, changing);
+    Step(scene, changing); // Old-scene A has started; B is held but not admitted.
     ++scene.state.sceneGeneration;
     ++scene.state.mapId;
     Step(scene, changing);
-    Check(scene.directions.empty() && Field(changing.CurrentStatus("scene"), "resumes").Number() == 1,
-          "scene transition releases old intent and skips only that Lua frame");
-    Step(scene, changing);
-    Check(scene.directions.empty() && Field(changing.CurrentStatus("scene"), "resumes").Number() == 2,
-          "stable frame never automatically replays old-scene movement");
+    Check(scene.directions.empty() && scene.desired.kind == ActionKind::Stop
+              && Field(changing.CurrentStatus("scene"), "resumes").Number() == 2,
+          "scene transition clears direction and action and skips only that Lua frame");
+    scene.Complete();
+    for (int i = 0; i < 3; ++i) Step(scene, changing);
+    Check(scene.directions.empty() && scene.requests.size() == 2 && scene.delivered.size() == 1
+              && Field(changing.CurrentStatus("scene"), "resumes").Number() == 5,
+          "stable frames never replay old-scene B after the previous animation completes");
     changing.CancelAll("explicit_cancel");
 }
 
@@ -1187,7 +1518,7 @@ void Reentrancy() {
     Start(runtime, "reentrant",
           Source("function main(c) assert(c.tick.index==1); c.game.log('once'); c.game.player.attack() end"));
     int callbacks = 0;
-    native.onBegin = [&] {
+    native.onIntent = [&] {
         ++callbacks;
         runtime.Tick();
         std::string error;
@@ -1346,6 +1677,42 @@ end
     }
 }
 
+void HeldSkillExample(const std::string& path) {
+    std::ifstream input(path);
+    Check(input.good(), "compiled held-skill example required");
+    const std::string source{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    for (const bool animation : {false, true}) {
+        NativeBoundary native;
+        native.startsAnimation = animation;
+        auto now = std::chrono::steady_clock::time_point(std::chrono::seconds(100));
+        TickRuntime runtime(native, [&] { return now; });
+        Start(runtime, "held-skill-example", source);
+        Step(native, runtime);
+        Check(native.desired.skillId == 1001004 && native.requests.size() == 1,
+              "the example must set its selected skill once on first invocation");
+        now += std::chrono::milliseconds(50);
+        Step(native, runtime);
+        now += std::chrono::milliseconds(49);
+        Step(native, runtime);
+        Check(native.desired.skillId == 1001004 && native.intentCalls == 1 && native.delivered.size() == 1,
+              "the example holds input before its explicit duration without replaying native updates");
+        now += std::chrono::milliseconds(2);
+        Step(native, runtime);
+        Check(native.desired.kind == ActionKind::Stop && !native.ActionIntentSettled() && runtime.Running()
+                  && !Field(runtime.CurrentStatus("held-skill-example"), "control_released").Boolean(),
+              "done withdraws input but Runtime cannot publish completion before native release");
+        Step(native, runtime);
+        Check(runtime.Running() && TickField(runtime, "held-skill-example", "index").Number() == 4,
+              "Runtime must wait on its native fence without calling Lua again to poll release");
+        Step(native, runtime);
+        StatusIs(runtime, "held-skill-example", "completed", "script_returned");
+        Check(Field(runtime.CurrentStatus("held-skill-example"), "control_released").Boolean()
+                  && TickField(runtime, "held-skill-example", "index").Number() == 4 && native.actionActive == animation
+                  && native.intentCalls == 2 && native.beginCalls == 0,
+              "Runtime confirms release after done with or without an ongoing native animation");
+    }
+}
+
 void JumpAttackExample(const std::string& path, const std::string& direction) {
     std::ifstream input(path);
     Check(input.good(), "compiled example required");
@@ -1385,8 +1752,8 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
         Check(native.directions == expected && native.changes.size() == 1,
               "jump must not pause the selected movement direction");
 
-        // The fixture supplies external native facts, not simulated game success:
-        // jump key-up is consumed while the character is still above the floor.
+        // Supply external native animation/ground facts, not simulated game success:
+        // jump animation can end while the character is still above the floor.
         native.state.y = -20;
         native.state.character.velocity = {};
         native.state.character.movement = {}; // air/landing do not depend on these facts
@@ -1395,14 +1762,23 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
         native.Complete();
         for (int i = 0; i < 16 && native.requests.size() < 2; ++i) Step(native, runtime);
         Check(native.requests.size() == 2 && native.requests.back().kind == ActionKind::Attack,
-              "example must submit its single attack after liftoff, before landing");
+              "example must set its attack intent after liftoff, before landing");
         Check(native.directions == expected && native.changes.size() == 1,
               "air attack must preserve uninterrupted movement");
+        native.allowStart = false;
+        for (int i = 0; i < 3; ++i) Step(native, runtime);
+        Check(native.desired.kind == ActionKind::Attack && native.delivered.size() == 1 && native.result.dispatched
+                  && native.directions == expected,
+              "airborne facts and the previous jump dispatch cannot withdraw an unstarted attack");
+        native.allowStart = true;
         Step(native, runtime);
+        Check(native.delivered.size() == 2 && native.active.kind == ActionKind::Attack
+                  && native.desired.kind == ActionKind::Stop && native.actionActive,
+              "only the actual native attack and dispatch permit withdrawal without interrupting its animation");
         native.Complete();
         for (int i = 0; i < 8; ++i) Step(native, runtime);
         Check(runtime.Running() && native.directions == expected && native.requests.size() == 2,
-              "action-slot idle is not landing and must not repeat the attack");
+              "native action idle is not landing and must not resend the attack intent");
 
         native.state.y = 0;
         native.state.onGround = Fact::Unknown;
@@ -1426,13 +1802,14 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
               "movement must have exactly one keydown and one final landing release");
         Check(Field(runtime.CurrentStatus("example"), "control_released").Boolean(),
               "example completed before native direction release was consumed");
-        Check(native.delivered.size() == 2, "both one-shot inputs must reach the native consumer");
+        Check(native.delivered.size() == 2, "jump and attack intent must both reach the native consumer");
     }
 }
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2 || (argc == 3 && std::string(argv[1]) == "scene-script")
+    Check(argc == 2
+              || (argc == 3 && (std::string(argv[1]) == "held-skill-example" || std::string(argv[1]) == "scene-script"))
               || (argc == 4 && std::string(argv[1]) == "jump-attack-example"),
           "scenario required");
     const std::string scenario = argv[1];
@@ -1450,6 +1827,8 @@ int main(int argc, char** argv) {
         SceneContinuity();
     else if (scenario == "scene-cadence")
         SceneCadence();
+    else if (scenario == "scene-held-intents")
+        SceneHeldIntents();
     else if (scenario == "scene-unavailable")
         SceneUnavailable();
     else if (scenario == "scene-script")
@@ -1460,6 +1839,10 @@ int main(int argc, char** argv) {
         Draft();
     else if (scenario == "actions")
         Actions();
+    else if (scenario == "held-intents")
+        HeldIntents();
+    else if (scenario == "idle-facts")
+        IdleFacts();
     else if (scenario == "sessions")
         Sessions();
     else if (scenario == "budgets")
@@ -1474,7 +1857,10 @@ int main(int argc, char** argv) {
         Profiling();
     else if (scenario == "motion")
         MotionObservations();
-    else if (scenario == "jump-attack-example") {
+    else if (scenario == "held-skill-example") {
+        Check(argc == 3, "compiled held-skill example path required");
+        HeldSkillExample(argv[2]);
+    } else if (scenario == "jump-attack-example") {
         Check(argc == 4, "compiled example path and direction required");
         JumpAttackExample(argv[2], argv[3]);
     } else

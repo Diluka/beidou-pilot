@@ -8,23 +8,29 @@
 
 namespace MapleControl {
 
-// Native I/O only. Hosts must use a distinct adapter instance and independent
-// input ownership from their coroutine Adapter. Begin/Result/Released describe
-// the one-shot action only; SetHeldKeys updates persistent input independently.
+// Native I/O only, with input ownership independent of the coroutine Adapter.
+// A held intent is not an execution queue. Native consumers implement its actual
+// press/hold/release behavior; the Lua scheduler never replays it every tick.
 class TickAdapter : public Adapter {
 public:
     // ObserveDomain("terrain") is an internal, current-map static observation,
     // not a public game domain. On "ok", data contains map_id/source/footholds/
     // ropes, validated by the local resource producer. Other statuses preserve
     // their error/message/details without geometry. No cross-backend fallback.
-    // Canonical names: left/right/up/down/jump/attack/pickup. The runtime sends
-    // directional keys here; Begin owns one-shot keys and must not alter directions.
+    // Canonical direction names: left/right/up/down. Action keys belong to
+    // SetActionIntent and must not alter these directional keys.
     virtual bool SetHeldKeys(const std::vector<std::string>& keys, std::string& error) = 0;
-    // Confirm the most recent directional transition was consumed natively;
-    // does not require an empty direction and is independent of the action slot.
     virtual bool HeldKeysSettled() const = 0;
-    // Cancel the one-shot slot only. Never emit directional key-up/down edges;
-    // another session may own movement. Released confirms action cancellation.
+    // Stop clears only the action input. Repeating the same input is idempotent;
+    // replacing it never overwrites an already-started native action.
+    virtual bool SetActionIntent(const Action& action, std::string& error) = 0;
+    // Confirmation of the latest input transition, including the old key-up.
+    // May be true while the new input is held and while an old animation runs.
+    virtual bool ActionIntentSettled() const = 0;
+    // Native execution metadata, not the desired input. Null if none is known.
+    // The pointed-to action remains valid until the adapter's next native update.
+    virtual const Action* ActiveAction() const = 0;
+    // Clear action input without touching direction or interrupting native animation.
     virtual void ReleaseAction() = 0;
 };
 
@@ -47,7 +53,7 @@ bool ParseTickConfig(const std::string& source, TickConfig& config, std::string&
 ScriptMode ParseScriptMode(const std::string& source, std::string& error);
 
 // Exactly one instance per client; multiple independent Lua states share this
-// instance's movement intent and one-shot action slot. No Runtime state is used.
+// instance's movement and action input intents. No Runtime state is used.
 class TickRuntime {
 public:
     // Scheduling time only. Execution budgets and profiling always use real time.

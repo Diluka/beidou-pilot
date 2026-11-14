@@ -24,6 +24,7 @@
 #include <cstring>
 #include <iomanip>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -213,7 +214,16 @@ public:
 
     bool SupportsSkill() const override { return true; }
 
-    bool Begin(const MapleControl::Action& action, std::string& error) override;
+    bool Begin(const MapleControl::Action& action, std::string& error) override {
+        return SetActionIntent(action, error);
+    }
+
+    bool SetActionIntent(const MapleControl::Action& action, std::string& error) override;
+
+    const MapleControl::Action* ActiveAction() const override { return tickInput.ActiveAction(); }
+
+    bool ActionIntentSettled() const override { return tickInput.ActionIntentSettled(); }
+
     bool SetHeldKeys(const std::vector<std::string>& keys, std::string& error) override;
 
     bool HeldKeysSettled() const override { return tickInput.HeldKeysSettled(); }
@@ -242,6 +252,18 @@ template <typename T> bool ReadAt(std::uintptr_t address, T& value) {
     SIZE_T count = 0;
     return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), &value, sizeof(value), &count)
            && count == sizeof(value);
+}
+
+BeiDouBridge::NativeActionState CaptureNativeAction(std::uintptr_t user) {
+    return BeiDouBridge::ReadNativeActionState(
+        user, [](std::uintptr_t address, std::uint32_t& value) { return ReadAt(address, value); });
+}
+
+BeiDouBridge::NativeRepeatSettings CaptureNativeRepeat() {
+    std::uint32_t input = 0;
+    if (!ReadAt(0x00BEC33C, input)) return {};
+    return BeiDouBridge::ReadNativeRepeatSettings(
+        input, [](std::uintptr_t address, std::uint32_t& value) { return ReadAt(address, value); });
 }
 
 const MapleControl::Value& CareField(const MapleControl::Value& object, const std::string& name) {
@@ -721,6 +743,7 @@ MapleControl::State CaptureState(NativeContext& native) {
         state.character.velocity = std::move(motion.velocity);
         state.character.movement = std::move(motion.movement);
         state.onGround = motion.onGround;
+        state.actionIdle = CaptureNativeAction(native.user).idle;
     }
     if (state.mapKnown) {
         state.dropsKnown = CaptureDrops(state.drops);
@@ -886,13 +909,9 @@ bool SendMouse(BeiDouBridge::NativeMouseInput::Event event, const BeiDouBridge::
     return true;
 }
 
-bool ApplyOwnedKeys(BeiDouBridge::NativeKeyInput& target, const std::vector<unsigned int>& keys,
-                    unsigned int durationMs, std::string& error) {
-    std::array<bool, 256> desired{};
-    if (keys.empty()) {
-        target.Request(desired, durationMs, currentNative.user, GetTickCount64());
-        return true;
-    }
+bool ResolveOwnedKeys(const std::vector<unsigned int>& keys, BeiDouBridge::NativeKeyInput::Mask& desired,
+                      std::string& error) {
+    if (keys.empty()) return true;
     if (!currentState->mapKnown || !currentState->characterKnown || !currentState->positionKnown
         || currentState->character.values[6] == 0) {
         error = "state_unavailable_or_dead";
@@ -918,6 +937,13 @@ bool ApplyOwnedKeys(BeiDouBridge::NativeKeyInput& target, const std::vector<unsi
         desired[key] = true;
         scanCodes[key] = nativeScanCodes[key];
     }
+    return true;
+}
+
+bool ApplyOwnedKeys(BeiDouBridge::NativeKeyInput& target, const std::vector<unsigned int>& keys,
+                    unsigned int durationMs, std::string& error) {
+    BeiDouBridge::NativeKeyInput::Mask desired{};
+    if (!ResolveOwnedKeys(keys, desired, error)) return false;
     // Replace only this producer's desired set without flickering unchanged keys.
     target.Request(desired, durationMs, currentNative.user, GetTickCount64());
     return true;
@@ -989,7 +1015,21 @@ bool BeiDouTickAdapter::SetHeldKeys(const std::vector<std::string>& names, std::
     return true;
 }
 
-bool BeiDouTickAdapter::Begin(const MapleControl::Action& request, std::string& error) {
+bool BeiDouTickAdapter::SetActionIntent(const MapleControl::Action& request, std::string& error) {
+    if (request.kind == MapleControl::ActionKind::Attack && BeiDouBridge::IsNativeKeyDownSkill(request.skillId)) {
+        tickInput.ReleaseAction();
+        error = "unsupported: native_keydown_skill_release";
+        tickInput.result.reason = error;
+        return false;
+    }
+    if (BeiDouBridge::NativeTickInput::SameIntent(tickInput.Intent(), request)) {
+        tickInput.SetIntent(request, currentNative.user);
+        return true;
+    }
+    if (request.kind == MapleControl::ActionKind::Stop) {
+        tickInput.SetIntent(request, currentNative.user);
+        return true;
+    }
     if (!Supports(request.kind)) {
         error = "unsupported: tick_action";
         return false;
@@ -998,45 +1038,24 @@ bool BeiDouTickAdapter::Begin(const MapleControl::Action& request, std::string& 
         error = "state_unavailable_or_dead";
         return false;
     }
-    if (!Released()) {
-        error = "busy";
-        return false;
-    }
-    tickInput.result = MapleControl::ActionResult{};
-    tickInput.itemResult = false;
-    if (request.kind == MapleControl::ActionKind::UseItem) {
-        if (!RequestNativeItem(request.itemId, tickInput.item, error)) return false;
-        tickInput.itemResult = true;
-        tickInput.result.reason = "item_use_requested";
-        return true;
-    }
     unsigned int key = 0;
     if (request.kind == MapleControl::ActionKind::Jump) {
         if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 53, key, error)) return false;
     } else if (request.kind == MapleControl::ActionKind::Pickup) {
         if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 50, key, error)) return false;
-    } else if (request.skillId == 0) {
+    } else if (request.kind == MapleControl::ActionKind::Attack && request.skillId == 0) {
         if (!BindingKey(BeiDouBridge::NativeBindingType::Action, 52, key, error)) return false;
     }
-    const auto duration = request.durationMs == 0 ? 60 : request.durationMs;
-    const std::vector<unsigned int> keys = key == 0 ? std::vector<unsigned int>{} : std::vector<unsigned int>{key};
-    if (!ApplyOwnedKeys(tickInput.action, keys, duration, error)) return false;
-    tickInput.actionWindow = true;
-    tickInput.actionUntil = GetTickCount64() + duration;
-    if (request.kind == MapleControl::ActionKind::Attack && request.skillId != 0) {
-        BeiDouBridge::NativeSkillUse::Skill skill;
-        skill.skillId = request.skillId;
-        skill.character = previousState.character.id;
-        skill.user = currentNative.user;
-        skill.sceneGeneration = sceneGeneration;
-        skill.inputEpoch = tickInput.action.Epoch();
-        skill.deadline = tickInput.actionUntil;
-        // Direction is exclusively the tick state machine's persistent input.
-        tickInput.skill.Request(skill);
-        tickInput.result.skillRequested = true;
-        tickInput.result.skill = tickInput.skill.Result();
-    }
-    tickInput.result.reason = "native_action_requested";
+    // Validate before replacing the existing input. Skill IDs never resolve or
+    // mutate hotkeys. Item admission uses a temporary typed request, not native I/O.
+    BeiDouBridge::NativeItemUse item;
+    if (request.kind == MapleControl::ActionKind::UseItem && !RequestNativeItem(request.itemId, item, error))
+        return false;
+    const auto keys = key == 0 ? std::vector<unsigned int>{} : std::vector<unsigned int>{key};
+    BeiDouBridge::NativeKeyInput::Mask desired{};
+    if (!ResolveOwnedKeys(keys, desired, error)) return false;
+    tickInput.SetIntent(request, currentNative.user);
+    tickInput.action.Request(desired, 0, currentNative.user, GetTickCount64());
     return true;
 }
 
@@ -1098,6 +1117,9 @@ bool Publish(const MapleControl::State& state) {
         character["id"] = state.character.id;
         character["name"] = state.character.name;
         character["movement"] = state.character.movement.Document();
+        character["action_idle"] = state.actionIdle == MapleControl::Fact::Unknown
+                                       ? MapleControl::Value{}
+                                       : MapleControl::Value(state.actionIdle == MapleControl::Fact::True);
         const std::array<const char*, 13> names{
             "level",  "job", "strength", "dexterity",      "intelligence", "luck",      "hp",
             "max_hp", "mp",  "max_mp",   "ability_points", "skill_points", "experience"};
@@ -1425,54 +1447,126 @@ void ReadCommand() {
 
 bool DeliverTickInput() {
     const auto frame = sequence;
-    tickInput.ExpireAction(GetTickCount64());
+    const auto revision = tickInput.IntentRevision();
+    auto beforeKeys = CaptureNativeAction(currentNative.user);
     for (auto* input : {&tickInput.movement, &tickInput.action}) {
+        if (input == &tickInput.action) beforeKeys = CaptureNativeAction(currentNative.user);
         const auto delivered =
             input->Flush([input](unsigned int key, bool down,
                                  std::uint64_t epoch) { return SendOwnedKey(*input, false, key, down, epoch); },
                          [] { return characterUpdates; });
-        // Native delivery may have pumped a new frame, including cancellation
-        // and a new action. Never run the superseded frame's remaining work.
-        if (sequence != frame) return false;
-        if (delivered.failed && delivered.epoch == input->Epoch()) {
-            tickInput.result.reason = "input_route_unavailable";
-            // The producer retains failed keyups and retries them. Rejection is
-            // an action-level fact, not cancellation of unrelated tick sessions.
+        // Native delivery may pump cancellation/replacement. No old frame work
+        // may resume, and failed keyups remain owned by the real producer.
+        if (sequence != frame || revision != tickInput.IntentRevision()) return false;
+        if (delivered.failed && delivered.epoch == input->Epoch()) tickInput.result.reason = "input_route_unavailable";
+    }
+    const bool exited = currentNative.loginStage || currentNative.user == 0;
+    tickInput.MovementFlushed(updatedCharacter, characterUpdates, exited);
+    const auto now = GetTickCount64();
+    const auto& intent = tickInput.Intent();
+    const bool ordinaryKey = intent.kind == MapleControl::ActionKind::Jump
+                             || intent.kind == MapleControl::ActionKind::Pickup
+                             || (intent.kind == MapleControl::ActionKind::Attack && intent.skillId == 0);
+    // The first keydown is delivered by NativeKeyInput. It stays down without a
+    // pulse deadline. Jump has no synthetic repeat in this conservative bridge.
+    if (ordinaryKey && tickInput.DispatchPending() && !tickInput.Dispatched() && tickInput.action.Dispatched()) {
+        const auto request = tickInput.TakeDispatch(now);
+        tickInput.NativeStarted(request, revision, beforeKeys, CaptureNativeAction(currentNative.user), true);
+    }
+    tickInput.RepeatDue(now, intent.kind == MapleControl::ActionKind::Pickup
+                                     || intent.kind == MapleControl::ActionKind::Attack
+                                 ? CaptureNativeRepeat()
+                                 : BeiDouBridge::NativeRepeatSettings{});
+    if (tickInput.DispatchPending() && tickInput.Dispatched() && ordinaryKey
+        && (intent.kind != MapleControl::ActionKind::Attack
+            || CaptureNativeAction(currentNative.user).idle == MapleControl::Fact::True)) {
+        unsigned int key = 0;
+        const unsigned int binding = intent.kind == MapleControl::ActionKind::Pickup ? 50 : 52;
+        std::string error;
+        if (!BindingKey(BeiDouBridge::NativeBindingType::Action, binding, key, error)
+            || !tickInput.action.Held()[key]) {
+            tickInput.ReleaseAction();
+            tickInput.result.reason = "native_action_binding_changed";
+        } else {
+            std::uint32_t input = 0, manager = 0;
+            if (ReadAt(0x00BEC33C, input) && input != 0 && ReadAt(0x00BEC20C, manager) && manager != 0) {
+                const auto request = tickInput.TakeDispatch(now);
+                const auto before = CaptureNativeAction(currentNative.user);
+                auto flags = ((scanCodes[key] & 0x7F) | ((scanCodes[key] & 0x80) << 1)) << 16;
+                flags |= inputModifiers(reinterpret_cast<InputSystem*>(input));
+                const auto messageKey = key == VK_LCONTROL || key == VK_RCONTROL ? VK_CONTROL
+                                        : key == VK_LSHIFT || key == VK_RSHIFT   ? VK_SHIFT
+                                        : key == VK_LMENU || key == VK_RMENU     ? VK_MENU
+                                                                                 : key;
+                ++inputEvents;
+                // This is an actual repeat keydown, not a new union ownership
+                // transition and never an up/down pulse of the held key.
+                dispatchInput(0x100, messageKey, flags);
+                if (sequence != frame || revision != tickInput.IntentRevision()) return false;
+                tickInput.NativeStarted(request, revision, before, CaptureNativeAction(currentNative.user), true);
+            } else {
+                tickInput.result.reason = "input_route_unavailable";
+            }
         }
     }
-    tickInput.MovementFlushed(updatedCharacter, characterUpdates, currentNative.loginStage || currentNative.user == 0);
+    if (tickInput.DispatchPending() && intent.kind == MapleControl::ActionKind::UseItem
+        && tickInput.ItemDispatchAllowed(now)) {
+        const auto request = tickInput.TakeDispatch(now);
+        std::string error;
+        if (!RequestNativeItem(request.itemId, tickInput.item, error)) tickInput.result.reason = error;
+    }
     if (tickInput.item.Pending()) {
         std::uint32_t context = 0;
         if (!ReadAt(0x00BE7918, context)) context = 0;
-        const auto consumed = tickInput.item.Consume(
-            previousState.characterKnown ? previousState.character.id : 0, sceneGeneration, context,
+        const auto consumed = tickInput.ConsumeItem(
+            previousState.characterKnown ? previousState.character.id : 0, sceneGeneration, context, GetTickCount64(),
             [](const BeiDouBridge::NativeItemUse::Item& item) {
                 useItem(reinterpret_cast<ClientContext*>(item.context), item.slot, static_cast<int>(item.itemId));
             });
-        if (sequence != frame) return false;
+        if (sequence != frame || revision != tickInput.IntentRevision()) return false;
         if (consumed == BeiDouBridge::NativeItemUse::Consumption::ContextChanged)
             tickInput.result.reason = "item_context_changed";
     }
-    if (tickInput.skill.Pending() && tickInput.actionWindow) {
+    if (tickInput.DispatchPending() && intent.kind == MapleControl::ActionKind::Attack && intent.skillId != 0
+        && tickInput.action.Released() && tickInput.HeldKeysSettled()
+        && (!tickInput.Dispatched() || CaptureNativeAction(currentNative.user).idle == MapleControl::Fact::True)) {
+        const auto request = tickInput.TakeDispatch(now);
+        BeiDouBridge::NativeSkillUse::Skill skill;
+        skill.skillId = request.skillId;
+        skill.character = previousState.character.id;
+        skill.user = currentNative.user;
+        skill.sceneGeneration = sceneGeneration;
+        skill.inputEpoch = tickInput.action.Epoch();
+        // No animation/pulse timeout. The current held intent owns this pending
+        // direction/context transaction; replacement and release cancel it.
+        skill.deadline = (std::numeric_limits<std::uint64_t>::max)();
+        tickInput.skill.Request(skill);
+        tickInput.result.skillRequested = true;
+        tickInput.result.skill = tickInput.skill.Result();
+    }
+    if (tickInput.skill.Pending()) {
         BeiDouBridge::NativeSkillUse::Context context;
         context.character = previousState.character.id;
         context.user = currentNative.user;
         context.sceneGeneration = sceneGeneration;
         context.inputEpoch = tickInput.action.Epoch();
-        context.now = GetTickCount64();
+        context.now = now;
         context.updatedCharacter = updatedCharacter;
         context.characterUpdates = characterUpdates;
         context.facingKnown = previousState.facingKnown;
         context.facingLeft = previousState.facingLeft;
+        const auto request = intent;
+        const auto before = CaptureNativeAction(currentNative.user);
         const bool consumed = tickInput.skill.Consume(context, InvokeNativeSkill);
-        if (sequence != frame) return false;
+        if (sequence != frame || revision != tickInput.IntentRevision()) return false;
         tickInput.result.skill = tickInput.skill.Result();
-        if (!consumed) {
-            tickInput.result.reason = tickInput.result.skill.reason;
-            tickInput.actionWindow = false;
-            tickInput.action.Release();
-        }
+        tickInput.result.reason = tickInput.result.skill.reason;
+        tickInput.NativeStarted(request, revision, before, CaptureNativeAction(currentNative.user),
+                                consumed && tickInput.result.skill.nativeResultKnown
+                                    && tickInput.result.skill.nativeResult != 0,
+                                tickInput.result.skill.nativeResultKnown);
     }
+    tickInput.ActionFlushed(updatedCharacter, characterUpdates, exited);
     return true;
 }
 
@@ -1538,10 +1632,10 @@ void Tick() {
 
     const bool tickCharacterExited = native.loginStage || native.user == 0;
     tickInput.Observe(native.user, updatedCharacter, characterUpdates, tickCharacterExited);
+    tickInput.ObserveAction(CaptureNativeAction(native.user), tickCharacterExited || changed);
     if ((changed || !ready || previousState.character.values[6] == 0)
-        && (tickInput.movement.Active() || tickInput.actionWindow || tickInput.item.Pending()))
+        && (tickInput.movement.Active() || tickInput.HasIntent() || tickInput.item.Pending()))
         tickAdapter.Release();
-    tickInput.ExpireAction(now);
 
     ReadCommand();
     runtime.Tick(changed);

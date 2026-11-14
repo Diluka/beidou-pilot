@@ -42,6 +42,7 @@
     <ClInclude Include="..\..\shared\lua-runtime\SceneTerrain.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="NativeKeyUnion.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="NativeTickInput.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="NativeActionState.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\shared\lua-runtime\TickRuntime.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="dllmain.h">
       <Filter>Header Files</Filter>

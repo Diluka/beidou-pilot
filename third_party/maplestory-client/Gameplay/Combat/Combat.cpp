@@ -84,7 +84,7 @@ namespace ms
 		return motions;
 	}
 
-	SpecialMove::ForbidReason Combat::use_move(int32_t move_id)
+	SpecialMove::ForbidReason Combat::use_move(int32_t move_id, MoveInput input)
 	{
 		const auto attack_reason = player.attack_forbid_reason();
 		if (attack_reason != SpecialMove::ForbidReason::FBR_NONE)
@@ -98,12 +98,53 @@ namespace ms
 		{
 		case SpecialMove::ForbidReason::FBR_NONE:
 			apply_move(move);
+			last_move = move_id;
+			last_move_input = input;
+			++move_sequence;
 			break;
 		default:
 			ForbidSkillMessage(reason, weapontype).drop();
 			break;
 		}
 		return reason;
+	}
+
+	void Combat::hold_move(std::optional<int32_t> move_id)
+	{
+		if (held_move == move_id)
+			return;
+
+		held_move = move_id;
+		held_move_consumed = false;
+	}
+
+	void Combat::update_held_move()
+	{
+		if (!held_move || held_move_consumed || player.attack_forbid_reason() != SpecialMove::FBR_NONE)
+			return;
+
+		// Check native admission without emitting a forbid-message every update.
+		// Failed admission leaves only the current hold eligible, never a queue.
+		if (player.can_use(get_move(*held_move)) != SpecialMove::FBR_NONE)
+			return;
+
+		if (use_move(*held_move, MoveInput::HeldSkill) == SpecialMove::FBR_NONE && !player.is_attacking())
+			held_move_consumed = true;
+	}
+
+	uint64_t Combat::get_move_sequence() const
+	{
+		return move_sequence;
+	}
+
+	int32_t Combat::get_last_move() const
+	{
+		return last_move;
+	}
+
+	Combat::MoveInput Combat::get_last_move_input() const
+	{
+		return last_move_input;
 	}
 
 	void Combat::apply_move(const SpecialMove& move)
