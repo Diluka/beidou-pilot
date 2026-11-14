@@ -341,6 +341,10 @@ struct TickRuntime::Impl {
     bool sampled = false;
     std::uint64_t lastGeneration = 0;
     std::vector<std::pair<std::string, Value>> core, lazyDomains;
+    // Only the current native scene is retained, including an unavailable result.
+    // Transitions discard it; there is no per-map cache or background retry.
+    Value scene;
+    bool scenePending = true;
     Session* current = nullptr;
     Session* movementOwner = nullptr;
     Session* actionOwner = nullptr;
@@ -744,6 +748,63 @@ struct TickRuntime::Impl {
         lua_sethook(lua, Budget, LUA_MASKCOUNT, 1000);
     }
 
+    bool SameScene() {
+        return scene.Type() == Value::Kind::Object && scene["instance_id"].Text() == observed.instanceId
+               && scene["scene_generation"].Number() == observed.sceneGeneration
+               && (scene["character_id"].Type() == Value::Kind::Number) == observed.characterKnown
+               && (!observed.characterKnown || scene["character_id"].Number() == observed.character.id)
+               && (scene["map_id"].Type() == Value::Kind::Number) == observed.mapKnown
+               && (!observed.mapKnown || scene["map_id"].Number() == observed.mapId);
+    }
+
+    void InstallScene(Session& session) {
+        if (session.lua == nullptr || session.context == LUA_NOREF) return;
+        auto* lua = session.lua;
+        lua_rawgeti(lua, LUA_REGISTRYINDEX, session.context);
+        PushValue(lua, scene);
+        Protect(lua);
+        lua_setfield(lua, -2, "scene");
+        lua_pop(lua, 1);
+    }
+
+    void RefreshScene(bool readTerrain) {
+        Value terrain = Value::Object({{"status", "unavailable"}, {"error", "scene_transition"}});
+        scenePending = !readTerrain;
+        if (readTerrain) {
+            if (observed.ready && observed.mapKnown && observed.characterKnown) {
+                auto observation = adapter.ObserveDomain("terrain");
+                // Geometry is validated at the resource boundary. Here only its
+                // map identity may authorize attaching it to this native scene.
+                if (observation.status == "ok") {
+                    const auto& map = observation.data["map_id"];
+                    if (map.Type() == Value::Kind::Number && map.Number() == observed.mapId)
+                        terrain = Value::Object({{"status", "available"},
+                                                 {"source", observation.data["source"]},
+                                                 {"footholds", observation.data["footholds"]},
+                                                 {"ropes", observation.data["ropes"]}});
+                    else
+                        terrain = Value::Object({{"status", "unavailable"}, {"error", "terrain_map_mismatch"}});
+                } else {
+                    terrain = Value::Object({{"status", observation.status}});
+                    for (const auto& entry : observation.data.Members())
+                        if (entry.first == "source" || entry.first == "message" || entry.first == "details"
+                            || entry.first == "error")
+                            terrain[entry.first] = entry.second;
+                    if (!observation.error.empty()) terrain["error"] = observation.error;
+                }
+            } else
+                terrain["error"] = "scene_identity_unavailable";
+        }
+        scene = Value::Object({{"instance_id", observed.instanceId},
+                               {"scene_generation", observed.sceneGeneration},
+                               {"terrain", std::move(terrain)}});
+        if (observed.characterKnown) scene["character_id"] = observed.character.id;
+        if (observed.mapKnown) scene["map_id"] = observed.mapId;
+        // Replace whole read-only snapshots, never relabel old geometry. Even a
+        // non-due session loses its old available scene as soon as it changes.
+        for (auto& session : sessions) InstallScene(*session);
+    }
+
     bool Context(Session& session, std::string& error) {
         auto* lua = session.lua;
         // The chunk result is the only wrapper protocol. Global main gets a new
@@ -809,7 +870,7 @@ struct TickRuntime::Impl {
         lua_setfield(lua, context, "state");
         lua_rawgeti(lua, LUA_REGISTRYINDEX, session.game);
         lua_setfield(lua, context, "game");
-        // Keep runtime-owned game/tick slots behind a context proxy too. Script
+        // Keep runtime-owned game/tick/scene slots behind a context proxy too. Script
         // state and caller-supplied payload remain writable across ticks.
         lua_newtable(lua);
         lua_newtable(lua);
@@ -821,7 +882,8 @@ struct TickRuntime::Impl {
             [](lua_State* state) -> int {
                 if (lua_type(state, 2) == LUA_TSTRING) {
                     const std::string key = lua_tostring(state, 2);
-                    if (key == "game" || key == "tick") return luaL_error(state, "runtime context slot is read-only");
+                    if (key == "game" || key == "tick" || key == "scene")
+                        return luaL_error(state, "runtime context slot is read-only");
                 }
                 lua_pushvalue(state, 2);
                 lua_pushvalue(state, 3);
@@ -836,6 +898,12 @@ struct TickRuntime::Impl {
         session.publicContext = luaL_ref(lua, LUA_REGISTRYINDEX);
         lua_pushvalue(lua, context);
         session.context = luaL_ref(lua, LUA_REGISTRYINDEX);
+        // Caller anchors above are checked before native scene replacement.
+        // Initial terrain is sampled only on a stable, due host frame.
+        if (SameScene())
+            InstallScene(session);
+        else
+            RefreshScene(false);
         lua_settop(lua, 0);
         return true;
     }
@@ -1118,6 +1186,7 @@ void TickRuntime::Tick(bool sceneChanged) {
             runtime.held.clear();
         else
             runtime.result.reason = error;
+        runtime.RefreshScene(false);
     }
     runtime.draft = {};
 
@@ -1132,6 +1201,7 @@ void TickRuntime::Tick(bool sceneChanged) {
                                         [now](const auto& session) { return session->Due(now); });
         if (hasDue) {
             ScopedTiming refreshCoreTiming(runtime.refreshCoreTiming);
+            if (runtime.scenePending || !runtime.SameScene()) runtime.RefreshScene(true);
             runtime.RefreshCore();
         }
         for (auto& owned : runtime.sessions) {

@@ -2,6 +2,12 @@
 #include "TickNativeAdapter.h"
 #include "SharedLuaAdapter.h"
 #include "Gameplay/Stage.h"
+#include "SceneTerrain.h"
+#include <nlnx/nx.hpp>
+
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
 
 TickNativeAdapter::TickNativeAdapter(SharedLuaAdapter& owner) : host(owner) {}
 
@@ -14,6 +20,25 @@ const MapleControl::State& TickNativeAdapter::Observe() const {
 }
 
 MapleControl::Observation TickNativeAdapter::ObserveDomain(const std::string& domain) const {
+    if (domain == "terrain") {
+        const auto& state = Observe();
+        if (!state.ready || !state.mapKnown || !state.characterKnown)
+            return {"unavailable", {}, "strategy_scene_unavailable"};
+        std::ostringstream name;
+        name << std::setfill('0') << std::setw(9) << state.mapId << ".img";
+        const auto group = "Map" + std::to_string(state.mapId / 100000000);
+        // ImgFiles::init selected this immutable, already decoded directory.
+        // Do not reopen the full map catalog in a gameplay frame.
+        const auto map = nl::nx::Map002["Map"][group][name.str()];
+        const auto root = std::filesystem::current_path();
+        const auto directory = std::filesystem::is_directory(root / "Map002") ? "Map002" : "Map";
+        const auto source = (root / directory / "Map" / group / name.str()).generic_string();
+        return MapleControl::ReadSceneTerrain(map, state.mapId, source, [](const nl::node& node, std::int64_t& value) {
+            if (node.data_type() != nl::node::type::integer) return false;
+            value = node.get_integer();
+            return true;
+        });
+    }
     auto observation = host.ObserveDomain(domain);
     if (domain == "character" && observation.status == "ok") {
         // Player exposes only has_buff(stat), not a complete list or remaining

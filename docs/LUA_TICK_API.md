@@ -40,7 +40,7 @@ end
 
 运行元数据只读取首段可执行代码之前的前导单行注释，允许空行、普通注释与尾部 `--` 说明；Lua 长注释内部不解释元数据。`@mode` 只接受小写 `tick/coroutine`，重复、未知 mode、未知或重复的 `@tick.*`、格式错误均在发布前拒绝；`@tick.*` 必须配合显式的 `@mode tick`。预算为正有限十进制毫秒数，支持小数，不接受符号、科学计数、NaN 或无穷；`overrun` 为 `abort/skip`，`abort_commit` 为小写 `true/false`。未配置时为 **第3档（30Hz）/ 100ms / abort / true**，单次预算与调用周期独立。
 
-策略文件仍采用唯一顶层 `main(context)` 和既有 `@option` 参数规则。CLI 注入 `options/scene`，调用方已有的 `route` 等额外上下文按原规则保留。编译结果向新引擎返回 `{main=main, context=__beidou_context}`，不调用旧 `game.state()`，也不在装载阶段执行 `main`；初始 `scene` 身份由原生 tick 引擎核对。`--code` 保留原始源码、不注入策略参数，但同样读取前导 mode/config：应定义全局 `function main(context) ... end`，或显式返回含 `main/context` 的入口表。
+策略文件仍采用唯一顶层 `main(context)` 和既有 `@option` 参数规则。CLI 注入 `options` 和初始 `scene` 身份锚点；原生 tick 引擎随后维护当前只读 `scene`，调用方已有的 `route` 等额外上下文按原规则保留。编译结果向新引擎返回 `{main=main, context=__beidou_context}`，不调用旧 `game.state()`，也不在装载阶段执行 `main`；初始 `scene` 身份由原生 tick 引擎核对。`--code` 保留原始源码、不注入策略参数，但同样读取前导 mode/config：应定义全局 `function main(context) ... end`，或显式返回含 `main/context` 的入口表。
 
 宿主每次更新都推进原生生命周期；`main` 按每会话工作频率档位到期调用，首次稳定帧立即调用，返回后统一提交差异供后续帧消费。GUI 使用 `ClientApplication::Update` 主循环渲染帧，无头使用 `Stage::update` 逻辑步进，不假设渲染与角色物理更新 1:1。
 
@@ -60,7 +60,7 @@ end
 | `context.tick` | 只读；`index` 为实际调用序号而非宿主帧号，`time/delta` 为各次真实调用的单调时间及间隔（秒），`gear` 为本会话有效档位，`scene_generation` 为当前场景代次，`overrun` 表示上次调用超限 |
 | `context.state` | 脚本自有可写表，跨 tick 保留，不解释、不序列化、不落盘 |
 | `context.options` | 策略参数及有效默认值；直接源码未提供时为空表 |
-| `context.scene` | 装载时静态场景和身份锚点，与动态 `context.game.scene` 分开 |
+| `context.scene` | 原生维护的当前只读静态场景；身份和 `terrain` 随地图及场景代次更新，与动态实体领域 `context.game.scene` 分开 |
 | `context.route` | 调用方已有的预计算路线；无路线不伪造 |
 | `context.game` | 只读领域入口及客户端级 `player` 状态机 |
 
@@ -86,6 +86,31 @@ end
 | `game.dialog/shop/ui/hotkeys/interaction/notifications` | 按需只读观察；支持范围与原生领域一致，不增加窗口动作 API |
 
 buff 归 `game.character`，不在 `player.status()`。首版两端都没有可靠的完整 buff 效果及剩余时间来源，返回 `buffs=nil`（JSON `null`）、`buffs_status="unsupported"` 和 `buffs_unavailable="native_buff_details_unavailable"`；不把未知列表伪造成 `{}`，不通过服务端查询补齐。
+
+### 当前静态场景与跨图
+
+`context.scene` 由本端原生 tick 引擎维护，文件策略及直接 `--code` 都可读取：
+
+- `instance_id/character_id/map_id/scene_generation` 表示这份静态场景的身份；每次稳定回调中，地图和代次与 `game.world`、`context.tick.scene_generation` 一致。初始调用方的身份锚点仍先核验，随后不以调用方旧地形作为回退。
+- `terrain.status="available"` 时提供 `source`、`footholds`、`ropes`。平台段含整数 `id/x1/x2/y1/y2/prev/next`，绳梯含整数 `index/x/y1/y2`，本端已知的整数 `l/uf` 可选保留；坐标沿用地图原始像素方向，绳梯列表可为空。
+- 缺图、坏字段、无法读取等返回 `unavailable`，空自身地形且存在 `info.link` 返回 `unsupported`；`error` 及可用的 `message/details/source` 说明原因。不可用时不带 `footholds/ropes`，不把缺失坐标补零，也不跟链接地图或另一后端拼出地形。有本图完整自身几何时可直接使用，不因额外 `info.link` 拒绝。
+- 同一会话可以继续跨图，`context.state` 和已有 `options/route` 不重建。换图沿现有规则暂停回调并清除旧输入；转场立即使当前静态场景不可用，首次稳定到期帧再读取本图。稳定但资料不可用时仍调用 `main`，由策略决定等待或退出；资料结果在当前场景有效期内共享，不逐 tick 重读。相同地图ID的新场景代次也重新读取。
+- `scene` 槽及嵌套数据只读，不能由策略替换。旧表引用仍是带旧身份的历史只读快照，不能当成当前图；需要缓存路径等进度时放入 `context.state`，发现代次变化后自行重规划。
+
+headless 使用本端已加载的 IMG 地图树；GUI 原生桥按显式配置的同端只读 `game_data` 目录读取单张 IMG，不按工作目录猜资源根，不经 Python 换图回填。`game.scene` 仍只负责动态实体观察，不增加公开的 `game.terrain` 查询，也不改变既有 coroutine 导航。
+
+```lua
+local scene = context.scene
+if scene.terrain.status ~= "available" then return end
+if context.state.scene_generation ~= scene.scene_generation then
+    context.state.scene_generation = scene.scene_generation
+    context.state.maps_seen = (context.state.maps_seen or 0) + 1
+    -- 在此丢弃依赖上一场景的平台图、门户阶段等缓存，再规划本图。
+    game.log(("map=%d generation=%d footholds=%d ropes=%d"):format(
+        scene.map_id, scene.scene_generation,
+        #scene.terrain.footholds, #scene.terrain.ropes))
+end
+```
 
 ### 运动观察与静止参考
 
@@ -149,7 +174,7 @@ buff 归 `game.character`，不在 `player.status()`。首版两端都没有可�
 
 清槽、停止、取消和放键不受药品间隔限制。清空输入不停止空中运动、受击惯性或已经发生的动画；跳跃飞行/落地看物理事实。用药、拾取、技能派发以及 `action_idle=true` 均不是命中、消耗、恢复或buff生效凭据。
 
-完成、取消、期限、角色变化、离开游戏或错误只结束对应会话；清除该会话仍拥有的方向与动作输入，确认最新原生释放后发布终态，不清后来者的有效输入。换图清旧意图，稳定后的新main须重新决定；不修复CLI装载的静态地形（另见 #210）。窗口、对话、商店、AP/SP和装备交互仍由CLI逐步操作；内置旅行/狩猎/恢复仍是coroutine，本次不迁移。
+完成、取消、期限、角色变化、离开游戏或错误只结束对应会话；清除该会话仍拥有的方向与动作输入，确认最新原生释放后发布终态，不清后来者的有效输入。换图清旧意图，稳定后的新main须根据当前[只读静态场景](#当前静态场景与跨图)重新决定；地形刷新不将旧动作输入带入新图，也不以输入变更改写已知原生动作。窗口、对话、商店、AP/SP和装备交互仍由CLI逐步操作；内置旅行/狩猎/恢复仍是coroutine，本次不迁移。
 
 ## 策略参数与静态场景
 
@@ -172,9 +197,9 @@ end
 
 CLI 参数名把 Lua 下划线转为连字符，例如 `mob_id` 使用 `--mob-id 1001001`。布尔选项可用裸 `--flag` 与 `--no-flag` 分别传入 `true`、`false`，也可显式写成 `--flag true|false`。省略布尔选项时，`context.options` 收到声明的默认值；未显式声明时收到 `true`，`default=false` 时收到 `false`。`choices` 校验默认值、正向 flag 和显式值；`--no-flag` 不会因 `choices` 未列出 `false` 而拒绝。其他可选参数仅在实际提供或声明默认值时出现在 `context.options` 中。`script describe FILE` 根据注释输出每项参数的类型、必填状态、有效默认值、范围、候选值和调用用法。
 
-`context.scene` 绑定 CLI 装载前观察到的当前场景，包含只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 与静态 `terrain`。地形可用时，`terrain.status` 为 `available`，并提供来源路径 `source`、`footholds` 和 `ropes`；`footholds` 中 `x1 == x2` 的条目是竖直墙段（`y1`/`y2` 为上下端），其余是水平或倾斜地面，`prev`/`next` 是原始连接；数据不可用或当前地图只引用另一张地图时，状态分别为 `unavailable` 或 `unsupported`，并提供错误代码、说明和来源详情，不提供空地形或借用地图的坐标。策略需要静态地形时，应先检查 `terrain.status`。身份字段由 CLI 创建，不能作为普通 `@option` 覆盖；动态 HP、位置、技能和库存等事实从当前 `context.game` 的独立只读领域读取；静态上下文不代替当前领域观察。
+CLI 提供的初始场景身份不能作为普通 `@option` 覆盖；核验后，当前身份及地形由原生维护，跨图规则见[当前静态场景与跨图](#当前静态场景与跨图)。`footholds` 中 `x1 == x2` 的条目是竖直墙段（`y1/y2` 为上下端），其余为水平或倾斜地面，`prev/next` 保留原始连接。策略先检查 `terrain.status` 再使用几何；动态 HP、位置、技能和库存等事实仍从当前 `context.game` 独立只读领域读取。
 
-初始化与后续宿主更新均由原生tick引擎核对身份及场景。初始化失败或静态资料验证失败时不进入 `main`；策略自身仍须在动作前检查当前领域的就绪、角色与场景事实。调用方已有的预计算 `context.route` 可保留，没有路线不自动生成；当前内置旅行、狩猎和恢复脚本仍使用另一套引擎，不是本引擎的函数库。
+初始化与后续宿主更新均由原生 tick 引擎核对身份及场景。初始化或初始身份核验失败时不进入 `main`；稳定场景的静态资料不可用则仍进入 `main` 并明确返回该状态，策略在动作前检查当前领域的就绪、角色、场景及所需地形事实。调用方已有的预计算 `context.route` 可保留，没有路线不自动生成；当前内置旅行、狩猎和恢复脚本仍使用另一套引擎，不是本引擎的函数库。
 
 ## 示例与实现入口
 

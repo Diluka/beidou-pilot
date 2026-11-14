@@ -772,6 +772,7 @@ using ImgDecoder = wz::ImgDecoder;
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -785,6 +786,21 @@ public:
     void parse() {
         add_string({});
         add_directory(0, source);
+        finish_parse();
+    }
+
+    void parse_file() {
+        if (!std::filesystem::is_regular_file(source) || source.extension() != ".img")
+            throw std::runtime_error("IMG file is unavailable: " + source.string());
+        const auto size = std::filesystem::file_size(source);
+        if (size == 0 || size > static_cast<uintmax_t>(std::numeric_limits<int32_t>::max()))
+            throw std::runtime_error("IMG file size is unsupported: " + source.string());
+        add_string({});
+        nodes[0].name = add_string(source.filename().string());
+        sources.push_back(source.string());
+        in.open(source.string());
+        img(0, static_cast<int32_t>(size));
+        assign_source(0, 0);
         finish_parse();
     }
 
@@ -838,8 +854,12 @@ void set_error(char* output, size_t capacity, std::string const& error) {
 }
 
 struct BeidouImgDirectory {
-    explicit BeidouImgDirectory(std::filesystem::path const& path, bool base_only) : parser(path, base_only) {
-        parser.parse();
+    explicit BeidouImgDirectory(std::filesystem::path const& path, bool base_only, bool single_file = false)
+        : parser(path, base_only) {
+        if (single_file)
+            parser.parse_file();
+        else
+            parser.parse();
     }
 
     DirectoryParser parser;
@@ -853,6 +873,22 @@ extern "C" int beidou_img_directory_open(const char* path, int base_only, Beidou
     }
     try {
         *result = new BeidouImgDirectory(path, base_only != 0);
+        return 1;
+    } catch (std::exception const& failure) {
+        *result = nullptr;
+        set_error(error, error_capacity, failure.what());
+        return 0;
+    }
+}
+
+extern "C" int beidou_img_file_open(const char* path, BeidouImgDirectory** result, char* error,
+                                    size_t error_capacity) {
+    if (!path || !result) {
+        set_error(error, error_capacity, "IMG file path and result are required");
+        return 0;
+    }
+    try {
+        *result = new BeidouImgDirectory(path, false, true);
         return 1;
     } catch (std::exception const& failure) {
         *result = nullptr;

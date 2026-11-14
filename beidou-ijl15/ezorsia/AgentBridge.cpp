@@ -14,6 +14,7 @@
 #include "NativeSkillUse.h"
 #include "NativeObservation.h"
 #include "NativeMotion.h"
+#include "NativeSceneTerrain.h"
 #include "LoginAction.h"
 
 #include <array>
@@ -66,6 +67,7 @@ struct NativeContext {
 };
 
 std::string directory;
+std::string sceneDataRoot;
 std::string instanceId;
 std::string runId;
 std::string commandId;
@@ -193,6 +195,7 @@ public:
     const MapleControl::State& Observe() const override { return previousState; }
 
     MapleControl::Observation ObserveDomain(const std::string& domain) const override {
+        if (domain == "terrain") return BeiDouBridge::ObserveSceneTerrain(previousState, sceneDataRoot);
         auto observation = NativeObservation::Collect(domain);
         if (domain == "character") {
             // CharacterData's verified maps are learned skill levels, not active
@@ -1766,6 +1769,9 @@ bool AgentBridge::Install() {
     if (length == 0) return true;
     if (length >= path.size()) return false;
     directory.assign(path.data(), length);
+    std::array<char, MAX_PATH> data{};
+    const DWORD dataLength = GetEnvironmentVariableA("MAPLE_DATA_ROOT", data.data(), static_cast<DWORD>(data.size()));
+    if (dataLength > 0 && dataLength < data.size()) sceneDataRoot.assign(data.data(), dataLength);
     if (!CreateDirectoryA(directory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return false;
     std::array<char, 128> run{};
     const DWORD runLength = GetEnvironmentVariableA("RUN_ID", run.data(), static_cast<DWORD>(run.size()));

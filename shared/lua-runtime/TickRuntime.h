@@ -13,6 +13,12 @@ namespace MapleControl {
 // press/hold/release behavior; the Lua scheduler never replays it every tick.
 class TickAdapter : public Adapter {
 public:
+    // ObserveDomain("terrain") is an internal, current-map static observation,
+    // not a public game domain. On "ok", data contains map_id/source/footholds/
+    // ropes, validated by the local resource producer. Other statuses preserve
+    // their error/message/details without geometry. No cross-backend fallback.
+    // Canonical direction names: left/right/up/down. Action keys belong to
+    // SetActionIntent and must not alter these directional keys.
     virtual bool SetHeldKeys(const std::vector<std::string>& keys, std::string& error) = 0;
     virtual bool HeldKeysSettled() const = 0;
     // Stop clears only the action input. Repeating the same input is idempotent;
