@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from beidou_pilot.strategies import compile_strategy
+from beidou_pilot.strategies import compile_strategy, read_strategy_file
 
 
 class HuntLuaContract(unittest.TestCase):
@@ -27,6 +27,35 @@ class HuntLuaContract(unittest.TestCase):
         hunt = (root / "shared/scripts/combat/hunt.lua").read_text(encoding="utf-8")
         cls.strategy = Path(temporary.name) / "hunt-with-terrain.lua"
         cls.strategy.write_text(terrain + "\n" + hunt, encoding="utf-8")
+
+    def test_stale_entry_context_stops_recovery_before_actions(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        scene = {
+            "instance_id": "current-instance",
+            "character_id": 4,
+            "map_id": 100,
+            "scene_generation": 2,
+            "terrain": {"status": "unavailable", "error": "hunt_terrain_unavailable"},
+        }
+        source, metadata = read_strategy_file(root / "shared/scripts/recovery/recover.lua")
+        self.assertIsNotNone(metadata)
+        options = {
+            "item_id": 2000000,
+            "count": 1,
+            "budget_seconds": 60,
+            "heals_hp": False,
+            "heals_mp": False,
+            "healing_known": False,
+            "consume_only": False,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            compiled_path = Path(temporary) / "compiled.lua"
+            compiled_path.write_text(compile_strategy(source, options, scene), encoding="utf-8")
+            subprocess.run(
+                [str(self.executable), str(self.strategy_context_contract), str(compiled_path)],
+                check=True,
+                timeout=5,
+            )
 
     def test_generated_preflight_rejects_each_identity_anchor_before_main(self) -> None:
         scene = {
