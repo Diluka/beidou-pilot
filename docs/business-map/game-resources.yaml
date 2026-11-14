@@ -2,192 +2,197 @@ schemaVersion: 1
 map:
   id: game-resources
   title: 外部资源与静态资料
-  summary: 从外部只读客户端准备运行资源，并向观察和策略提供有来源的本地静态资料。
+  summary: 从外部只读原客户端读取 Data/IMG 与 GUI 客户端目录，向观察与静态查询提供有来源的本地资料；原件只读、资源外置。
 nodes:
   - id: game-resources
     kind: domain
     name: 外部资源与静态资料
-    summary: 拥有外部资源路径、无头NX转换产物、GUI运行副本和WZ XML查询；不拥有外部客户端原件及在线游戏事实。
-    aliases: [资源准备, 资源转换, 静态资料]
+    summary: 拥有外部资源路径、共享原生 IMG 解析、静态资料查询、GUI 运行副本和只读/未知边界；不拥有外部客户端原件及在线游戏事实。
+    aliases: [资源准备, 静态资料, IMG 资源]
     anchors:
       - kind: document
         value: docs/ARCHITECTURE.md
-        description: 说明外部资源配置、metadata-only NX与GUI只读挂载边界。
-  - id: game-resources.prepare
+        description: 说明外部资源配置、只读挂载和静态资料边界。
+      - kind: document
+        value: docs/CLI.md
+        description: resources-check、静态查询和资源路径的当前使用契约。
+  - id: game-resources.query
     kind: scenario
-    name: 准备无头元数据资源
-    summary: 显式指定外部客户端，在原件目录外转换或核验复用NX类别并生成来源清单。
-    aliases: [IMG转NX, 资源转换, prepare_resources]
+    name: 查询本地静态资料
+    summary: 按当前地图或物品 ID 从配置的原版 Data/IMG 查询名称、属性与几何；资料缺失或不可解析时明确返回未知，不向服务端或其他后端补齐。
+    aliases: [名称查询, 地形资料, 物品恢复属性]
     anchors:
+      - kind: document
+        value: docs/CLI.md
+        description: 静态查询入口与结果来源说明。
       - kind: symbol
-        file: headless/tools/prepare_resources.py
-        value: main
-        description: 核验输入输出位置，转换IMG类别或校验既有产物，再记录输入、转换器及输出哈希。
+        file: cli/beidou_pilot/catalog.py
+        value: Catalog
+        description: 在本进程内读取原版 IMG 并投影名称、分类、属性与几何。
   - id: game-resources.lookup
     kind: operation
     name: 查询本地静态资料
-    summary: 查询WZ XML中的地图、NPC、怪物、物品名称和地形信息；缺失资料保留未知，损坏资料明确报错。
-    aliases: [名称查询, 地形资料, Catalog]
+    summary: 通过 Catalog 读取原版 Data/IMG 中的地图、NPC、怪物、物品名称和地形；缺失条目保留未知，损坏条目明确报错。
+    aliases: [Catalog, inspect map, 静态查询]
     anchors:
       - kind: symbol
         file: cli/beidou_pilot/catalog.py
         value: Catalog
-        description: 从本地WZ XML提供名称、地图几何、NPC和物品资料，不读取服务端状态。
-      - kind: symbol
-        file: cli/beidou_pilot/catalog.py
-        value: Catalog._xml
-        description: 区分资料不存在与资料无法解析，不为缺失XML构造事实。
+        description: 从配置的原版 IMG 提供名称、地图几何、NPC 和物品资料，不读取服务端状态。
+      - kind: file
+        value: cli/beidou_pilot/img_resources.py
+        description: 加载共享原生 IMG 解析库并暴露目录/节点读取接口。
   - id: game-resources.catalog
     kind: data
-    name: 本地WZ静态资料
-    summary: 由可选metadata_root定位的名称、分类、属性与几何资料；描述客户端素材，不代表当前游戏现场。
-    aliases: [WZ XML, metadata_root, 静态目录]
+    name: 本地 IMG 静态资料
+    summary: 由配置的 game_data 目录提供的名称、分类、属性与几何资料；描述客户端素材，不代表当前游戏现场。
+    aliases: [game_data, 静态目录, Data/IMG]
     anchors:
       - kind: file
         value: cli/beidou_pilot/catalog.py
         description: 定义本地静态资料的读取、查询及来源投影。
-  - id: game-resources.readonly
-    kind: invariant
-    name: 外部客户端原件保持只读
-    summary: 转换输出和GUI运行副本必须位于原客户端目录之外；镜像与源码不包含游戏素材、私密profile或运行数据。
-    aliases: [原件保护, 外部只读资源]
-    anchors:
-      - kind: symbol
-        file: headless/tools/prepare_resources.py
-        value: main
-        description: 拒绝将转换输出写入原客户端目录及其子目录。
       - kind: file
-        value: docker/gui/prepare-client.sh
-        description: 在原件之外复制运行文件并只替换运行副本的桥DLL。
-      - kind: document
-        value: AGENTS.md
-        description: 规定外部资源、账号和运行状态不进入源码或镜像。
+        value: cli/config/resources.example.json
+        description: 无私密内容的资源配置格式示例。
+  - id: game-resources.img-parser
+    kind: operation
+    name: 加载共享原生 IMG 解析库
+    summary: 两端镜像打包同一份独立解析库；Python Catalog 经它直接读取原版 Data/IMG，不需要预生成中间资源文件。
+    aliases: [libbeidou-img, 原生解析库]
+    anchors:
+      - kind: file
+        value: cli/beidou_pilot/img_resources.py
+        description: 在 CLI 进程内加载解析库并读取 IMG 节点。
+      - kind: file
+        value: headless/Makefile
+        description: 定义 libbeidou-img.so 的构建目标。
   - id: game-resources.configure
     kind: operation
     name: 解析外部资源配置
-    summary: 从指定资源配置或本项目默认位置解析路径，相对路径以配置文件目录为基准，拒绝未知字段和无效配置。
+    summary: 从指定资源配置解析路径，相对路径以配置文件目录为基准，拒绝未知字段和无效配置。
     aliases: [load_resources, MAPLE_RESOURCES_CONFIG]
     anchors:
       - kind: symbol
         file: cli/beidou_pilot/resources.py
         value: load_resources
-        description: 统一解析metadata_root、headless_resources、gui_client和gui_dll，不扫描其他工作区。
+        description: 统一解析 game_data、gui_client 等路径，不扫描其他工作区。
   - id: game-resources.config
     kind: data
     name: 外部资源路径配置
-    summary: 本机配置将四类资源路径与消费者关联；配置不含账号，实际resources.json不入库。
+    summary: 本机配置将原版 Data/ 与 GUI 客户端目录关联到消费者；配置不含账号，实际 resources.json 不入库。
     aliases: [resources.json, ResourcePaths, 资源路径]
     anchors:
       - kind: symbol
         file: cli/beidou_pilot/resources.py
         value: ResourcePaths
-        description: 声明静态资料、无头资源、GUI原件和桥DLL路径。
+        description: 声明 game_data、gui_client 与 gui_dll 路径。
       - kind: file
         value: cli/config/resources.example.json
         description: 提供无私密内容的资源配置格式示例。
   - id: game-resources.check
     kind: operation
-    name: 离线检查无头资源
-    summary: 通过无网络短时容器只读挂载资源，验证无头客户端能否读取，不登录游戏。
-    aliases: [agent check, NX检查]
+    name: 离线检查资源
+    summary: 使用无头镜像以无网络短时容器只读挂载配置的原版 Data/，验证解析与读取能力，不登录游戏、不依赖账号或服务器。
+    aliases: [resources-check, 离线检查]
     anchors:
       - kind: file
-        value: headless/agent
-        description: 只支持check入口，以network none和只读资源挂载启动检查容器。
-  - id: game-resources.nx
-    kind: data
-    name: 无头NX产物与来源清单
-    summary: 按类别保存NX和manifest，记录输入树、转换器和产物哈希及节点统计，供运行或一致性复用核验。
-    aliases: [metadata-only NX, manifest, headless_resources]
+        value: private/workbenches/workbench
+        description: 宿主统一入口固定 headless 镜像并装配只读资源检查。
+      - kind: document
+        value: docs/CLI.md
+        description: resources-check 的输入与输出边界。
+  - id: game-resources.readonly
+    kind: invariant
+    name: 外部客户端原件保持只读
+    summary: GUI 运行副本必须位于原客户端目录之外；镜像与源码不包含游戏素材、私密 profile 或运行数据。资源读取不写回原件。
+    aliases: [原件保护, 外部只读资源]
     anchors:
       - kind: file
-        value: headless/tools/prepare_resources.py
-        description: 定义NX类别输出和manifest的内容及一致性核验。
+        value: docker/gui/prepare-client.sh
+        description: 在原件之外复制运行文件并只替换运行副本的桥 DLL。
+      - kind: document
+        value: AGENTS.md
+        description: 规定外部资源、账号和运行状态不进入源码或镜像。
   - id: game-resources.metadata-limit
     kind: invariant
-    name: 元数据不补造画面与在线事实
-    summary: NX保留玩法属性、帧时序和几何，不含可绘制像素或可播放音频；WZ XML缺失不由服务端或其他后端补齐。
-    aliases: [metadata-only, 未知资料]
+    name: 静态资料不补造现场与画面事实
+    summary: 静态资料只描述客户端素材，不含在线状态；缺失或不可解析保留未知，不由服务端、另一后端或猜造数据补齐。
+    aliases: [未知资料, 静态资料边界]
     anchors:
       - kind: document
         value: docs/ARCHITECTURE.md
-        description: 声明元数据资源、可选XML和事实补齐的支持边界。
-      - kind: symbol
-        file: headless/tools/prepare_resources.py
-        value: main
-        description: 在manifest声明metadata_only、renderable_pixels和playable_audio。
+        description: 声明静态资料、只读挂载与未知语义的支持边界。
+      - kind: document
+        value: docs/CLIENT_LIMITATIONS.md
+        description: 记录静态资料与现场事实分别核对的使用边界。
   - id: game-resources.gui-copy
     kind: scenario
-    name: 装配GUI运行副本
-    summary: 在容器私有目录复制运行文件、链接只读Data并替换所选桥DLL，保留外部原客户端不变。
+    name: 装配 GUI 运行副本
+    summary: 在容器私有目录复制运行文件、链接只读 Data 并替换所选桥 DLL，保留外部原客户端不变。
     aliases: [原版客户端副本, GUI资源装配]
     anchors:
       - kind: file
         value: docker/gui/prepare-client.sh
-        description: 校验输入与输出，独立复制运行文件并替换副本中的ijl15.dll。
+        description: 校验输入与输出，独立复制运行文件并替换副本中的 ijl15.dll。
       - kind: file
         value: docker/compose.yaml
-        description: 将外部原客户端与桥DLL以只读方式挂入GUI容器。
+        description: 将外部原客户端与只读 Data 挂入 GUI 容器。
       - kind: file
         value: cli/test/test_portability.py
         description: 合同覆盖运行副本更改不会修改原件。
 relations:
-  - {from: game-resources.prepare, type: part_of, to: game-resources, summary: NX转换建立本域的无头运行资源。}
+  - {from: game-resources.query, type: part_of, to: game-resources, summary: 静态资料查询是资源域的用户场景。}
   - {from: game-resources.lookup, type: part_of, to: game-resources, summary: 静态资料查询由资源域提供。}
   - {from: game-resources.catalog, type: part_of, to: game-resources, summary: 静态目录归资源域管理其读取语义。}
-  - {from: game-resources.readonly, type: part_of, to: game-resources, summary: 原件保护约束所有资源准备。}
+  - {from: game-resources.img-parser, type: part_of, to: game-resources, summary: 共享原生解析库属于资源读取实现。}
   - {from: game-resources.configure, type: part_of, to: game-resources, summary: 资源配置解析建立外部路径关联。}
-  - {from: game-resources.config, type: part_of, to: game-resources, summary: 四类路径配置属于资源责任。}
-  - {from: game-resources.check, type: part_of, to: game-resources, summary: 离线检查验证准备后的无头资源。}
-  - {from: game-resources.nx, type: part_of, to: game-resources, summary: NX与来源清单由转换流程产生。}
-  - {from: game-resources.metadata-limit, type: part_of, to: game-resources, summary: 元数据边界界定可消费资料的意义。}
-  - {from: game-resources.gui-copy, type: part_of, to: game-resources, summary: GUI副本装配是同一原件保护责任的另一场景。}
-  - {from: game-resources.prepare, type: writes, to: game-resources.nx, summary: 转换生成类别NX及来源清单。}
-  - {from: game-resources.prepare, type: reads, to: game-resources.nx, summary: 复用既有产物前核验输入、转换器和输出哈希。}
-  - {from: game-resources.prepare, type: constrained_by, to: game-resources.readonly, summary: 转换必须写到原件之外。}
-  - {from: game-resources.prepare, type: constrained_by, to: game-resources.metadata-limit, summary: 转换只承诺元数据用途。}
+  - {from: game-resources.config, type: part_of, to: game-resources, summary: 资源路径配置属于资源责任。}
+  - {from: game-resources.check, type: part_of, to: game-resources, summary: 离线检查验证资源读取能力。}
+  - {from: game-resources.readonly, type: part_of, to: game-resources, summary: 原件保护约束所有资源消费。}
+  - {from: game-resources.metadata-limit, type: part_of, to: game-resources, summary: 静态资料边界界定可消费事实的意义。}
+  - {from: game-resources.gui-copy, type: part_of, to: game-resources, summary: GUI 副本装配是同一原件保护责任的另一场景。}
+  - {from: game-resources.query, type: invokes, to: game-resources.lookup, summary: 查询场景调用静态资料查询。}
+  - {from: game-resources.query, type: reads, to: game-resources.catalog, summary: 查询结果来自本地 IMG 静态资料。}
   - {from: game-resources.lookup, type: invokes, to: game-resources.configure, summary: 静态查询通过统一配置确定资料根目录。}
-  - {from: game-resources.lookup, type: reads, to: game-resources.catalog, summary: 查询读取本地XML资料。}
+  - {from: game-resources.lookup, type: invokes, to: game-resources.img-parser, summary: 查询经共享原生解析库读取原版 IMG。}
   - {from: game-resources.lookup, type: constrained_by, to: game-resources.metadata-limit, summary: 缺失资料保留未知且不作为现场事实。}
   - {from: game-resources.configure, type: reads, to: game-resources.config, summary: 按配置文件所在目录解析外部资源路径。}
-  - {from: game-resources.check, type: reads, to: game-resources.nx, summary: 资源检查只读消费NX，不登录游戏。}
-  - {from: game-resources.gui-copy, type: reads, to: game-resources.config, summary: GUI装配消费已选原客户端和桥DLL路径。}
-  - {from: game-resources.gui-copy, type: constrained_by, to: game-resources.readonly, summary: 运行副本的配置和DLL变更不写回原客户端。}
+  - {from: game-resources.check, type: reads, to: game-resources.config, summary: 资源检查只读消费配置的原版 Data 路径。}
+  - {from: game-resources.check, type: constrained_by, to: game-resources.readonly, summary: 检查以只读挂载使用资源，不修改原件。}
+  - {from: game-resources.img-parser, type: constrained_by, to: game-resources.readonly, summary: 解析库只读访问原版 IMG。}
+  - {from: game-resources.gui-copy, type: reads, to: game-resources.config, summary: GUI 装配消费已选原客户端路径。}
+  - {from: game-resources.gui-copy, type: constrained_by, to: game-resources.readonly, summary: 运行副本的配置和 DLL 变更不写回原客户端。}
 flows:
-  - id: game-resources.prepare.flow
-    name: 转换或复用无头NX
-    summary: 保护外部原件，并以输入和产物一致性决定是否复用已存在的转换结果。
-    scenario: game-resources.prepare
-    startsAt: input
+  - id: game-resources.query.flow
+    name: 从配置资源查询静态资料
+    summary: 先确认配置与解析库可用，再按当前问题查询名称、属性或几何；缺失与损坏分别保留未知。
+    scenario: game-resources.query
+    startsAt: inspect
     steps:
-      - {id: input, kind: action, name: 指定外部客户端与输出目录, summary: 显式提供client-root，定位Data及原件之外的输出。, concept: game-resources.prepare}
-      - {id: valid, kind: decision, name: 输入与输出是否有效, summary: Data必须存在，输出不能等于或位于原客户端目录内。}
-      - {id: existing, kind: decision, name: 类别NX是否已经存在, summary: 按选定类别检查待产出的NX。}
-      - {id: reuse, kind: decision, name: 是否允许一致性复用, summary: 需要显式reuse-existing、既有manifest及匹配的输入树、转换器和产物哈希。}
-      - {id: convert, kind: action, name: 转换新类别, summary: 只读输入IMG，完成临时NX后生成类别产物。, concept: game-resources.prepare}
-      - {id: manifest, kind: action, name: 记录来源与元数据边界, summary: 写入选定类别的来源、哈希、统计及metadata-only声明。, concept: game-resources.prepare}
-      - {id: prepared, kind: outcome, name: 元数据资源已准备, summary: 选定类别的NX和清单可供后续离线检查及运行消费。}
-      - {id: refused, kind: outcome, name: 拒绝准备或复用, summary: 报告输入输出或一致性问题，不覆盖不匹配产物和外部原件。}
+      - {id: inspect, kind: action, name: 确定查询目标, summary: 按当前地图、NPC、怪物或物品 ID 选择静态查询。, concept: game-resources.query}
+      - {id: configured, kind: decision, name: 资源配置与解析库是否可用, summary: 检查 game_data 路径、只读挂载与共享解析库加载结果。}
+      - {id: refused, kind: outcome, name: 未开始查询, summary: 缺少配置或解析库不可用时明确报告，不猜造资料。}
+      - {id: read, kind: action, name: 读取原版 IMG 资料, summary: 在本地解析库中查询名称、分类、属性与几何。, concept: game-resources.catalog}
+      - {id: available, kind: decision, name: 资料是否存在且可解析, summary: 区分条目缺失、损坏与支持范围不足。}
+      - {id: found, kind: outcome, name: 返回有来源的静态资料, summary: 返回实际消费的 IMG 路径、哈希与查询结果。}
+      - {id: unknown, kind: outcome, name: 保留缺失或不可用, summary: 缺失条目保持未知，损坏条目明确报错，不向服务端补齐。}
     transitions:
-      - {from: input, to: valid}
-      - {from: valid, to: existing, when: 输入输出通过核验}
-      - {from: valid, to: refused, when: 缺少Data或输出侵入原件}
-      - {from: existing, to: convert, when: 类别产物不存在}
-      - {from: existing, to: reuse, when: 类别产物已存在}
-      - {from: reuse, to: manifest, when: 显式复用且全部哈希一致}
-      - {from: reuse, to: refused, when: 未授权复用或一致性不符}
-      - {from: convert, to: manifest}
-      - {from: manifest, to: prepared}
+      - {from: inspect, to: configured}
+      - {from: configured, to: read, when: 配置与解析库可用}
+      - {from: configured, to: refused, when: 缺少配置或解析库不可用}
+      - {from: read, to: available}
+      - {from: available, to: found, when: 条目存在且可解析}
+      - {from: available, to: unknown, when: 条目缺失、损坏或超出支持范围}
   - id: game-resources.gui-copy.flow
-    name: 装配原件之外的GUI副本
-    summary: 保留原客户端和Data，只在独立运行副本替换桥DLL与运行配置。
+    name: 装配原件之外的 GUI 副本
+    summary: 保留原客户端和 Data，只在独立运行副本替换桥 DLL 与运行配置。
     scenario: game-resources.gui-copy
     startsAt: select
     steps:
-      - {id: select, kind: action, name: 选择原客户端与桥DLL, summary: 从外置路径取得原客户端、所选DLL和独立输出位置。, concept: game-resources.gui-copy}
-      - {id: valid, kind: decision, name: 是否满足装配条件, summary: 必需运行文件和Data存在，输出在原件之外且尚未存在。}
-      - {id: copy, kind: action, name: 建立独立运行副本, summary: 复制运行文件、链接只读Data并将所选桥DLL写入副本。, concept: game-resources.gui-copy}
-      - {id: ready, kind: outcome, name: GUI副本可供启动, summary: 运行配置与桥DLL可在副本使用，外部原件保持原状。}
+      - {id: select, kind: action, name: 选择原客户端与桥 DLL, summary: 从外置路径取得原客户端、所选 DLL 和独立输出位置。, concept: game-resources.gui-copy}
+      - {id: valid, kind: decision, name: 是否满足装配条件, summary: 必需运行文件和 Data 存在，输出在原件之外且尚未存在。}
+      - {id: copy, kind: action, name: 建立独立运行副本, summary: 复制运行文件、链接只读 Data 并将所选桥 DLL 写入副本。, concept: game-resources.gui-copy}
+      - {id: ready, kind: outcome, name: GUI 副本可供启动, summary: 运行配置与桥 DLL 可在副本使用，外部原件保持原状。}
       - {id: refused, kind: outcome, name: 装配被拒绝, summary: 报告缺失文件或输出位置问题，不修改原客户端。}
     transitions:
       - {from: select, to: valid}

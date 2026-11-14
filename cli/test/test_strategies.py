@@ -1,4 +1,4 @@
-"""Lua 策略的 CLI 声明、上下文和原生执行入口合同。"""
+"""tick Lua 脚本的 CLI 声明、上下文和原生执行入口合同。"""
 
 from contextlib import redirect_stdout
 import io
@@ -7,12 +7,11 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from beidou_pilot.backend import Backend
 from beidou_pilot.bridge import BridgeClient
 from beidou_pilot.cli import main
-from beidou_pilot.control_scripts import run_strategy
 from beidou_pilot.errors import ClientError
 from beidou_pilot.strategies import (
     compile_strategy,
@@ -21,7 +20,6 @@ from beidou_pilot.strategies import (
     parse_strategy,
     read_strategy_file,
 )
-from beidou_pilot.script_libraries import with_library
 from beidou_pilot.strategy_scene import scene_context
 from .test_bridge import BridgeFiles
 
@@ -51,12 +49,6 @@ class LuaStrategyContract(unittest.TestCase):
             "character_id": self.files.state["character"]["id"],
             "map_id": self.files.state["map_id"],
             "scene_generation": self.files.state["scene_generation"],
-            "terrain": {
-                "status": "available",
-                "source": "/client/Map.wz/Map/Map0/000000100.img.xml",
-                "footholds": [{"id": 1, "x1": 0, "x2": 10, "y1": 20, "y2": 20, "prev": 0, "next": 0}],
-                "ropes": [{"index": 0, "x": 5, "y1": 0, "y2": 20}],
-            },
         }
 
     def cli(self, *arguments: str) -> tuple[int, str]:
@@ -90,13 +82,7 @@ class LuaStrategyContract(unittest.TestCase):
             with (
                 self.subTest(action=action),
                 patch.object(BridgeClient, "snapshot", return_value=self.files.state),
-                patch(
-                    "beidou_pilot.strategy_scene.load_hunt_terrain",
-                    return_value={
-                        **self.scene["terrain"],
-                        "map_id": 100,
-                    },
-                ),
+                patch("beidou_pilot.strategy_scene.scene_context", return_value=self.scene),
                 patch.object(BridgeClient, "run_script", return_value={"status": "accepted"}) as run,
             ):
                 code, output = self.cli("script", action, str(self.path), *options)
@@ -107,8 +93,8 @@ class LuaStrategyContract(unittest.TestCase):
             if action == "start":
                 self.assertNotIn('["range_mode"]', source)
             self.assertIn('["scene_generation"]=1', source)
-            self.assertIn("strategy_scene_context_stale", source)
-            self.assertTrue(source.endswith("return main(__beidou_context)\nend\n"))
+            self.assertNotIn("game.state()", source)
+            self.assertTrue(source.endswith("return {main=main,context=__beidou_context}\nend\n"))
             self.assertEqual(asynchronous, run.call_args.kwargs["wait_for_start"])
             report = json.loads(output)["data"]
             self.assertEqual(str(self.path), report["script_file"])
@@ -121,6 +107,8 @@ class LuaStrategyContract(unittest.TestCase):
         backend.assert_not_called()
         data = json.loads(output)["data"]
         self.assertEqual("main(context)", data["entry"])
+        self.assertEqual("tick", data["mode"])
+        self.assertEqual({"gear": 3, "budget_ms": 100, "overrun": "abort", "abort_commit": True}, data["tick"])
         self.assertIn("--mob-id <int>", data["usage"])
         self.assertTrue(data["options"][0]["required"])
         self.assertEqual(1001005, data["options"][1]["default"])
@@ -132,8 +120,6 @@ class LuaStrategyContract(unittest.TestCase):
         metadata = parse_strategy(
             "-- @option[type=boolean,opt,default=true] enabled 启用策略\nlocal function main(context)\nend\n"
         )
-        self.assertIsNotNone(metadata)
-        assert metadata is not None
         self.assertEqual({"enabled": False}, parse_options(metadata, ["--no-enabled"]))
         for arguments in (("--no-enabled=false",), ("--no-enabled", "false")):
             with self.subTest(arguments=arguments), self.assertRaises(ClientError) as raised:
@@ -148,11 +134,9 @@ class LuaStrategyContract(unittest.TestCase):
         self.assertEqual(0, code, output)
         data = json.loads(output)["data"]
         self.assertIn("[--enabled|--no-enabled]", data["usage"])
-        self.assertEqual(False, data["options"][0]["required"])
+        self.assertFalse(data["options"][0]["required"])
         self.assertTrue(data["options"][0]["default"])
         metadata = parse_strategy(self.path.read_text(encoding="utf-8"))
-        self.assertIsNotNone(metadata)
-        assert metadata is not None
         self.assertEqual({"enabled": True}, parse_options(metadata, []))
         self.assertEqual({"enabled": True}, parse_options(metadata, ["--enabled"]))
         self.assertEqual({"enabled": False}, parse_options(metadata, ["--no-enabled"]))
@@ -165,10 +149,7 @@ class LuaStrategyContract(unittest.TestCase):
             with (
                 self.subTest(arguments=arguments),
                 patch.object(BridgeClient, "snapshot", return_value=self.files.state),
-                patch(
-                    "beidou_pilot.strategy_scene.load_hunt_terrain",
-                    return_value={**self.scene["terrain"], "map_id": 100},
-                ),
+                patch("beidou_pilot.strategy_scene.scene_context", return_value=self.scene),
                 patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run,
             ):
                 code, output = self.cli("script", "run", str(self.path), *arguments)
@@ -178,8 +159,6 @@ class LuaStrategyContract(unittest.TestCase):
     def test_boolean_inputs_obey_choices_before_script_dispatch(self) -> None:
         source = "-- @option[type=boolean,choices=true] enabled 启用策略\nlocal function main(context)\nend\n"
         metadata = parse_strategy(source)
-        self.assertIsNotNone(metadata)
-        assert metadata is not None
         self.assertEqual({"enabled": True}, parse_options(metadata, ["--enabled"]))
         self.assertEqual({"enabled": False}, parse_options(metadata, ["--no-enabled"]))
         with self.assertRaises(ClientError) as raised:
@@ -206,8 +185,6 @@ class LuaStrategyContract(unittest.TestCase):
         metadata = parse_strategy(
             "-- @option[type=boolean,default=false] enabled 启用策略\nlocal function main(context)\nend\n"
         )
-        self.assertIsNotNone(metadata)
-        assert metadata is not None
         self.assertEqual({"enabled": False}, parse_options(metadata, []))
         self.assertEqual({"enabled": True}, parse_options(metadata, ["--enabled"]))
         self.assertEqual({"enabled": False}, parse_options(metadata, ["--no-enabled"]))
@@ -217,8 +194,6 @@ class LuaStrategyContract(unittest.TestCase):
             "-- @option[type=boolean,default=false,choices=false] disabled 默认关闭\n"
             "local function main(context)\nend\n"
         )
-        self.assertIsNotNone(metadata)
-        assert metadata is not None
         self.assertEqual({"disabled": False}, parse_options(metadata, []))
         self.assertEqual({"disabled": False}, parse_options(metadata, ["--no-disabled"]))
         with self.assertRaises(ClientError) as raised:
@@ -232,10 +207,7 @@ class LuaStrategyContract(unittest.TestCase):
         )
         with (
             patch.object(BridgeClient, "snapshot", return_value=self.files.state),
-            patch(
-                "beidou_pilot.strategy_scene.load_hunt_terrain",
-                return_value={**self.scene["terrain"], "map_id": 100},
-            ),
+            patch("beidou_pilot.strategy_scene.scene_context", return_value=self.scene),
             patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run,
         ):
             code, output = self.cli("script", "run", str(self.path), "--continuity")
@@ -252,6 +224,51 @@ class LuaStrategyContract(unittest.TestCase):
         with self.assertRaises(ClientError) as raised:
             parse_strategy("local function main(context)\nend\nlocal function main(context)\nend\n")
         self.assertEqual("invalid_strategy_metadata", raised.exception.code)
+
+    def test_raw_chunk_without_main_is_rejected(self) -> None:
+        raw_file = self.files.root / "raw.lua"
+        raw_file.write_text("game.log('raw file')\n", encoding="utf-8")
+        with self.assertRaises(ClientError) as raised:
+            read_strategy_file(raw_file)
+        self.assertEqual("invalid_strategy_metadata", raised.exception.code)
+        for arguments in (("script", "run", str(raw_file)), ("script", "start", str(raw_file))):
+            with (
+                self.subTest(arguments=arguments),
+                patch("beidou_pilot.cli.Backend", wraps=Backend) as backend,
+                patch.object(BridgeClient, "run_script") as run,
+            ):
+                code, output = self.cli(*arguments)
+            self.assertEqual(2, code)
+            self.assertEqual("invalid_strategy_metadata", json.loads(output)["error"]["code"])
+            backend.assert_not_called()
+            run.assert_not_called()
+
+    def test_coroutine_mode_and_removed_inputs_are_rejected(self) -> None:
+        self.path.write_text("-- @mode coroutine\n" + POLICY, encoding="utf-8")
+        with (
+            patch("beidou_pilot.cli.Backend") as backend,
+            patch.object(BridgeClient, "run_script") as run,
+        ):
+            code, output = self.cli("script", "run", str(self.path), "--mob-id", "12")
+        self.assertEqual(2, code)
+        self.assertEqual("invalid_strategy_metadata", json.loads(output)["error"]["code"])
+        backend.assert_not_called()
+        run.assert_not_called()
+
+        self.path.write_text("-- @mode tick\n" + POLICY, encoding="utf-8")
+        for arguments in (
+            ("script", "run", "--code", "function main(context) end"),
+            ("script", "run", str(self.path), "--library", "travel", "--mob-id", "12"),
+        ):
+            with (
+                self.subTest(arguments=arguments),
+                patch("beidou_pilot.cli.Backend", wraps=Backend) as backend,
+                patch.object(BridgeClient, "run_script") as run,
+            ):
+                code, output = self.cli(*arguments)
+            self.assertEqual(2, code, output)
+            backend.assert_not_called()
+            run.assert_not_called()
 
     def test_invalid_metadata_or_option_is_rejected_before_runtime_or_script_dispatch(self) -> None:
         self.path.write_text(
@@ -273,146 +290,38 @@ class LuaStrategyContract(unittest.TestCase):
             run.assert_not_called()
 
         self.path.write_text(POLICY, encoding="utf-8")
-        with (
-            patch("beidou_pilot.cli.Backend", wraps=Backend) as backend,
-            patch.object(BridgeClient, "run_script") as run,
-        ):
-            code, output = self.cli("script", "run", str(self.path), "--mob-id", "0")
-        self.assertEqual(2, code)
-        self.assertEqual("invalid_strategy_option", json.loads(output)["error"]["code"])
-        backend.assert_not_called()
-        run.assert_not_called()
-
-        with (
-            patch("beidou_pilot.cli.Backend", wraps=Backend) as backend,
-            patch.object(BridgeClient, "run_script") as run,
-        ):
-            code, output = self.cli("script", "run", str(self.path), "--mob-id", "12", "--range-mode", "anywhere")
-        self.assertEqual(2, code)
-        self.assertEqual("invalid_strategy_option", json.loads(output)["error"]["code"])
-        backend.assert_not_called()
-        run.assert_not_called()
-
-    def test_raw_file_and_code_are_not_wrapped_as_strategies(self) -> None:
-        raw_file = self.files.root / "raw.lua"
-        raw_source = "game.log('raw file')\r\n"
-        raw_file.write_bytes(raw_source.encode("utf-8"))
-        raw_code = "-- @option[type=int] x raw\nlocal function main(context) game.log('raw code') end"
-        for source_args, expected, script_file in (
-            ((str(raw_file),), raw_source, str(raw_file)),
-            (("--code", raw_code), raw_code, None),
-        ):
+        for arguments in (("--mob-id", "0"), ("--mob-id", "12", "--range-mode", "anywhere")):
             with (
-                self.subTest(source_args=source_args),
-                patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run,
+                self.subTest(arguments=arguments),
+                patch("beidou_pilot.cli.Backend", wraps=Backend) as backend,
+                patch.object(BridgeClient, "run_script") as run,
             ):
-                code, output = self.cli("script", "run", *source_args)
-            self.assertEqual(0, code, output)
-            self.assertEqual(expected, run.call_args.kwargs["code"])
-            self.assertNotIn("main(__beidou_context)", run.call_args.kwargs["code"])
-            self.assertEqual(script_file, json.loads(output)["data"].get("script_file"))
+                code, output = self.cli("script", "run", str(self.path), *arguments)
+            self.assertEqual(2, code)
+            self.assertEqual("invalid_strategy_option", json.loads(output)["error"]["code"])
+            backend.assert_not_called()
+            run.assert_not_called()
 
-    def test_python_strategy_adapter_uses_declared_options_and_rejects_unknown_fields(self) -> None:
-        backend = Mock(spec=Backend)
-        backend.root, backend.name, backend.instance = self.files.root, "headless", "default"
-        with (
-            patch("beidou_pilot.control_scripts.scene_context", return_value=self.scene),
-            patch("beidou_pilot.control_scripts.run_source", return_value={"status": "completed"}) as run,
-        ):
-            run_strategy(backend, "travel/move_to", {"x": 10}, 21, context_state=self.files.state)
-        source = run.call_args.args[1]
-        self.assertIn('["x"]=10', source)
-        self.assertIn("return main(__beidou_context)", source)
-        self.assertEqual(21, run.call_args.args[2])
-
-        with patch("beidou_pilot.control_scripts.run_source") as unpublished:
-            with self.assertRaises(ClientError) as raised:
-                run_strategy(
-                    backend, "travel/move_to", {"x": 10, "not_declared": True}, 21, context_state=self.files.state
-                )
-        self.assertEqual("invalid_strategy_option", raised.exception.code)
-        unpublished.assert_not_called()
-
-        with (
-            patch("beidou_pilot.control_scripts.scene_context") as scene,
-            patch("beidou_pilot.control_scripts.run_source") as unpublished,
-        ):
-            with self.assertRaises(ClientError) as raised:
-                run_strategy(
-                    backend,
-                    "travel/climb_to",
-                    {"x": 10, "y": 20, "direction": 1},
-                    21,
-                    context_state=self.files.state,
-                )
-        self.assertEqual("invalid_strategy_option", raised.exception.code)
-        scene.assert_not_called()
-        unpublished.assert_not_called()
-
-    def test_builtin_policies_declare_main_and_travel_helpers_are_loaded(self) -> None:
-        scripts = Path(__file__).resolve().parents[2] / "shared/scripts"
-        for relative in (
-            "travel/move_to.lua",
-            "travel/climb_to.lua",
-            "travel/enter_portal.lua",
-            "combat/hunt.lua",
-            "recovery/recover.lua",
-        ):
-            with self.subTest(script=relative):
-                source, metadata = read_strategy_file(scripts / relative)
-                self.assertIsNotNone(metadata)
-                self.assertIn("local function main(context)", source)
-        travel_source, travel_metadata = read_strategy_file(scripts / "travel/move_to.lua")
-        self.assertIsNotNone(travel_metadata)
-        self.assertIn("local function travel_initial(context, min_hp_ratio, fail)", travel_source)
-        self.assertEqual(
-            {"budget_seconds": 20.0, "tolerance": 8, "y_tolerance": 45, "min_hp_ratio": 0.0, "x": 10},
-            parse_options(travel_metadata, ["--x", "10"]),
+    def test_tick_default_and_explicit_metadata_are_visible_without_a_client(self) -> None:
+        self.assertEqual(100, parse_script_execution(POLICY).budget_ms)
+        self.assertEqual(1, parse_script_execution("-- @tick.gear 1\n" + POLICY).gear)
+        execution = parse_script_execution(
+            "-- @mode tick\n-- @tick.gear 4 -- 说明\n-- @tick.budget_ms 12.5\n"
+            "-- @tick.overrun skip\n-- @tick.abort_commit false\n"
         )
-        _, recovery_metadata = read_strategy_file(scripts / "recovery/recover.lua")
-        assert recovery_metadata is not None
-        recovery_options = parse_options(recovery_metadata, ["--item-id", "2000000", "--budget-seconds", "5"])
         self.assertEqual(
-            {"heals_hp": False, "heals_mp": False, "healing_known": False, "consume_only": False},
-            {name: recovery_options[name] for name in ("heals_hp", "heals_mp", "healing_known", "consume_only")},
+            (12.5, "skip", False, 4), (execution.budget_ms, execution.overrun, execution.abort_commit, execution.gear)
         )
-
-    def test_tick_metadata_defaults_and_description_are_visible_without_a_client(self) -> None:
-        self.path.write_text("-- @mode tick\n" + POLICY, encoding="utf-8")
-        with patch("beidou_pilot.cli.Backend") as backend:
-            code, output = self.cli("script", "describe", str(self.path))
-        self.assertEqual(0, code, output)
-        backend.assert_not_called()
-        data = json.loads(output)["data"]
-        self.assertEqual("tick", data["mode"])
-        self.assertEqual({"gear": 3, "budget_ms": 100, "overrun": "abort", "abort_commit": True}, data["tick"])
-        self.assertEqual("coroutine", parse_script_execution(POLICY).mode)
-        self.assertEqual("coroutine", parse_script_execution("-- @mode coroutine\n" + POLICY).mode)
         for budget, expected in ((".5", 0.5), ("1.", 1), ("0002.5", 2.5)):
             with self.subTest(budget=budget):
                 execution = parse_script_execution("-- @mode tick--说明\n-- @tick.budget_ms " + budget + "\n")
-                self.assertEqual(("tick", expected), (execution.mode, execution.budget_ms))
+                self.assertEqual(expected, execution.budget_ms)
 
-    def test_tick_gears_are_visible_and_survive_compilation_and_library_injection(self) -> None:
-        for gear in (1, 2, 3, 4):
-            with self.subTest(gear=gear), patch("beidou_pilot.cli.Backend") as backend:
-                header = f"-- @mode tick\n-- @tick.gear {gear} -- 决策档位\n"
-                source = header + POLICY
-                self.path.write_text(source, encoding="utf-8")
-                code, output = self.cli("script", "describe", str(self.path))
-                self.assertEqual(0, code, output)
-                backend.assert_not_called()
-                self.assertEqual(gear, json.loads(output)["data"]["tick"]["gear"])
-                for prepared in (
-                    source,
-                    compile_strategy(source, {"mob_id": 12}, self.scene),
-                    with_library("travel", None, source),
-                ):
-                    self.assertTrue(prepared.startswith(header))
-                    self.assertEqual(gear, parse_script_execution(prepared).gear)
-
-    def test_tick_compile_returns_entry_and_context_without_old_state_or_calling_main(self) -> None:
-        header = "-- @mode tick\n-- @tick.gear 2\n-- @tick.budget_ms 12.5\n-- @tick.overrun skip -- 分片执行\n-- @tick.abort_commit false\n"
+    def test_compile_returns_entry_and_context_without_old_state_or_calling_main(self) -> None:
+        header = (
+            "-- @mode tick\n-- @tick.gear 2\n-- @tick.budget_ms 12.5\n"
+            "-- @tick.overrun skip -- 分片执行\n-- @tick.abort_commit false\n"
+        )
         source = header + POLICY
         compiled = compile_strategy(source, {"mob_id": 12}, self.scene, {"route": [{"map_id": 200}]})
         self.assertTrue(compiled.startswith(header))
@@ -425,39 +334,17 @@ class LuaStrategyContract(unittest.TestCase):
         self.assertTrue(compiled.endswith("return {main=main,context=__beidou_context}\nend\n"))
         execution = parse_script_execution(compiled)
         self.assertEqual(
-            ("tick", 12.5, "skip", False, 2),
-            (execution.mode, execution.budget_ms, execution.overrun, execution.abort_commit, execution.gear),
+            (12.5, "skip", False, 2), (execution.budget_ms, execution.overrun, execution.abort_commit, execution.gear)
         )
-        legacy = compile_strategy(POLICY, {"mob_id": 12}, self.scene)
-        self.assertIn("game.state()", legacy)
-        self.assertIn("strategy_scene_context_stale", legacy)
-        self.assertTrue(legacy.endswith("return main(__beidou_context)\nend\n"))
-
-    def test_tick_run_and_start_use_existing_options_and_scene_rules(self) -> None:
-        self.path.write_text("-- @mode tick\n" + POLICY, encoding="utf-8")
-        for action in ("run", "start"):
-            with (
-                self.subTest(action=action),
-                patch.object(BridgeClient, "snapshot", return_value=self.files.state),
-                patch("beidou_pilot.strategy_scene.scene_context", return_value=self.scene) as context,
-                patch.object(BridgeClient, "run_script", return_value={"status": "running"}) as run,
-            ):
-                code, output = self.cli("script", action, str(self.path), "--mob-id", "12")
-            self.assertEqual(0, code, output)
-            context.assert_called_once_with(self.files.root, self.files.state)
-            self.assertIn('["mob_id"]=12', run.call_args.kwargs["code"])
-            self.assertTrue(run.call_args.kwargs["code"].startswith("-- @mode tick\n"))
-            self.assertEqual(action == "start", run.call_args.kwargs["wait_for_start"])
-            self.assertNotIn("game.state()", run.call_args.kwargs["code"])
 
     def test_execution_config_rejects_invalid_headers_before_backend_or_publication(self) -> None:
         invalid = (
+            "-- @mode coroutine",
             "-- @mode unknown",
             "-- @mode Tick",
             "-- @mode",
             "-- @mode tick junk",
             "-- @mode tick\n-- @mode tick",
-            "-- @tick.budget_ms 10",
             "-- @mode coroutine\n-- @tick.overrun skip",
             "-- @mode tick\n-- @tick.unknown true",
             "-- @mode tick\n-- @tick.budget_ms 10\n-- @tick.budget_ms 10",
@@ -471,8 +358,6 @@ class LuaStrategyContract(unittest.TestCase):
             "-- @mode tick\n-- @tick.abort_commit True",
             "-- @mode tick\n-- @tick.abort_commit 1",
             "-- @mode tick\n-- @tick budget_ms 10",
-            "-- @tick.gear 1",
-            "-- @mode coroutine\n-- @tick.gear 1",
             "-- @mode tick\n-- @tick.gear 1\n-- @tick.gear 1",
         ) + tuple(
             "-- @mode tick\n-- @tick.gear " + value
@@ -497,65 +382,45 @@ class LuaStrategyContract(unittest.TestCase):
         for header in invalid:
             source = header + "\nlocal function main(context)\nend\n"
             self.path.write_text(source, encoding="utf-8")
-            for arguments in ((str(self.path),), ("--code=" + source,)):
-                with (
-                    self.subTest(header=header, arguments=arguments),
-                    patch("beidou_pilot.cli.Backend") as backend,
-                    patch.object(BridgeClient, "run_script") as run,
-                ):
-                    code, output = self.cli("script", "start", *arguments)
-                self.assertEqual(2, code, output)
-                self.assertEqual("invalid_strategy_metadata", json.loads(output)["error"]["code"])
-                backend.assert_not_called()
-                run.assert_not_called()
+            with (
+                self.subTest(header=header),
+                patch("beidou_pilot.cli.Backend") as backend,
+                patch.object(BridgeClient, "run_script") as run,
+            ):
+                code, output = self.cli("script", "start", str(self.path))
+            self.assertEqual(2, code, output)
+            self.assertEqual("invalid_strategy_metadata", json.loads(output)["error"]["code"])
+            backend.assert_not_called()
+            run.assert_not_called()
 
     def test_only_real_leading_line_comments_define_execution_mode(self) -> None:
         for source in (
-            "--[[\n-- @mode tick\n]]\nlocal x = 1\n-- @mode tick\n",
-            "--[=[\n-- @mode unknown\n]=]\n-- @mode coroutine\nlocal x = 1\n",
-            "local text = '-- @mode tick'\n-- @tick.budget_ms invalid\n",
+            "--[[\n-- @mode tick\n]]\nlocal function main(context)\nend\n",
+            "--[=[\n-- @mode unknown\n]=]\nlocal function main(context)\nend\n",
+            "local text = '-- @mode tick'\n-- @tick.budget_ms invalid\nlocal function main(context)\nend\n",
         ):
             with self.subTest(source=source):
-                self.assertEqual("coroutine", parse_script_execution(source).mode)
+                self.assertEqual(100, parse_script_execution(source).budget_ms)
         source = "-- a literal --[[ inside a line comment\n--- @mode tick\nfunction main(context)\nend\n"
-        self.assertEqual("tick", parse_script_execution(source).mode)
-        self.assertEqual("tick", parse_script_execution(with_library("travel", None, source)).mode)
+        self.assertEqual(100, parse_script_execution(source).budget_ms)
         source = "--[==[\n-- @mode coroutine\n]==]\n-- @mode tick\nfunction main(context)\nend\n"
-        self.assertEqual("tick", parse_script_execution(compile_strategy(source, {}, self.scene)).mode)
+        self.assertEqual(100, parse_script_execution(compile_strategy(source, {}, self.scene)).budget_ms)
 
-    def test_raw_tick_code_keeps_native_global_main_entry(self) -> None:
-        source = "-- @mode tick\nfunction main(context) return 'done' end\n"
-        with patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run:
-            code, output = self.cli("script", "start", "--code=" + source)
-        self.assertEqual(0, code, output)
-        self.assertEqual(source, run.call_args.kwargs["code"])
-
-    def test_scene_context_keeps_catalog_source_and_reports_missing_terrain(self) -> None:
-        terrain = self.scene["terrain"]
-        catalog_result = terrain | {"map_id": 100}
-        with patch("beidou_pilot.strategy_scene.load_hunt_terrain", return_value=catalog_result):
-            available = scene_context(self.files.root, self.files.state)
-        self.assertEqual(self.files.state["instance_id"], available["instance_id"])
-        self.assertEqual(self.files.state["character"]["id"], available["character_id"])
-        self.assertEqual(1, available["scene_generation"])
-        self.assertEqual(terrain["source"], available["terrain"]["source"])
-        self.assertEqual(1, len(available["terrain"]["footholds"]))
-        self.assertEqual(1, len(available["terrain"]["ropes"]))
-
-        for code, status in (("hunt_terrain_unavailable", "unavailable"), ("hunt_terrain_unsupported", "unsupported")):
-            with (
-                self.subTest(code=code),
-                patch(
-                    "beidou_pilot.strategy_scene.load_hunt_terrain",
-                    side_effect=ClientError(code, "当前地图没有可用的地形。", {"map_id": 100}),
-                ),
-            ):
-                unavailable = scene_context(self.files.root, self.files.state)
-            terrain_context = unavailable["terrain"]
-            self.assertEqual(status, terrain_context["status"])
-            self.assertEqual(code, terrain_context["error"])
-            self.assertNotIn("footholds", terrain_context)
-            self.assertNotIn("ropes", terrain_context)
+    def test_scene_context_injects_identity_only(self) -> None:
+        available = scene_context(self.files.state)
+        self.assertEqual(
+            {
+                "instance_id": self.files.state["instance_id"],
+                "character_id": self.files.state["character"]["id"],
+                "map_id": self.files.state["map_id"],
+                "scene_generation": self.files.state["scene_generation"],
+            },
+            available,
+        )
+        not_ready = {**self.files.state, "ready": False}
+        with self.assertRaises(ClientError) as raised:
+            scene_context(not_ready)
+        self.assertEqual("strategy_scene_unavailable", raised.exception.code)
 
 
 if __name__ == "__main__":

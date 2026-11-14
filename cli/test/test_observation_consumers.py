@@ -5,54 +5,26 @@ import unittest
 from unittest.mock import Mock, patch
 
 from beidou_pilot.backend import Backend
-from beidou_pilot.catalog import Catalog
 from beidou_pilot.errors import ClientError
 from beidou_pilot.items import read_inventory
 from beidou_pilot.snapshot import collect, format_snapshot
-from beidou_pilot.stats import read_character
-from beidou_pilot.travel import portal
 
 
 class ObservationConsumerContract(unittest.TestCase):
     def test_native_values_are_usable_when_checksum_verification_is_unknown(self) -> None:
         backend = Mock(spec=Backend)
-        character = {"id": 4, "hp": 100}
-        backend.read.return_value = {"character": character, "native_values_valid": True,
-                                     "character_checksum_valid": None, "unavailable": []}
-        self.assertEqual(character, read_character(backend))
         inventory = {"items": [], "native_values_valid": True, "checksums_valid": None,
                      "unavailable": []}
         backend.read.return_value = inventory
         self.assertEqual(inventory, read_inventory(backend, 2))
         self.assertIsNone(inventory["checksums_valid"])
 
-    def test_unavailable_native_values_stop_character_and_inventory_actions(self) -> None:
+    def test_unavailable_native_values_stop_inventory_actions(self) -> None:
         backend = Mock(spec=Backend)
-        backend.read.return_value = {"character": {"id": 4}, "native_values_valid": False,
+        backend.read.return_value = {"items": [], "native_values_valid": False,
                                      "checksums_valid": None, "unavailable": ["transition"]}
-        for read in (lambda: read_character(backend), lambda: read_inventory(backend, 2)):
-            with self.subTest(read=read), self.assertRaises(ClientError):
-                read()
-
-    def test_portal_plan_anchors_native_identity_and_rejects_replacement_result(self) -> None:
-        backend = Mock(spec=Backend)
-        backend.root, backend.name, backend.instance = Path("/unused"), "beidou", "default"
-        initial = {"ready": True, "instance_id": "first", "scene_generation": 3, "map_id": 100,
-                   "position": {"x": 10.5, "y": 20.0}, "character": {"id": 4, "hp": 100, "max_hp": 100}}
-        catalog = Mock(spec=Catalog)
-        catalog.map.return_value = {"portals": [{"name": "out", "x": 10, "y": 20, "target_map_id": 200}],
-                                    "metadata_source": "fixture", "unavailable": []}
-        result = {"status": "completed", "last_state": {**initial, "map_id": 200, "instance_id": "replacement"}}
-        with patch("beidou_pilot.travel.BridgeClient") as bridge:
-            bridge.return_value.snapshot.return_value = initial
-            with patch("beidou_pilot.travel.run_strategy", return_value=result) as run:
-                with self.assertRaises(ClientError) as failure:
-                    portal(backend, "out", catalog=catalog)
-        self.assertEqual("portal_identity_changed", failure.exception.code)
-        options = run.call_args.args[2]
-        self.assertEqual(initial, run.call_args.kwargs["context_state"])
-        self.assertEqual((10, 20, 200), tuple(options[key] for key in ("x", "y", "target_map")))
-        self.assertNotIn("instance_id", options)
+        with self.assertRaises(ClientError):
+            read_inventory(backend, 2)
 
 
 class SnapshotConsumerContract(unittest.TestCase):
@@ -125,9 +97,7 @@ class SnapshotConsumerContract(unittest.TestCase):
         page = {"source": "server", "title": "NPC对话", "text": None, "controls": None}
         self.domains["interaction"].update(page=page, unavailable=["interaction_page_layout_not_supported"],
                                            not_covered=[], client={"container_id": "native-metadata"})
-        with patch("beidou_pilot.control_scripts.run_source") as run:
-            report = collect(self.backend)
-        run.assert_not_called()
+        report = collect(self.backend)
         self.assertEqual(page, report["interaction"]["page"])
         self.assertEqual(["interaction_page_layout_not_supported"], report["interaction"]["unavailable"])
         self.assertEqual([], report["interaction"]["not_covered"])
@@ -215,7 +185,7 @@ class SnapshotConsumerContract(unittest.TestCase):
                     text = format_snapshot(report)
                     self.assertIn("首转路线未知", text)
                     self.assertIn("魔法师8级", text)
-                    self.assertIn("hunt", text)
+                    self.assertIn("先完成转职", text)
 
 
 if __name__ == "__main__":

@@ -1,516 +1,117 @@
 schemaVersion: 1
 map:
   id: character-care
-  title: 角色养成与恢复
-  summary: 明确目标的加点、装备、药品、复活与快捷键维护。
+  title: 角色维护
+  summary: 原版 GUI 的装备、复活与快捷键维护，按实际变化核对结果；Lua 动作意图归动作领域。
 nodes:
-- id: character-care
-  kind: domain
-  name: 角色养成与恢复
-  summary: 按调用方明确目标进行角色加点、装备、恢复、复活与快捷键配置，并核对可观察变化；不替调用方选择长期养成路线。
-  aliases:
-  - 角色经营
-  - 角色维护
-  anchors:
-  - kind: document
-    value: docs/CLI.md
-    description: 养成、装备、药品和复活的当前使用契约。
-- id: character-care.growth
-  kind: capability
-  name: 指定角色养成
-  summary: 依据指定属性、技能和装备执行 GUI 操作，核对实际点数或装备变化。
-  aliases: []
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/stats.py
-    value: allocate_ap
-    description: 逐点核对 AP 和目标属性。
-  - kind: symbol
-    file: cli/beidou_pilot/stats.py
-    value: allocate_sp
-    description: 逐点核对 SP 和已学技能等级。
-- id: character-care.restoration
-  kind: capability
-  name: 资源恢复与死亡处理
-  summary: 按库存、HP/MP 目标和支持的恢复品进行有界使用，死亡时通过已识别 GUI 确认恢复。
-  aliases: []
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/items.py
-    value: use
-    description: 按物品种类选择恢复或传送路径并核对效果。
-  - kind: symbol
-    file: cli/beidou_pilot/recovery.py
-    value: revive
-    description: 只在已识别复活确认窗口点击一次并核对恢复。
-- id: character-care.allocate
-  kind: scenario
-  name: 按指定目标分配 AP 或 SP
-  summary: 每分配一点同时确认剩余点数减一与指定属性或技能等级加一；读数、技能列表或窗口定位未确认则停止。
-  aliases:
-  - 加点
-  - stats
-  - skills
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/stats.py
-    value: allocate_ap
-    description: 以剩余 AP 和目标属性双重读数确认每点分配。
-  - kind: symbol
-    file: cli/beidou_pilot/stats.py
-    value: allocate_sp
-    description: 以剩余 SP 和完整技能记录确认每点分配。
-- id: character-care.equip
-  kind: operation
-  name: 更换指定装备并读回
-  summary: 已装备时无操作返回；否则从普通背包装备，在已装备负槽位确认指定物品。
-  aliases: []
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/items.py
-    value: equip
-    description: 正常背包操作后确认指定装备出现在已装备槽位。
-- id: character-care.recover
-  kind: scenario
-  name: 按次数或目标使用恢复品
-  summary: 两端普通 200 类药品通过共享 Lua 原生用药，逐次确认库存恰减一及所需 HP/MP 增长；其他已支持恢复品与单张传送卷保留 GUI 背包路径。
-  aliases:
-  - 用药
-  - use
-  - 恢复HP
-  - 恢复MP
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/items.py
-    value: use
-    description: 选择支持的物品与路径，投影消耗、恢复或传送确认结果。
-  - kind: file
-    value: shared/scripts/recovery/recover.lua
-    description: 普通 200 类药品按当前身份和库存逐次确认消耗与恢复。
-- id: character-care.revive
-  kind: scenario
-  name: 确认死亡角色恢复
-  summary: 存活直接跳过；死亡时只在唯一已识别确认框点击一次，核对同角色 HP 为正且位置可用。
-  aliases:
-  - 复活
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/recovery.py
-    value: revive
-    description: 等待已识别死亡确认窗口并核对同角色恢复，不重复点击。
-- id: character-care.bind
-  kind: operation
-  name: 配置物品或技能快捷键
-  summary: 通过当前可见背包或已学技能拖放到已定位快捷栏，读回绑定表并确认拖拽结束；原生白名单与布局限制明确拒绝。
-  aliases:
-  - 快捷键绑定
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/hotkeys.py
-    value: _bind
-    description: 通过正常拖放设置绑定并读取原生键位表确认。
-- id: character-care.press
-  kind: operation
-  name: 使用已有快捷键
-  summary: 读取真实绑定并通过 Lua 发送一次普通按键，仅报告已派发；消耗或技能效果由对应业务观察确认。
-  aliases: []
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/hotkeys.py
-    value: press_bound
-    description: 读取已绑定按键并显式返回 effect_confirmed=false。
-- id: character-care.specified-growth
-  kind: invariant
-  name: 养成目标由调用方明确指定
-  summary: 工具按指定属性、技能、装备与数量执行；不自动制定职业路线或转职，不将未确认的分配作为可安全重试操作。
-  aliases: []
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/stats.py
-    value: allocate_ap
-    description: 按调用方指定属性和数量逐点执行。
-  - kind: symbol
-    file: cli/beidou_pilot/stats.py
-    value: allocate_sp
-    description: 按调用方指定技能和数量逐点执行。
-  - kind: document
-    value: AGENTS.md
-    description: 授权角色、不可逆养成及真实结果的操作约定。
-- id: character-care.confirmation
-  kind: invariant
-  name: 以实际变化确认角色维护结果
-  summary: 加点核对点数与目标值，装备核对槽位，用药核对消耗与所需恢复，复活核对同角色状态；派发成功不能替代效果。
-  aliases: []
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/items.py
-    value: use
-    description: 物品已消耗但恢复或转场未确认时停止后续使用。
-  - kind: symbol
-    file: cli/beidou_pilot/stats.py
-    value: allocate_ap
-    description: 点数与目标属性必须同时符合预期。
-- id: character-care.support-boundary
-  kind: invariant
-  name: 恢复共享而养成窗口限于 GUI
-  summary: 普通 200 类药品两端共享 Lua；无头仅支持此类药品，AP/SP、装备、复活和快捷键配置仍是原版 GUI 流程。按 HP/MP 目标使用需已知恢复类型。
-  aliases: []
-  anchors:
-  - kind: symbol
-    file: cli/beidou_pilot/items.py
-    value: use
-    description: 拒绝无头非普通药品及恢复类型未知的 HP/MP 目标。
-  - kind: symbol
-    file: cli/beidou_pilot/cli.py
-    value: dispatch
-    description: 无头入口明确拒绝 GUI 专属养成、装备与复活命令。
+  - id: character-care
+    kind: domain
+    name: 角色维护
+    summary: 为操作者在原版 GUI 中提供背包换装、死亡复活和快捷键绑定，并核对可观察变化；不替调用方选择养成路线，也不提供 AP/SP 自动分配或药品命令。
+    aliases: [角色经营, 角色维护, 养成]
+    anchors:
+      - kind: document
+        value: docs/CLI.md
+        description: 装备、复活和快捷键的当前使用契约。
+      - kind: document
+        value: docs/CLIENT_LIMITATIONS.md
+        description: 当前能力边界与已退役的自动养成入口。
+  - id: character-care.equip
+    kind: operation
+    name: 在 GUI 背包中更换装备
+    summary: 通过原版背包界面点击更换指定装备，随后读取已装备槽位确认物品；无头与 Lua 不提供该语义入口。
+    aliases: [equip, 换装]
+    anchors:
+      - kind: file
+        value: cli/beidou_pilot/items.py
+        description: 装备工作流与背包点击换装。
+      - kind: document
+        value: docs/CLI.md
+        description: equip 的 GUI 支持范围。
+  - id: character-care.bind
+    kind: operation
+    name: 配置物品或技能快捷键
+    summary: 通过当前可见背包或已学技能拖放到已定位快捷栏，读回绑定表并确认拖拽结束；原生白名单与布局限制明确拒绝。
+    aliases: [快捷键绑定, bind]
+    anchors:
+      - kind: file
+        value: cli/beidou_pilot/hotkeys.py
+        description: 快捷键读取、拖放绑定与原生键位表核对。
+      - kind: document
+        value: docs/CLI.md
+        description: hotkeys/bind 的命令边界。
+  - id: character-care.revive
+    kind: scenario
+    name: 确认死亡角色恢复
+    summary: 存活直接跳过；死亡时只在唯一已识别确认框点击一次，核对同角色 HP 为正且位置可用。
+    aliases: [复活, revive]
+    anchors:
+      - kind: file
+        value: cli/beidou_pilot/cli.py
+        description: revive 命令的 GUI 分派与无头明确拒绝。
+      - kind: document
+        value: docs/CLI.md
+        description: 复活的前提、一次确认和结果核对。
+  - id: character-care.confirmation
+    kind: invariant
+    name: 以实际变化确认角色维护结果
+    summary: 换装核对槽位，复活核对同角色状态；派发成功或窗口变化不能替代效果确认。
+    aliases: [槽位确认, 恢复确认]
+    anchors:
+      - kind: file
+        value: cli/beidou_pilot/snapshot.py
+        description: 观察当前角色、背包、装备与位置用于结果核对。
+      - kind: document
+        value: docs/CLI.md
+        description: 各维护动作的结果核对边界。
+  - id: character-care.support-boundary
+    kind: invariant
+    name: 角色维护入口限于原版 GUI
+    summary: 装备、复活与快捷键是 GUI CLI 的现有能力；无头端明确拒绝，Lua 只保留动作槽意图，不提供窗口、加点或药品命令。
+    aliases: [GUI专属, 能力边界]
+    anchors:
+      - kind: document
+        value: docs/ARCHITECTURE.md
+        description: 两端能力与命令支持范围。
+      - kind: document
+        value: docs/CLIENT_LIMITATIONS.md
+        description: 当前能力缺口与已退役入口。
 relations:
-- from: character-care.growth
-  type: part_of
-  to: character-care
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.restoration
-  type: part_of
-  to: character-care
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.allocate
-  type: part_of
-  to: character-care.growth
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.equip
-  type: part_of
-  to: character-care.growth
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.recover
-  type: part_of
-  to: character-care.restoration
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.revive
-  type: part_of
-  to: character-care.restoration
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.bind
-  type: part_of
-  to: character-care
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.press
-  type: part_of
-  to: character-care
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.specified-growth
-  type: part_of
-  to: character-care
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.confirmation
-  type: part_of
-  to: character-care
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.support-boundary
-  type: part_of
-  to: character-care
-  summary: 归属角色养成与恢复的相应责任。
-- from: character-care.allocate
-  type: invokes
-  to: world-interaction.windows
-  summary: 在已识别属性或技能窗口逐点分配。
-- from: character-care.allocate
-  type: invokes
-  to: game-observation.observe
-  summary: 读取剩余点数、属性及技能等级确认结果。
-- from: character-care.equip
-  type: invokes
-  to: world-interaction.windows
-  summary: 使用已确认的背包窗口操作装备。
-- from: character-care.equip
-  type: reads
-  to: game-observation.facts
-  summary: 比较装备背包和已装备槽位。
-- from: character-care.recover
-  type: invokes
-  to: script-execution.run
-  summary: 普通 200 类药品装载共享恢复 Lua 策略。
-- from: character-care.recover
-  type: invokes
-  to: world-interaction.windows
-  summary: 其他支持的 GUI 消费品使用背包窗口并处理收尾。
-- from: character-care.recover
-  type: invokes
-  to: world-interaction.focus
-  summary: GUI 用药前或收尾时按实际上下文恢复游戏焦点。
-- from: character-care.recover
-  type: invokes
-  to: game-resources.lookup
-  summary: 恢复目标类型与传送卷用途依赖已知静态物品资料。
-- from: character-care.recover
-  type: reads
-  to: game-observation.facts
-  summary: 核对本端角色、库存、HP/MP 及必要的转场结果。
-- from: character-care.revive
-  type: invokes
-  to: game-observation.observe
-  summary: 核对已识别确认框与同角色恢复状态。
-- from: character-care.bind
-  type: invokes
-  to: world-interaction.windows
-  summary: 通过当前背包或技能窗口定位拖放来源。
-- from: character-care.bind
-  type: invokes
-  to: game-observation.observe
-  summary: 读取真实快捷键表确认目标绑定。
-- from: character-care.press
-  type: invokes
-  to: script-execution.run
-  summary: 普通快捷键派发沿既有 Lua 执行链进行。
-- from: character-care.press
-  type: constrained_by
-  to: script-execution.effect-boundary
-  summary: 按键派发不表示物品或技能效果已确认。
-- from: character-care.allocate
-  type: constrained_by
-  to: character-care.specified-growth
-  summary: 只执行已指定的养成分配。
-- from: character-care.allocate
-  type: constrained_by
-  to: character-care.confirmation
-  summary: 逐点双重确认，未确认即停止。
-- from: character-care.equip
-  type: constrained_by
-  to: character-care.confirmation
-  summary: 指定物品须出现在已装备槽位。
-- from: character-care.recover
-  type: constrained_by
-  to: character-care.confirmation
-  summary: 每次消耗及所需效果均须核对。
-- from: character-care.revive
-  type: constrained_by
-  to: character-care.confirmation
-  summary: 一次确认后等待同角色恢复，未确认不重放。
-- from: character-care
-  type: constrained_by
-  to: character-care.support-boundary
-  summary: 按本端实际支持范围选择维护操作。
-- from: character-care.recover
-  type: constrained_by
-  to: game-observation.truth
-  summary: 库存或恢复事实未知时停止依赖这些事实的后续使用。
+  - {from: character-care.equip, type: part_of, to: character-care, summary: 装备更换归角色维护。}
+  - {from: character-care.bind, type: part_of, to: character-care, summary: 快捷键绑定归角色维护。}
+  - {from: character-care.revive, type: part_of, to: character-care, summary: 死亡复活归角色维护。}
+  - {from: character-care.confirmation, type: part_of, to: character-care, summary: 角色维护结果以实际变化确认。}
+  - {from: character-care.support-boundary, type: part_of, to: character-care, summary: 角色维护明确 GUI 专属支持范围。}
+  - {from: character-care.equip, type: reads, to: game-observation.facts, summary: 比较装备背包和已装备槽位。}
+  - {from: character-care.bind, type: reads, to: game-observation.facts, summary: 读取真实快捷键表确认目标绑定。}
+  - {from: character-care.revive, type: invokes, to: game-observation.observe, summary: 核对已识别确认框与同角色恢复状态。}
+  - {from: character-care.revive, type: reads, to: game-observation.facts, summary: 复活前后读取角色 HP 与位置。}
+  - {from: character-care.equip, type: constrained_by, to: character-care.confirmation, summary: 指定物品须出现在已装备槽位。}
+  - {from: character-care.bind, type: constrained_by, to: character-care.confirmation, summary: 绑定结果以重新读取的键位表为准。}
+  - {from: character-care.revive, type: constrained_by, to: character-care.confirmation, summary: 一次确认后等待同角色恢复，未确认不重放。}
+  - {from: character-care, type: constrained_by, to: character-care.support-boundary, summary: 按本端实际支持范围选择维护操作。}
 flows:
-- id: character-care.allocate.flow
-  name: 逐点执行并确认养成分配
-  summary: 按指定目标逐点提交；未确认时保留已发生结果，停止后续分配。
-  scenario: character-care.allocate
-  startsAt: read
-  steps:
-  - id: read
-    kind: action
-    name: 读取指定目标与可用点数
-    summary: 核对本次属性或技能、数量、当前角色与剩余点数。
-    concept: character-care.allocate
-  - id: eligible
-    kind: decision
-    name: 目标及点数是否可用
-    summary: 检查点数足够、读数有效，技能分配还要求完整技能记录和可定位技能。
-  - id: refuse
-    kind: outcome
-    name: 分配前拒绝
-    summary: 缺少点数、读数或可确认目标，不继续分配。
-  - id: point
-    kind: action
-    name: 在当前窗口分配一点
-    summary: 使用已识别属性或技能窗口提交当前一点。
-    concept: character-care.allocate
-  - id: confirmed
-    kind: decision
-    name: 点数与目标值是否同时变化
-    summary: 要求剩余点数减一且指定属性或技能等级加一。
-    concept: character-care.confirmation
-  - id: unknown
-    kind: outcome
-    name: 本点效果未确认
-    summary: 返回已确认数量及实际读数，停止后续分配。
-  - id: remaining
-    kind: decision
-    name: 本次指定数量是否完成
-    summary: 仅在上一点已经双重确认后决定下一点。
-  - id: done
-    kind: outcome
-    name: 指定分配已确认
-    summary: 返回已分配数量及点数和目标值的前后变化。
-  transitions:
-  - from: read
-    to: eligible
-  - from: eligible
-    to: refuse
-    when: 条件缺失或点数不足
-  - from: eligible
-    to: point
-    when: 目标与点数可用
-  - from: point
-    to: confirmed
-  - from: confirmed
-    to: unknown
-    when: 任一变化未确认
-  - from: confirmed
-    to: remaining
-    when: 点数和目标值同时符合预期
-  - from: remaining
-    to: point
-    when: 仍有指定点数待分配
-  - from: remaining
-    to: done
-    when: 指定数量全部确认
-- id: character-care.recover.flow
-  name: 使用恢复品并逐次核对
-  summary: 按本端支持与目标选择执行路径；停止条件与效果未确认分别报告。
-  scenario: character-care.recover
-  startsAt: inspect
-  steps:
-  - id: inspect
-    kind: action
-    name: 读取角色库存和物品用途
-    summary: 核对物品、数量、目标与预算；按目标恢复需要已知恢复类型。
-    concept: character-care.recover
-  - id: supported
-    kind: decision
-    name: 本次用途是否支持
-    summary: 检查后端、物品类型、目标范围；传送卷仅接受单张且不接受 HP/MP 目标。
-    concept: character-care.support-boundary
-  - id: refused
-    kind: outcome
-    name: 使用前拒绝
-    summary: 用途不支持或依赖的资料与读数缺失。
-  - id: needed
-    kind: decision
-    name: 是否需要继续一次使用
-    summary: 核对目标已达、资源已满、次数、库存与剩余预算。
-  - id: done
-    kind: outcome
-    name: 返回实际停止原因
-    summary: 目标已达、资源已满、次数完成、库存耗尽或预算结束。
-  - id: method
-    kind: decision
-    name: 选择已支持的使用方式
-    summary: 普通 200 类药品两端走共享 Lua，其他支持消费品走原版 GUI。
-  - id: lua
-    kind: action
-    name: 原生 Lua 使用普通药品
-    summary: 在当前角色身份和场景中派发一次普通用药。
-    concept: script-execution.run
-  - id: gui
-    kind: action
-    name: 背包使用支持的消费品
-    summary: 使用当前确认槽位；传送卷只提交一次。
-    concept: character-care.recover
-  - id: confirmed
-    kind: decision
-    name: 消耗及所需效果是否确认
-    summary: 库存须恰减一；按用途核对所需 HP/MP 增长或同角色地图、位置变化。
-    concept: character-care.confirmation
-  - id: unknown
-    kind: outcome
-    name: 效果未确认并停止
-    summary: 保留消耗和状态事实，不重放已发生或未知的效果。
-  - id: recheck
-    kind: action
-    name: 读取新状态再判断
-    summary: 普通恢复重新核对是否仍需使用；已确认传送返回本次结果。
-    concept: character-care.recover
-  transitions:
-  - from: inspect
-    to: supported
-  - from: supported
-    to: refused
-    when: 不支持或必要事实缺失
-  - from: supported
-    to: needed
-    when: 本次用途与事实可用
-  - from: needed
-    to: done
-    when: 已满足停止条件
-  - from: needed
-    to: method
-    when: 仍需一次支持的使用
-  - from: method
-    to: lua
-    when: 普通 200 类药品
-  - from: method
-    to: gui
-    when: GUI 的其他已支持消费品
-  - from: lua
-    to: confirmed
-  - from: gui
-    to: confirmed
-  - from: confirmed
-    to: unknown
-    when: 消耗或所需效果未确认
-  - from: confirmed
-    to: recheck
-    when: 消耗与所需效果均确认
-  - from: recheck
-    to: needed
-- id: character-care.revive.flow
-  name: 一次确认并等待角色恢复
-  summary: 存活跳过，死亡时仅操作已识别确认框，不重复提交。
-  scenario: character-care.revive
-  startsAt: read
-  steps:
-  - id: read
-    kind: action
-    name: 读取当前角色状态
-    summary: 要求角色及其原生读数可用。
-    concept: character-care.revive
-  - id: alive
-    kind: decision
-    name: 角色是否存活
-    summary: 检查当前 HP 是否为正。
-  - id: skip
-    kind: outcome
-    name: 角色已存活
-    summary: 无需复活，changed=false。
-  - id: window
-    kind: decision
-    name: 死亡确认框能否唯一识别
-    summary: 等待已识别窗口并核对唯一确认按钮和已验布局。
-  - id: refused
-    kind: outcome
-    name: 未发送复活确认
-    summary: 角色读数或确认窗口不能用于本次操作。
-  - id: confirm
-    kind: action
-    name: 点击一次确认
-    summary: 只向已识别复活窗口提交一次确认。
-    concept: character-care.revive
-  - id: restored
-    kind: decision
-    name: 同角色是否恢复
-    summary: 在期限内核对同一角色 HP 为正且位置可用。
-  - id: done
-    kind: outcome
-    name: 复活已确认
-    summary: 返回恢复后的本端状态。
-  - id: unknown
-    kind: outcome
-    name: 恢复未确认
-    summary: 身份变化或恢复未确认时停止，不重复点击。
-  transitions:
-  - from: read
-    to: alive
-  - from: alive
-    to: skip
-    when: 角色存活
-  - from: alive
-    to: window
-    when: 角色死亡
-  - from: window
-    to: refused
-    when: 窗口或布局未确认
-  - from: window
-    to: confirm
-    when: 唯一已识别确认框可用
-  - from: confirm
-    to: restored
-  - from: restored
-    to: done
-    when: 同角色恢复已确认
-  - from: restored
-    to: unknown
-    when: 身份变化或恢复未确认
+  - id: character-care.revive.flow
+    name: 一次确认并等待角色恢复
+    summary: 存活跳过，死亡时仅操作已识别确认框，不重复提交。
+    scenario: character-care.revive
+    startsAt: read
+    steps:
+      - {id: read, kind: action, name: 读取当前角色状态, summary: 要求角色及其原生读数可用。, concept: character-care.revive}
+      - {id: alive, kind: decision, name: 角色是否存活, summary: 检查当前 HP 是否为正。}
+      - {id: skip, kind: outcome, name: 角色已存活, summary: 无需复活，changed=false。}
+      - {id: window, kind: decision, name: 死亡确认框能否唯一识别, summary: 等待已识别窗口并核对唯一确认按钮和已验布局。}
+      - {id: refused, kind: outcome, name: 未发送复活确认, summary: 角色读数或确认窗口不能用于本次操作。}
+      - {id: confirm, kind: action, name: 点击一次确认, summary: 只向已识别复活窗口提交一次确认。, concept: character-care.revive}
+      - {id: restored, kind: decision, name: 同角色是否恢复, summary: 在期限内核对同一角色 HP 为正且位置可用。}
+      - {id: done, kind: outcome, name: 复活已确认, summary: 返回恢复后的本端状态。}
+      - {id: unknown, kind: outcome, name: 恢复未确认, summary: 身份变化或恢复未确认时停止，不重复点击。}
+    transitions:
+      - {from: read, to: alive}
+      - {from: alive, to: skip, when: 角色存活}
+      - {from: alive, to: window, when: 角色死亡}
+      - {from: window, to: refused, when: 窗口或布局未确认}
+      - {from: window, to: confirm, when: 唯一已识别确认框可用}
+      - {from: confirm, to: restored}
+      - {from: restored, to: done, when: 同角色恢复已确认}
+      - {from: restored, to: unknown, when: 身份变化或恢复未确认}

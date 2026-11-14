@@ -70,7 +70,7 @@ class WorkbenchBuildContract(unittest.TestCase):
         self.entry = self.repository / "private/workbenches/workbench"
         self.entry.parent.mkdir(parents=True)
         shutil.copyfile(source / "private/workbenches/workbench", self.entry)
-        self.native = self.repository / "shared/lua-runtime/Runtime.cpp"
+        self.native = self.repository / "shared/lua-runtime/TickRuntime.cpp"
         self.native.parent.mkdir(parents=True)
         self.native.write_text("native version one\n")
         self.dockerfile = self.repository / "docker/headless/Dockerfile"
@@ -79,7 +79,7 @@ class WorkbenchBuildContract(unittest.TestCase):
         self.git("init", "--initial-branch=main")
         self.git("config", "user.name", "Build contract")
         self.git("config", "user.email", "build-contract@example.invalid")
-        self.git("add", "private/workbenches/workbench", "shared/lua-runtime/Runtime.cpp", "docker/headless/Dockerfile")
+        self.git("add", "private/workbenches/workbench", "shared/lua-runtime/TickRuntime.cpp", "docker/headless/Dockerfile")
         self.git("commit", "-m", "fixture source")
         self.revision = self.git("rev-parse", "HEAD")
         self.workbench = self.directory / "workbench"
@@ -164,7 +164,7 @@ class WorkbenchBuildContract(unittest.TestCase):
         self.assertEqual(manifest, report["data"]["preparation"]["bridge"]["manifest"])
         self.assertEqual("image", report["data"]["preparation"]["bridge"]["source"])
         self.native.write_text("native version two\n")
-        self.git("add", "shared/lua-runtime/Runtime.cpp")
+        self.git("add", "shared/lua-runtime/TickRuntime.cpp")
         self.git("commit", "-m", "change native input")
         settings["ref"] = self.git("rev-parse", "HEAD")
         failed, report = self.build(settings)

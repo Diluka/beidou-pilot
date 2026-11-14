@@ -76,7 +76,7 @@ void Prepare(SharedLuaAdapter& host) {
 
 void Consume(SharedLuaAdapter& host, std::uint64_t tick) {
     ms::Stage::get().update();
-    host.Tick(tick, false);
+    host.Tick(tick);
 }
 
 void FinishAnimation() {
@@ -247,8 +247,7 @@ void Potions(SharedLuaAdapter& host) {
 
 void Provenance(SharedLuaAdapter& host) {
     auto& adapter = host.tickAdapter;
-    auto& stage = ms::Stage::get();
-    auto& combat = stage.get_combat();
+    auto& combat = ms::Stage::get().get_combat();
     std::string error;
     Check(adapter.SetActionIntent(Attack(SkillA), error), error);
     Check(combat.use_move(SkillA) == ms::SpecialMove::FBR_NONE, "direct_native_move_starts");
@@ -261,32 +260,15 @@ void Provenance(SharedLuaAdapter& host) {
     FinishAnimation();
     adapter.Advance(2, false);
 
+    // Only the action this tick owner actually started carries its session.
     Check(adapter.SetActionIntent(Attack(SkillB), error), error);
-    MapleControl::Action movement;
-    movement.kind = MapleControl::ActionKind::Move;
-    movement.direction = "right";
-    movement.durationMs = 100;
-    Check(host.Begin(movement, error), error);
-    host.Release();
     Consume(host, 3);
     Check(adapter.Result().dispatched && adapter.ActiveAction()
               && adapter.ActiveAction()->sessionId == "native-contract",
-          "coroutine_release_does_not_clear_the_tick_semantic_skill_hold");
+          "native_consumer_starts_the_current_tick_held_skill");
     adapter.ReleaseAction();
     FinishAnimation();
     adapter.Advance(4, false);
-
-    Check(adapter.SetActionIntent(Attack(), error), error);
-    Check(host.Begin(Attack(), error), error);
-    Consume(host, 5);
-    Check(adapter.ActiveAction() && adapter.ActiveAction()->sessionId.empty() && !adapter.Result().dispatched,
-          "shared_ordinary_key_does_not_fabricate_an_exclusive_tick_owner");
-    host.Release();
-    Check(stage.get_player().is_key_down(ms::KeyAction::ATTACK),
-          "coroutine_release_preserves_tick_physical_hold_at_the_union_boundary");
-    adapter.ReleaseAction();
-    FinishAnimation();
-    adapter.Advance(6, false);
 }
 
 void Lifecycle(SharedLuaAdapter& host) {

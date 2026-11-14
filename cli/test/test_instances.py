@@ -12,7 +12,6 @@ from unittest.mock import patch
 from beidou_pilot.backend import Backend
 from beidou_pilot.bridge import BridgeClient
 from beidou_pilot.cli import control, main
-from beidou_pilot.control_scripts import action
 from beidou_pilot.errors import ClientError
 from beidou_pilot.instances import InstancePaths
 from beidou_pilot.observations import NativeObserver
@@ -51,32 +50,25 @@ class InstanceContract(unittest.TestCase):
         code, report = self.cli("--instance", "../peer", "status")
         self.assertEqual((2, "invalid_instance"), (code, report["error"]["code"]))
         batch = self.files.root / "batch.json"
-        batch.write_text(json.dumps([["--instance", "beta", "walk", "right"]]))
+        batch.write_text(json.dumps([["--instance", "beta", "status"]]))
         code, report = self.cli("batch", "--file", str(batch))
         self.assertEqual((2, "usage"), (code, report["error"]["code"]))
 
-    def test_containers_share_lua_actions_with_separate_input_locks_and_bridges(self) -> None:
+    def test_containers_keep_separate_input_locks_and_bridges(self) -> None:
         peer = self.instance("beta")
         alpha = Backend(self.files.root, "headless", "alpha")
         with patch.dict(os.environ, peer.environment):
             beta = Backend(peer.root, "headless", "beta")
-        with control(alpha, "walk"), control(beta, "face"):
+        with control(alpha, "script"), control(beta, "script"):
             with self.assertRaises(ClientError) as busy:
-                with control(alpha, "attack"):
+                with control(alpha, "script"):
                     self.fail("同一实例不能同时接受两个输入控制者")
         self.assertEqual("input_busy", busy.exception.code)
-        calls = []
-
-        def execute(bridge, source, *, seconds):
-            calls.append((bridge.directory, source.read_text()))
-            return {"last_state": self.files.state if bridge.root == self.files.root else peer.state}
-
-        with patch.object(BridgeClient, "run_script", autospec=True, side_effect=execute):
-            action(alpha, "move", direction="right", seconds=0.2)
-            with patch.dict(os.environ, peer.environment):
-                action(beta, "face", direction="left")
-        self.assertEqual([self.files.directory, peer.directory], [directory for directory, _ in calls])
         self.assertNotEqual(alpha.paths.input_lock, beta.paths.input_lock)
+        self.assertNotEqual(
+            BridgeClient(alpha.root, alpha.name, alpha.instance).directory,
+            BridgeClient(beta.root, beta.name, beta.instance).directory,
+        )
 
     def test_container_close_directs_to_host_lifecycle_even_while_lua_owns_input(self) -> None:
         backend = Backend(self.files.root, "headless", "alpha")
@@ -110,7 +102,8 @@ class InstanceContract(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertFalse(report["data"]["connected"])
         self.assertIsNone(report["data"]["native_actions"])
-        self.files.state["capabilities"] = {"move": True, "raw_keys": False, "skill": False}
+        self.files.state["capabilities"] = {"move": True, "jump": True, "attack": True, "pickup": True,
+                                            "use_item": True, "stop": True, "skill": True}
         self.files.publish()
         code, report = self.cli("capabilities")
         self.assertEqual(0, code)

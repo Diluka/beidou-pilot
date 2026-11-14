@@ -12,8 +12,8 @@ harness/                        容器内模型会话、角色上下文与专用
 headless/                       无头原生宿主和适配器
 beidou-ijl15/                   原版客户端 DLL 工程和适配器
 shared/
-  lua-runtime/                  两端共用的 C++ Lua 调度与 game API
-  scripts/                      随镜像固定的公共 Lua 策略和示例
+  lua-runtime/                  两端共用的 tick Lua 调度、领域观察与动作槽
+  scripts/                      随镜像固定的 tick 示例
 third_party/                    上游依赖
 ```
 
@@ -68,7 +68,7 @@ private/workbenches/workbench /external/workbench close
 
 只给目录时默认执行只读的 `status`；`--list` 列出主检出 `private/workbenches/` 下已有的工作目录，`notes` 读取指定目录的计划和交接。需要先准备镜像时使用同一入口的 `build`。离线 IMG 检查使用 `resources-check`，不登录游戏。
 
-新实例默认取 `main` 当时的已提交版本构建或复用镜像；后端、开发 `ref`、等待期限和可选桥工件在工作目录内配置，不通过宿主命令行覆盖。已有实例的命令继续使用其已登记容器，运行中的 CLI 与内置策略保持启动时的版本；修改新建设置或更新 `main` 后，新实例再按新版本构建。实际版本查 `status` 的 `source_revision/image/run_id`。
+新实例默认取 `main` 当时的已提交版本构建或复用镜像；后端、开发 `ref`、等待期限和可选桥工件在工作目录内配置，不通过宿主命令行覆盖。已有实例的命令继续使用其已登记容器，运行中的 CLI 与内置 Lua 保持启动时的版本；修改新建设置或更新 `main` 后，新实例再按新版本构建。实际版本查 `status` 的 `source_revision/image/run_id`。
 
 日常命令经宿主入口转到所属容器内的 `beidou-pilot`。核对容器归属后也可只读排查：`docker exec CONTAINER beidou-pilot --json status`。脚本 CLI 中断只结束等待，已发布的原生任务继续；等待超时或观察失败时，任务是否停止以当前脚本状态为准。先读当前脚本状态，明确取消用 `script cancel --session`，核对终态和放键；`close` 另行关闭并回收所属容器。Lua 返回或取消后实例继续运行，真实断线或错误会保留退出原因。完整参数见 [CLI](docs/CLI.md)。
 
@@ -82,8 +82,8 @@ private/workbenches/workbench /external/workbench close
 - [客户端操作技能](.agents/skills/beidou-pilot-client/SKILL.md)：供新会话接续工作台、登录已有角色，并区分账号注册与首次建角；可显式调用 `$beidou-pilot-client`。
 - [游戏 AI harness](docs/HARNESS.md)：隔离 Codex、角色上下文、游戏工具与开发 AI 协作。
 - [命令使用](docs/CLI.md)：实例、观察、动作、GUI 入口和错误结果。
-- [Lua API 导航](docs/LUA_API.md)：按引擎选择 [coroutine API](docs/LUA_COROUTINE_API.md) 或 [tick API](docs/LUA_TICK_API.md)，两份文档分别说明状态、动作、参数、返回值与执行语义。
-- [Lua 脚本目录说明](shared/scripts/README.md)：内置旅行、战斗、恢复策略及示例的用途、调用入口和弃用标记。
+- [Lua API 导航](docs/LUA_API.md)：指向 [tick API](docs/LUA_TICK_API.md)，说明入口、档位、只读领域、动作槽、参数、返回值与执行语义。
+- [Lua 示例目录说明](shared/scripts/README.md)：随镜像固定的 tick 示例及其运行方式。
 - [Lua 与控制协议](docs/CONTROL.md)：脚本、控制权、取消和效果边界。
 - [架构与支持范围](docs/ARCHITECTURE.md)：代码职责、外部资源、两端能力和限制。
 - [客户端能力边界与缺口索引](docs/CLIENT_LIMITATIONS.md)：实际使用成本、已入池用户结果和已有能力的适用范围。

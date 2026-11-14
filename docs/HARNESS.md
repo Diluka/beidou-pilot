@@ -46,10 +46,10 @@ private/workbenches/workbench /external/workbench ai \
 
 | 工具 | 只读合同 |
 | --- | --- |
-| `game_observe` | 读取当前 status、原生身份、已有 script/command、持键/动作及新鲜 snapshot；未运行与未知事实照实返回 |
-| `game_script_status` | 读取 Lua、任务、控制权及持键，只返回当前状态 |
+| `game_observe` | 读取当前 status、原生身份、已有 script/command、控制释放及新鲜 snapshot；未运行与未知事实照实返回 |
+| `game_script_status` | 读取 Lua 会话、控制释放及持键，只返回当前状态 |
 
-只读模式只观察，其他操作者的执行保持原状。模型进程锁和状态目录锁保护模型会话，角色与脚本控制权以当前原生状态为准。普通模式重新接入时先读取当前脚本、任务和输入归属；已有执行继续有效，恢复 LLM 后继续观察即可。
+只读模式只观察，其他操作者的执行保持原状。模型进程锁和状态目录锁保护模型会话，角色与脚本控制权以当前原生状态为准。普通模式重新接入时先读取当前脚本、控制归属与输入状态；已有执行继续有效，恢复 LLM 后继续观察即可。
 
 两种模式都保留 Codex 原生 `request_user_input`，真正缺少选择或越界决策时经专用通道询问；运行环境只启用模型协作需要的配置。
 
@@ -74,9 +74,9 @@ stdin 接收 JSONL，stdout 输出带事件与时间的 JSONL；每个命令可�
 
 `task` 更新模型目标和检查点，`message` 补充事实或询问；运行中的消息经 `turn/steer` 进入当前 turn，空闲时在同一 thread 开启下一轮，暂停时等待恢复。改目标时已启动 Lua 继续运行；需要停止脚本时，先核对当前 `script.id`，再明确执行 `script cancel --session SCRIPT_ID` 并确认结果。
 
-`pause/stop` 只中断并确认当前 LLM turn，后台 shell、Lua 与客户端保持运行。客户端与已提交的独立脚本继续运行；要改变游戏执行，仍需对当前任务发出明确的客户端命令。
+`pause/stop` 只中断并确认当前 LLM turn，后台 shell、Lua 与客户端保持运行。客户端与已提交的独立脚本继续运行；要改变游戏执行，仍需显式停止脚本或关闭客户端。
 
-`resume` 复用仍活的 app-server 和原 thread，先观察当前角色、脚本会话、任务和控制权。重新接入已有执行时同样先观察，核对当前 `script.id` 后按现状续接。脚本是否停止或角色是否放键以当前 CLI 读取的原生状态为准，`status.lua_running=null` 只表示 harness 未观察到运行中的脚本。
+`resume` 复用仍活的 app-server 和原 thread，先观察当前角色、脚本会话和控制状态。重新接入已有执行时同样先观察，核对当前 `script.id` 后按现状续接。脚本是否停止或角色是否放键以当前 CLI 读取的原生状态为准，`status.lua_running=null` 只表示 harness 未观察到运行中的脚本。
 
 | 操作意图 | 明确命令与确认 |
 | --- | --- |
@@ -94,7 +94,7 @@ stdin 接收 JSONL，stdout 输出带事件与时间的 JSONL；每个命令可�
 
 离线构建及完整测试命令集中在 [CI](CI.md#本地复现)。`Game AI harness contract` 从无头客户端派生镜像，验证镜像内 CLI/技能、真实 Codex 到无认证假 Responses 端点的 shell、技能、只读工具、询问和线程恢复合同，全程使用离线假端点。
 
-独立启停边界的验收覆盖 headless 与 GUI：在无 LLM 时启动原生脚本；LLM 退出及重新接入后，同一 `script.id` 和已有任务继续；重新接入只观察，已有执行继续原样运行。显式脚本取消放键与客户端关闭分别核对，模型侧使用既有无认证离线合同。对应镜像、提交和实际脚本证据分别记录；模型质量、token、决策延迟和询问功能按相关需求另行验证。
+独立启停边界的验收覆盖 headless 与 GUI：在无 LLM 时启动原生脚本；LLM 退出及重新接入后，同一 `script.id` 继续；重新接入只观察，已有执行继续原样运行。显式脚本取消放键与客户端关闭分别核对，模型侧使用既有无认证离线合同。对应镜像、提交和实际脚本证据分别记录；模型质量、token、决策延迟和询问功能按相关需求另行验证。
 
 ## 向已有 SSH Codex 会话投递客户端事件
 
@@ -123,7 +123,7 @@ uv pip install --python /private/game-events/venv/bin/python -r harness/requirem
 
 默认 `--delivery steer` 在活跃回合使用 `turn/steer`，空闲时直接 `turn/start`。显式选择 `--delivery interrupt` 时，先中断当前模型回合，等待匹配的 `turn/completed`，再启动事件处理回合。该选项会打断目标聊天正在处理的工作，只用于明确授权的专用控制会话。
 
-消费者只调度模型，游戏侧操作分别由各自的显式命令完成。`script run/start` 的 CLI 中断只结束等待，已发布的原生任务继续运行；等待超时或观察失败后先核对当前脚本与任务，再决定后续。需要停止脚本时明确 `script cancel --session` 并确认终态和放键，关闭客户端另用 `close`。停止本监听器只关闭它自己的只读 watcher 与 daemon 连接。
+消费者只调度模型，游戏侧操作分别由各自的显式命令完成。`script run/start` 的 CLI 中断只结束等待，已发布的原生脚本继续运行；等待超时或观察失败后先核对当前脚本，再决定后续。需要停止脚本时明确 `script cancel --session` 并确认终态和放键，关闭客户端另用 `close`。停止本监听器只关闭它自己的只读 watcher 与 daemon 连接。
 
 stdout 的 `event_delivered` 区分事件观察到接口受理的时间、投递调度耗时、目标 thread/turn 和实际使用的 RPC；`effect="unknown"` 表示尚未核对游戏效果。接口受理表示通知已送达模型，模型理解与决策时点以后续回合为准。收到通知后先用 `notifications read` 读取当前引用和真实按钮；确有明确操作意图时使用 `notifications respond REF --button CONTROL_ID`，按钮范围以当前读取结果为准。信息类气泡可以只记录；未知 `kind` 保持未知。渲染正文尚未真实读取时 `text=null`，观察明确报告 `not_covered=["rendered_body_text"]`，正文以实际读取结果为准。
 

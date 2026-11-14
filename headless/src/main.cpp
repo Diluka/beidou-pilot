@@ -130,7 +130,7 @@ int main(int argc, char** argv)
             {
                 ms::Stage::get().update();
                 ++tick;
-                bridge.Tick(tick, false);
+                bridge.Tick(tick);
                 next_tick += std::chrono::milliseconds(ms::Constants::TIMESTEP);
             }
             const auto& phase = ms::login_state().phase;

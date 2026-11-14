@@ -40,17 +40,18 @@ private/workbenches/workbench /external/workbench snapshot
 
 先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`。`capabilities.native_actions` 来自有效在线桥；领域响应中的支持状态、来源与时效分别判断，未知保持未知。无头任务支持正常增量，原始进度串及关联语义按原样保留。
 
-在已确认安全区域选择一项有界动作并比较前后事实。下面仅适用于已核实右侧可安全短移的场景：
+在已确认安全区域选择一项有界 tick 动作并比较前后事实。仓库示例 [tick-jump-attack.lua](../shared/scripts/examples/tick-jump-attack.lua) 是可复用的有界移动跳砍脚本；仅需短移时写一个设置 `player.move`、在 `context.tick.time` 到达期限后清方向并返回 `done` 的 tick 文件。下面按示例运行，须先核实该方向有足够空间且没有其他脚本控制角色：
 
 ```bash
-private/workbenches/workbench /external/workbench walk right --seconds 0.2
+private/workbenches/workbench /external/workbench script describe /opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua
+private/workbenches/workbench /external/workbench script run /opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua --direction right --seconds 5
 private/workbenches/workbench /external/workbench snapshot
 private/workbenches/workbench /external/workbench script status
 ```
 
 按真实位置判断移动，按经验/等级判断成长，按库存和 HP/MP 判断恢复，按槽位变化判断换装。请求受理、输入派发、脚本完成与放键是分别可观察的事实，命中、拾取或任务完成另行核对。消费、交易、奖励、加点等结果不明时先观察，不可逆操作按一次执行处理；成长决策延续已核实的养成计划。
 
-持续策略写 Lua。宿主入口转发 `script run --code CODE --seconds N`，或读取容器路径中的 UTF-8 文件；工作台内的 `scripts/` 直接位于 `/work/scripts`，例如 `script run /work/scripts/control.lua --seconds 20`。文件与源码二选一，持续模式须明确 `--continuous`。内置 Lua 随镜像固定，用户提交的 Lua 是本次明确输入，可在已有实例中更新。维护公共策略前阅读 [shared/scripts/AGENTS.md](../shared/scripts/AGENTS.md)，写脚本查 [Lua API](LUA_API.md)。
+角色动作与持续策略都写 tick Lua。宿主入口转发 `script run FILE --seconds N`；工作台内的 `scripts/` 直接位于 `/work/scripts`，例如 `script run /work/scripts/control-tick.lua --seconds 20`。持续模式须明确 `--continuous`，文件须含顶层 `main(context)`，脚本入口只有文件。内置 Lua 与 tick 示例随镜像固定，用户提交的 Lua 是本次明确输入，可在已有实例中更新。维护示例前阅读 [shared/scripts/AGENTS.md](../shared/scripts/AGENTS.md)，写脚本查 [Tick Lua API](LUA_TICK_API.md)。
 
 同层移动、单根绳梯和门户都有场景前提。缺能力或静态资料时按实际错误与[缺口索引](CLIENT_LIMITATIONS.md)处理，未知事实保留原样。
 
@@ -79,7 +80,7 @@ docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop s
 
 `script run` 的同步等待或 `script start` 的受理等待收到 Ctrl+C、SIGINT 或 SIGTERM 时，宿主薄入口向该次容器内 CLI 转发信号，只结束等待，已受理脚本继续运行。等待超时或观察失败只结束 CLI 等待，任务是否停止以当前脚本状态为准。中断或失败后先用 `script status` 观察当前任务及 `script.id`，核对受理和执行事实后再决定后续；Lua 执行期限及原生停止规则仍由 Runtime 处理。
 
-需要停止脚本时按当前 `script.id` 显式 `script cancel --session SCRIPT_ID`，核对终态和放键后再交接；客户端关闭另用 `close`。harness 的 `pause/stop` 只管理 LLM 会话，客户端和脚本继续运行；重新接入先观察已有任务。详情见 [控制协议](CONTROL.md#控制权期限与取消)和 [harness 协作](HARNESS.md#开发-ai-的协作通道)。
+需要停止脚本时按当前 `script.id` 显式 `script cancel --session SCRIPT_ID`，核对终态和放键后再交接；客户端关闭另用 `close`。harness 的 `pause/stop` 只管理 LLM 会话，客户端和脚本继续运行；重新接入先观察已有脚本与 `script.id`。详情见 [控制协议](CONTROL.md#控制权期限与取消)和 [harness 协作](HARNESS.md#开发-ai-的协作通道)。
 
 ```bash
 private/workbenches/workbench /external/workbench script status
@@ -89,6 +90,6 @@ private/workbenches/workbench /external/workbench close
 private/workbenches/workbench /external/workbench status
 ```
 
-取消后核对同一原生身份下的终态和 `held_keys=[]`；有惯性或动画时继续观察。空闲遗留控制可用 `stop`，活动控制者的控制权保持。短脚本结束保留客户端；宿主 `close` 才经 Docker 正常关闭、核实退出并回收。容器内 `close` 会提示使用宿主生命周期入口。危险区域结束有界执行后，先进入已验证安全位置或关闭所属实例，再长时间分析。
+取消后核对同一原生身份下的终态与 `control_released`；全局 `held_keys` 仍可能包含其他会话的合法持键，有惯性或动画时继续观察。需要停止全部会话并释放按键时用 `stop` 或 `bridge stop`；正常交接只取消自己的 `script.id`。短脚本结束保留客户端；宿主 `close` 才经 Docker 正常关闭、核实退出并回收。容器内 `close` 会提示使用宿主生命周期入口。危险区域结束有界执行后，先进入已验证安全位置或关闭所属实例，再长时间分析。
 
 交接保留账号角色的计划、实际进度、下一步、所用源码/镜像/桥版本与必要证据引用。公开记录只给无私密结论。离线检查、构建、入图、移动、战斗和恢复分别报告，各端结果按本端真实结果记录。
