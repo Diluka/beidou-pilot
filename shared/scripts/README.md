@@ -1,8 +1,8 @@
 # 共享 Lua 脚本
 
-这里保存随客户端镜像固定的 tick 脚本示例，供 headless 与 GUI 客户端使用。客户端只有一套 tick 引擎，示例统一按 tick 执行、无需声明引擎，只在前导注释按需声明 `@tick.*`。旧的内置策略及其函数库已移除。各示例用途见下表，公共接口以 [Tick Lua API](../../docs/LUA_TICK_API.md) 为准。
+这里保存随客户端镜像固定的 Lua 资产，供 headless 与 GUI 客户端使用：`examples/` 是 tick 示例，`tick/travel/` 是通用跨图旅行策略包。客户端只有一套 tick 引擎，两者统一按 tick 执行、无需声明引擎，只在前导注释按需声明 `@tick.*`。旧的内置策略及其函数库已移除。示例用途见下表，旅行包见[跨图旅行策略包](#跨图旅行策略包ticktravel)；公共接口以 [Tick Lua API](../../docs/LUA_TICK_API.md) 为准。
 
-示例不由内置策略自动加载，阅读或试用时按用途显式选择。示例会实际移动、跳跃、消耗 MP 或普攻，运行前确认角色、场景和操作者，并按实际游戏结果核对。
+示例与旅行包都不由内置策略自动加载，阅读或试用时按用途显式选择。示例会实际移动、跳跃、消耗 MP 或普攻；旅行包会真实寻路、跳跃并可能用药。运行前确认角色、场景和唯一操作者，并按实际游戏结果核对。
 
 ## 示例：`examples/`
 
@@ -49,9 +49,37 @@ private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
 
 可以从这个结构扩展更多阶段，不要加入阻塞等待或 `game.sleep()` 等旧接口。tick 多会话共享 player，同客户端其他会话可能覆盖方向；初学试用只运行这一份动作示例。完整契约见 [tick API](../../docs/LUA_TICK_API.md#tick-环境)。
 
+## 跨图旅行策略包：`tick/travel/`
+
+`tick/travel/` 是随镜像固定的目录脚本包，用于「声明目的地后跨图移动」的参考实现。由 CLI `travel` 查询跨图路线并注入 `context.route/context.goal` 后运行；普通 `script run/start` 不注入路线与目标，脚本会以 `route_unavailable` 明确失败，不伪造路线。
+
+| 文件 | 职责 |
+| --- | --- |
+| [main.lua](tick/travel/main.lua) | 入口与 `@option`；每 tick 顺序 `safety → combat → locomotion → travel_core`，终止时 `player.stop()` |
+| [terrain.lua](tick/travel/terrain.lua) | 消费 `context.scene.terrain.navigation` 的候选关系，按角色有效跳高过滤生成可执行边与代价，按场景代次缓存并做最短路 |
+| [locomotion.lua](tick/travel/locomotion.lua) | `walk/step/jumpup/drop/rope` 逐边相位机、同平台 `walk_to`、门户 `enter_portal`、失败上报与运行期禁边 |
+| [safety.lua](tick/travel/safety.lua) | 每 tick 最先：低血用药、达到目标撤下用药意图、死亡/无药/低于 HP 下限时终止 |
+| [combat.lua](tick/travel/combat.lua) | 战斗层骨架：当前未启用，只记录请求，不产生攻击/技能输入 |
+| [travel_core.lua](tick/travel/travel_core.lua) | 任务相位：boot → leg/门户 → final → arrived，含重规划、失败原因与日志 |
+
+```bash
+DIR=/你的工作台目录
+PACKAGE=/opt/beidou-pilot/shared/scripts/tick/travel
+
+private/workbenches/workbench "$DIR" script describe "$PACKAGE"
+private/workbenches/workbench "$DIR" travel "$PACKAGE" \
+  --target-map 102020100 --target-x 225 --target-y 1755 --seconds 180
+```
+
+- 路线由 CLI 用只读 `world-map route` 查询后注入；Lua 不解析门户模型、不做跨图搜索、不在运行中改道。注入形状与失败集合见 [Tick Lua API](../../docs/LUA_TICK_API.md#跨图旅行脚本包travel)，CLI 参数与输出见 [CLI](../../docs/CLI.md#跨图旅行travel)。
+- 脚本参数按 `@option` 声明：`budget_seconds`（默认 120）、`arrive_tolerance`（12）、`min_hp_ratio`（0.25）、`heal_hp_ratio`（0.7）、`hp_item_id`（2000002）、`block_policy`（auto）、`clear_limit`（8）、`max_replans`（8），可用 `--budget-seconds` 等覆盖；`script describe` 显示有效默认值。`block_policy`/`clear_limit` 当前只解析默认值，不参与决策。
+- 阶段边界：当前只实现「起点图 == 目标图（腿序列为空）→ 目标图内走到目标坐标 → 完成」；leg/门户/换图相位是 M3 骨架，尚未做真实客户端验证。挡路怪战斗与 M4 恢复策略未实现，`combat` 不产生战斗输入。
+- 结果以 CLI 输出的 `route` 与事后 `arrival` 核对；脚本内部失败以 `error("travel_failed ...")` 结束会话。
+- 会实际移动、跳跃并可能用药（用药受本端支持的药品范围限制）。先在安全城镇单图验证，确认角色、场景与唯一操作者，不要在其他脚本控制角色时运行。
+
 ## 调用与维护
 
-示例文件声明 `main(context)` 与 `@option`；`script describe FILE` 可查看参数，`script run FILE` 可按同一声明传值。内置示例随镜像位于 `/opt/beidou-pilot/shared/scripts/examples/`，可以通过通用入口直接查看和调用，例如：
+示例与旅行包入口都声明 `main(context)` 与 `@option`；`script describe FILE|DIR` 可查看参数，`script run FILE` / `travel DIR` 可按同一声明传值。内置资产随镜像位于 `/opt/beidou-pilot/shared/scripts/`，可以通过通用入口直接查看和调用，例如：
 
 ```bash
 beidou-pilot script describe /opt/beidou-pilot/shared/scripts/examples/tick-held-skill.lua
@@ -65,6 +93,6 @@ beidou-pilot script run /opt/beidou-pilot/shared/scripts/examples/tick-jump-atta
 private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
 ```
 
-内置示例随镜像版本固定，已有容器保持启动时的版本。执行中断或等待失败只结束等待；先用 `script status` 查看已有会话，需要取消时明确执行 `script cancel --session SCRIPT_ID`，并核对终态及放键。
+内置示例与旅行包随镜像版本固定，已有容器保持启动时的版本。执行中断或等待失败只结束等待；先用 `script status` 查看已有会话，需要取消时明确执行 `script cancel --session SCRIPT_ID`，并核对终态及放键。
 
-编写脚本查 [Tick Lua API](../../docs/LUA_TICK_API.md)，装载、控制权和取消规则查 [控制协议](../../docs/CONTROL.md)，维护本目录前阅读 [AGENTS.md](AGENTS.md)。脚本返回、动作派发和离线测试属于过程证据，实际到达、消耗、恢复与战斗效果另行确认。
+编写脚本查 [Tick Lua API](../../docs/LUA_TICK_API.md)，旅行用法查 [CLI](../../docs/CLI.md#跨图旅行travel)，装载、控制权和取消规则查 [控制协议](../../docs/CONTROL.md)，维护本目录前阅读 [AGENTS.md](AGENTS.md)。脚本返回、动作派发、CLI 成功输出和离线测试属于过程证据，实际到达、消耗、恢复与战斗效果另行确认。

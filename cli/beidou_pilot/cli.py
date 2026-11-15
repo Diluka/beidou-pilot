@@ -90,6 +90,12 @@ def parser() -> Parser:
     command("doctor", "检查本地运行条件与读取能力，不启动客户端")
     q = command("bridge", "读取原生桥状态，或停止桥持有的按键")
     q.add_argument("action", choices=["status", "stop"], nargs="?", default="status")
+    q = command("travel", "运行 tick 旅行目录脚本包：查询跨图路线并注入 context.route/context.goal")
+    q.add_argument("file", type=Path, help="含 main.lua 的目录脚本包")
+    q.add_argument("--target-map", type=map_number, required=True, help="目的地图号")
+    q.add_argument("--target-x", type=int, required=True, help="目的坐标 x（地图像素）")
+    q.add_argument("--target-y", type=int, required=True, help="目的坐标 y（地图像素）")
+    q.add_argument("--seconds", type=float, default=180, help="客户端内任务时限，默认 180 秒")
     q = command("script", "运行tick Lua脚本，或只读当前脚本状态", allow_abbrev=False)
     q.add_argument("action", choices=["run", "start", "status", "cancel", "describe"])
     q.add_argument("--session", help="cancel必须指定script.id；status可按script.id查询指定会话")
@@ -254,6 +260,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "instances",
         "capabilities",
         "world-map",
+        "travel",
         "doctor",
         "bridge",
         "script",
@@ -365,6 +372,66 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
         return cast(JsonObject, bridge.stop() if args.action == "stop" else bridge.snapshot())
+    if cmd == "travel":
+        from .bridge import BridgeClient
+        from .observations import NativeObserver
+        from .strategy_scene import scene_context
+
+        package = cast(Path, args.file)
+        if not package.is_dir():
+            raise ClientError("usage", "travel 需要含 main.lua 的目录脚本包。")
+        bridge = BridgeClient(backend.root, backend.name, backend.instance)
+        state = bridge.snapshot()
+        if not state.get("ready") or state.get("map_id") is None or state.get("character") is None:
+            raise ClientError("travel_observation_unavailable", "旅行所需的原生角色与地图尚不可用。")
+        start = int(cast(int, state["map_id"]))
+        observer = NativeObserver(backend.root, backend.name, backend.instance)
+        try:
+            route = observer.route(start, args.target_map)
+        except ClientError as error:
+            raise ClientError(
+                "travel_route_unavailable",
+                "无法查询跨图路线。",
+                {"start": start, "goal": args.target_map, "cause": error.code},
+            ) from error
+        if route.get("status") != "ok":
+            raise ClientError(
+                "travel_route_unavailable",
+                "没有可用的跨图路线。",
+                {"start": start, "goal": args.target_map, "route": route},
+            )
+        goal: JsonObject = {"map_id": args.target_map, "x": args.target_x, "y": args.target_y}
+        code = compile_strategy(
+            cast(str, args.strategy_source), args.strategy_options, scene_context(state), {"route": route, "goal": goal}
+        )
+        report = bridge.run_script(
+            None,
+            seconds=args.seconds,
+            code=code,
+            package_root=str(package.resolve()),
+            admission_control=None,
+        )
+        observed = bridge.snapshot()
+        character = cast(JsonObject, observed.get("character") or {})
+        arrival: JsonObject = {
+            "map_id": observed.get("map_id"),
+            "x": character.get("x"),
+            "y": character.get("y"),
+            "hp": character.get("hp"),
+            "script_status": report.get("status"),
+        }
+        return {
+            **report,
+            "start": start,
+            "goal": goal,
+            "route": {
+                "status": route.get("status"),
+                "legs": route.get("legs"),
+                "model": route.get("model"),
+                "cache": route.get("cache"),
+            },
+            "arrival": arrival,
+        }
     if cmd == "script":
         if args.action == "cancel":
             if args.session is None or args.file is not None:
@@ -666,6 +733,18 @@ def main(argv: list[str] | None = None) -> int:
         args.strategy_source = None
         args.strategy_options = {}
         args.script_package = None
+        if args.command == "travel":
+            if not cast(Path, args.file).is_dir():
+                raise ClientError("usage", "travel 需要含 main.lua 的目录脚本包。")
+            args.script_package = cast(Path, args.file)
+            entry = cast(Path, args.file) / "main.lua"
+            if not entry.is_file():
+                raise ClientError(
+                    "script_package_entry_missing", "目录脚本包缺少入口 main.lua。", {"path": str(args.file)}
+                )
+            args.strategy_source, args.strategy_metadata = read_strategy_entry(entry)
+            args.strategy_options = parse_options(args.strategy_metadata, unrecognized)
+            unrecognized = []
         if args.command == "script" and args.action in {"run", "start", "describe"} and args.file is not None:
             if args.file.is_dir():
                 args.script_package = args.file

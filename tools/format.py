@@ -37,6 +37,7 @@ SOURCES = {
         "cli/test/test_catalog_resources.py",
         "cli/test/test_img_resources.py",
         "cli/test/test_scene_terrain.py",
+        "cli/test/test_travel_command.py",
         "cli/test/test_gui_scene_terrain.py",
     ),
     "clang-format": (
@@ -71,7 +72,7 @@ SOURCES = {
         "beidou-ijl15/ezorsia/ObserveNotifications.cpp",
         "cli/test/*_contract.cpp",
     ),
-    "stylua": ("shared/scripts/examples/*.lua",),
+    "stylua": ("shared/scripts/examples/*.lua", "shared/scripts/tick/**/*.lua"),
 }
 
 

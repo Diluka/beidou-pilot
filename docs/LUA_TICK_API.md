@@ -84,7 +84,8 @@ end
 | `context.state` | 脚本自有可写表，跨 tick 保留，不解释、不序列化、不落盘 |
 | `context.options` | 策略参数及有效默认值；脚本未声明参数时为空表 |
 | `context.scene` | 原生维护的当前只读静态场景；身份和 `terrain` 随地图及场景代次更新，与动态实体领域 `context.game.scene` 分开 |
-| `context.route` | 调用方在启动会话前注入的预计算腿序列，可由原生只读路线查询提供；无路线不伪造 |
+| `context.route` | 调用方在启动会话前注入的预计算腿序列，可由原生只读路线查询提供；无路线不伪造。形状见[跨图旅行脚本包](#跨图旅行脚本包travel) |
+| `context.goal` | 调用方随旅行脚本注入的目标 `{map_id,x,y}`；普通 `script run/start` 不注入，策略按未知处理 |
 | `context.game` | 只读领域入口及客户端级 `player` 状态机 |
 
 单次调用用Lua指令hook核对墙钟预算，包括初始化。`abort` 默认先提交有效草稿，然后停止入口并清除该会话仍拥有的输入，释放确认后以 `cancelled/tick_overrun` 结束；不保证终止帧的意图已被客户端消费。`abort_commit=false` 丢弃当次草稿，已经发生的动作不会被回滚。`skip` 中断当次入口、保留草稿参与本帧提交且保留会话，下次 `context.tick.overrun=true`；脚本自行分片或降低负载。`state`修改不事务回滚。hook不能抢占阻塞中的原生C函数，本环境仍用于受信本地脚本。
@@ -122,12 +123,12 @@ buff 归 `game.character`，不在 `player.status()`。首版两端都没有可�
   - `platforms[]`：被竖直墙切分后的可站立平台，`index` 从 1 开始；`left/right` 为水平范围，`open_left/open_right` 表示能否从该物理边缘走出，`segments` 是扁平数组，每 4 个数为 `left,right,y1,y2`，平台高度按段线性插值。
   - `walls`：合并后的竖直墙扁平数组，每 3 个数为 `x,top,bottom`。
   - `ropes[]`：`index/x/y1/y2` 与 `platforms` 相交层。`platforms` 为扁平数组，每 2 个数为平台 `index` 与该平台在绳 x 处的高度；单层也会列出，是否可攀爬由策略按模型常量决定。
-  - `candidates`：`walk/step/jumpup/drop` 为每 5 个数 `from,to,x,destination,rise` 的扁平数组，`rope` 为每 6 个数追加 `rope_index`。`from/to` 是 `platforms` 的 1 基索引；`x` 为源平台对齐点，`destination` 为目标平台落点。`walk/step/jumpup/drop` 的 `rise` 为源高度减目标高度（地图像素 y 向下为正）；`rope` 的 `rise` 为目标高度减源高度，负值表示沿绳向上。候选只是几何关系，边成本、禁边、适用筛选与执行由策略维护。
+  - `candidates`：`walk/step/jumpup/drop` 为每 5 个数 `from,to,x,destination,rise` 的扁平数组，`rope` 为每 6 个数追加 `rope_index`。`from/to` 是 `platforms` 的 1 基索引；`x` 为源平台对齐点，`destination` 为目标平台落点。`walk/step/jumpup` 的 `rise` 为源高度减目标高度（正数表示目标更高）；`drop` 的 `rise` 为目标高度减源高度（正数表示向下落层）；`rope` 的 `rise` 为目标高度减源高度，负值表示沿绳向上（地图像素 y 向下为正）。候选只是几何关系，边成本、禁边、适用筛选与执行由策略维护。
 - 缺图、坏字段、无法读取等返回 `unavailable`，空自身地形且存在 `info.link` 返回 `unsupported`；`error` 及可用的 `message/details/source` 说明原因。不可用时不带 `footholds/ropes`，不把缺失坐标补零，也不跟链接地图或另一后端拼出地形。有本图完整自身几何时可直接使用，不因额外 `info.link` 拒绝。
 - 同一会话可以继续跨图，`context.state` 和已有 `options/route` 不重建。换图沿现有规则暂停回调并清除旧输入；转场立即使当前静态场景不可用，首次稳定到期帧再读取本图。稳定但资料不可用时仍调用 `main`，由策略决定等待或退出；资料结果在当前场景有效期内共享，不逐 tick 重读；`navigation` 与原始几何由客户端场景快照跨会话共享。相同地图ID的新场景代次也重新读取。
 - `scene` 槽及嵌套数据只读，不能由策略替换。旧表引用仍是带旧身份的历史只读快照，不能当成当前图；需要缓存路径等进度时放入 `context.state`，发现代次变化后自行重规划。
 
-跨图路线不由场景几何生成：需要路线时，调用方先用原生只读查询 `world-map route START GOAL` 获得腿序列（每段 `from/portal/to` 与门户坐标 `portal_at`），再在启动会话前把它注入 `context.route`。tick 引擎不生成、不更新路线，`script run/start` 也不会自动查询或注入。Lua 只消费注入的腿序列；门户模型、有向 BFS 与版本化文件缓存都在原生/CLI 侧，不放进 `context`，Lua 不解析模型也不搜索。查询按有向门户、最多 24 段返回，script 门户与外部目标不参与；付费交通不在路线模型内。
+跨图路线不由场景几何生成：需要路线时，调用方先用原生只读查询 `world-map route START GOAL` 获得腿序列（每段 `from/portal/to` 与门户坐标 `portal_at`），再在启动会话前把它注入 `context.route`（`beidou-pilot travel` 已接线此流程，见[跨图旅行脚本包](#跨图旅行脚本包travel)）。tick 引擎不生成、不更新路线，`script run/start` 也不会自动查询或注入。Lua 只消费注入的腿序列；门户模型、有向 BFS 与版本化文件缓存都在原生/CLI 侧，不放进 `context`，Lua 不解析模型也不搜索。查询按有向门户、最多 24 段返回，script 门户与外部目标不参与；付费交通不在路线模型内。
 
 headless 使用本端已加载的 IMG 地图树；GUI 原生桥按显式配置的同端只读 `game_data` 目录读取单张 IMG，不按工作目录猜资源根，不经 Python 换图回填。`game.scene` 仍只负责动态实体观察，不增加公开的 `game.terrain` 查询。
 
@@ -144,6 +145,39 @@ if context.state.scene_generation ~= scene.scene_generation then
         #navigation.platforms, #navigation.walls // 3))
 end
 ```
+
+### 跨图旅行脚本包（travel）
+
+需要跨图移动时，CLI 先用上一节的只读查询取得有向腿序列，再用 `travel` 命令启动目录脚本包，并把路线与目标点作为额外上下文注入会话；策略不在运行中自己算路：
+
+```bash
+private/workbenches/workbench /external/workbench travel \
+  /opt/beidou-pilot/shared/scripts/tick/travel \
+  --target-map 102020100 --target-x 225 --target-y 1755 --seconds 180
+```
+
+```lua
+context.route = {
+    source = "native_world_map", -- 原生只读查询的来源
+    status = "ok",               -- 非 ok 时 CLI 拒绝启动脚本
+    error = nil,
+    start = 100000000,
+    goal = 102020100,
+    legs = {
+        { from = 100000000, portal = "east00", to = 100000100,
+          portal_at = { { 1400, 300 } } }, -- 来源图上同名门户坐标，可能有多个点
+    },
+}
+context.goal = { map_id = 102020100, x = 225, y = 1755 }
+```
+
+- 注入来源是 `travel` 命令；普通 `script run/start` 不注入 `context.route/context.goal`，策略看到 `nil` 时按未知处理，不伪造路线。
+- Lua 只消费注入的腿序列与目标点：不解析门户模型、不做跨图 BFS、不搜索替代路线。缺少路线或 `route.status ~= "ok"` 时明确以 `route_unavailable` 失败；走错图只能按剩余腿前向对齐，运行中改道需要调用方重新查询并重开会话。
+- 随镜像固定的参考策略包在 [shared/scripts/tick/travel](../shared/scripts/tick/travel/main.lua)：`main.lua` 是入口，`terrain` 过滤原生导航候选并做最短路，`locomotion` 执行 `walk/step/jumpup/drop/rope` 与门户，`safety` 低血用药，`combat` 是未启用的战斗骨架，`travel_core` 维护任务相位。每 tick 顺序为 `safety → combat → locomotion → travel_core`；层返回 `nil` 继续、`"halt"` 短路、`"done"` 结束。
+- 阶段边界：当前已实现「起点图 == 目标图（腿序列为空）→ 目标图内走到目标坐标 → 完成」的 M1/M2 路径；leg/门户/换图相位是 M3 骨架，按真实 API 迁移但尚未做真实客户端验证。挡路怪战斗与 M4 恢复策略未实现：`combat` 不产生攻击/技能输入，也不声称清怪。
+- 失败集合（以 `error("travel_failed ...")` 结束会话，文本含 `phase/map/x/y/leg/reason/detail/heals/elapsed`）：`route_unavailable`、`terrain_unavailable`、`platform_unknown`、`no_viable_path`、`edge_timeout`、`portal_unconfirmed`、`map_mismatch`、`hp_limit`、`potion_exhausted`、`death`、`action_stuck`、`budget_exhausted`。`identity_changed` 由 Runtime 的会话取消覆盖（`character_changed`/`instance_changed`）；`mob_blocked` 属 M4 未实现。
+- 参数默认值（`script describe DIR` 可查）：`budget_seconds=120`、`arrive_tolerance=12`、`min_hp_ratio=0.25`、`heal_hp_ratio=0.7`、`hp_item_id=2000002`、`block_policy=auto`、`clear_limit=8`、`max_replans=8`。`block_policy`/`clear_limit` 在 M1/M2 只解析默认值，不参与决策。
+- 低血用药依赖本端 `game.inventory` 投影的恢复品行（`item_id/quantity`）；本页不把未公开的背包行字段列为稳定契约，读不到时保持未知，只用原生拒绝原因 `item_not_in_inventory` 确认药尽。用药、跳跃和移动会真实发生，运行前确认角色、场景与唯一操作者。
 
 ### 运动观察与静止参考
 

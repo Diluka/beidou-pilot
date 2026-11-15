@@ -110,6 +110,7 @@ private/workbenches/workbench /external/workbench character result REQUEST_ID --
 | `instances` | 返回当前容器实例身份与版本 |
 | `capabilities` | 读取原生能力和静态观察支持范围 |
 | `world-map route START GOAL` | 只读查询原生世界门户图的有向跨图路线；不启动、不控制客户端 |
+| `travel DIR --target-map MAP --target-x X --target-y Y [--seconds N]` | 查询跨图路线并启动 tick 旅行目录脚本包；返回路线与事后到达快照 |
 | `open/close` | 新建或接续所属实例；正常停止、确认退出并回收 |
 | `ai [harness参数]` | 通过 `docker exec` 运行所属容器内的 `beidou-game-ai`；要求已有 harness 镜像实例 |
 | `snapshot [-i] [--all]` | 当前角色、场景、领域摘要与引用 |
@@ -147,7 +148,33 @@ private/workbenches/workbench /external/workbench world-map route 100000000 1000
 | `cache` | `hit`（命中缓存）、`built`（本次派生并写入）或 `memory`（未写文件，仅内存模型） |
 | `legs` | 有序路线段；每段含 `from`、`portal`、`to` 与门户坐标 `portal_at`（二维整数数组，每个元素为 `[x, y]` 门户点） |
 
-`status=ok` 时 `legs` 为按顺序的腿序列，起点与终点相同时为空数组；起点或终点地图号不在模型内时返回 `map_unknown`（`error` 区分 `source_map_unknown` 与 `target_map_unknown`），有向门户不可达返回 `no_route`，超过 24 段返回 `route_too_long`；`no_route`、`map_unknown` 与 `route_too_long` 的 `legs` 为空，且都按正常 JSON 返回（退出码 0）。该查询复用只读观察请求通道（domain `world-route`，请求额外携带 start 与 goal 两个地图号），但不是普通观察领域：不出现在 `capabilities.observation_domains`，也不能用 `inspect` 或领域观察读取。腿序列如何交给 tick 脚本见 [Tick Lua API](LUA_TICK_API.md#当前静态场景与跨图)；付费交通不在路线模型内。
+`status=ok` 时 `legs` 为按顺序的腿序列，起点与终点相同时为空数组；起点或终点地图号不在模型内时返回 `map_unknown`（`error` 区分 `source_map_unknown` 与 `target_map_unknown`），有向门户不可达返回 `no_route`，超过 24 段返回 `route_too_long`；`no_route`、`map_unknown` 与 `route_too_long` 的 `legs` 为空，且都按正常 JSON 返回（退出码 0）。该查询复用只读观察请求通道（domain `world-route`，请求额外携带 start 与 goal 两个地图号），但不是普通观察领域：不出现在 `capabilities.observation_domains`，也不能用 `inspect` 或领域观察读取。腿序列如何交给 tick 脚本见 [Tick Lua API](LUA_TICK_API.md#跨图旅行脚本包travel)；付费交通不在路线模型内。
+
+## 跨图旅行（travel）
+
+```bash
+private/workbenches/workbench /external/workbench travel \
+  /work/scripts/travel-policy --target-map 102020100 --target-x 225 --target-y 1755 --seconds 180
+```
+
+`travel` 提交一次跨图旅行目录脚本包：先按只读 `world-map route` 语义查询起点图到目标图的路线，再把路线与目标点注入脚本上下文，然后等待脚本会话终态。命令需要已有运行中的客户端且快照就绪（`ready` 为真、有 `map_id` 与 `character`），不启动客户端；它与 `script run/start` 一样发布客户端脚本并参与输入锁，不是只读命令。
+
+- `DIR` 必须是含 `main.lua` 的目录脚本包；单文件脚本用 `script run/start`。
+- `--target-map` 必填，正整数地图号；`--target-x/--target-y` 必填，地图像素坐标；`--seconds` 为客户端内脚本期限，默认 180 秒，不是任务总预算（任务预算由脚本参数 `budget_seconds` 控制）。
+- 目录包声明的 `@option` 按 `script run` 同一规则跟在命令后，例如 `--budget-seconds 300`、`--heal-hp-ratio 0.6`；`script describe DIR` 可查看有效默认值与范围。
+- 路线来源只有只读 `world-map route`：CLI 不解析地图资料、不猜路线，Lua 只消费注入的腿序列，不自行搜索或改道；付费交通不在路线模型内。
+- headless 与 GUI 都提供该入口；GUI 仍是实际玩法验收的权威端。
+
+成功返回在脚本会话报告之外附加：
+
+| 字段 | 含义 |
+| --- | --- |
+| `start` | 启动时快照的起点地图号 |
+| `goal` | 注入的目标 `{map_id,x,y}` |
+| `route` | `{status,legs,model,cache}`，来自本次只读路线查询 |
+| `arrival` | 脚本结束后新快照的 `{map_id,x,y,hp,script_status}`，用于事后核对，不是脚本内的成功声明 |
+
+失败语义：参数或目录包问题按 `usage`、`script_package_entry_missing`、`invalid_strategy_option` 拒绝且不发布脚本；客户端未就绪返回 `travel_observation_unavailable`；路线查询失败或 `status` 非 `ok` 返回 `travel_route_unavailable`，同样不会发布脚本。脚本自身的失败保留在报告 `status/reason/error` 与会话终态中：脚本以 `error("travel_failed ...")` 结束时，原因集合与当前阶段边界见 [Tick Lua API](LUA_TICK_API.md#跨图旅行脚本包travel)。`arrival` 只是事后快照，不能替代对脚本终态与目标地图/坐标的核对。
 
 ## 游戏 AI
 
@@ -269,7 +296,7 @@ local function main(context)
 end
 ```
 
-`script describe FILE` 显示动态参数帮助及有效默认值。策略的 `context.options` 包含 CLI 值和声明默认值；`context.scene` 带有只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 及静态地形，调用方已有的 `context.route` 按原规则保留。`context.scene.terrain.status` 是 `available`、`unavailable` 或 `unsupported`；只有 `available` 时才提供有来源的 `footholds` 与 `ropes`。换图与场景代次变化由原生 tick 引擎更新只读 `context.scene`，策略在 `context.state` 中管理自己的缓存。
+`script describe FILE` 显示动态参数帮助及有效默认值。策略的 `context.options` 包含 CLI 值和声明默认值；`context.scene` 带有只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 及静态地形，调用方已有的 `context.route/context.goal` 按原规则保留。`context.scene.terrain.status` 是 `available`、`unavailable` 或 `unsupported`；只有 `available` 时才提供有来源的 `footholds` 与 `ropes`。换图与场景代次变化由原生 tick 引擎更新只读 `context.scene`，策略在 `context.state` 中管理自己的缓存。
 
 `script status` 保留最新接纳的 `script`，并列出全部会话 `scripts`；每项含 `mode`、状态、原因、会话级 `control_released`，tick 另含有效 gear、实际调用 index/time/delta、场景代次、预算、超限策略及共享 `player` 动作状态。`player` 只区分当前输入槽和已开始的原生动作，不是角色 HP/buff。指定 `--session` 后 `script` 选择对应会话，`scripts` 仍保留全部会话；`command` 是最近命令，不能代替会话身份。同一客户端可追加多个 tick 会话，共享唯一角色状态机，后写覆盖；精确取消只检查目标会话终态及所属输入释放，需要全部停止时显式 `stop` 或 `bridge stop`。
 
