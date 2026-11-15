@@ -1,12 +1,12 @@
 # Tick Lua API（逐次决策引擎）
 
-本页描述 **tick 引擎**（逐次决策）。脚本在前导注释显式声明 `-- @mode tick`，省略时同样按 tick 处理。入口按档位到期执行，以 `context.state` 保存跨调用状态，通过只读领域观察和非阻塞 `player` 状态机提交意图。本引擎不提供阻塞动作、`game.sleep()`、任务控制或按键接口；导航入口见 [Lua API](LUA_API.md)。
+本页描述 **tick 引擎**（逐次决策）。脚本无需声明引擎，统一按 tick 执行；前导注释按需写 `@tick.*` 运行配置与 `@option` 参数。入口按档位到期执行，以 `context.state` 保存跨调用状态，通过只读领域观察和非阻塞 `player` 状态机提交意图。本引擎不提供阻塞动作、`game.sleep()`、任务控制或按键接口；导航入口见 [Lua API](LUA_API.md)。
 
 两端使用本页同一公开契约，能力缺口和未知事实按后端如实保留。脚本组织与传输见 [控制协议](CONTROL.md)，维护约定见 [共享脚本约定](../shared/scripts/AGENTS.md)。修改 tick 公共 API 时同步维护本页。
 
 ## 启动与基本约定
 
-将下节带有前导 `-- @mode tick` 和顶层 `main(context)` 的 UTF-8 文件保存到工作台的 `scripts/control-tick.lua`，从宿主运行：
+将下节带顶层 `main(context)` 的 UTF-8 文件保存到工作台的 `scripts/control-tick.lua`；需要调整调度或预算时在前导注释按需写 `@tick.*`，从宿主运行：
 
 ```bash
 private/workbenches/workbench /external/workbench script describe /work/scripts/control-tick.lua
@@ -24,7 +24,6 @@ private/workbenches/workbench /external/workbench script run /work/scripts/contr
 ### 入口、配置与装载
 
 ```lua
--- @mode tick
 -- @tick.gear 3            -- 1=10Hz，2=20Hz，3=30Hz（默认），4=本端原生更新
 -- @tick.budget_ms 100
 -- @tick.overrun abort     -- abort | skip
@@ -38,7 +37,7 @@ local function main(context)
 end
 ```
 
-运行元数据只读取首段可执行代码之前的前导单行注释，允许空行、普通注释与尾部 `--` 说明；Lua 长注释内部不解释元数据。`@mode` 可省略并视为 tick，显式时只接受小写 `tick`；重复、未知 mode、未知或重复的 `@tick.*`、格式错误均在发布前拒绝。`@tick.*` 可单独出现。预算为正有限十进制毫秒数，支持小数，不接受符号、科学计数、NaN 或无穷；`overrun` 为 `abort/skip`，`abort_commit` 为小写 `true/false`。未配置时为 **第3档（30Hz）/ 100ms / abort / true**，单次预算与调用周期独立。
+运行元数据只读取首段可执行代码之前的前导单行注释，允许空行、普通注释与尾部 `--` 说明；Lua 长注释内部不解释元数据。脚本统一按 tick 引擎执行，无需声明引擎；`@tick.*` 可单独出现在前导注释中。`@mode` 已移除，仍写 `-- @mode ...`（任何值）的脚本会在发布前被明确拒绝，这是迁移期的有意行为；未知或重复的 `@tick.*`、格式错误同样在发布前拒绝。预算为正有限十进制毫秒数，支持小数，不接受符号、科学计数、NaN 或无穷；`overrun` 为 `abort/skip`，`abort_commit` 为小写 `true/false`。未配置时为 **第3档（30Hz）/ 100ms / abort / true**，单次预算与调用周期独立。
 
 策略文件仍采用唯一顶层 `main(context)` 和既有 `@option` 参数规则。CLI 注入 `options` 和初始 `scene` 身份锚点；原生 tick 引擎随后维护当前只读 `scene`，调用方已有的 `route` 等额外上下文按原规则保留。编译结果返回 `{main=main, context=__beidou_context}`，不在装载阶段执行 `main`；初始 `scene` 身份由原生 tick 引擎核对。
 
@@ -52,7 +51,6 @@ private/workbenches/workbench /external/workbench script run /work/scripts/trave
 
 ```lua
 -- /work/scripts/travel-policy/main.lua
--- @mode tick
 local terrain = require("lib.terrain")
 local guard = require("layers.self_preserve")
 local function main(context)
@@ -64,7 +62,7 @@ end
 - 模块文件直接按提交的包目录读取，不复制进会话目录：headless 端使用同一容器路径（如 `/work/scripts/travel-policy`）；GUI 端由原生桥映射为 Wine 的 `Z:\work\...`。脚本只写包内相对名称、不写绝对路径，因此同一份入口与模块在两端都能装载，错误位置里的路径按本端原生形式显示。
 - 会话状态 `scripts[]` 中，包会话额外提供 `module_root`（本端原生包根）和 `modules`（按 `require` 顺序记录的实际装载模块，每项含 `name` 与解析到的源文件 `file`）。单文件 `script run FILE` 不产生这两个字段，装载方式和行为保持不变。
 - 模块缺失、模块编译错误、模块装载或调用时的运行错误都带来源模块与行号：包入口 chunk 名固定为 `main.lua`，模块 chunk 名是实际解析到的源文件，错误文本保留 Lua `stack traceback`，可看到 `require` 调用行与模块内部位置。单文件的错误文本保持原样。
-- 目录脚本包只支持 tick 引擎；模块由入口自己按包内路径装载。
+- 目录脚本包与单文件入口使用同一 tick 引擎和运行配置规则；模块由入口自己按包内路径装载。
 - 包内目录结构、模块依赖清单和组装方式由写策略时决定，引擎不解析依赖声明；模块在入口第一次 `require` 时装载，加载失败按脚本错误结束会话。
 
 宿主每次更新都推进原生生命周期；`main` 按每会话工作频率档位到期调用，首次稳定帧立即调用，返回后统一提交差异供后续帧消费。GUI 使用 `ClientApplication::Update` 主循环渲染帧，无头使用 `Stage::update` 逻辑步进，不假设渲染与角色物理更新 1:1。
@@ -84,7 +82,7 @@ end
 | --- | --- |
 | `context.tick` | 只读；`index` 为实际调用序号而非宿主帧号，`time/delta` 为各次真实调用的单调时间及间隔（秒），`gear` 为本会话有效档位，`scene_generation` 为当前场景代次，`overrun` 表示上次调用超限 |
 | `context.state` | 脚本自有可写表，跨 tick 保留，不解释、不序列化、不落盘 |
-| `context.options` | 策略参数及有效默认值；直接源码未提供时为空表 |
+| `context.options` | 策略参数及有效默认值；脚本未声明参数时为空表 |
 | `context.scene` | 原生维护的当前只读静态场景；身份和 `terrain` 随地图及场景代次更新，与动态实体领域 `context.game.scene` 分开 |
 | `context.route` | 调用方已有的预计算路线；无路线不伪造 |
 | `context.game` | 只读领域入口及客户端级 `player` 状态机 |
@@ -204,7 +202,6 @@ end
 运行参数用紧邻策略源码的 `@option` 注释声明。支持 `int`、`number`、`string`、`boolean` 四种类型；未标 `opt`、也没有 `default` 的非布尔参数必填。布尔参数始终可省略：未显式声明 `default` 时默认 `true`，显式 `default=false` 可覆盖该默认值。可选修饰符为 `default=值`、数值型 `min=值` / `max=值` 和 `choices=值1|值2`。默认值、正向布尔 flag 和显式值按声明校验；`--no-flag` 作为无值负向开关直接传入 `false`，不参与 `choices` 校验。
 
 ```lua
--- @mode tick
 -- @option[type=int,min=1] mob_id 目标怪物模板ID
 -- @option[type=boolean] observe_only 仅观察；省略时默认true
 -- @option[type=boolean,default=false] attack_enabled 默认关闭攻击

@@ -50,7 +50,7 @@ struct TickConfig {
 };
 
 // Parse only file-level leading line comments (before executable Lua). Scripts
-// are tick scripts: an omitted @mode means tick, and any other mode is rejected.
+// run on the single tick engine; a removed @mode declaration is rejected.
 // Invalid declarations and duplicates are rejected.
 bool ParseTickConfig(const std::string& source, TickConfig& config, std::string& error);
 

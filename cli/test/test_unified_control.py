@@ -18,7 +18,7 @@ from beidou_pilot.profile import LoginProfile
 from .test_bridge import BridgeFiles
 
 
-TICK_SOURCE = "-- @mode tick\nlocal function main(context)\n    game.log('tick')\nend\n"
+TICK_SOURCE = "local function main(context)\n    game.log('tick')\nend\n"
 
 REMOVED_COMMANDS = (
     ("move", "100"),

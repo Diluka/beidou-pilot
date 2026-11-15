@@ -36,7 +36,7 @@ def tick_script(script_id: str, *, status: str = "running", control_released: bo
 
 
 TICK_SOURCE = (
-    "-- @mode tick\r\n"
+    ""
     "local function main(context)\r\n"
     '    game.log("中文 \\"引号\\"")\r\n'
     "end\r\n"

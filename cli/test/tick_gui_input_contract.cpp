@@ -427,12 +427,11 @@ void ActionOwnerCancellation() {
     MapleControl::TickRuntime runtime(native);
     std::string error;
     Check(runtime.Start("attacker",
-                        "-- @mode tick\n-- @tick.gear 4\nfunction main(c) if not c.state.sent then "
+                        "-- @tick.gear 4\nfunction main(c) if not c.state.sent then "
                         "c.game.player.attack(); c.state.sent=true end end",
                         1000, error),
           error.c_str());
-    Check(runtime.Start("mover", "-- @mode tick\n-- @tick.gear 4\nfunction main(c) c.game.player.move('right') end",
-                        1000, error),
+    Check(runtime.Start("mover", "-- @tick.gear 4\nfunction main(c) c.game.player.move('right') end", 1000, error),
           error.c_str());
     native.Advance(runtime);
     Check(native.input.action.Held()[Attack] && native.input.movement.Held()[Right],
@@ -454,8 +453,7 @@ void HeldIntentUpdates() {
     DeferredNativeAdapter native;
     MapleControl::TickRuntime runtime(native);
     std::string error;
-    Check(runtime.Start("held", "-- @mode tick\n-- @tick.gear 4\nfunction main(c) c.game.player.skill(1001004) end",
-                        1000, error),
+    Check(runtime.Start("held", "-- @tick.gear 4\nfunction main(c) c.game.player.skill(1001004) end", 1000, error),
           error.c_str());
     for (unsigned frame = 0; frame < 10; ++frame) native.Advance(runtime);
     Check(native.skillCalls == 1 && native.input.HasIntent() && native.input.ActionIntentSettled(),
@@ -467,8 +465,7 @@ void HeldIntentUpdates() {
 
     DeferredNativeAdapter replaced;
     MapleControl::TickRuntime replacementRuntime(replaced);
-    Check(replacementRuntime.Start("replace", R"lua(-- @mode tick
--- @tick.gear 4
+    Check(replacementRuntime.Start("replace", R"lua(-- @tick.gear 4
 function main(c)
     c.state.step = (c.state.step or 0) + 1
     if c.state.step == 1 then c.game.player.attack()
@@ -495,7 +492,7 @@ void RejectedAttackRecovery() {
         native.skillStartsAction = true;
         MapleControl::TickRuntime runtime(native);
         std::string error;
-        const auto source = std::string("-- @mode tick\n-- @tick.gear 4\nfunction main(c) if not c.state.sent then ")
+        const auto source = std::string("-- @tick.gear 4\nfunction main(c) if not c.state.sent then ")
                             + (useSkill ? "c.game.player.skill(1001004)" : "c.game.player.attack()")
                             + "; c.state.sent=true end end";
         Check(runtime.Start("recover", source, 1000, error), error.c_str());
@@ -523,7 +520,7 @@ void RejectedAttackRecovery() {
     MapleControl::TickRuntime noLockRuntime(noLock);
     std::string error;
     Check(noLockRuntime.Start("no-lock",
-                              "-- @mode tick\n-- @tick.gear 4\nfunction main(c) if not c.state.sent then "
+                              "-- @tick.gear 4\nfunction main(c) if not c.state.sent then "
                               "c.game.player.skill(1001004); c.state.sent=true end end",
                               1000, error),
           error.c_str());
@@ -537,7 +534,7 @@ void RejectedAttackRecovery() {
     cleared.skillAllowed = false;
     MapleControl::TickRuntime clearedRuntime(cleared);
     Check(clearedRuntime.Start("clear-retry",
-                               "-- @mode tick\n-- @tick.gear 4\nfunction main(c) "
+                               "-- @tick.gear 4\nfunction main(c) "
                                "c.state.n=(c.state.n or 0)+1; if c.state.n==1 then c.game.player.skill(1001004) "
                                "elseif c.state.n==3 then c.game.player.skill(nil) end end",
                                1000, error),
@@ -555,8 +552,7 @@ void PotionIntentChurn() {
     DeferredNativeAdapter native;
     MapleControl::TickRuntime runtime(native);
     std::string error;
-    Check(runtime.Start("potions", R"lua(-- @mode tick
--- @tick.gear 4
+    Check(runtime.Start("potions", R"lua(-- @tick.gear 4
 function main(c)
     c.state.step = (c.state.step or 0) + 1
     local step = c.state.step
@@ -591,7 +587,7 @@ void DeferredFinish(bool overrun) {
             DeferredNativeAdapter native;
             MapleControl::TickRuntime runtime(native);
             std::string error;
-            const std::string source = "-- @mode tick\n-- @tick.gear 4\n-- @tick.budget_ms 1\n-- @tick.abort_commit "
+            const std::string source = "-- @tick.gear 4\n-- @tick.budget_ms 1\n-- @tick.abort_commit "
                                        + std::string(commit ? "true" : "false") + "\nfunction main(c) c.game.player."
                                        + action + (overrun ? "; while true do end end" : "; return 'done' end");
             Check(runtime.Start("deferred", source, 1000, error), error.c_str());

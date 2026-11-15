@@ -1,4 +1,3 @@
--- @mode tick
 -- @option[type=int,min=1] skill_id 本角色已学会且本端支持的普通技能
 -- @option[type=number,default=1,min=0.1,max=5] hold_seconds 保持输入的演示时长（不是动画时长）
 

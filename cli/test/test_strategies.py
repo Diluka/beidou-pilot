@@ -107,7 +107,7 @@ class LuaStrategyContract(unittest.TestCase):
         backend.assert_not_called()
         data = json.loads(output)["data"]
         self.assertEqual("main(context)", data["entry"])
-        self.assertEqual("tick", data["mode"])
+        self.assertNotIn("mode", data)
         self.assertEqual({"gear": 3, "budget_ms": 100, "overrun": "abort", "abort_commit": True}, data["tick"])
         self.assertIn("--mob-id <int>", data["usage"])
         self.assertTrue(data["options"][0]["required"])
@@ -243,19 +243,21 @@ class LuaStrategyContract(unittest.TestCase):
             backend.assert_not_called()
             run.assert_not_called()
 
-    def test_coroutine_mode_and_removed_inputs_are_rejected(self) -> None:
-        self.path.write_text("-- @mode coroutine\n" + POLICY, encoding="utf-8")
-        with (
-            patch("beidou_pilot.cli.Backend") as backend,
-            patch.object(BridgeClient, "run_script") as run,
-        ):
-            code, output = self.cli("script", "run", str(self.path), "--mob-id", "12")
-        self.assertEqual(2, code)
-        self.assertEqual("invalid_strategy_metadata", json.loads(output)["error"]["code"])
-        backend.assert_not_called()
-        run.assert_not_called()
+    def test_removed_mode_and_inputs_are_rejected(self) -> None:
+        for source in ("-- @mode coroutine\n" + POLICY, "-- @mode tick\n" + POLICY):
+            self.path.write_text(source, encoding="utf-8")
+            with (
+                self.subTest(source=source),
+                patch("beidou_pilot.cli.Backend") as backend,
+                patch.object(BridgeClient, "run_script") as run,
+            ):
+                code, output = self.cli("script", "run", str(self.path), "--mob-id", "12")
+            self.assertEqual(2, code)
+            self.assertEqual("invalid_strategy_metadata", json.loads(output)["error"]["code"])
+            backend.assert_not_called()
+            run.assert_not_called()
 
-        self.path.write_text("-- @mode tick\n" + POLICY, encoding="utf-8")
+        self.path.write_text(POLICY, encoding="utf-8")
         for arguments in (
             ("script", "run", "--code", "function main(context) end"),
             ("script", "run", str(self.path), "--library", "travel", "--mob-id", "12"),
@@ -302,30 +304,28 @@ class LuaStrategyContract(unittest.TestCase):
             backend.assert_not_called()
             run.assert_not_called()
 
-    def test_tick_default_and_explicit_metadata_are_visible_without_a_client(self) -> None:
+    def test_default_and_explicit_tick_metadata_are_visible_without_a_client(self) -> None:
         self.assertEqual(100, parse_script_execution(POLICY).budget_ms)
         self.assertEqual(1, parse_script_execution("-- @tick.gear 1\n" + POLICY).gear)
         execution = parse_script_execution(
-            "-- @mode tick\n-- @tick.gear 4 -- 说明\n-- @tick.budget_ms 12.5\n"
-            "-- @tick.overrun skip\n-- @tick.abort_commit false\n"
+            "-- @tick.gear 4 -- 说明\n-- @tick.budget_ms 12.5\n-- @tick.overrun skip\n-- @tick.abort_commit false\n"
         )
         self.assertEqual(
             (12.5, "skip", False, 4), (execution.budget_ms, execution.overrun, execution.abort_commit, execution.gear)
         )
         for budget, expected in ((".5", 0.5), ("1.", 1), ("0002.5", 2.5)):
             with self.subTest(budget=budget):
-                execution = parse_script_execution("-- @mode tick--说明\n-- @tick.budget_ms " + budget + "\n")
+                execution = parse_script_execution("--@tick.budget_ms " + budget + "\n")
                 self.assertEqual(expected, execution.budget_ms)
 
     def test_compile_returns_entry_and_context_without_old_state_or_calling_main(self) -> None:
         header = (
-            "-- @mode tick\n-- @tick.gear 2\n-- @tick.budget_ms 12.5\n"
-            "-- @tick.overrun skip -- 分片执行\n-- @tick.abort_commit false\n"
+            "-- @tick.gear 2\n-- @tick.budget_ms 12.5\n-- @tick.overrun skip -- 分片执行\n-- @tick.abort_commit false\n"
         )
         source = header + POLICY
         compiled = compile_strategy(source, {"mob_id": 12}, self.scene, {"route": [{"map_id": 200}]})
         self.assertTrue(compiled.startswith(header))
-        self.assertEqual(1, compiled.count("@mode tick"))
+        self.assertNotIn("@mode", compiled)
         self.assertIn('["mob_id"]=12', compiled)
         self.assertIn('["scene_generation"]=1', compiled)
         self.assertIn('["route"]={{["map_id"]=200}}', compiled)
@@ -340,27 +340,28 @@ class LuaStrategyContract(unittest.TestCase):
     def test_execution_config_rejects_invalid_headers_before_backend_or_publication(self) -> None:
         invalid = (
             "-- @mode coroutine",
+            "-- @mode tick",
             "-- @mode unknown",
             "-- @mode Tick",
             "-- @mode",
             "-- @mode tick junk",
             "-- @mode tick\n-- @mode tick",
             "-- @mode coroutine\n-- @tick.overrun skip",
-            "-- @mode tick\n-- @tick.unknown true",
-            "-- @mode tick\n-- @tick.budget_ms 10\n-- @tick.budget_ms 10",
-            "-- @mode tick\n-- @tick.budget_ms 0",
-            "-- @mode tick\n-- @tick.budget_ms -1",
-            "-- @mode tick\n-- @tick.budget_ms +1",
-            "-- @mode tick\n-- @tick.budget_ms 1e2",
-            "-- @mode tick\n-- @tick.budget_ms NaN",
-            "-- @mode tick\n-- @tick.budget_ms inf",
-            "-- @mode tick\n-- @tick.overrun restart",
-            "-- @mode tick\n-- @tick.abort_commit True",
-            "-- @mode tick\n-- @tick.abort_commit 1",
-            "-- @mode tick\n-- @tick budget_ms 10",
-            "-- @mode tick\n-- @tick.gear 1\n-- @tick.gear 1",
+            "-- @tick.unknown true",
+            "-- @tick.budget_ms 10\n-- @tick.budget_ms 10",
+            "-- @tick.budget_ms 0",
+            "-- @tick.budget_ms -1",
+            "-- @tick.budget_ms +1",
+            "-- @tick.budget_ms 1e2",
+            "-- @tick.budget_ms NaN",
+            "-- @tick.budget_ms inf",
+            "-- @tick.overrun restart",
+            "-- @tick.abort_commit True",
+            "-- @tick.abort_commit 1",
+            "-- @tick budget_ms 10",
+            "-- @tick.gear 1\n-- @tick.gear 1",
         ) + tuple(
-            "-- @mode tick\n-- @tick.gear " + value
+            "-- @tick.gear " + value
             for value in (
                 "",
                 "0",
@@ -393,18 +394,18 @@ class LuaStrategyContract(unittest.TestCase):
             backend.assert_not_called()
             run.assert_not_called()
 
-    def test_only_real_leading_line_comments_define_execution_mode(self) -> None:
+    def test_only_real_leading_line_comments_define_execution_config(self) -> None:
         for source in (
-            "--[[\n-- @mode tick\n]]\nlocal function main(context)\nend\n",
-            "--[=[\n-- @mode unknown\n]=]\nlocal function main(context)\nend\n",
+            "--[[\n-- @tick.budget_ms invalid\n]]\nlocal function main(context)\nend\n",
+            "--[=[\n-- @tick.gear invalid\n]=]\nlocal function main(context)\nend\n",
             "local text = '-- @mode tick'\n-- @tick.budget_ms invalid\nlocal function main(context)\nend\n",
         ):
             with self.subTest(source=source):
                 self.assertEqual(100, parse_script_execution(source).budget_ms)
-        source = "-- a literal --[[ inside a line comment\n--- @mode tick\nfunction main(context)\nend\n"
-        self.assertEqual(100, parse_script_execution(source).budget_ms)
-        source = "--[==[\n-- @mode coroutine\n]==]\n-- @mode tick\nfunction main(context)\nend\n"
-        self.assertEqual(100, parse_script_execution(compile_strategy(source, {}, self.scene)).budget_ms)
+        source = "-- a literal --[[ inside a line comment\n--- @tick.gear 2\nfunction main(context)\nend\n"
+        self.assertEqual(2, parse_script_execution(source).gear)
+        source = "--[==[\n-- @tick.budget_ms invalid\n]==]\n-- @tick.gear 2\nfunction main(context)\nend\n"
+        self.assertEqual(2, parse_script_execution(compile_strategy(source, {}, self.scene)).gear)
 
     def test_scene_context_injects_identity_only(self) -> None:
         available = scene_context(self.files.state)

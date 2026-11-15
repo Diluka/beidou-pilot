@@ -945,8 +945,8 @@ void ReadCommand() {
             packageRoot.insert(0, "Z:");
         }
     }
-    // The tick runtime owns mode validation: an explicit non-tick @mode is
-    // rejected there, and an omitted @mode means tick.
+    // The tick runtime owns metadata validation: @mode has been removed, so
+    // any mode declaration is rejected before the script starts.
     std::string error;
     const bool started =
         sourceValid

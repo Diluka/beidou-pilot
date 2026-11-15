@@ -1,4 +1,3 @@
--- @mode tick
 -- @option[type=string,default=right,choices=left|right] direction 移动方向
 
 -- 连续移动跳砍：先助跑，再保持方向跳起，空中普攻并撤下保持，落地后停止。

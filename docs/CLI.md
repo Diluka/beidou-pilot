@@ -193,7 +193,7 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 
 | 命令 | 支持与结果边界 |
 | --- | --- |
-| `script describe FILE\|DIR` | 只读本地 tick 策略文件或目录脚本包，输出 `main(context)`、有效 `@mode`/`@tick` 配置、声明参数和动态用法；不执行入口。 |
+| `script describe FILE\|DIR` | 只读本地 tick 策略文件或目录脚本包，输出 `main(context)`、有效 `@tick` 配置、声明参数和动态用法；输出不含 `mode` 字段，不执行入口。 |
 | `script run/start FILE [策略参数]` | 客户端内同步等待会话终态；等待中断只结束 CLI 等待，已受理会话继续运行。 |
 | `script run/start DIR [策略参数]` | tick 目录脚本包：`DIR/main.lua` 为入口，其余 `.lua` 由入口按包内相对路径 `require`；会话状态可查实际装载模块，模块缺失/编译/运行错误带来源模块与行号。 |
 | `script status [--session SCRIPT_ID]` | 只读全部会话 `scripts` 与最新 `script`，可按 ID 选择；tick 会话含调度、动作与所属输入释放事实。 |
@@ -205,7 +205,6 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 tick 引擎按每会话频率档位到期调用 `main(context)`，通过 `context.state` 保留跨调用状态，通过 `context.game` 的只读领域观察，通过 `context.game.player` 提交方向与动作意图；调用频率、预算、领域字段和动作槽语义以 [Tick Lua API](LUA_TICK_API.md#tick-环境) 为准。tick 入口可以是单文件，也可以是目录脚本包：目录内固定 `main.lua` 为入口，其余 `.lua` 由入口用原生 `require` 按包内相对路径装载，模块文件保持原位置、不复制进会话目录；GUI 与 headless 由原生各自把包根映射到本端文件系统，会话状态可查实际装载模块，模块缺失、编译或运行错误带来源模块与行号。完整示例：
 
 ```lua
--- @mode tick
 -- @tick.gear 3            -- 1=10Hz，2=20Hz，3=30Hz默认，4=本端原生更新
 -- @tick.budget_ms 100
 -- @tick.overrun abort     -- 或 skip
@@ -223,7 +222,7 @@ end
 private/workbenches/workbench /external/workbench script run /work/scripts/tick_observe.lua --ticks 120 --continuous
 ```
 
-`@mode` 可省略并视为 tick；`@tick.gear/budget_ms/overrun/abort_commit` 可单独或与显式 `@mode tick` 一起使用。`@mode` 其他值、未知或重复配置、非法值均在发布前拒绝。`@tick.gear` 接受 `1/2/3/4`，分别为 10Hz、20Hz、30Hz 和本端原生更新不节流，默认第 3 档；不接受前导零、符号或任意 tick 倍率。首次稳定回调立即执行，之后按绝对相位跳过过期周期，不突发补跑。固定频率是目标而非严格最大延迟。默认单次预算 **100ms / abort / abort_commit=true**；`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。
+脚本统一按 tick 引擎执行，无需声明引擎；`@tick.gear/budget_ms/overrun/abort_commit` 可单独出现在前导注释中。`@mode` 已移除，仍写 `-- @mode ...`（任何值）的脚本会在发布前被明确拒绝，这是迁移期的有意行为；未知或重复的 `@tick.*`、非法值同样在发布前拒绝。`@tick.gear` 接受 `1/2/3/4`，分别为 10Hz、20Hz、30Hz 和本端原生更新不节流，默认第 3 档；不接受前导零、符号或任意 tick 倍率。首次稳定回调立即执行，之后按绝对相位跳过过期周期，不突发补跑。固定频率是目标而非严格最大延迟。默认单次预算 **100ms / abort / abort_commit=true**；`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。
 
 ### 策略参数与状态
 

@@ -72,10 +72,9 @@ beidou-pilot --json bridge status
 - 有界执行使用 `--seconds N`；操作者明确选择长期持续脚本时使用 `script start LUA_PATH --continuous`。原生受理后 CLI 返回，脚本继续执行；LLM 暂停、停止、退出和结束事件监听均不隐式取消。
 - 取消只针对匹配的当前 `script.id`。核对同一 `instance_id/run_id` 的终态与会话级 `control_released`；全局 `held_keys` 可能仍包含其他会话的合法持键。旧会话 ID 只对应历史脚本。活动 Lua 期间普通 GUI 输入遇到 `input_busy` 时先确认控制者。
 - `script run` 同步等待结果。`run/start` 等待期间收到 Ctrl+C/SIGINT/SIGTERM 只结束 CLI 等待；已发布任务继续由原生执行，两端语义相同。等待超时或陈旧观察错误时，任务是否受理与停止以当前状态为准。先用 `script status` 核对当前任务与身份，不重放 `start`；主动取消使用 `script cancel --session`，再核对终态和放键。
-- `script run/start` 只接受文件。文件是使用 tick API 的 UTF-8 Lua，例如：
+- `script run/start` 只接受文件。文件是使用 tick API 的 UTF-8 Lua，按 tick 引擎执行、无需声明引擎；`@mode` 已移除，仍写该声明会在发布前被拒绝，需要调整调度或预算时在前导注释用 `@tick.*`。例如：
 
 ```lua
--- @mode tick
 local function main(context)
     if context.tick.index == 1 then context.game.log("观察开始") end
     if context.tick.index >= 5 then return "done" end

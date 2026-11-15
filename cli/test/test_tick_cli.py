@@ -20,7 +20,7 @@ from .test_bridge import BridgeFiles
 from .test_native_scripts import script_state
 
 
-TICK_SOURCE = "-- @mode tick\nfunction main(context)\n    context.state.calls = (context.state.calls or 0) + 1\nend\n"
+TICK_SOURCE = "function main(context)\n    context.state.calls = (context.state.calls or 0) + 1\nend\n"
 
 
 def tick_state(script_id: str, *, stopped: bool = False) -> BridgeScript:
@@ -496,7 +496,7 @@ class TickCliContract(unittest.TestCase):
 
     def test_invalid_execution_config_does_not_copy_or_publish_a_script(self) -> None:
         with self.assertRaises(ClientError) as invalid:
-            self.client.run_script(code="-- @mode tick\n-- @tick.overrun retry\nfunction main(context) end")
+            self.client.run_script(code="-- @tick.overrun retry\nfunction main(context) end")
         self.assertEqual("invalid_strategy_metadata", invalid.exception.code)
         self.assertFalse((self.files.directory / "scripts").exists())
         self.assertFalse((self.files.directory / "command.txt").exists())
@@ -584,7 +584,7 @@ class TickCliContract(unittest.TestCase):
 
     def test_directory_package_publishes_require_root_and_projects_loaded_modules(self) -> None:
         directory = self.package_directory(
-            "-- @mode tick\n"
+            ""
             "-- @option[type=int,opt,default=2] ticks 观察次数\n"
             'local lib = require("lib.value")\n'
             'function main(context)\n    return "done"\nend\n',
@@ -627,9 +627,7 @@ class TickCliContract(unittest.TestCase):
 
     def test_rejected_package_reports_the_source_module_and_line(self) -> None:
         directory = self.package_directory(
-            "-- @mode tick\n"
-            'local broken = require("lib.broken")\n'
-            'local function main(context)\n    return "done"\nend\n',
+            'local broken = require("lib.broken")\nlocal function main(context)\n    return "done"\nend\n',
             {"lib/broken.lua": "return {\n    missing = ,\n}\n"},
         )
         previous = tick_state("a" * 32)
@@ -681,7 +679,7 @@ class TickCliContract(unittest.TestCase):
                 (
                     "script",
                     "run",
-                    str(self.package_directory('-- @mode tick\nfunction main(context)\n    return "done"\nend\n')),
+                    str(self.package_directory('function main(context)\n    return "done"\nend\n')),
                     "--library",
                     "travel",
                 ),
@@ -697,14 +695,14 @@ class TickCliContract(unittest.TestCase):
 
     def test_directory_package_describe_reports_usage_entry_and_tick_options(self) -> None:
         directory = self.package_directory(
-            "-- @mode tick\n-- @option[type=int,opt,default=2] ticks 观察次数\nfunction main(context)\nend\n"
+            "-- @option[type=int,opt,default=2] ticks 观察次数\nfunction main(context)\nend\n"
         )
         code, report = self.cli("script", "describe", str(directory))
         self.assertEqual(code, 0)
         data = report["data"]
         self.assertEqual(data["file"], str(directory))
         self.assertEqual(data["package_entry"], str(directory / "main.lua"))
-        self.assertEqual(data["mode"], "tick")
+        self.assertNotIn("mode", data)
         self.assertEqual(
             data["usage"],
             "beidou-pilot script run/start " + str(directory) + " [--ticks <int>] [--seconds N|--continuous]",

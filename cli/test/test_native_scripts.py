@@ -20,7 +20,7 @@ from beidou_pilot.errors import ClientError
 from .test_bridge import BridgeFiles, tick_script
 
 
-TICK_SOURCE = "-- @mode tick\nlocal function main(context)\n    context.state.calls = 0\nend\n"
+TICK_SOURCE = "local function main(context)\n    context.state.calls = 0\nend\n"
 
 
 def script_state(script_id: str, status: Literal["running", "completed", "cancelled", "rejected"],
