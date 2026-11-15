@@ -128,7 +128,7 @@ nodes:
   - id: script-execution.lua-api
     kind: interface
     name: tick Lua 接口
-    summary: 提供只读领域观察和 player 动作槽提交；各端原生适配器落实能力差异，窗口、对话、商店和养成工作流尚无对应 Lua 接口。
+    summary: 提供只读领域观察、当前静态场景导航数据和 player 动作槽提交；各端原生适配器落实能力差异，窗口、对话、商店和养成工作流尚无对应 Lua 接口。
     aliases: [game API, context.game, player 状态机]
     anchors:
       - kind: document
@@ -141,6 +141,25 @@ nodes:
         file: shared/lua-runtime/TickRuntime.cpp
         value: TickRuntime::Start
         description: 注册只读领域与共享 player 状态机，并按原样提供 Lua 标准库。
+  - id: script-execution.tick-scene
+    kind: interface
+    name: 当前静态场景与原生导航数据
+    summary: tick 引擎按地图与场景代次维护只读静态场景；原始 footholds/ropes 与从它们派生的 platforms/walls/ropes/candidates 由共享 C++ 在稳定场景读取时一次给出，跨会话共享。派生只依赖客户端导航模型常量，不含角色属性、边成本或脚本策略；脚本据此自行维护代价、禁边与路径。地形不可用或地图身份不符时不携带旧几何。
+    aliases: [context.scene, terrain, navigation, platforms, candidates]
+    anchors:
+      - kind: file
+        value: shared/lua-runtime/SceneNavigation.h
+        description: 静态平台切分、竖直墙、绳索相交层与几何候选关系的原生派生实现。
+      - kind: file
+        value: shared/lua-runtime/SceneTerrain.h
+        description: 原始 IMG 几何读取并附上 navigation 静态数据。
+      - kind: symbol
+        file: shared/lua-runtime/TickRuntime.cpp
+        value: TickRuntime::Start
+        description: 在稳定场景读取地形并按场景代次与地图身份绑定到只读 context.scene。
+      - kind: document
+        value: docs/LUA_TICK_API.md
+        description: 面向脚本作者说明 navigation 字段、模型常量与候选关系格式。
   - id: script-execution.strategy-entry
     kind: interface
     name: main(context) 策略入口与参数合同

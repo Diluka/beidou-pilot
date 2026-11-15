@@ -80,6 +80,18 @@ class GuiSceneTerrainContract(unittest.TestCase):
             {"id": 17, "x1": -125, "x2": 490, "y1": 85, "y2": 90, "prev": 0, "next": 18}, result["data"]["footholds"][0]
         )
         self.assertEqual({"index": 3, "x": -24, "y1": 12, "y2": 85, "l": 1}, result["data"]["ropes"][0])
+        navigation = result["data"]["navigation"]
+        self.assertEqual(1, len(navigation["platforms"]))
+        self.assertEqual([], navigation["walls"])
+        self.assertEqual(
+            {"left": -125, "right": 490}, {key: navigation["platforms"][0][key] for key in ("left", "right")}
+        )
+        self.assertEqual([-125, 490, 85, 90], navigation["platforms"][0]["segments"])
+        rope_platforms = navigation["ropes"][0]["platforms"]
+        self.assertEqual([1], rope_platforms[0::2])
+        self.assertAlmostEqual(85.82113821138212, rope_platforms[1], places=6)
+        self.assertEqual([], navigation["candidates"]["walk"])
+        self.assertEqual([], navigation["candidates"]["drop"])
 
     def test_map_directory_is_used_only_when_map002_directory_is_absent(self):
         selected = self.map_file(directory="Map")

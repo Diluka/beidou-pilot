@@ -115,9 +115,16 @@ buff 归 `game.character`，不在 `player.status()`。首版两端都没有可�
 `context.scene` 由本端原生 tick 引擎维护，策略文件可直接读取：
 
 - `instance_id/character_id/map_id/scene_generation` 表示这份静态场景的身份；每次稳定回调中，地图和代次与 `game.world`、`context.tick.scene_generation` 一致。初始调用方的身份锚点仍先核验，随后不以调用方旧地形作为回退。
-- `terrain.status="available"` 时提供 `source`、`footholds`、`ropes`。平台段含整数 `id/x1/x2/y1/y2/prev/next`，绳梯含整数 `index/x/y1/y2`，本端已知的整数 `l/uf` 可选保留；坐标沿用地图原始像素方向，绳梯列表可为空。
+- `terrain.status="available"` 时提供 `source`、`footholds`、`ropes` 与静态导航数据 `navigation`。平台段含整数 `id/x1/x2/y1/y2/prev/next`，绳梯含整数 `index/x/y1/y2`，本端已知的整数 `l/uf` 可选保留；坐标沿用地图原始像素方向，绳梯列表可为空。
+- `terrain.navigation` 是本端共享 C++ 在稳定场景读取时从原始地形一次派生的静态导航数据，不占用 Lua 计算时间，并按客户端场景快照跨会话共享；内容只含环境几何和公开的客户端导航模型常量，不含角色属性、边代价或脚本策略：
+  - `model`：派生使用的客户端导航模型常量 `stand_height/wall_margin/min_platform_width/jump_rise/drop_min/drop_max/rope_grab`。脚本重建或复核关系时可读取同一组值。
+  - `terrain_left/terrain_right`：本图地形左右边界。
+  - `platforms[]`：被竖直墙切分后的可站立平台，`index` 从 1 开始；`left/right` 为水平范围，`open_left/open_right` 表示能否从该物理边缘走出，`segments` 是扁平数组，每 4 个数为 `left,right,y1,y2`，平台高度按段线性插值。
+  - `walls`：合并后的竖直墙扁平数组，每 3 个数为 `x,top,bottom`。
+  - `ropes[]`：`index/x/y1/y2` 与 `platforms` 相交层。`platforms` 为扁平数组，每 2 个数为平台 `index` 与该平台在绳 x 处的高度；单层也会列出，是否可攀爬由策略按模型常量决定。
+  - `candidates`：`walk/step/jumpup/drop` 为每 5 个数 `from,to,x,destination,rise` 的扁平数组，`rope` 为每 6 个数追加 `rope_index`。`from/to` 是 `platforms` 的 1 基索引；`x` 为源平台对齐点，`destination` 为目标平台落点。`walk/step/jumpup/drop` 的 `rise` 为源高度减目标高度（地图像素 y 向下为正）；`rope` 的 `rise` 为目标高度减源高度，负值表示沿绳向上。候选只是几何关系，边成本、禁边、适用筛选与执行由策略维护。
 - 缺图、坏字段、无法读取等返回 `unavailable`，空自身地形且存在 `info.link` 返回 `unsupported`；`error` 及可用的 `message/details/source` 说明原因。不可用时不带 `footholds/ropes`，不把缺失坐标补零，也不跟链接地图或另一后端拼出地形。有本图完整自身几何时可直接使用，不因额外 `info.link` 拒绝。
-- 同一会话可以继续跨图，`context.state` 和已有 `options/route` 不重建。换图沿现有规则暂停回调并清除旧输入；转场立即使当前静态场景不可用，首次稳定到期帧再读取本图。稳定但资料不可用时仍调用 `main`，由策略决定等待或退出；资料结果在当前场景有效期内共享，不逐 tick 重读。相同地图ID的新场景代次也重新读取。
+- 同一会话可以继续跨图，`context.state` 和已有 `options/route` 不重建。换图沿现有规则暂停回调并清除旧输入；转场立即使当前静态场景不可用，首次稳定到期帧再读取本图。稳定但资料不可用时仍调用 `main`，由策略决定等待或退出；资料结果在当前场景有效期内共享，不逐 tick 重读；`navigation` 与原始几何由客户端场景快照跨会话共享。相同地图ID的新场景代次也重新读取。
 - `scene` 槽及嵌套数据只读，不能由策略替换。旧表引用仍是带旧身份的历史只读快照，不能当成当前图；需要缓存路径等进度时放入 `context.state`，发现代次变化后自行重规划。
 
 headless 使用本端已加载的 IMG 地图树；GUI 原生桥按显式配置的同端只读 `game_data` 目录读取单张 IMG，不按工作目录猜资源根，不经 Python 换图回填。`game.scene` 仍只负责动态实体观察，不增加公开的 `game.terrain` 查询。
@@ -129,9 +136,10 @@ if context.state.scene_generation ~= scene.scene_generation then
     context.state.scene_generation = scene.scene_generation
     context.state.maps_seen = (context.state.maps_seen or 0) + 1
     -- 在此丢弃依赖上一场景的平台图、门户阶段等缓存，再规划本图。
-    game.log(("map=%d generation=%d footholds=%d ropes=%d"):format(
+    local navigation = scene.terrain.navigation
+    game.log(("map=%d generation=%d platforms=%d walls=%d"):format(
         scene.map_id, scene.scene_generation,
-        #scene.terrain.footholds, #scene.terrain.ropes))
+        #navigation.platforms, #navigation.walls // 3))
 end
 ```
 

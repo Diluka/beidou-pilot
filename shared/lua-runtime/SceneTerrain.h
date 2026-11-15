@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Observation.h"
+#include "SceneNavigation.h"
 
 #include <cstdint>
 #include <initializer_list>
@@ -37,6 +38,7 @@ Observation ReadSceneTerrain(const Node& map, std::uint32_t mapId, const std::st
         return true;
     };
     Value footholds = Value::Array();
+    std::vector<SceneFoothold> footholdData;
     for (const auto& layer : map["foothold"])
         for (const auto& group : layer)
             for (const auto& entry : group) {
@@ -45,6 +47,12 @@ Observation ReadSceneTerrain(const Node& map, std::uint32_t mapId, const std::st
                 auto foothold = Value::Object({{"id", id}});
                 if (!fields(entry, {"x1", "x2", "y1", "y2", "prev", "next"}, foothold))
                     return unavailable("unavailable", "hunt_terrain_invalid");
+                footholdData.push_back({id, static_cast<std::int64_t>(foothold["x1"].Number()),
+                                        static_cast<std::int64_t>(foothold["x2"].Number()),
+                                        static_cast<std::int64_t>(foothold["y1"].Number()),
+                                        static_cast<std::int64_t>(foothold["y2"].Number()),
+                                        static_cast<std::int64_t>(foothold["prev"].Number()),
+                                        static_cast<std::int64_t>(foothold["next"].Number())});
                 footholds.Add(std::move(foothold));
             }
     // Match load_hunt_terrain: use this map's own complete geometry when it
@@ -54,22 +62,25 @@ Observation ReadSceneTerrain(const Node& map, std::uint32_t mapId, const std::st
                                    : unavailable("unavailable", "hunt_terrain_unavailable");
 
     Value ropes = Value::Array();
+    std::vector<SceneRope> ropeData;
     for (const auto& entry : map["ladderRope"]) {
         std::int64_t index = 0;
         if (!ReadTerrainIndex(entry.name(), index)) return unavailable("unavailable", "hunt_terrain_invalid");
         auto rope = Value::Object({{"index", index}});
         if (!fields(entry, {"x", "y1", "y2"}, rope)) return unavailable("unavailable", "hunt_terrain_invalid");
+        ropeData.push_back({index, static_cast<std::int64_t>(rope["x"].Number()),
+                            static_cast<std::int64_t>(rope["y1"].Number()),
+                            static_cast<std::int64_t>(rope["y2"].Number())});
         for (const auto* name : {"l", "uf"}) {
             std::int64_t value = 0;
             if (readInteger(entry[name], value)) rope[name] = value;
         }
         ropes.Add(std::move(rope));
     }
-    return {
-        "ok",
-        Value::Object(
-            {{"map_id", mapId}, {"source", source}, {"footholds", std::move(footholds)}, {"ropes", std::move(ropes)}}),
-        {}};
+    Value data = Value::Object(
+        {{"map_id", mapId}, {"source", source}, {"footholds", std::move(footholds)}, {"ropes", std::move(ropes)}});
+    data["navigation"] = SceneNavigationValue(BuildSceneNavigation(footholdData, ropeData));
+    return {"ok", std::move(data), {}};
 }
 
 }
