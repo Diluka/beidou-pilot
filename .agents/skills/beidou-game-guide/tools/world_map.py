@@ -1,16 +1,21 @@
-"""重新生成 references/world-map.md。
+"""重新生成技能内静态世界图资料：references/world-map.md、world-graph.json 与分册。
 
-维护者重新生成时，通过 MAPLE_RESOURCES_CONFIG 显式指定资源配置；日常路线查询不需要资源：
+维护者重新生成时，通过 MAPLE_RESOURCES_CONFIG 或 CLIENT_ROOT 显式指定客户端资源；
+日常浏览与路线查询不需要这些步骤：
 
     PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/beidou-game-guide/tools/world_map.py
 
 读取本地原版 IMG 里每张地图的门户（名称、坐标、类型、目的地图与目的门户），按地图号归组为区域，
 输出纯文本 graph：场景是节点，跨场景传送门是带坐标的边。
 
+生成器只依赖本目录的 world_map_data.py，不导入 beidou_pilot 包，也不读取客户端运行状态。
 需要共享 IMG 解析库，CI 生成的库不会留在检出目录里，本地运行时显式给出：
 
     BEIDOU_IMG_LIBRARY=<检出>/headless/build/libbeidou-img.so \
+        MAPLE_RESOURCES_CONFIG=<检出>/private/workbenches/resources.json \
         PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/beidou-game-guide/tools/world_map.py
+
+跨图路线只由客户端原生 `beidou-pilot world-map route START GOAL` 提供；本技能不包含路线计算。
 """
 
 import json
@@ -20,9 +25,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[4]
 SKILL = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "cli"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from beidou_pilot.world_map import display_regions, edges_of, index, region_section, regions_of, route_text, world_data  # noqa: E402
+from world_map_data import display_regions, edges_of, game_data_root, index, region_section, regions_of, world_data  # noqa: E402
 
 HEADER = """# 世界地图
 
@@ -32,20 +37,20 @@ HEADER = """# 世界地图
 
 - 世界地图展示索引取自客户端 `WorldMap*.img`；单一地图可能出现在多张图中，未展示的场景不推断归属。
   地图号分册是启发式索引，不代表官方区域划分；编号范围内未必每个 ID 都存在。
-- `tools/world_route.py <起点地图> <终点地图>` 比较已收录的静态有向门户及部分出租车、飞艇候选；
-  未覆盖的 NPC、地铁和动态脚本保留未知。搜索结果不是实际可达保证；未找到不等于不可达。
-- 查单张地图或当前地图的门户：`beidou-pilot inspect map [地图号]`。进入门户需写用户 tick Lua 并用 `player.move("up")` 等原生输入触发，没有 CLI 进门户命令。
-- 金银岛出租车、区域出租车及飞艇费用、NPC 和条件见路线工具的快捷候选；它们参考
+- 跨图路线只由客户端原生实现查询：`beidou-pilot world-map route <起点地图号> <终点地图号>`；
+  该命令需要同目录已有运行中的客户端提供只读观察通道。本技能只有离线静态资料，不包含路线计算工具或付费交通候选。
+- 查单张地图或当前地图的门户：`beidou-pilot inspect map [地图号]`。当前没有 CLI 进门户命令；进入门户要写用户 tick Lua，用 `player.move("up")` 等原生输入靠近并触发，再核对地图与落点。
+- 金银岛出租车、区域出租车及飞艇的静态费用、NPC 和条件见 [交通攻略](transport.md)；它们参考
   [BeiDou-Server 固定版本 00422c2](https://github.com/BeiDouMS/BeiDou-Server/tree/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc)，
-  为源码静态推断，单条出租车实测与限制见 [交通攻略](transport.md)。
+  为源码静态推断，单条出租车实测与限制也记录在该文。
 
 """
 
 
 def main() -> None:
-    resource_root = Path(os.environ.get("CLIENT_ROOT", ROOT))
-    scenes = world_data(resource_root)
-    display = display_regions(resource_root)
+    game_data = game_data_root(Path(os.environ.get("CLIENT_ROOT", ROOT)))
+    scenes = world_data(game_data)
+    display = display_regions(game_data)
     if not scenes or not display:
         raise SystemExit("地图或世界地图资源不可用，未覆盖现有攻略。")
     regions = regions_of(scenes)
@@ -77,9 +82,6 @@ def main() -> None:
     for region in regions:
         (region_dir / f"{region.entity:05d}.md").write_text(
             "[返回世界地图索引](../world-map.md)\n\n" + region_section(region, scenes))
-    body += ["## 线路示例", "",
-             "```", route_text(scenes, 100000000, 104000000), "```", "",
-             "```", route_text(scenes, 200000000, 230000000), "```", ""]
     (SKILL / "references/world-map.md").write_text("\n".join(body))
     print(json.dumps({"scenes": len(scenes), "regions": len(regions)}, ensure_ascii=False))
 
