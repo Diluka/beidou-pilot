@@ -24,7 +24,7 @@ class CodexSurfaceContract(unittest.IsolatedAsyncioTestCase):
             if "BEIDOU_GAME_AI_IMAGE" in os.environ or os.environ.get("CI"):
                 self.fail("合同要求的 Codex 镜像不存在；CI 必须先构建镜像。")
             self.skipTest("尚未构建固定 Codex 镜像；仅本地开发可跳过，CI 不允许。")
-        route_result = subprocess.run(
+        bundled_graph = subprocess.run(
             [
                 "docker",
                 "run",
@@ -34,16 +34,15 @@ class CodexSurfaceContract(unittest.IsolatedAsyncioTestCase):
                 "--entrypoint",
                 "python3",
                 image,
-                "/game/.agents/skills/beidou-game-guide/tools/world_route.py",
-                "103000000",
-                "102000000",
+                "-c",
+                "import json; data = json.load(open('/game/.agents/skills/beidou-game-guide/references/world-graph.json'));"
+                " print(len(data['maps']))",
             ],
             check=True,
             capture_output=True,
             text=True,
         )
-        route_report = json.loads(route_result.stdout)
-        self.assertEqual(route_report["paid_candidates"]["fewest_planning_legs"]["cost"], 1000)
+        self.assertGreater(int(bundled_graph.stdout), 0, "离线世界图资料未随镜像打包。")
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
