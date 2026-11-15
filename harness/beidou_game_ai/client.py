@@ -86,9 +86,9 @@ class GameClient:
             "observed_at_ms": state["observed_at_ms"],
             "snapshot": snapshot,
             "script": state.get("script"),
+            "scripts": state.get("scripts"),
             "command": state["command"],
             "held_keys": state["held_keys"],
-            "held_actions": state.get("held_actions"),
         }
 
     async def script_status(self) -> JsonObject:
@@ -101,8 +101,8 @@ class GameClient:
                 "seq",
                 "observed_at_ms",
                 "script",
+                "scripts",
                 "command",
                 "held_keys",
-                "held_actions",
             )
         }

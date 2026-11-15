@@ -55,8 +55,7 @@ class HeadlessHeldInputContract(unittest.TestCase):
             )
         ]
         sources += [
-            root / "shared/lua-runtime" / name
-            for name in ("Observation.cpp", "Runtime.cpp", "TickRuntime.cpp", "TaskTransport.cpp", "EventTransport.cpp")
+            root / "shared/lua-runtime" / name for name in ("Observation.cpp", "TickRuntime.cpp", "EventTransport.cpp")
         ]
         sources += [root / "cli/test/headless_held_input_contract.cpp"]
         flags = [
@@ -129,5 +128,5 @@ class HeadlessHeldInputContract(unittest.TestCase):
     def test_native_action_idle_is_not_physical_settled_and_scene_releases_everything(self) -> None:
         self.run_contract("lifecycle")
 
-    def test_global_native_actions_do_not_fabricate_tick_ownership_or_cross_engine_release(self) -> None:
+    def test_global_native_actions_do_not_fabricate_tick_ownership(self) -> None:
         self.run_contract("provenance")

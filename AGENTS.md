@@ -7,16 +7,16 @@
 - 每个工作目录对应一个账号角色和自己的 `default` 容器，原生 `instance_id/run_id` 继续核对身份；取消和关闭只作用于所属实例。同一游戏目标同一角色不并发接管，GUI仅一名明确操作者。
 - 不操作未授权的游戏目标或账号。实际玩法优先复用常驻服务器中已授权的已有账号和角色，只有验证场景必须从新账号或新角色开始、且已有资源无法满足时才新建；新建账号或角色不自动要求另开隔离服。不直接修改正式数据库。构建/离线合同与实际游戏结果分别报告。
 - 宿主只使用 `private/workbenches/workbench DIR COMMAND` 统一入口，Docker逻辑直接在该脚本中；容器内CLI仍名为 `beidou-pilot`。保留真实消费者所需代码，删除已被API/Lua替代的无消费者实现，避免重建平行控制链。
-- LLM 为可选旁路控制端，与客户端和 Lua 独立启停；镜像继承只用于打包复用。宿主 `workbench DIR ai` 通过 `docker exec` 启动容器内 `beidou-game-ai`，普通模式通过 shell 直接使用本容器 CLI；只读模式无 shell，仅保留两个观察工具。LLM 暂停或退出不联动清 shell、取消 Lua 或关闭客户端；重新接入先观察已有脚本与任务，不重复启动或抢占。脚本取消和客户端关闭分别发出明确命令；角色与脚本控制权以当前 CLI 和原生状态为准。harness 状态使用 `/work` 下的常驻目录，按稳定工作目录、角色与目标绑定续接；`lua-v1/hunt-v1` 旧工具面的数据只作历史保留，续接使用新状态。
+- LLM 为可选旁路控制端，与客户端和 Lua 独立启停；镜像继承只用于打包复用。宿主 `workbench DIR ai` 通过 `docker exec` 启动容器内 `beidou-game-ai`，普通模式通过 shell 直接使用本容器 CLI；只读模式无 shell，仅保留两个观察工具。LLM 暂停或退出不联动清 shell、取消 Lua 或关闭客户端；重新接入先观察已有脚本与 `script.id`，不重复启动或抢占。脚本取消和客户端关闭分别发出明确命令；角色与脚本控制权以当前 CLI 和原生状态为准。harness 状态使用 `/work` 下的常驻目录，按稳定工作目录、角色与目标绑定续接；`lua-v1/hunt-v1` 旧工具面的数据只作历史保留，续接使用新状态。
 - `private/workbenches/workbench` 是 `private/` 下唯一纳入 Git 的公共脚本；共享资源配置、所有账号工作目录、认领锁和运行数据仍被忽略。不要为集中入口而把整个 private 目录加入版本控制，也不恢复根宿主入口或每目录转发脚本。
 - 新会话实际使用客户端、接续实例或处理登录与账号准备时，优先使用仓库技能 [beidou-pilot-client](.agents/skills/beidou-pilot-client/SKILL.md)，先找回已有工作台与角色，按当前能力区分已有角色登录和首次建角。
 
 - 直接管理的第三方依赖统一放根 `third_party/`，来源版本与许可随源码保留。上游内部嵌套依赖保持其原结构；集成适配器放 `beidou-ijl15/`，不复制第二份共享Runtime。未修改的基础库可固定commit引为submodule，配置以实际的gitlink为准；本地改造的上游保留补丁与来源。
 
-- 角色控制策略写在 `shared/scripts/` 或用户Lua中；Python仅做参数、装载/取消和结果投影。不增加宏DSL、JSON动作预设、Python逐帧反馈/多轨控制或已退役的直接按键/技能桥入口。桌面模块只承担原版GUI必需原语。
+- 角色动作与策略写在用户 tick Lua 文件中；`shared/scripts/` 只保留随镜像固定的 tick 示例。Python 仅做参数、文件读取、装载/取消和结果投影。不增加宏DSL、JSON动作预设、Python逐帧反馈/多轨控制或直接按键/技能桥入口。桌面模块只承担原版GUI必需原语。
 - 原生脚本生命周期由客户端 Runtime 持有。`script run` 同步等结果，`script start` 等受理；中断或观察等待失败只结束等待，不自动取消已发布任务。先观察当前脚本与任务，不重放启动；脚本取消须明确 `script cancel --session` 并核对终态/放键，客户端关闭另行 `close`。
 
-- headless 与 GUI 客户端 base 安装同一份 CLI、辅助引擎和 Lua，分别提供对应原生运行环境；可选 harness 镜像继承所选 base，不复制第二套客户端。新实例默认从 main 的已提交版本构建或复用镜像，已有实例通过 docker exec 使用启动时的代码，不挂载宿主开发源码。`private/workbenches/workbench` 只做工作目录选择、Git构建输入和Docker生命周期；日常客户端运行不在宿主加载 Python 客户端、harness、策略或游戏进程；开发离线测试仍按下文入口执行。
+- headless 与 GUI 客户端 base 安装同一份 CLI、tick Lua 运行时和 Lua，分别提供对应原生运行环境；可选 harness 镜像继承所选 base，不复制第二套客户端。新实例默认从 main 的已提交版本构建或复用镜像，已有实例通过 docker exec 使用启动时的代码，不挂载宿主开发源码。`private/workbenches/workbench` 只做工作目录选择、Git构建输入和Docker生命周期；日常客户端运行不在宿主加载 Python 客户端、harness、脚本或游戏进程；开发离线测试仍按下文入口执行。
 - Docker 定义统一放在 `docker/`：`docker/headless/Dockerfile` 是无头镜像唯一构建定义，`docker/gui/Dockerfile` 与唯一的 `docker/compose.yaml` 交付并装配 GUI；两端使用根构建上下文，不为资源或工作台子目录增加 Compose 覆盖文件。GUI 桥默认取得所选提交成功 CI 的 Windows 工件并随镜像固定；显式复用工件也须匹配原生输入。原版客户端 `/client` 与配置的 `Data/` `/data` 均只读挂载；无头资源入口和静态查询经共享原生 IMG 解析器读取。资源读取格式和来源的改动需单独核实与验收，不能随装配调整合并、复制或迁移资源。游戏资源、账号、可变配置、角色计划、桥目录和运行数据外置，不进入镜像或构建上下文；用户 Lua 是明确的运行输入。
 - Docker 负责进程和资源生命周期，宿主 close 正常发信号并核对所属容器退出；容器内 CLI 直接使用本容器进程、桥和显示环境，不挂 Docker socket。桥仍负责单次 Lua 取消、放键与游戏效果确认；不维护宿主游戏 PID 查杀或进程期限兼容。
 - 仅在 harness 客户端配置了非空 `model_proxy` 时，另接 Docker 默认 `bridge` 到达模型代理，GUI 防火墙也只额外放行该代理 IP/端口；游戏服务器仍只在 internal 目标网络。镜像只打包 `/game/.agents/skills` 中的专用客户端技能及其公共文档，不复制仓库 AGENTS、宿主技能或开发配置。技能正文直接讲 CLI，Docker 用法下沉参考。
@@ -96,8 +96,8 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/tes
 
 ## Lua 接口与策略维护
 
-- `shared/scripts/` 当前是初步脚手架策略，后续按真实游戏行为迭代；维护前阅读其局部 `AGENTS.md`；现有阈值/流程和测试结果属于脚手架阶段。
+- `shared/scripts/` 只保留随镜像固定的 tick 示例；用户策略写在工作台 `/work/scripts`。维护示例前阅读其局部 `AGENTS.md`。
 
-- 脚本状态/动作/结果以headless接口为统一标准，由独立shared/lua-runtime绑定；ijl15新增桥直接一致，不保留旧接口别名或兼容包装。各端所需原生实现可保留，未知事实不得伪造为一致。
+- tick 的状态观察、动作槽与结果以共享 `shared/lua-runtime` 合同为统一标准，两端适配器各自实现原生逻辑；ijl15 桥直接一致，不保留旧接口别名或兼容包装。各端所需原生实现可保留，未知事实不得伪造为一致。
 
-- Lua脚本公共接口按引擎分开维护：`docs/LUA_COROUTINE_API.md` 与 `docs/LUA_TICK_API.md`；`docs/LUA_API.md` 只作导航。写策略优先查所属引擎的参考；绑定、状态字段、参数/返回或错误语义变化时同步更新对应文档。Serena记忆只链接导航入口，不重复维护接口清单。
+- Lua 公共接口只有 tick：`docs/LUA_TICK_API.md`；`docs/LUA_API.md` 只作导航。写策略前查 tick 参考；绑定、状态字段、参数/返回或错误语义变化时同步更新该文档。Serena 记忆只链接导航入口，不重复维护接口清单。

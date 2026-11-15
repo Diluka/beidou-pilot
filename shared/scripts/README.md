@@ -1,60 +1,19 @@
 # 共享 Lua 脚本
 
-这里保存随客户端镜像固定的复合策略和 API 示例，供 headless 与 GUI 客户端使用。各脚本用途和当前入口见下表；后端实际支持范围仍以当前能力声明和 [Lua API](../../docs/LUA_API.md) 为准。
+这里保存随客户端镜像固定的 tick 脚本示例，供 headless 与 GUI 客户端使用。客户端只有一套 tick 引擎，本目录的示例都在前导注释声明 `-- @mode tick`；旧的内置策略及其函数库已移除。各示例用途见下表，公共接口以 [Tick Lua API](../../docs/LUA_TICK_API.md) 为准。
 
-这些策略仍是初步脚手架，现有阈值、时序和流程会按真实游戏行为调整，后续可能重写或替换。“当前使用”表示有现行调用入口。标为“弃用”的脚本保留现有调用，新脚本不推荐依赖，后续可能改写或移除。
-
-## 旅行：`travel/`
-
-| 文件 | 作用 | 当前入口与限制 |
-| --- | --- | --- |
-| [move_to.lua](travel/move_to.lua) | 根据位置反馈移动到当前层的目标 X，停止后再次确认到达。 | CLI `move X`；负责同层横向对齐，跨层与跨图路线由旅行函数库组合。 |
-| [climb_to.lua](travel/climb_to.lua) | 靠近并对齐单根绳梯，向目标 Y 攀爬，检查最终位置。 | CLI `climb X --to-y Y`；单次局部攀爬，确认失败时停止。 |
-| [enter_portal.lua](travel/enter_portal.lua) | 接近单个门户，只发送一次进入动作，再观察换图或同图传送结果。 | CLI `portal NAME`；门户需在当前可接近层。 |
-| [walk_to.lua](travel/walk_to.lua) | 按静态地形图把角色移动到当前地图的目标坐标：走、跳台、落层、绳底跳抓；竖直墙把平台切成不同区间。 | CLI `move X --to-y Y`；每段执行后重新采样再规划，执行失败的边本次会话禁用；失败信息带地图、坐标、阶段与原因。 |
-| [_route.lua](travel/_route.lua) | 普通 Lua 函数在同一预算内组合已知同层移动、落层和相邻地图门户，按阶段核对身份与到达。 | `script run/start --library travel`；接口见 [Lua API](../../docs/LUA_COROUTINE_API.md#可选旅行函数库)。 |
-| [_common.lua](travel/_common.lua) | 旅行脚本共用的身份、场景、生命值检查，以及横向反馈对齐。 | 内部辅助文件，由装载器自动拼接到旅行脚本前。 |
-| [navigate.lua](travel/navigate.lua) | 按 CLI 打包的静态路线逐段换图：场景内寻路到门户、按上进门、核对落点与地图。 | CLI `navigate MAP_ID`；跨图路线由 Python 侧从本地门户资料计算，本策略不选路。 |
-| [_move.lua](travel/_move.lua) | `walk_to` 与 `navigate` 共用的单地图执行器：逐边执行走、跳台、落层、绳梯，失败边禁用并重规划。 | 内部辅助文件，由装载器拼接到两者之前。 |
-| [_terrain.lua](travel/_terrain.lua) | 单地图静态地形图：把 footholds/ropes 构建成平台区间、竖直墙与可执行边（走、跳台、落层、绳梯），并提供最短路径搜索。 | 由装载器拼接给 `walk_to.lua` 与 `combat/hunt.lua` 共用；地形规则只在这里维护。 |
-
-## 战斗：`combat/`
-
-| 文件 | 作用 | 状态与入口 |
-| --- | --- | --- |
-| [hunt.lua](combat/hunt.lua) | 在当前场景连续寻找可达怪物，结合静态地形换平台、爬绳梯、跨有限台阶或落层；可在移动时普攻或使用指定技能。 | 当前连续狩猎优先入口：CLI `hunt [MOB\|all]`，支持限时或明确的 `--continuous`。 |
-
-`hunt.lua` 绑定启动时的实例、角色、地图和场景代次，门户与换图由独立操作处理。它支持范围、停级和生命下限；补给只尝试使用调用方明确指定的药品。无法确认进展、地形不可达或场景变化时停止，命中以实际战斗结果为准。
-
-[island_supply.lua](examples/island_supply.lua) 是首轮已知路线消费者，`--library island-supply` 显式装载旅行函数和这一示例。调用 `island_supply.to_town()` 从50000东上层经东侧落层及门户进入1000000；`to_field()` 从城镇西入口返回50000东下层。坐标作为该示例明确提供的已知地形事实，通行仍由当前原生位置确认。它覆盖这两段已知路线，补给与养成计划由调用方决定；支持起点、结果和真实验收范围见 Lua API 与对应 PR。
-
-启动位置接近已知绳梯时，先在总预算内尝试到达狩猎范围内的已知安全端点，并通过离开绳轴的实际横移和平台位置复采确认恢复，再继续找怪；中途失去平台时也可使用同一恢复。坐标只表示候选，原生攀爬状态按本端事实判断。没有安全端点、候选不唯一、恢复无进展或超出预算时以 `hunt_rope_recovery_*` 原因停止，被接管的控制权按现状交接。未知绳梯与任意空中位置恢复属于后续能力。
-
-旧的 `fight` 策略及命令已移除，连续狩猎使用 `hunt`。`hunt` 不提供旧策略的近距拾取、结束时退回锚点或自动选择药品功能；需要这些行为时由调用方另行处理。
-
-## 恢复：`recovery/`
-
-| 文件 | 作用 | 当前入口与限制 |
-| --- | --- | --- |
-| [recover.lua](recovery/recover.lua) | 按次数或 HP/MP 目标用药，逐次核对库存恰减一及适用的恢复效果；达到目标、已满或预算用尽时结束。 | CLI `use ITEM --count N`、`--until-hp N`、`--until-mp N` 的原生用物路径；物品属性和参数由调用方提供，直接按物品 ID 使用。 |
-
-明确的仅消费模式只确认库存变化；恢复效果另看 HP/MP。单次 `use_item ID` 的原生尝试与本脚本的重复消费、效果确认流程不同，具体物品分类和参数限制见 [CLI](../../docs/CLI.md#动作与-lua)。
+示例不由内置策略自动加载，阅读或试用时按用途显式选择。示例会实际移动、跳跃、消耗 MP 或普攻，运行前确认角色、场景和操作者，并按实际游戏结果核对。
 
 ## 示例：`examples/`
 
-示例不由正式策略自动加载，阅读或试用时按用途选择。
-
 | 文件 | 演示内容 | 使用边界 |
 | --- | --- | --- |
-| [read-state.lua](examples/read-state.lua) | 使用 `game.state()` 做只读分支和短循环，检查角色就绪、地图及存活状态。 | 只读示例。 |
-| [read-domains.lua](examples/read-domains.lua) | 使用 `game.observe()` 按需读取场景、装备、任务和 UI，保留不可用及不支持状态。 | 只读，适合学习分领域观察。 |
-| [common-basic.lua](examples/common-basic.lua) | 顺序调用移动、朝向、跳跃、攻击、拾取，并在低血量时尝试使用固定药品。 | 会实际移动、攻击和消耗物品；只演示动作串联。 |
-| [tick-held-skill.lua](examples/tick-held-skill.lua) | 只设置一次技能持续意图，到明确的演示期限后撤下并结束，由Runtime确认停止所属持续输入。 | 会消耗MP；传入角色已学会且本端支持的技能，保持时长不用于猜动画结束。 |
+| [tick-held-skill.lua](examples/tick-held-skill.lua) | 只设置一次技能持续意图，到明确的演示期限后撤下并结束，由 Runtime 确认停止所属持续输入。 | 会消耗 MP；传入角色已学会且本端支持的技能，保持时长不用于猜动画结束。 |
 | [tick-jump-attack.lua](examples/tick-jump-attack.lua) | 保持方向助跑再起跳，空中普攻并撤下保持，落地后停止。 | 会实际移动、跳跃和普攻；需本端已知地面和动作忙闲事实，不寻路、不选怪、不保证命中或精确出手次数。 |
 
 ### tick 持续输入：技能保持与撤下
 
-`tick-held-skill.lua` 演示 `player.skill(id)` 只调用一次，后续回调不重放。客户端按本端原生动作完成和准入处理当前仍有效的意图；`player.skill(nil)`撤下整个动作槽，不清方向或强行中断已发生动画。撤下后直接返回 `"done"`，由Runtime确认停止所属持续输入（持键路径包含真实释放）后发布会话完成；脚本不轮询内部握手。按ID技能没有实体技能键，撤下移除持续意图及未执行派发，不发送技能key-up。显式 `hold_seconds` 是调用者选择的保持期限，不是动画时间。无动作锁技能每次保持只派发一次；GUI蓄力类别不支持。用药与技能不同，持续用药会重复尝试消耗，目标达到必须撤下；详见 [持续输入合同](../../docs/LUA_TICK_API.md#角色状态机与动作槽)。
+`tick-held-skill.lua` 演示 `player.skill(id)` 只调用一次，后续回调不重放。客户端按本端原生动作完成和准入处理当前仍有效的意图；`player.skill(nil)` 撤下整个动作槽，不清方向或强行中断已发生动画。撤下后直接返回 `"done"`，由 Runtime 确认停止所属持续输入（持键路径包含真实释放）后发布会话完成；脚本不轮询内部握手。按 ID 技能没有实体技能键，撤下移除持续意图及未执行派发，不发送技能 key-up。显式 `hold_seconds` 是调用者选择的保持期限，不是动画时间。无动作锁技能每次保持只派发一次；GUI 蓄力类别不支持。用药与技能不同，持续用药会重复尝试消耗，目标达到必须撤下；详见 [持续输入合同](../../docs/LUA_TICK_API.md#角色状态机与动作槽)。
 
 ```bash
 private/workbenches/workbench "$DIR" script run \
@@ -80,34 +39,32 @@ private/workbenches/workbench "$DIR" script status --session SCRIPT_ID
 private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
 ```
 
-`--direction` 来自头部 `@option`，默认 `right`，也可为 `left`。`--seconds` 是整个原生会话的期限，不是跳跃时长；例如起跳失败时由这个期限停止等待并释放输入。本例省略 `@tick.gear` 时使用第3档（30Hz）；复制到用户脚本后，可在前导注释中显式设置，例如 `-- @tick.gear 4` 选择原生更新；1、2、3档分别为10Hz、20Hz和30Hz。低档只降低判断频率，不改变角色物理和每宿主更新的取消/放键；落地后在下一次到期判断清方向。
+`--direction` 来自头部 `@option`，默认 `right`，也可为 `left`。`--seconds` 是整个原生会话的期限，不是跳跃时长；例如起跳失败时由这个期限停止等待并释放输入。本例省略 `@tick.gear` 时使用第 3 档（30Hz）；复制到用户脚本后，可在前导注释中显式设置，例如 `-- @tick.gear 4` 选择原生更新；1、2、3 档分别为 10Hz、20Hz 和 30Hz。低档只降低判断频率，不改变角色物理和每宿主更新的取消/放键；落地后在下一次到期判断清方向。
 
-阅读时关注四点：`@mode tick`选择新引擎；`main`只做短判断，返回nil后下次继续；`context.state.phase`保存“助跑 → 空中 → 攻击输入消费 → 撤下保持 → 落地停止”阶段；方向和动作都只需设置一次，当前原生 `action="attack"` 且 `dispatched=true` 后用 `player.skill(nil)`撤下，已经发生的动画继续，落地后用 `move(nil)`清方向，速度接近零再返回done。
+阅读时关注四点：`@mode tick` 选择 tick 引擎；`main` 只做短判断，返回 nil 后下次继续；`context.state.phase` 保存“助跑 → 空中 → 攻击输入消费 → 撤下保持 → 落地停止”阶段；方向和动作都只需设置一次，当前原生 `action="attack"` 且 `dispatched=true` 后用 `player.skill(nil)` 撤下，已经发生的动画继续，落地后用 `move(nil)` 清方向，速度接近零再返回 done。
 
-`character.velocity` 是角色自己的当前运动向量，`character.movement` 是按当前有效属性及本端物理模型推断的静止平地参考能力，两者不混用。自己、其他玩家、怪物、NPC、投射物和掉落物共享可移动物体的观察基类，每个实体各自拥有向量，世界不是运动主体。向量保留原生或原生更新区间差分的来源，未知不填零。沿目标方向达到参考移速的99%后才提交 jump：无头速度渐近稳态，不能严格比较相等，也不用固定助跑时长/距离或仅凭速度平台。完整运动参考及最大跳高的适用条件见 [运动观察](../../docs/LUA_TICK_API.md#运动观察与静止参考)。
+`character.velocity` 是角色自己的当前运动向量，`character.movement` 是按当前有效属性及本端物理模型推断的静止平地参考能力，两者不混用。自己、其他玩家、怪物、NPC、投射物和掉落物共享可移动物体的观察基类，每个实体各自拥有向量，世界不是运动主体。向量保留原生或原生更新区间差分的来源，未知不填零。沿目标方向达到参考移速的 99% 后才提交 jump：无头速度渐近稳态，不能严格比较相等，也不用固定助跑时长/距离或仅凭速度平台。完整运动参考及最大跳高的适用条件见 [运动观察](../../docs/LUA_TICK_API.md#运动观察与静止参考)。
 
-空中阶段要求真实 `character.on_ground=false`、Y小于原平地Y且 `character.action_idle=true`；输入保持与角色动作分开，不用“槽空”猜落地。地面/动作事实未知时不以重复坐标推断。速度/能力参考只阻断助跑或停止确认，不阻断已具备离地事实的攻击。当前原生普攻与派发事实确认后撤下保持，不能把上次跳跃的 `dispatched` 或仍在空中当作普攻已派发。槽空也不表示所属输入已停止；最终返回done后由Runtime确认停止所属持续输入（持键路径包含真实释放）。低频可能错过原生重复边界，所以本例不承诺精确一次出手。`settled` 包含停止移动，不能用于全程移动的落地判断；派发、释放或动画结束也不等于命中。
+空中阶段要求真实 `character.on_ground=false`、Y 小于原平地 Y 且 `character.action_idle=true`；输入保持与角色动作分开，不用“槽空”猜落地。地面/动作事实未知时不以重复坐标推断。速度/能力参考只阻断助跑或停止确认，不阻断已具备离地事实的攻击。当前原生普攻与派发事实确认后撤下保持，不能把上次跳跃的 `dispatched` 或仍在空中当作普攻已派发。槽空也不表示所属输入已停止；最终返回 done 后由 Runtime 确认停止所属持续输入（持键路径包含真实释放）。低频可能错过原生重复边界，所以本例不承诺精确一次出手。`settled` 包含停止移动，不能用于全程移动的落地判断；派发、释放或动画结束也不等于命中。
 
-可以从这个结构扩展更多阶段，不要加入阻塞等待或混用 coroutine 的 `game.sleep()/game.state()`。tick 多会话共享 player，同客户端其他会话可能覆盖方向；初学试用只运行这一份动作示例。完整契约见 [tick API](../../docs/LUA_TICK_API.md#tick-环境)。
+可以从这个结构扩展更多阶段，不要加入阻塞等待或 `game.sleep()` 等旧接口。tick 多会话共享 player，同客户端其他会话可能覆盖方向；初学试用只运行这一份动作示例。完整契约见 [tick API](../../docs/LUA_TICK_API.md#tick-环境)。
 
 ## 调用与维护
 
-由 CLI 消费的旅行、战斗和恢复策略都声明 `main(context)` 与 `@option`；`script describe FILE` 可查看参数，`script run FILE` 可按同一声明传值。旅行策略的 `_common.lua` 由策略装载器按内置文件路径自动组合，其他辅助库和函数库示例仍按各自用途加载。Python 命令适配器继续负责解析游戏目录资料、预检用户输入并映射现有参数；Lua 入口从 `context.options` 取运行配置，从 `context.scene` 取身份锚点和可用静态地形。策略预算字段使用 `budget_seconds`，与 CLI 控制整个原生脚本生命周期的 `--seconds` / `--continuous` 分开。普通 Lua chunk、`--code` 与示例函数库仍保持原始语义。
-
-内置策略随镜像位于 `/opt/beidou-pilot/shared/scripts/`，可以通过通用入口直接查看和调用，例如：
+示例文件声明 `main(context)` 与 `@option`；`script describe FILE` 可查看参数，`script run FILE` 可按同一声明传值。内置示例随镜像位于 `/opt/beidou-pilot/shared/scripts/examples/`，可以通过通用入口直接查看和调用，例如：
 
 ```bash
-beidou-pilot script describe /opt/beidou-pilot/shared/scripts/travel/move_to.lua
-beidou-pilot script run /opt/beidou-pilot/shared/scripts/travel/move_to.lua \
-  --x 400 --budget-seconds 20 --seconds 21
+beidou-pilot script describe /opt/beidou-pilot/shared/scripts/examples/tick-held-skill.lua
+beidou-pilot script run /opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua \
+  --direction right --seconds 5
 ```
 
-自定义策略放工作台的 `scripts/`，在容器内对应 `/work/scripts/`，通过统一宿主入口提交：
+自定义脚本放工作台的 `scripts/`，在容器内对应 `/work/scripts/`，通过统一宿主入口提交：
 
 ```bash
 private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
 ```
 
-内置脚本随镜像版本固定，已有容器保持启动时的版本。执行中断或等待失败只结束等待；先用 `script status` 查看已有会话，需要取消时明确执行 `script cancel --session SCRIPT_ID`，并核对终态及放键。
+内置示例随镜像版本固定，已有容器保持启动时的版本。执行中断或等待失败只结束等待；先用 `script status` 查看已有会话，需要取消时明确执行 `script cancel --session SCRIPT_ID`，并核对终态及放键。
 
-编写脚本查 [Lua API](../../docs/LUA_API.md)，装载、控制权和取消规则查 [控制协议](../../docs/CONTROL.md)，维护本目录前阅读 [AGENTS.md](AGENTS.md)。脚本返回、动作派发和离线测试属于过程证据，实际到达、消耗、恢复与战斗效果另行确认。
+编写脚本查 [Tick Lua API](../../docs/LUA_TICK_API.md)，装载、控制权和取消规则查 [控制协议](../../docs/CONTROL.md)，维护本目录前阅读 [AGENTS.md](AGENTS.md)。脚本返回、动作派发和离线测试属于过程证据，实际到达、消耗、恢复与战斗效果另行确认。

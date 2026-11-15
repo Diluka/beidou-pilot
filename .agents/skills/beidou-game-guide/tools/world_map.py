@@ -34,7 +34,7 @@ HEADER = """# 世界地图
   地图号分册是启发式索引，不代表官方区域划分；编号范围内未必每个 ID 都存在。
 - `tools/world_route.py <起点地图> <终点地图>` 比较已收录的静态有向门户及部分出租车、飞艇候选；
   未覆盖的 NPC、地铁和动态脚本保留未知。搜索结果不是实际可达保证；未找到不等于不可达。
-- 查单张地图或当前地图的门户：`beidou-pilot inspect map [地图号]`；进门户：`beidou-pilot portal <门户名>`。
+- 查单张地图或当前地图的门户：`beidou-pilot inspect map [地图号]`。进入门户需写用户 tick Lua 并用 `player.move("up")` 等原生输入触发，没有 CLI 进门户命令。
 - 金银岛出租车、区域出租车及飞艇费用、NPC 和条件见路线工具的快捷候选；它们参考
   [BeiDou-Server 固定版本 00422c2](https://github.com/BeiDouMS/BeiDou-Server/tree/00422c2ec4ccd915f71bbeaf6e38549dbe14efda/gms-server/scripts-zh-CN/npc)，
   为源码静态推断，单条出租车实测与限制见 [交通攻略](transport.md)。

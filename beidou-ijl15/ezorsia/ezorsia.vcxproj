@@ -195,10 +195,9 @@
     <ClInclude Include="NativeSceneTerrain.h" />
     <ClInclude Include="..\..\headless\src\ImgResources.h" />
     <ClInclude Include="..\..\shared\lua-runtime\SceneTerrain.h" />
-    <ClInclude Include="..\..\shared\lua-runtime\Runtime.h" />
+    <ClInclude Include="..\..\shared\lua-runtime\Contract.h" />
     <ClInclude Include="..\..\shared\lua-runtime\TickRuntime.h" />
     <ClInclude Include="..\..\shared\lua-runtime\Observation.h" />
-    <ClInclude Include="..\..\shared\lua-runtime\TaskTransport.h" />
     <ClInclude Include="..\..\shared\lua-runtime\EventTransport.h" />
     <ClInclude Include="BossHP.h" />
     <ClInclude Include="HpMpAlert.h" />
@@ -252,10 +251,8 @@
     <ClCompile Include="ObserveCharacter.cpp" />
     <ClCompile Include="ObserveUi.cpp" />
     <ClCompile Include="ObserveNotifications.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
-    <ClCompile Include="..\..\shared\lua-runtime\Runtime.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\TickRuntime.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\Observation.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
-    <ClCompile Include="..\..\shared\lua-runtime\TaskTransport.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\EventTransport.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="BossHP.cpp" />
     <ClCompile Include="HpMpAlert.cpp" />

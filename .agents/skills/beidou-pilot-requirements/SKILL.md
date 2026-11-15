@@ -17,7 +17,7 @@ description: "讨论 beidou-pilot 的需求、临时想法、玩法试用问题�
 
 在已发现或显式加载本技能的会话中使用。先确定 beidou-pilot 仓库；当前目录不在项目中时，可从本技能真实文件位置沿 `.agents/skills/` 找回仓库，不把另一个项目当作北斗仓库。项目目录提供仓库内发现；其他项目会话需要用户技能目录中的入口或显式加载本技能。
 
-先读仓库 `AGENTS.md` 的项目边界与需求池约定、`README.md`，再按问题读取最小必要的文档、源码及相关 Issue。脚本问题优先查 `docs/LUA_API.md` 和 `docs/CONTROL.md`；实际策略维护另读 `shared/scripts/AGENTS.md`。这些当前资料是权威来源，不在技能里复制能力清单或固定实现状态。
+先读仓库 `AGENTS.md` 的项目边界与需求池约定、`README.md`，再按问题读取最小必要的文档、源码及相关 Issue。脚本问题优先查 `docs/LUA_API.md`、`docs/LUA_TICK_API.md` 和 `docs/CONTROL.md`；示例维护另读 `shared/scripts/AGENTS.md`。这些当前资料是权威来源，不在技能里复制能力清单或固定实现状态。
 
 草稿、导出的工单正文及临时参考资料遵守仓库的开发工作目录约定，写入主工作目录的 `tmp/<任务标识>/`。即使从其他会话目录调用，临时资料统一写入主工作目录。
 

@@ -2,7 +2,7 @@
 #include "Gameplay/Combat/Bullet.h"
 #include "Gameplay/MapleMap/Drop.h"
 #include "Gameplay/MapleMap/MapObjects.h"
-#include "Runtime.h"
+#include "Contract.h"
 
 #include <cmath>
 #include <cstdlib>

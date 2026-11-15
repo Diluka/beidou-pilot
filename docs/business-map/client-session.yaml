@@ -33,14 +33,12 @@ nodes:
     summary: 正常停止并核实所属容器退出，保存退出事实；GUI另行回收能够证明归属的会话网络。
     aliases: [退出, 容器回收]
     anchors:
-      - kind: symbol
-        file: cli/beidou_pilot/headless.py
-        value: close_game
-        description: 停止登记的无头容器，核实退出、保存日志与原因后回收容器。
-      - kind: symbol
-        file: cli/beidou_pilot/session.py
-        value: close_game
-        description: 关闭本目录GUI客户端并报告网络回收成功或cleanup_pending。
+      - kind: file
+        value: cli/beidou_pilot/headless.py
+        description: 停止登记的无头容器并核实退出与运行记录。
+      - kind: file
+        value: cli/beidou_pilot/session.py
+        description: 关闭本目录 GUI 客户端并报告网络回收成功或 cleanup_pending。
   - id: client-session.status
     kind: operation
     name: 查询实例状态
@@ -51,20 +49,18 @@ nodes:
         file: cli/beidou_pilot/cli.py
         value: status
         description: 按后端返回当前实例的运行阶段与原生角色状态。
-      - kind: symbol
-        file: cli/beidou_pilot/headless.py
-        value: list_instances
-        description: 枚举已登记无头实例并核实各自容器运行状态。
+      - kind: file
+        value: cli/beidou_pilot/instances.py
+        description: 实例登记与选择路径，供状态与关闭核验所属容器。
   - id: client-session.adopt
     kind: operation
     name: 恢复已证明归属的GUI会话
     summary: 依据现有容器、运行记录和目标登记恢复会话归属；没有唯一证据时保留未决状态。
     aliases: [会话接续, 网络归属]
     anchors:
-      - kind: symbol
-        file: cli/beidou_pilot/session.py
-        value: adopt_session
-        description: 对照容器、目标与session记录，只接续唯一可证明的GUI会话。
+      - kind: file
+        value: cli/beidou_pilot/session.py
+        description: 对照容器、目标与会话记录，只接续唯一可证明的 GUI 会话。
   - id: client-session.registration
     kind: data
     name: 实例运行登记
@@ -75,34 +71,31 @@ nodes:
         file: cli/beidou_pilot/instances.py
         value: InstancePaths
         description: 定义实例独立的登记、桥、运行目录及输入锁路径。
-      - kind: symbol
-        file: cli/beidou_pilot/headless.py
-        value: registration
-        description: 读取并校验所选无头实例的会话登记。
+      - kind: file
+        value: cli/beidou_pilot/instances.py
+        description: 定义实例登记、运行目录与输入锁路径。
   - id: client-session.target
     kind: data
     name: 已核验目标与角色配置
     summary: 外部target标识目标容器、镜像及隔离网络，私密profile声明已有角色与登录参数；本域只消费和核验。
     aliases: [target, profile, 已有角色]
     anchors:
+      - kind: file
+        value: private/workbenches/workbench
+        description: 宿主统一入口核验目标容器唯一性、镜像、internal 网络与授权服务器路径。
       - kind: symbol
-        file: cli/clientctl.py
-        value: target
-        description: 核验目标容器唯一性、镜像、internal网络与授权的工作区服务器路径。
-      - kind: symbol
-        file: cli/beidou_pilot/headless.py
+        file: cli/beidou_pilot/profile.py
         value: load_profile
-        description: 在启动边界核验私密profile权限和已有角色参数。
+        description: 在启动边界核验私密 profile 权限和已有角色参数。
   - id: client-session.identity
     kind: invariant
     name: 控制与关闭必须属于所选实例
     summary: 按实例名选择并继续核对容器、镜像、run_id及原生instance_id；身份不符时拒绝接管或操作。
     aliases: [实例隔离, 身份核验]
     anchors:
-      - kind: symbol
-        file: cli/beidou_pilot/headless.py
-        value: current_container
-        description: 核验登记容器的任务、根目录、实例标签、镜像及容器边界。
+      - kind: file
+        value: cli/beidou_pilot/bridge.py
+        description: 按实例身份核对原生 instance_id/run_id 与桥状态。
       - kind: document
         value: docs/CONTROL.md
         description: 说明后续桥请求的原生实例与运行身份核对规则。

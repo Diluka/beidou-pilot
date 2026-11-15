@@ -31,9 +31,9 @@ NativeKeyInput::Mask Keys(std::initializer_list<unsigned> keys) {
 }
 
 struct Boundary {
-    NativeKeyInput old;
+    NativeKeyInput peer;
     NativeTickInput tick;
-    NativeKeyUnion keys{&old, &tick.movement, &tick.action};
+    NativeKeyUnion keys{&peer, &tick.movement, &tick.action};
     std::uint64_t updates = 0;
     std::vector<std::pair<unsigned, bool>> events;
     std::function<bool(unsigned, bool)> onSend;
@@ -64,41 +64,41 @@ struct Boundary {
 
     void Update(bool characterStep = true) {
         if (characterStep) ++updates;
-        old.ConfirmRelease(User, updates, false);
+        peer.ConfirmRelease(User, updates, false);
         tick.Observe(User, User, updates, false);
     }
 };
 
 void SingleProducer() {
     Boundary native;
-    native.old.Request(Keys({Left}), 60, User, 0);
-    native.Flush(native.old);
-    Check(native.old.Dispatched() && native.keys.Held(Left), "legacy keydown not dispatched");
-    native.old.Request(Keys({Left}), 60, User, 1);
-    native.Flush(native.old);
-    Check(native.events.size() == 1, "unchanged legacy target flickered");
-    native.old.Release();
-    native.Flush(native.old);
+    native.peer.Request(Keys({Left}), 60, User, 0);
+    native.Flush(native.peer);
+    Check(native.peer.Dispatched() && native.keys.Held(Left), "peer keydown not dispatched");
+    native.peer.Request(Keys({Left}), 60, User, 1);
+    native.Flush(native.peer);
+    Check(native.events.size() == 1, "unchanged peer target flickered");
+    native.peer.Release();
+    native.Flush(native.peer);
     Check(native.events == std::vector<std::pair<unsigned, bool>>{{Left, true}, {Left, false}},
-          "legacy key event sequence changed");
+          "peer key event sequence changed");
     native.Update(false);
-    Check(!native.old.Released(), "render frame incorrectly acknowledged legacy key release");
+    Check(!native.peer.Released(), "render frame incorrectly acknowledged peer key release");
     native.Update();
-    Check(native.old.Released(), "actual character step did not acknowledge legacy release");
+    Check(native.peer.Released(), "actual character step did not acknowledge peer release");
 }
 
 void IndependentProducers() {
-    for (bool releaseOldFirst : {false, true}) {
+    for (bool releasePeerFirst : {false, true}) {
         Boundary native;
-        native.old.Request(Keys({Left, Attack}), 60, User, 0);
-        native.Flush(native.old);
+        native.peer.Request(Keys({Left, Attack}), 60, User, 0);
+        native.Flush(native.peer);
         native.Movement({Left});
         native.tick.action.Request(Keys({Attack}), 60, User, 0);
         native.FlushTick();
         Check(native.events.size() == 2, "shared key produced duplicate physical keydown");
-        if (releaseOldFirst) {
-            native.old.Release();
-            native.Flush(native.old);
+        if (releasePeerFirst) {
+            native.peer.Release();
+            native.Flush(native.peer);
         } else {
             native.tick.Release(User);
             native.FlushTick();
@@ -106,22 +106,22 @@ void IndependentProducers() {
         Check(native.keys.Held(Left) && native.keys.Held(Attack), "one producer released another producer's key");
         Check(native.events.size() == 2, "logical release emitted physical keyup while another engine held it");
         native.Update(false);
-        Check(releaseOldFirst ? !native.old.Released() : !native.tick.Released(),
+        Check(releasePeerFirst ? !native.peer.Released() : !native.tick.Released(),
               "logical release skipped native consumption acknowledgement");
         native.Update();
-        if (releaseOldFirst)
-            Check(native.old.Released() && native.tick.movement.Held()[Left],
-                  "legacy cancellation disturbed tick input");
+        if (releasePeerFirst)
+            Check(native.peer.Released() && native.tick.movement.Held()[Left],
+                  "peer cancellation disturbed tick input");
         else {
             native.Update(); // full tick Release also fences the replacement-safe movement producer
-            Check(native.tick.Released() && native.old.Held()[Left], "tick cancellation disturbed legacy input");
+            Check(native.tick.Released() && native.peer.Held()[Left], "tick cancellation disturbed peer input");
         }
-        if (releaseOldFirst) {
+        if (releasePeerFirst) {
             native.tick.Release(User);
             native.FlushTick();
         } else {
-            native.old.Release();
-            native.Flush(native.old);
+            native.peer.Release();
+            native.Flush(native.peer);
         }
         Check(!native.keys.Held(Left) && !native.keys.Held(Attack), "last producer did not release all native keys");
         Check(native.events.size() == 4, "final producer failed to emit exactly one physical keyup per key");
@@ -136,23 +136,23 @@ void ReentrantDown() {
             reentered = true;
             native.Movement({Left});
             native.FlushTick();
-            native.old.Release();
-            native.Flush(native.old);
+            native.peer.Release();
+            native.Flush(native.peer);
         }
         return true;
     };
-    native.old.Request(Keys({Left, Right}), 60, User, 0);
-    native.Flush(native.old);
+    native.peer.Request(Keys({Left, Right}), 60, User, 0);
+    native.Flush(native.peer);
     Check(reentered && native.events == std::vector<std::pair<unsigned, bool>>{{Left, true}},
           "reentrant keydown resumed stale keys or released the new owner");
     native.Update();
-    Check(native.old.Released() && native.tick.movement.Held()[Left], "reentrant logical release was not isolated");
+    Check(native.peer.Released() && native.tick.movement.Held()[Left], "reentrant logical release was not isolated");
 }
 
 void ReentrantUpAndFailure() {
     Boundary native;
-    native.old.Request(Keys({Left}), 60, User, 0);
-    native.Flush(native.old);
+    native.peer.Request(Keys({Left}), 60, User, 0);
+    native.Flush(native.peer);
     bool reentered = false;
     native.onSend = [&](unsigned key, bool down) {
         if (!reentered && key == Left && !down) {
@@ -164,14 +164,14 @@ void ReentrantUpAndFailure() {
         }
         return true;
     };
-    native.old.Release();
-    Check(native.Flush(native.old).failed, "failed native keyup was not reported");
+    native.peer.Release();
+    Check(native.Flush(native.peer).failed, "failed native keyup was not reported");
     native.onSend = {};
-    native.Flush(native.old);
+    native.Flush(native.peer);
     Check(native.events == std::vector<std::pair<unsigned, bool>>{{Left, true}, {Left, false}, {Left, true}},
           "old failed keyup released the reentrant producer or restored stale physical state");
     native.Update();
-    Check(native.old.Released() && native.tick.movement.Held()[Left],
+    Check(native.peer.Released() && native.tick.movement.Held()[Left],
           "failed keyup retry did not converge independently");
     native.tick.Release(User);
     native.FlushTick();
@@ -273,8 +273,6 @@ public:
         state.actionIdle = MapleControl::Fact::True;
     }
 
-    const char* Backend() const override { return "gui-tick-contract"; }
-
     const MapleControl::State& Observe() const override { return state; }
 
     bool Supports(MapleControl::ActionKind kind) const override {
@@ -283,10 +281,6 @@ public:
     }
 
     bool SupportsSkill() const override { return true; }
-
-    bool Begin(const MapleControl::Action& request, std::string& error) override {
-        return SetActionIntent(request, error);
-    }
 
     bool SetActionIntent(const MapleControl::Action& request, std::string& error) override {
         if (request.kind == MapleControl::ActionKind::Attack && BeiDouBridge::IsNativeKeyDownSkill(request.skillId)) {

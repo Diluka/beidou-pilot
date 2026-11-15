@@ -30,45 +30,42 @@ nodes:
   - id: game-ai.play
     kind: scenario
     name: 观察并推进当前游戏目标
-    summary: 以新鲜观察进行模型决策，委托有界 Lua 执行持续动作，并将执行结果回送同一会话要求重新核对效果。
+    summary: 以新鲜观察进行模型决策；普通模式通过 shell 直接调用本容器 CLI 运行用户 tick Lua，并把执行结果回送同一会话要求重新核对效果。
     aliases: [自主决策, 游戏循环]
     anchors:
       - kind: symbol
         file: harness/beidou_game_ai/client.py
         value: GameClient.observe
         description: 先查实例是否运行，再读取所属桥身份与实际快照，不自动启动客户端。
-      - kind: symbol
-        file: harness/beidou_game_ai/controller.py
-        value: Controller._lua
-        description: 将 Lua 完成或失败结果送回同一模型会话，要求重新观察并按当前任务决策。
+      - kind: file
+        value: harness/beidou_game_ai/controller.py
+        description: 会话 turn 与 CLI shell 的组合，执行结果回送同一游戏 thread。
   - id: game-ai.dispatch
     kind: operation
-    name: 派发所属实例的有界 Lua
-    summary: 仅在可执行状态且非只读时受理一项有界 Lua；返回 starting，保留原生受理和游戏效果的不确定性。
-    aliases: [game_run_lua, 动态游戏工具]
+    name: 通过 CLI shell 运行用户 tick Lua
+    summary: 普通模式启用 shell，模型直接调用本容器 beidou-pilot 的 script 入口执行 UTF-8 tick 文件；只读模式无 shell，仅保留观察工具。执行结果按原生终态和游戏事实分别核对。
+    aliases: [beidou-pilot CLI, shell, script start]
     anchors:
       - kind: symbol
         file: harness/beidou_game_ai/controller.py
-        value: Controller._tool
-        description: 拒绝暂停、只读、无效时限和并行 Lua 请求，受理后异步派发并返回效果未知。
-      - kind: symbol
-        file: harness/beidou_game_ai/client.py
-        value: GameClient.run_lua
-        description: 核对运行身份后调用固定实例的既有 script run，保留原 CLI 的取消语义。
+        value: GAME_INSTRUCTIONS
+        description: 要求模型通过 shell 使用本容器 CLI，以 script start 启动持续任务并显式取消。
+      - kind: document
+        value: docs/HARNESS.md
+        description: cli-v1 工具面、只读边界与脚本取消合同。
   - id: game-ai.control
     kind: scenario
-    name: 暂停、恢复或停止玩法控制
-    summary: 暂停和停止先阻止新动作，中断模型并确认所属 Lua 释放输入；恢复读取新观察，停止 harness 保留客户端。
+    name: 暂停、恢复或停止模型会话
+    summary: 暂停和停止只中断并确认当前 LLM turn，shell、Lua 脚本与客户端保持运行；恢复读取新观察后再继续决策，不取消或重放已有脚本。
     aliases: [pause, resume, stop, 控制权交接, 暂停游戏AI, 恢复游戏AI, 停止游戏AI]
     anchors:
       - kind: symbol
         file: harness/beidou_game_ai/controller.py
         value: Controller.control
-        description: 管理暂停、恢复和停止状态，恢复前重新观察，放键未确认时保持错误结论。
-      - kind: symbol
-        file: harness/beidou_game_ai/client.py
-        value: GameClient.cancel
-        description: 取消本 harness 持有的原脚本 CLI，并核对同一运行身份下脚本、命令和持键已释放。
+        description: 管理暂停、恢复和停止状态；只管理模型会话，不联动取消游戏脚本或关闭客户端。
+      - kind: document
+        value: docs/HARNESS.md
+        description: LLM 与客户端、脚本独立启停的合同。
   - id: game-ai.collaborate
     kind: scenario
     name: 与开发 AI 交换事实、目标和询问
@@ -90,7 +87,7 @@ nodes:
   - id: game-ai.session
     kind: data
     name: 独立游戏决策会话
-    summary: 专用模型 thread、角色与养成约束、当前目标、turn 和控制模式；不是客户端实时状态或可恢复的 Lua 协程。
+    summary: 专用模型 thread、角色与养成约束、当前目标、turn 和控制模式；不是客户端实时状态或可恢复的 Lua 会话。
     aliases: [游戏 thread, 角色上下文]
     anchors:
       - kind: file
@@ -160,16 +157,16 @@ nodes:
   - id: game-ai.bounded-control
     kind: invariant
     name: 有界执行与效果核对
-    summary: 本 harness 同时最多一项 Lua，动态工具时限大于零且不超过 30 秒；请求受理和脚本返回不证明游戏效果，恢复时不重放旧动作。
-    aliases: [有界 Lua, 效果未知]
+    summary: 普通模式由模型通过 shell 调用 CLI，只读模式无 shell 且仅保留观察工具；脚本受理和返回不证明游戏效果，重新接入先观察现有 script.id 而不重放旧动作。
+    aliases: [有界脚本, 效果未知, 只观察]
     anchors:
       - kind: symbol
         file: harness/beidou_game_ai/controller.py
-        value: Controller._tool
-        description: 限定本 harness 的活动 Lua 数量和工具时限，受理时明确返回效果未知。
+        value: GAME_INSTRUCTIONS
+        description: 只读模式仅两个观察工具；普通模式通过 CLI shell 使用 script start/cancel。
       - kind: document
         value: docs/HARNESS.md
-        description: 约定观察后决策、停止放键及真实游戏结果的独立核验。
+        description: 约定观察后决策、显式取消放键及真实游戏结果的独立核验。
   - id: game-ai.read-only
     kind: invariant
     name: 只读游戏会话不接管输入
@@ -229,11 +226,9 @@ relations:
   - {from: game-ai.dispatch, type: constrained_by, to: game-ai.read-only, summary: 只读会话拒绝派发游戏动作。}
   - {from: game-ai.dispatch, type: constrained_by, to: client-session.identity, summary: 动作只发送到核验过的所属运行身份。}
   - {from: game-ai.dispatch, type: constrained_by, to: game-ai.binding, summary: 不允许模型改选客户端或控制后继实例。}
-  - {from: game-ai.control, type: invokes, to: script-execution.cancel, summary: 有控制权的会话通过原脚本 CLI 取消所属 Lua。}
   - {from: game-ai.control, type: invokes, to: game-observation.observe, summary: 恢复前读取最新游戏事实重新规划。}
   - {from: game-ai.control, type: writes, to: game-ai.session, summary: 更新暂停、恢复、停止及错误模式。}
   - {from: game-ai.control, type: constrained_by, to: game-ai.read-only, summary: 只读暂停和停止不取消当前操作者输入。}
-  - {from: game-ai.control, type: constrained_by, to: game-ai.binding, summary: 确认所属身份下释放输入后才报告成功。}
   - {from: game-ai.collaborate, type: writes, to: game-ai.session, summary: 目标调整与补充事实进入当前或后续模型 turn。}
   - {from: game-ai.collaborate, type: writes, to: game-ai.checkpoint, summary: task 命令同步保存当前目标。}
   - {from: game-ai.collaborate, type: reads, to: game-ai.questions, summary: 回答必须匹配当前挂起询问。}
@@ -276,9 +271,9 @@ flows:
       - {id: observe, kind: action, name: 读取所属实例的新鲜观察, summary: 先查运行状态；未运行时返回事实，不自动打开客户端。, concept: game-observation.observe}
       - {id: decide, kind: decision, name: 本轮需要哪类后续行动, summary: 模型依据角色约束、当前目标和观察决定继续交流或请求 Lua。, concept: game-ai.play}
       - {id: report, kind: outcome, name: 返回观察结论或等待协助, summary: 可以报告事实或经专用通道询问，不要求每轮都执行动作。, concept: game-ai.collaborate}
-      - {id: permitted, kind: decision, name: Lua 请求是否符合当前控制边界, summary: 只读、暂停、无效时限或已有活动 Lua 时拒绝派发。, concept: game-ai.dispatch}
-      - {id: rejected, kind: outcome, name: 动作请求被拒绝, summary: 返回明确原因，不绕过只读、暂停或并发限制。}
-      - {id: run, kind: action, name: 派发有界 Lua 并等待结果, summary: 核对运行身份，委托既有 CLI 执行并保留实际完成或失败事实。, concept: script-execution.run}
+      - {id: permitted, kind: decision, name: 当前是否可运行 tick Lua, summary: 只读模式无 shell；已有脚本时先按 script.id 观察控制者，不重复启动或抢占。}
+      - {id: rejected, kind: outcome, name: 未执行脚本, summary: 返回明确原因，不绕过只读、暂停或已有控制者。}
+      - {id: run, kind: action, name: 通过 CLI 运行 tick Lua, summary: 核对运行身份后用 script run/start 执行 UTF-8 文件，并回读原生终态。 , concept: script-execution.run}
       - {id: safe, kind: decision, name: 当前会话是否仍可继续决策, summary: 身份变化或放键未确认进入 error；执行期间暂停或停止时不发起后续 turn。, concept: game-ai.binding}
       - {id: failed, kind: outcome, name: 停止继续派发并保留失败, summary: 不把后继实例或未知持键状态当作正常完成。}
       - {id: held, kind: outcome, name: 保持暂停或停止状态, summary: 不因 Lua 完成自动恢复玩法控制。, concept: game-ai.control}
@@ -310,11 +305,8 @@ flows:
       - {id: observe, kind: action, name: 重新观察并规划, summary: 读取当前事实与排队消息，不恢复已取消的 Lua。, concept: game-observation.observe}
       - {id: resumed, kind: outcome, name: 按当前任务继续决策, summary: 恢复同一游戏 thread 的模型 turn，不重放旧动作。, concept: game-ai.play}
       - {id: block, kind: action, name: 阻止新动作并中断当前模型, summary: 进入 pausing 或 stopping，等待已受理的模型输入取得身份后中断。, concept: game-ai.control}
-      - {id: readonly, kind: decision, name: 是否为只读会话, summary: 只读会话不调用游戏取消，避免影响当前操作者。, concept: game-ai.read-only}
-      - {id: cancel, kind: action, name: 取消所属原脚本并核对放键, summary: 向原 CLI 发信号并等待，同一运行身份下确认脚本、命令和持键已释放。, concept: script-execution.cancel}
-      - {id: released, kind: decision, name: 是否确认所属输入已释放, summary: 取消失败、身份变化或仍有持键不能报告成功。, concept: game-ai.binding}
-      - {id: error, kind: outcome, name: 保留释放失败并进入错误状态, summary: 不交接尚未确认释放的角色控制。}
-      - {id: finish, kind: decision, name: 完成暂停还是停止, summary: 确认控制边界后按请求进入 paused 或 stopped。, concept: game-ai.control}
+      - {id: readonly, kind: decision, name: 会话是否只读, summary: 只读会话无 shell，仅观察；普通会话的 shell、Lua 与客户端同样保持运行。, concept: game-ai.read-only}
+      - {id: finish, kind: decision, name: 完成暂停还是停止, summary: 模型 turn 已确认终态后按请求进入 paused 或 stopped。, concept: game-ai.control}
       - {id: waiting, kind: outcome, name: 已暂停并可交接控制, summary: 阻止新动作，后续 resume 必须重新观察。, concept: game-ai.session}
       - {id: stopped, kind: outcome, name: 游戏 AI 停止而客户端保留, summary: 结束本次 harness，客户端按实例域的独立生命周期继续存在。, concept: game-ai.session}
     transitions:
@@ -325,9 +317,6 @@ flows:
       - {from: observe, to: resumed}
       - {from: block, to: readonly}
       - {from: readonly, to: finish, when: 只读会话}
-      - {from: readonly, to: cancel, when: 有游戏控制权的会话}
-      - {from: cancel, to: released}
-      - {from: released, to: finish, when: 已确认放键}
-      - {from: released, to: error, when: 释放失败或无法确认}
+      - {from: readonly, to: finish, when: 有游戏控制权的会话}
       - {from: finish, to: waiting, when: 请求暂停}
       - {from: finish, to: stopped, when: 请求停止}
