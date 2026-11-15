@@ -58,6 +58,8 @@ beidou-pilot --json bridge status
 
 支持范围以本端 `capabilities` 和返回结果为准。未知资料保留未知，未支持能力明确报告；不从另一后端或服务器补造客户端事实。命令参数查 [CLI](../../../docs/CLI.md)，Lua 入口、只读领域、动作槽与错误查 [Tick Lua API](../../../docs/LUA_TICK_API.md)。
 
+跨图路线只使用客户端原生只读查询 `beidou-pilot --json world-map route START_MAP GOAL_MAP`：需要当前实例已在运行，不启动或控制客户端；客户端与技能都不提供其他路线计算入口，结果按正常数据状态返回，不当作观察错误。
+
 ## 执行和取消 Lua
 
 角色动作与持续脚本都写 tick Lua 文件。长期脚本优先使用原生 `script start`，由客户端独立执行；保留返回的 `script.id`，按该会话查询和显式取消。`LUA_PATH` 是当前运行环境可读取、含顶层 `main(context)` 的 UTF-8 Lua 文件路径。
