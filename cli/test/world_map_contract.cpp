@@ -75,9 +75,9 @@ void ModelContract() {
 
     std::vector<WorldMapFile> files{{"Map/Map/Map1/a.img", 10, 100}, {"Map/Map/Map1/b.img", 20, 200}};
     const auto first = FingerprintWorldMapFiles(files);
-    files[1].size = 21;
-    Check(first != FingerprintWorldMapFiles(files), "fingerprint changes with source metadata");
-    Check(WorldMapCacheRelativePath(first) == "world-map/1/" + first + ".wmap", "versioned cache path");
+    files[1].sampleHash = 201;
+    Check(first != FingerprintWorldMapFiles(files), "fingerprint changes with source content sample");
+    Check(WorldMapCacheRelativePath(first) == "world-map/2/" + first + ".wmap", "versioned cache path");
 
     std::cout << "{\"model\":\"ok\",\"legs\":" << route.legs.size() << ",\"roundtrip\":true}\n";
 }

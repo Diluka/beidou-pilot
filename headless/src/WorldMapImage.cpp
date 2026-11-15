@@ -164,14 +164,28 @@ std::vector<std::filesystem::path> MapFiles(const std::filesystem::path& dataRoo
 std::string CacheKey(const std::filesystem::path& dataRoot, const std::vector<std::filesystem::path>& files) {
     std::vector<WorldMapFile> inventory;
     inventory.reserve(files.size());
+    constexpr std::streamsize kSample = 4096;
     for (const auto& path : files) {
         std::error_code error;
         const auto size = std::filesystem::file_size(path, error);
         if (error) return {};
-        const auto mtime = std::filesystem::last_write_time(path, error);
-        if (error) return {};
+        std::ifstream input(path, std::ios::binary);
+        if (!input) return {};
+        std::string sample;
+        const auto head = static_cast<std::streamsize>(std::min<std::uint64_t>(size, kSample));
+        sample.resize(static_cast<std::size_t>(head));
+        input.read(sample.data(), head);
+        if (!input) return {};
+        if (size > static_cast<std::uint64_t>(kSample)) {
+            input.clear();
+            input.seekg(-kSample, std::ios::end);
+            std::string tail(static_cast<std::size_t>(kSample), '\0');
+            input.read(tail.data(), kSample);
+            if (!input) return {};
+            sample += tail;
+        }
         inventory.push_back({path.lexically_relative(dataRoot).generic_string(), size,
-                             static_cast<std::int64_t>(mtime.time_since_epoch().count())});
+                             HashWorldMapContent(sample)});
     }
     return FingerprintWorldMapFiles(std::move(inventory));
 }

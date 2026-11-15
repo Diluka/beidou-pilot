@@ -79,7 +79,7 @@ class WorldMapContract(unittest.TestCase):
         self.assertEqual(4, built["edges"])
         self.assertEqual("ok", built["route"])
         self.assertEqual(2, built["legs"])
-        path = self.cache / "world-map" / "1" / f"{built['fingerprint']}.wmap"
+        path = self.cache / "world-map" / "2" / f"{built['fingerprint']}.wmap"
         self.assertTrue(path.is_file(), path)
         cached = self.run_contract("cache", str(self.data), str(self.cache))
         self.assertEqual("hit", cached["cache"])
@@ -88,7 +88,7 @@ class WorldMapContract(unittest.TestCase):
 
     def test_corrupt_cache_rebuilds_and_source_change_keeps_old_file(self) -> None:
         built = self.run_contract("cache", str(self.data), str(self.cache))
-        old_path = self.cache / "world-map" / "1" / f"{built['fingerprint']}.wmap"
+        old_path = self.cache / "world-map" / "2" / f"{built['fingerprint']}.wmap"
         old_path.write_text("broken cache\n")
         rebuilt = self.run_contract("cache", str(self.data), str(self.cache))
         self.assertEqual("built", rebuilt["cache"])
@@ -99,7 +99,7 @@ class WorldMapContract(unittest.TestCase):
         changed = self.run_contract("cache", str(self.data), str(self.cache))
         self.assertEqual("built", changed["cache"])
         self.assertNotEqual(built["fingerprint"], changed["fingerprint"])
-        self.assertTrue((self.cache / "world-map" / "1" / f"{changed['fingerprint']}.wmap").is_file())
+        self.assertTrue((self.cache / "world-map" / "2" / f"{changed['fingerprint']}.wmap").is_file())
         self.assertTrue(old_path.is_file(), "runtime must not delete old versioned caches")
 
     def test_missing_cache_root_builds_in_memory_only(self) -> None:

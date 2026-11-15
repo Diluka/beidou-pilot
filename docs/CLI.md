@@ -133,7 +133,7 @@ private/workbenches/workbench /external/workbench world-map route 100000000 1000
 
 原生侧从客户端只读 `Data/` 的地图 IMG（`Map002/Map`，缺少 `Map002/` 时用 `Map/Map`）门户记录派生模型：只把指向其他地图的跨图门户当作有向边，排除带 script 的门户和外部目标 `999999999`；同地图内同名同目的地的门户合并为一条边，不推断反向边。路线按有向 BFS 搜索，最多 24 段。模型、路线搜索和版本化缓存都由两端共用的原生实现（[WorldMap.h](../shared/lua-runtime/WorldMap.h)、[WorldMapImage.h](../headless/src/WorldMapImage.h)）负责，Lua 侧不解析模型、不做搜索。
 
-缓存路径为 `<cache_dir>/world-map/<logic_version>/<source_fingerprint>.wmap`，当前 `logic_version=1`。`logic_version` 或来源 fingerprint（地图 IMG 的相对路径、字节数与 mtime）任一变化都会使用新路径；运行时只写新文件，不删除旧版本缓存。缓存不可写时本次仍用内存模型查询（`cache="memory"`）；来源数据缺失或不可读、观察通道或实例身份异常时返回统一错误信封（`ok=false`，退出码 2），不猜测缺失资料。
+缓存路径为 `<cache_dir>/world-map/<logic_version>/<source_fingerprint>.wmap`，当前 `logic_version=2`。`logic_version` 或来源 fingerprint（地图 IMG 的相对路径、字节数与首尾内容采样哈希；不依赖 mtime，避免 Linux 与 Wine/Windows 时间表示不同导致同一资料分叉缓存）任一变化都会使用新路径；运行时只写新文件，不删除旧版本缓存。缓存不可写时本次仍用内存模型查询（`cache="memory"`）；来源数据缺失或不可读、观察通道或实例身份异常时返回统一错误信封（`ok=false`，退出码 2），不猜测缺失资料。
 
 `data` 字段：
 

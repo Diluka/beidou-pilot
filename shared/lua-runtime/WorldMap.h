@@ -18,7 +18,7 @@ namespace MapleControl {
 // client IMG portal records; it never contains character state or server
 // state. Cache paths include both this logic version and a source fingerprint,
 // so a changed parser or changed client resources never overwrite each other.
-constexpr int kWorldMapLogicVersion = 1;
+constexpr int kWorldMapLogicVersion = 2;
 constexpr int kWorldMapSchemaVersion = 1;
 constexpr std::size_t kWorldRouteMaxLegs = 24;
 constexpr std::int64_t kWorldExternalTarget = 999999999;
@@ -68,8 +68,20 @@ struct WorldRoute {
 struct WorldMapFile {
     std::string path; // Relative path, independent from the mount root.
     std::uint64_t size = 0;
-    std::int64_t mtime = 0;
+    std::uint64_t sampleHash = 0; // First/last bytes, stable across host platforms.
 };
+
+// Content sample hash for a single IMG. File mtimes are not used: Linux and
+// Wine/Windows expose different filesystem time representations, which would
+// split one shared cache into platform-specific copies for identical data.
+inline std::uint64_t HashWorldMapContent(const std::string& bytes) {
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (const unsigned char byte : bytes) {
+        hash ^= byte;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
 
 inline bool WorldPortalIsCrossMap(const WorldPortal& portal) {
     return (portal.type == 1 || portal.type == 2 || portal.type == 3 || portal.type == 6 || portal.type == 10)
@@ -387,7 +399,7 @@ inline std::string FingerprintWorldMapFiles(std::vector<WorldMapFile> files) {
     for (const auto& file : files) {
         mix(file.path);
         mix(std::to_string(file.size));
-        mix(std::to_string(file.mtime));
+        mix(std::to_string(file.sampleHash));
     }
     const auto hex = "0123456789abcdef";
     std::string result(16, '0');
