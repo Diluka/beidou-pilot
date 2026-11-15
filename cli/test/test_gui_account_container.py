@@ -66,12 +66,13 @@ class GuiAccountContainerTest(unittest.TestCase):
         configured = dict(CLIENT_ROOT='/work', RUN_ID='fixture', MAPLE_INSTANCE='default',
                           CLIENT_IMAGE_ID='image', MAPLE_RESOURCES_CONFIG='/work/config/resources.json',
                           MAPLE_BRIDGE_DIR=r'Z:\work\runtime\bridge', MAPLE_DATA_ROOT=r'Z:\data',
-                          NOT_FOR_GUI='must-be-cleared')
+                          BEIDOU_CACHE_DIR='/cache', NOT_FOR_GUI='must-be-cleared')
         result = subprocess.run(['bash', '-eu', '-c', 'setpriv --reset-env env ' + forwarded + ' /usr/bin/env'],
                                 env={**os.environ, **configured}, text=True, capture_output=True, check=True)
         observed = dict(line.split('=', 1) for line in result.stdout.splitlines())
         self.assertEqual(configured['MAPLE_DATA_ROOT'], observed.get('MAPLE_DATA_ROOT'))
         self.assertEqual(configured['MAPLE_BRIDGE_DIR'], observed.get('MAPLE_BRIDGE_DIR'))
+        self.assertEqual(configured['BEIDOU_CACHE_DIR'], observed.get('BEIDOU_CACHE_DIR'))
         self.assertNotIn('NOT_FOR_GUI', observed)
 
     def test_compose_passes_explicit_mode_and_allows_missing_label(self):

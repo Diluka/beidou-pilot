@@ -22,6 +22,8 @@ from .runtime import load_runtime
 
 DOMAINS = frozenset({"stage", "scene", "inventory", "character", "quests", "hotkeys", "dialog", "interaction", "ui", "shop",
                      "notifications"})
+# 跨图路线复用只读观察请求通道，但不是普通观察领域：不进入 capabilities，也不能用 observe 读取。
+WORLD_ROUTE = "world-route"
 
 
 def client_root() -> Path:
@@ -121,9 +123,8 @@ class NativeObserver:
                     time.sleep(.01)
             yield
 
-    def observe(self, domain: str, timeout: float = 3) -> JsonObject:
-        if domain not in DOMAINS:
-            raise ClientError("unsupported_observation", "没有这个原生观察领域。", {"domain": domain})
+    def _read(self, domain: str, timeout: float, *parameters: int) -> tuple[JsonObject, float]:
+        """发布一次只读请求并核对响应身份；请求行只给该领域附加已声明参数。"""
         if not math.isfinite(timeout) or timeout <= 0:
             raise ClientError("invalid_observation_options", "观察期限须为正数。")
         before = self.snapshot(timeout)
@@ -132,7 +133,9 @@ class NativeObserver:
         started = time.monotonic()
         with self._read_lane(until):
             temporary = self.directory / ("observation-" + request_id + ".tmp")
-            line = " ".join(("1", cast(str, before["instance_id"]), request_id, domain)) + "\n"
+            fields = ("1", cast(str, before["instance_id"]), request_id, domain,
+                      *(str(parameter) for parameter in parameters))
+            line = " ".join(fields) + "\n"
             try:
                 with temporary.open("x", encoding="ascii") as stream:
                     stream.write(line)
@@ -163,24 +166,35 @@ class NativeObserver:
                     current = self._snapshot(timeout + 1)
                     if current["instance_id"] != before["instance_id"]:
                         raise ClientError("observation_identity_changed", "观察期间原生客户端实例已变化。")
-                    report = cast(JsonObject, result["data"])
-                    if "source" in report:
-                        report["data_source"] = report["source"]
-                    if domain == "inventory" and self.backend == "beidou":
-                        report["native_values_valid"] = report["checksums_valid"] is True and not report["unavailable"]
-                        report["validation_source"] = "native_secure_values"
-                    elif domain == "character" and self.backend == "beidou":
-                        report["native_values_valid"] = (report["mesos_checksum_valid"] is True
-                                                         and report["skills_complete"] is True
-                                                         and not report["unavailable"])
-                        report["validation_source"] = "native_secure_values"
-                    report.update(self.metadata(cast(JsonObject, result)))
-                    report["read_seconds"] = round(time.monotonic() - started, 6)
-                    return report
+                    return cast(JsonObject, result), started
                 if time.monotonic() >= until:
                     raise ClientError("native_observation_timeout", "原生客户端未在期限内返回观察结果。",
                                       {"domain": domain, "request_id": request_id})
                 time.sleep(.01)
+
+    def observe(self, domain: str, timeout: float = 3) -> JsonObject:
+        if domain not in DOMAINS:
+            raise ClientError("unsupported_observation", "没有这个原生观察领域。", {"domain": domain})
+        result, started = self._read(domain, timeout)
+        report = cast(JsonObject, result["data"])
+        if "source" in report:
+            report["data_source"] = report["source"]
+        if domain == "inventory" and self.backend == "beidou":
+            report["native_values_valid"] = report["checksums_valid"] is True and not report["unavailable"]
+            report["validation_source"] = "native_secure_values"
+        elif domain == "character" and self.backend == "beidou":
+            report["native_values_valid"] = (report["mesos_checksum_valid"] is True
+                                             and report["skills_complete"] is True
+                                             and not report["unavailable"])
+            report["validation_source"] = "native_secure_values"
+        report.update(self.metadata(result))
+        report["read_seconds"] = round(time.monotonic() - started, 6)
+        return report
+
+    def route(self, start: int, goal: int, timeout: float = 3) -> JsonObject:
+        """查询原生世界地图的跨图路线；no_route 等路线结果按 data.status 返回。"""
+        result, _ = self._read(WORLD_ROUTE, timeout, start, goal)
+        return cast(JsonObject, result["data"])
 
 
 def observe_domain(domain: str, root: Path | None = None, backend: str | None = None) -> JsonObject:

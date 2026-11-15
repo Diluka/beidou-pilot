@@ -144,8 +144,8 @@ nodes:
   - id: script-execution.tick-scene
     kind: interface
     name: 当前静态场景与原生导航数据
-    summary: tick 引擎按地图与场景代次维护只读静态场景；原始 footholds/ropes 与从它们派生的 platforms/walls/ropes/candidates 由共享 C++ 在稳定场景读取时一次给出，跨会话共享。派生只依赖客户端导航模型常量，不含角色属性、边成本或脚本策略；脚本据此自行维护代价、禁边与路径。地形不可用或地图身份不符时不携带旧几何。
-    aliases: [context.scene, terrain, navigation, platforms, candidates]
+    summary: tick 引擎按地图与场景代次维护只读静态场景；原始 footholds/ropes 与从它们派生的 platforms/walls/ropes/candidates 由共享 C++ 在稳定场景读取时一次给出，跨会话共享。派生只依赖客户端导航模型常量，不含角色属性、边成本或脚本策略；脚本据此自行维护代价、禁边与路径。地形不可用或地图身份不符时不携带旧几何。跨图路线不由场景几何生成：需要时调用原生只读查询 world-map route 获得有向腿序列（含 portal_at），由调用方在启动会话前注入 context.route；门户模型、BFS 与版本化文件缓存都在原生/CLI 侧，不进入 context。
+    aliases: [context.scene, terrain, navigation, platforms, candidates, context.route, world-map route, 世界门户图, portal_at]
     anchors:
       - kind: file
         value: shared/lua-runtime/SceneNavigation.h
@@ -153,13 +153,26 @@ nodes:
       - kind: file
         value: shared/lua-runtime/SceneTerrain.h
         description: 原始 IMG 几何读取并附上 navigation 静态数据。
+      - kind: file
+        value: shared/lua-runtime/WorldMap.h
+        description: 静态世界门户模型、有向门户边合并、BFS 路线与版本化缓存格式，不含角色或服务端状态。
+      - kind: file
+        value: headless/src/WorldMapImage.h
+        description: 枚举只读 Map002/Map 地图 IMG 的门户记录，构建并读写版本化缓存；GUI 与 headless 共用。
+      - kind: symbol
+        file: cli/beidou_pilot/observations.py
+        value: NativeObserver.route
+        description: 经只读观察通道的 world-route 请求返回跨图腿序列；路线结果按 data.status 返回。
       - kind: symbol
         file: shared/lua-runtime/TickRuntime.cpp
         value: TickRuntime::Start
         description: 在稳定场景读取地形并按场景代次与地图身份绑定到只读 context.scene。
       - kind: document
+        value: docs/CLI.md
+        description: world-map route 的只读用法、输出字段与失败语义。
+      - kind: document
         value: docs/LUA_TICK_API.md
-        description: 面向脚本作者说明 navigation 字段、模型常量与候选关系格式。
+        description: 面向脚本作者说明 navigation 字段、跨图规则与注入的 context.route 腿序列。
   - id: script-execution.strategy-entry
     kind: interface
     name: main(context) 策略入口与参数合同
@@ -218,6 +231,7 @@ relations:
   - {from: script-execution.run, type: constrained_by, to: script-execution.trusted-source, summary: 只在受信源码与调用预算边界内执行。}
   - {from: script-execution.run, type: constrained_by, to: script-execution.effect-boundary, summary: 运行结束仅报告执行事实，游戏目标需另外观察。}
   - {from: script-execution.tick-scheduling, type: consumes, to: script-execution.lua-api, summary: 调度只消费 tick 上下文与共享 player 动作槽。}
+  - {from: script-execution.tick-scene, type: part_of, to: script-execution, summary: 当前静态场景、原生导航数据与跨图路线查询由执行领域定义接口。}
   - {from: script-execution.tick-scheduling, type: constrained_by, to: script-execution.trusted-source, summary: 单次调用预算限制入口执行时间。}
   - {from: script-execution.cancel, type: writes, to: script-execution.session, summary: 停止会话并在释放后更新终态。}
   - {from: script-execution.cancel, type: constrained_by, to: client-session.identity, summary: 不向后继实例或其他控制者补发旧取消。}

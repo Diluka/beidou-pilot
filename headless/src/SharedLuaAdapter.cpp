@@ -2,6 +2,7 @@
 #include "SharedLuaAdapter.h"
 #include "HeadlessState.h"
 #include "LoginState.h"
+#include "WorldMapImage.h"
 
 #include "Character/Player.h"
 #include "Constants.h"
@@ -822,6 +823,45 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                           "linked_progress_semantics", "npc_quest_hint_updates", "quest_expiration_notifications"})}};
 }
 
+Json SharedLuaAdapter::RouteObservation(std::int64_t start, std::int64_t goal, std::string& status,
+                                        std::string& error) const {
+    MapleControl::WorldMapModel model;
+    std::string cacheState;
+    std::string buildError;
+    if (!MapleControl::LoadOrBuildWorldMap(std::filesystem::current_path().string(),
+                                           MapleControl::WorldMapCacheRootFromEnvironment(), model, cacheState,
+                                           buildError)) {
+        status = "unavailable";
+        error = "world_map_unavailable";
+        return Json{{"source", "native_world_map"},
+                    {"status", "unavailable"},
+                    {"error", buildError},
+                    {"start", start},
+                    {"goal", goal}};
+    }
+    const auto route = MapleControl::FindWorldRoute(model, start, goal);
+    std::size_t edges = 0;
+    for (const auto& scene : model.edges) edges += scene.second.size();
+    Json legs = Json::array();
+    for (const auto& leg : route.legs) {
+        Json portalAt = Json::array();
+        for (const auto& point : leg.portalAt) portalAt.push_back(Json::array({point.first, point.second}));
+        legs.push_back(
+            Json{{"from", leg.from}, {"portal", leg.portal}, {"to", leg.to}, {"portal_at", std::move(portalAt)}});
+    }
+    return Json{{"source", "native_world_map"},
+                {"status", route.status},
+                {"error", route.error.empty() ? Json(nullptr) : Json(route.error)},
+                {"start", start},
+                {"goal", goal},
+                {"model", Json{{"logic_version", model.logicVersion},
+                               {"source_fingerprint", model.sourceFingerprint},
+                               {"maps", model.scenes.size()},
+                               {"edges", edges}}},
+                {"cache", cacheState},
+                {"legs", std::move(legs)}};
+}
+
 void SharedLuaAdapter::ReadObservation() {
     if (directory.empty()) return;
     const auto path = directory / "observation-request.txt";
@@ -834,16 +874,26 @@ void SharedLuaAdapter::ReadObservation() {
     std::istringstream fields(line);
     unsigned int protocol = 0;
     std::string instance, requestId, domain, extra;
-    const bool valid = line.size() <= 1024 && static_cast<bool>(fields >> protocol >> instance >> requestId >> domain)
-                       && !(fields >> extra) && protocol == 1 && instance == state.instanceId && requestId.size() == 32
-                       && requestId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
+    std::int64_t start = 0;
+    std::int64_t goal = 0;
+    bool valid = line.size() <= 1024 && static_cast<bool>(fields >> protocol >> instance >> requestId >> domain)
+                 && protocol == 1 && instance == state.instanceId && requestId.size() == 32
+                 && requestId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
+    if (valid) {
+        if (domain == "world-route")
+            valid = static_cast<bool>(fields >> start >> goal) && !(fields >> extra);
+        else
+            valid = !(fields >> extra);
+    }
     std::string status = "ok";
     std::string error;
     Json data;
     if (!valid) {
         status = "unavailable";
         error = "invalid_or_foreign_observation_request";
-    } else
+    } else if (domain == "world-route")
+        data = RouteObservation(start, goal, status, error);
+    else
         data = ObservationData(domain, status, error);
     const Json response = {{"protocol", 1},
                            {"instance_id", state.instanceId},

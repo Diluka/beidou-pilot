@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "stdafx.h"
 #include "NativeObservation.h"
+#include "../../headless/src/WorldMapImage.h"
 
 #include <array>
 #include <chrono>
@@ -127,8 +128,63 @@ MapleControl::Observation Collect(const std::string& domain) {
     return result;
 }
 
+MapleControl::Observation WorldRoute(const std::string& dataRoot, std::int64_t start, std::int64_t goal) {
+    using MapleControl::Observation;
+    using MapleControl::Value;
+    if (dataRoot.empty()) {
+        return {"unavailable",
+                Value::Object({{"source", "native_world_map"},
+                               {"status", "unavailable"},
+                               {"error", "world_map_data_root_unavailable"},
+                               {"start", start},
+                               {"goal", goal}}),
+                "world_map_data_root_unavailable"};
+    }
+    MapleControl::WorldMapModel model;
+    std::string cacheState;
+    std::string buildError;
+    if (!MapleControl::LoadOrBuildWorldMap(dataRoot, MapleControl::WorldMapCacheRootFromEnvironment(), model,
+                                           cacheState, buildError)) {
+        return {"unavailable",
+                Value::Object({{"source", "native_world_map"},
+                               {"status", "unavailable"},
+                               {"error", buildError},
+                               {"start", start},
+                               {"goal", goal}}),
+                "world_map_unavailable"};
+    }
+    const auto route = MapleControl::FindWorldRoute(model, start, goal);
+    std::size_t edges = 0;
+    for (const auto& scene : model.edges) edges += scene.second.size();
+    Value legs = Value::Array();
+    for (const auto& leg : route.legs) {
+        Value portalAt = Value::Array();
+        for (const auto& point : leg.portalAt) {
+            Value pair = Value::Array();
+            pair.Add(point.first);
+            pair.Add(point.second);
+            portalAt.Add(std::move(pair));
+        }
+        legs.Add(Value::Object(
+            {{"from", leg.from}, {"portal", leg.portal}, {"to", leg.to}, {"portal_at", std::move(portalAt)}}));
+    }
+    return {"ok",
+            Value::Object({{"source", "native_world_map"},
+                           {"status", route.status},
+                           {"error", route.error.empty() ? Value{} : Value(route.error)},
+                           {"start", start},
+                           {"goal", goal},
+                           {"model", Value::Object({{"logic_version", model.logicVersion},
+                                                    {"source_fingerprint", model.sourceFingerprint},
+                                                    {"maps", static_cast<std::int64_t>(model.scenes.size())},
+                                                    {"edges", static_cast<std::int64_t>(edges)}})},
+                           {"cache", cacheState},
+                           {"legs", std::move(legs)}}),
+            {}};
+}
+
 void Tick(const std::string& directory, const std::string& instance, const std::string& run, std::uint64_t generation,
-          std::uint64_t sequence) {
+          std::uint64_t sequence, const std::string& dataRoot) {
     const std::string path = directory + "\\observation-request.txt";
     const HANDLE input = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
                                      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -141,11 +197,19 @@ void Tick(const std::string& directory, const std::string& instance, const std::
     std::istringstream request(std::string(bytes.data(), length));
     int protocol = 0;
     std::string target, id, domain, extra;
-    if (!complete || length == 512 || !(request >> protocol >> target >> id >> domain) || request >> extra
-        || protocol != 1 || target != instance || id.size() != 32
-        || id.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
-        return;
-    const auto observation = Collect(domain);
+    std::int64_t start = 0;
+    std::int64_t goal = 0;
+    bool valid = complete && length != 512 && static_cast<bool>(request >> protocol >> target >> id >> domain)
+                 && protocol == 1 && target == instance && id.size() == 32
+                 && id.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
+    if (valid) {
+        if (domain == "world-route")
+            valid = static_cast<bool>(request >> start >> goal) && !(request >> extra);
+        else
+            valid = !(request >> extra);
+    }
+    if (!valid) return;
+    const auto observation = domain == "world-route" ? WorldRoute(dataRoot, start, goal) : Collect(domain);
     const auto output = Value::Object({{"protocol", 1},
                                        {"instance_id", instance},
                                        {"run_id", run},

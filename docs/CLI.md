@@ -23,6 +23,7 @@
 | `server` | 仅特殊情况确需隔离服时使用的显式对象；日常使用、调试与实际游戏验收默认省略，使用固定常驻服务器 |
 | `harness` | 默认 `false`；`true` 时从所选客户端 base 派生包含 Codex、harness 和专用技能的镜像 |
 | `model_proxy` | 可选的 `http://IPv4:端口` 模型 HTTP 代理，独立于客户端和脚本；模型 API 地址仍在 provider 配置中 |
+| `cache_dir` | 可选；宿主绝对路径，默认 `<workbench>/cache`，读写挂载到容器内固定 `/cache`（客户端进程 `BEIDOU_CACHE_DIR=/cache`），保存版本化原生世界地图缓存 |
 
 调试和实际游戏验收默认复用常驻服务器与已授权的已有账号角色，只有场景必须时才新建账号或角色。确需隔离服时记录原因，其 `server` 要求 `project/service/expected_image`，`network` 可选。项目须为非 `beidou-ms` 项目，隔离服务器须不发布宿主端口、使用 bridge 网络；指定网络时为同项目 internal 网络并且服务器已连接。省略网络时，启动器为新实例建立所属 internal 连接并在关闭时回收。例如：
 
@@ -58,7 +59,7 @@
 
 `data.current_instance` 在暂无所属容器时为 `null`，存在时报告实际容器、镜像、运行身份及 `matches_prepared_image`。`native_inputs_match` 按对应后端原生源码输入比较，文档变更导致镜像 ID 不同时也能判断原生输入是否相同；后端不同或本地缺少来源树时为 `null`。这个比较只覆盖原生输入，CLI、策略与整个镜像的差异另行核对。`build` 只准备产物，切换已有实例仍需明确的 `close/open`。
 
-整个工作目录以一个读写挂载进入容器 `/work`。宿主保存 `runtime/default/host.json`，本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID`；桥、锁、日志和自动生成的账号/服务器快照按此隔离。资源 `/client` 和 `/data` 保持各自现有只读格式和来源。用户脚本直接使用 `/work/scripts`。
+整个工作目录以一个读写挂载进入容器 `/work`。宿主保存 `runtime/default/host.json`，本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID`；桥、锁、日志和自动生成的账号/服务器快照按此隔离。资源 `/client` 和 `/data` 保持各自现有只读格式和来源。用户脚本直接使用 `/work/scripts`。`cache_dir`（默认 `<workbench>/cache`）在创建新实例时创建并解析，不可用时启动失败（`cache_dir_unavailable`）；该目录读写挂到容器 `/cache`，GUI 与 headless 相同，客户端进程以 `BEIDOU_CACHE_DIR=/cache` 写入版本化世界地图缓存。
 
 普通结果为 JSON 信封，含 `ok/command/data`；客户端结果还含 `backend/instance`。失败含 `error.code/message/details`，已识别失败退出码2、中断130。`--list` 和 `notes` 输出文本，`watch/events watch` 输出 JSONL，`resources-check` 输出原生资源检查 JSON；`ai` 的 stdin/stdout 为 harness 专用 JSONL 协作通道。
 
@@ -108,6 +109,7 @@ private/workbenches/workbench /external/workbench character result REQUEST_ID --
 | `doctor` | 在已有容器内检查资源和读取能力 |
 | `instances` | 返回当前容器实例身份与版本 |
 | `capabilities` | 读取原生能力和静态观察支持范围 |
+| `world-map route START GOAL` | 只读查询原生世界门户图的有向跨图路线；不启动、不控制客户端 |
 | `open/close` | 新建或接续所属实例；正常停止、确认退出并回收 |
 | `ai [harness参数]` | 通过 `docker exec` 运行所属容器内的 `beidou-game-ai`；要求已有 harness 镜像实例 |
 | `snapshot [-i] [--all]` | 当前角色、场景、领域摘要与引用 |
@@ -120,6 +122,32 @@ private/workbenches/workbench /external/workbench character result REQUEST_ID --
 动作、脚本等客户端参数直接跟在命令后，属于客户端参数。比如 `script run FILE --seconds 20` 的文件路径按容器内部解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查。中断脚本 CLI 只结束等待，脚本取消另行显式 `script cancel --session`。
 
 短脚本返回或取消后容器继续运行。`close` 独立于输入锁，经Docker正常发SIGTERM，确认 `Running=false/Pid=0` 后保存退出日志并回收；活动Lua期间同样可关闭。容器内 `close` 返回 `host_lifecycle_required`。同一目录正在启停为 `lifecycle_busy`，活动脚本期间其他动作是 `input_busy`；失败先读状态和所属日志再决定重开。
+
+## 世界门户图与路线查询
+
+```bash
+private/workbenches/workbench /external/workbench world-map route 100000000 100000100
+```
+
+`world-map route START GOAL` 用两个正整数地图号查询原版静态门户模型中的跨图路线。命令只读：不启动客户端、不发送游戏输入，需要该目录已有运行中的客户端提供只读观察通道。缺少子命令、地图号缺失或非正整数、多余参数按 `usage` 拒绝，不会启动客户端。
+
+原生侧从客户端只读 `Data/` 的地图 IMG（`Map002/Map`，缺少 `Map002/` 时用 `Map/Map`）门户记录派生模型：只把指向其他地图的跨图门户当作有向边，排除带 script 的门户和外部目标 `999999999`；同地图内同名同目的地的门户合并为一条边，不推断反向边。路线按有向 BFS 搜索，最多 24 段。模型、路线搜索和版本化缓存都由两端共用的原生实现（[WorldMap.h](../shared/lua-runtime/WorldMap.h)、[WorldMapImage.h](../headless/src/WorldMapImage.h)）负责，Lua 侧不解析模型、不做搜索。
+
+缓存路径为 `<cache_dir>/world-map/<logic_version>/<source_fingerprint>.wmap`，当前 `logic_version=2`。`logic_version` 或来源 fingerprint（地图 IMG 的相对路径、字节数与首尾内容采样哈希；不依赖 mtime，避免 Linux 与 Wine/Windows 时间表示不同导致同一资料分叉缓存）任一变化都会使用新路径；运行时只写新文件，不删除旧版本缓存。缓存不可写时本次仍用内存模型查询（`cache="memory"`）；来源数据缺失或不可读、观察通道或实例身份异常时返回统一错误信封（`ok=false`，退出码 2），不猜测缺失资料。
+
+`data` 字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `source` | 固定 `native_world_map` |
+| `status` | `ok`、`no_route`、`map_unknown` 或 `route_too_long`；这些是正常返回的路线结果，不是 CLI 错误 |
+| `error` | 状态原因字符串（`no_route`、`source_map_unknown`、`target_map_unknown`、`route_too_long`），`ok` 时为 `null` |
+| `start`、`goal` | 本次查询的地图号 |
+| `model` | `logic_version`、`source_fingerprint`、`maps`（场景数）、`edges`（合并后有向边数） |
+| `cache` | `hit`（命中缓存）、`built`（本次派生并写入）或 `memory`（未写文件，仅内存模型） |
+| `legs` | 有序路线段；每段含 `from`、`portal`、`to` 与门户坐标 `portal_at`（二维整数数组，每个元素为 `[x, y]` 门户点） |
+
+`status=ok` 时 `legs` 为按顺序的腿序列，起点与终点相同时为空数组；起点或终点地图号不在模型内时返回 `map_unknown`（`error` 区分 `source_map_unknown` 与 `target_map_unknown`），有向门户不可达返回 `no_route`，超过 24 段返回 `route_too_long`；`no_route`、`map_unknown` 与 `route_too_long` 的 `legs` 为空，且都按正常 JSON 返回（退出码 0）。该查询复用只读观察请求通道（domain `world-route`，请求额外携带 start 与 goal 两个地图号），但不是普通观察领域：不出现在 `capabilities.observation_domains`，也不能用 `inspect` 或领域观察读取。腿序列如何交给 tick 脚本见 [Tick Lua API](LUA_TICK_API.md#当前静态场景与跨图)；付费交通不在路线模型内。
 
 ## 游戏 AI
 
