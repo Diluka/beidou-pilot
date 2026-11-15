@@ -90,7 +90,7 @@ class TickRuntimeContract(unittest.TestCase):
   end
 end
 """
-        header = "-- @mode tick\n-- @tick.gear 4\n-- @option[type=int,min=1] goal destination\n"
+        header = "-- @tick.gear 4\n-- @option[type=int,min=1] goal destination\n"
         policy = self.executable.parent / "scene-policy.lua"
         policy.write_text(header + body, encoding="utf-8")
         source, metadata = read_strategy_file(policy)

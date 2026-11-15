@@ -19,7 +19,7 @@ nodes:
   - id: script-execution.run
     kind: scenario
     name: 在现有实例运行 Lua
-    summary: 从文件或直接源码创建受信 tick 会话；script run 同步等待终态，script start 仅等待原生受理后返回；等待方中断不自动取消，Runtime 始终拥有会话生命周期，客户端实例继续存在。
+    summary: 从文件创建受信 tick 会话；script run 同步等待终态，script start 仅等待原生受理后返回；等待方中断不自动取消，Runtime 始终拥有会话生命周期，客户端实例继续存在。
     aliases: [script run, script start, 连续脚本, 脚本装载]
     anchors:
       - kind: symbol
@@ -33,7 +33,7 @@ nodes:
       - kind: symbol
         file: shared/lua-runtime/TickRuntime.cpp
         value: TickRuntime::Start
-        description: 编译受信 Lua 并创建独立会话，读取前导 @mode/@tick 配置。
+        description: 编译受信 Lua 并创建独立会话，读取前导 @tick 配置并拒绝已移除的 @mode 声明。
       - kind: symbol
         file: shared/lua-runtime/TickRuntime.cpp
         value: TickRuntime::Tick
@@ -105,7 +105,7 @@ nodes:
   - id: script-execution.status
     kind: operation
     name: 查询脚本会话
-    summary: 只读查看全部会话、最新会话、模式、终态、所属输入释放、tick 调度与共享 player 状态；查询历史响应不证明当前角色效果。
+    summary: 只读查看全部会话、最新会话、终态、所属输入释放、tick 调度与共享 player 状态；查询历史响应不证明当前角色效果。
     aliases: [script status, 脚本状态, control_released]
     anchors:
       - kind: symbol

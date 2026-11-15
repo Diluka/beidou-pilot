@@ -96,7 +96,7 @@ def split_script_header(source: str) -> tuple[str, str]:
 
 
 def parse_script_execution(source: str) -> ScriptExecution:
-    """读取文件前导的 tick 运行配置；唯一引擎是 tick，未声明 @mode 时按 tick 处理。"""
+    """读取文件前导的 tick 运行配置；脚本统一按 tick 引擎执行，@mode 已移除。"""
     _, comments = _script_header(source)
     declared: dict[str, str] = {}
     for line_number, line in comments:
@@ -104,14 +104,14 @@ def parse_script_execution(source: str) -> ScriptExecution:
             continue
         match = re.fullmatch(r"\s*--+\s*@(mode|tick\.[A-Za-z_]+)\s+(.+?)\s*", line)
         if match is None:
-            raise _invalid_metadata("@mode/@tick 配置须为前导注释中的单个声明值。", line_number)
+            raise _invalid_metadata("@tick 配置须为前导注释中的单个声明值。", line_number)
         key, raw_value = match.groups()
+        if key == "mode":
+            raise _invalid_metadata("@mode 已移除；脚本统一按 tick 引擎执行。", line_number)
         value = raw_value.partition("--")[0].strip()
-        if key not in {"mode", "tick.gear", "tick.budget_ms", "tick.overrun", "tick.abort_commit"} or key in declared:
+        if key not in {"tick.gear", "tick.budget_ms", "tick.overrun", "tick.abort_commit"} or key in declared:
             raise _invalid_metadata(f"脚本运行配置未知或重复：@{key}。", line_number)
         declared[key] = value
-    if declared.get("mode", "tick") != "tick":
-        raise _invalid_metadata("@mode 只接受 tick；coroutine 引擎已退役。")
     budget = declared.get("tick.budget_ms", "100")
     if not re.fullmatch(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", budget):
         raise _invalid_metadata("@tick.budget_ms 须为正有限十进制数。")
@@ -359,7 +359,6 @@ def describe_strategy(path: Path, metadata: StrategyMetadata, package_root: Path
     result: JsonObject = {
         "file": str(target),
         "entry": "main(context)",
-        "mode": "tick",
         "tick": {
             "gear": metadata.execution.gear,
             "budget_ms": metadata.execution.budget_ms,

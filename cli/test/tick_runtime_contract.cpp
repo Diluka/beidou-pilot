@@ -233,7 +233,7 @@ public:
 };
 
 std::string Source(const std::string& body, TickGear gear = TickGear::Native) {
-    return "-- @mode tick\n-- @tick.gear " + std::to_string(static_cast<int>(gear)) + "\n" + body;
+    return "-- @tick.gear " + std::to_string(static_cast<int>(gear)) + "\n" + body;
 }
 
 void Start(TickRuntime& runtime, const std::string& id, const std::string& source, std::uint32_t limit = 0) {
@@ -266,55 +266,57 @@ void Drain(NativeBoundary& native, TickRuntime& runtime, const std::string& id, 
 void Declarations() {
     TickConfig config;
     std::string error;
-    Check(ParseTickConfig("function main() end", config, error), "an omitted @mode is a tick script: " + error);
-    Check(
-        ParseTickConfig(
-            "\n -- title\n-- @mode tick -- description\n-- @tick.budget_ms .5\n-- @tick.overrun skip\n-- @tick.abort_commit false\nfunction main() end",
-            config, error),
-        error);
+    Check(ParseTickConfig("function main() end", config, error),
+          "a script without declarations uses the tick defaults: " + error);
+    Check(ParseTickConfig("\n -- title\n-- @tick.budget_ms .5\n-- @tick.overrun skip\n-- @tick.abort_commit false\n"
+                          "function main() end",
+                          config, error),
+          error);
     Check(config.budgetMs == .5 && config.skipOverrun && !config.abortCommit && config.gear == TickGear::ThirtyHz,
           "decimal budgets and explicit policies must not be truncated; default decision gear is 3");
     for (int gear = 1; gear <= 4; ++gear)
-        Check(ParseTickConfig("-- @mode tick\n-- @tick.gear " + std::to_string(gear) + " -- cadence", config, error)
+        Check(ParseTickConfig("-- @tick.gear " + std::to_string(gear) + " -- cadence", config, error)
                   && static_cast<int>(config.gear) == gear,
               "each exact gear token must retain its selected value");
     for (const std::string& token : std::vector<std::string>{"", "0", "5", "01", "+1", "-1", "1.0", ".1", "1e0", "NaN",
                                                              "inf", "true", "1 2", "１", std::string(5000, '9')})
-        Check(!ParseTickConfig("-- @mode tick\n-- @tick.gear " + token, config, error) && !error.empty(),
+        Check(!ParseTickConfig("-- @tick.gear " + token, config, error) && !error.empty(),
               "gear must be an exact supported ASCII token");
     const std::vector<std::string> invalid{"-- @mode unknown",
+                                           "-- @mode tick",
                                            "-- @mode coroutine",
                                            "-- @mode tick\n-- @mode tick",
                                            "-- @mode coroutine\n-- @tick.gear 1",
-                                           "-- @mode tick\n-- @tick.gear 1\n-- @tick.gear 1",
-                                           "-- @mode tick\n-- @tick.budget_ms 0",
-                                           "-- @mode tick\n-- @tick.budget_ms -1",
-                                           "-- @mode tick\n-- @tick.budget_ms 1e2",
-                                           "-- @mode tick\n-- @tick.budget_ms +1",
-                                           "-- @mode tick\n-- @tick.budget_ms NaN",
-                                           "-- @mode tick\n-- @tick.budget_ms inf",
-                                           "-- @mode tick\n-- @tick.overrun Skip",
-                                           "-- @mode tick\n-- @tick.abort_commit 1",
-                                           "-- @mode tick\n-- @tick.unknown true",
-                                           "-- @mode coroutine\n-- @tick.overrun abort",
-                                           "-- @mode tick\n-- @tick.budget_ms 1\n-- @tick.budget_ms 2"};
+                                           "-- @tick.gear 1\n-- @tick.gear 1",
+                                           "-- @tick.budget_ms 0",
+                                           "-- @tick.budget_ms -1",
+                                           "-- @tick.budget_ms 1e2",
+                                           "-- @tick.budget_ms +1",
+                                           "-- @tick.budget_ms NaN",
+                                           "-- @tick.budget_ms inf",
+                                           "-- @tick.overrun Skip",
+                                           "-- @tick.abort_commit 1",
+                                           "-- @tick.unknown true",
+                                           "-- @tick.budget_ms 1\n-- @tick.budget_ms 2"};
     for (const auto& text : invalid)
         Check(!ParseTickConfig(text, config, error) && !error.empty(), "must reject declaration: " + text);
-    Check(ParseTickConfig("--- @mode tick--说明\nfunction main() end", config, error),
-          "documentation-style line comments must select the tick engine as the CLI does");
-    Check(ParseTickConfig("---[[\n-- @mode tick\nfunction main() end", config, error),
+    Check(ParseTickConfig("--- @tick.gear 2--说明\nfunction main() end", config, error)
+              && config.gear == TickGear::TwentyHz,
+          "documentation-style line comments must select the tick configuration as the CLI does");
+    Check(ParseTickConfig("---[[\n-- @tick.gear 2\nfunction main() end", config, error)
+              && config.gear == TickGear::TwentyHz,
           "three-dash comments are not Lua long comments");
     Check(ParseTickConfig("local x = 1\n-- @mode coroutine", config, error),
-          "body comments cannot select metadata; the omitted mode is still tick");
-    Check(ParseTickConfig("--[=[\n-- @mode tick\n]=]\n-- @mode tick\nreturn", config, error),
+          "body comments cannot declare metadata; the defaults apply");
+    Check(ParseTickConfig("--[=[\n-- @tick.gear 1\n]=]\n-- @tick.gear 2\nreturn", config, error)
+              && config.gear == TickGear::TwentyHz,
           "long-comment contents are not metadata");
     Check(ParseTickConfig("local text = [[\n-- @mode coroutine\n]]", config, error),
           "Lua string contents are not metadata");
     Check(ParseTickConfig("-- @tick.gear 1\n-- @tick.budget_ms 2.5", config, error) && config.gear == TickGear::TenHz
               && config.budgetMs == 2.5,
-          "tick declarations without @mode are still tick scripts");
-    Check(ParseTickConfig("-- @mode tick\n-- @tick.budget_ms 4294967296.25", config, error)
-              && config.budgetMs == 4294967296.25,
+          "tick declarations are optional and stand alone");
+    Check(ParseTickConfig("-- @tick.budget_ms 4294967296.25", config, error) && config.budgetMs == 4294967296.25,
           "large finite decimal budget must remain a double");
 }
 
@@ -341,7 +343,7 @@ function main(c)
   if c.tick.gear==4 and c.tick.index==2 then return 'done' end
 end
 )lua";
-    Start(runtime, "default", "-- @mode tick\n" + body);
+    Start(runtime, "default", body);
     Start(runtime, "slow", Source(body, TickGear::TenHz));
     Start(runtime, "medium", Source(body, TickGear::TwentyHz));
     Start(runtime, "native", Source(body));
@@ -376,7 +378,7 @@ end
     native.state.x = 201;
     native.Advance();
     Start(runtime, "initialization",
-          "-- @mode tick\nlocal initial=game.character.x; assert(initial==201)\n"
+          "local initial=game.character.x; assert(initial==201)\n"
           "function main(c) assert(initial==c.game.character.x); return 'done' end");
     Check(TickField(runtime, "initialization", "index").Number() == 0 && native.queries["character"] == 11
               && Field(Field(runtime.Profile(), "refresh_core"), "samples").Number() == 10,
@@ -596,11 +598,11 @@ return {main=main, context={options={distance=5}, route={50001}, scene={
               "must validate initial CLI scene identity: " + error);
     }
     Check(!runtime.Start("missing", Source("return {}"), 0, error), "missing entry must fail at admission");
-    Check(!runtime.Start("coroutine", "-- @mode coroutine\nfunction main() end", 0, error)
-              && error.find("invalid @mode") != std::string::npos,
-          "an explicit coroutine mode must be rejected at admission: " + error);
-    Check(Field(runtime.CurrentStatus("coroutine"), "status").Text() == "rejected",
-          "a rejected mode leaves only a rejected session status");
+    Check(!runtime.Start("removed-mode", "-- @mode tick\nfunction main() end", 0, error)
+              && error.find("@mode has been removed") != std::string::npos,
+          "a removed @mode declaration must be rejected at admission: " + error);
+    Check(Field(runtime.CurrentStatus("removed-mode"), "status").Text() == "rejected",
+          "a rejected metadata declaration leaves only a rejected session status");
     Check(runtime.CurrentStatus("absent").Type() == Value::Kind::Null, "unknown session is null");
 }
 
@@ -1818,16 +1820,16 @@ void Packages() {
         NativeBoundary native;
         TickRuntime runtime(native);
         std::string error;
-        Check(!runtime.StartPackage("entry-compile", "-- @mode tick\nlocal broken = )\n", 0, root.string(), error),
+        Check(!runtime.StartPackage("entry-compile", "local broken = )\n", 0, root.string(), error),
               "entry compile error must reject the session");
-        Check(error.find("main.lua:2:") != std::string::npos,
+        Check(error.find("main.lua:1:") != std::string::npos,
               "package entry errors must name main.lua and its line: " + error);
         Check(!runtime.StartPackage("missing", Source("local x = require(\"lib.missing\")\nfunction main() end\n"), 0,
                                     root.string(), error),
               "missing module must reject the session");
         Check(error.find("module 'lib.missing' not found") != std::string::npos,
               "missing module must be named: " + error);
-        Check(error.find("main.lua:3:") != std::string::npos,
+        Check(error.find("main.lua:2:") != std::string::npos,
               "missing module keeps the require() caller line: " + error);
         Check(error.find("stack traceback") != std::string::npos, "package errors keep a traceback: " + error);
         Check(!runtime.StartPackage("compile", Source("local x = require(\"lib.bad\")\nfunction main() end\n"), 0,

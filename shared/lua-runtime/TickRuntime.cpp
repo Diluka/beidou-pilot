@@ -207,16 +207,15 @@ bool ParseTickConfig(const std::string& source, TickConfig& config, std::string&
             error = "duplicate script declaration: " + key;
             return false;
         }
+        if (key == "@mode") {
+            error = "@mode has been removed; the tick engine is the only engine";
+            return false;
+        }
         auto value = split == std::string::npos ? std::string{} : line.substr(split + 1);
         const auto comment = value.find("--");
         if (comment != std::string::npos) value.resize(comment);
         value = Trim(value);
-        if (key == "@mode") {
-            if (value != "tick") {
-                error = "invalid @mode: " + value;
-                return false;
-            }
-        } else if (key == "@tick.gear") {
+        if (key == "@tick.gear") {
             if (value.size() != 1 || value[0] < '1' || value[0] > '4') {
                 error = "@tick.gear must be 1, 2, 3 or 4";
                 return false;
