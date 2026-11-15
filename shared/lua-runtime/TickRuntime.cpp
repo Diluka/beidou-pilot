@@ -804,12 +804,11 @@ struct TickRuntime::Impl {
                 // map identity may authorize attaching it to this native scene.
                 if (observation.status == "ok") {
                     const auto& map = observation.data["map_id"];
-                    if (map.Type() == Value::Kind::Number && map.Number() == observed.mapId)
-                        terrain = Value::Object({{"status", "available"},
-                                                 {"source", observation.data["source"]},
-                                                 {"footholds", observation.data["footholds"]},
-                                                 {"ropes", observation.data["ropes"]}});
-                    else
+                    if (map.Type() == Value::Kind::Number && map.Number() == observed.mapId) {
+                        terrain = Value::Object({{"status", "available"}});
+                        for (const auto& entry : observation.data.Members())
+                            if (entry.first != "map_id") terrain[entry.first] = entry.second;
+                    } else
                         terrain = Value::Object({{"status", "unavailable"}, {"error", "terrain_map_mismatch"}});
                 } else {
                     terrain = Value::Object({{"status", observation.status}});

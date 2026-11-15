@@ -18,6 +18,21 @@ FOOTHOLDS = [
 ROPE = {"index": 1, "x": 262, "y1": -23, "y2": 333, "l": 0, "uf": 1}
 
 
+# Richer static geometry for the navigation topology contract: a wall splits a
+# merged floor, and the fixtures cover walk/step/jumpup/drop/rope candidates.
+NAVIGATION_FOOTHOLDS = [
+    {"id": 1, "x1": -200, "x2": 0, "y1": 300, "y2": 300, "prev": 0, "next": 2},
+    {"id": 2, "x1": 0, "x2": 200, "y1": 300, "y2": 300, "prev": 1, "next": 0},
+    {"id": 3, "x1": 240, "x2": 400, "y1": 250, "y2": 250, "prev": 0, "next": 0},
+    {"id": 4, "x1": 402, "x2": 560, "y1": 250, "y2": 250, "prev": 0, "next": 0},
+    {"id": 5, "x1": 250, "x2": 350, "y1": 300, "y2": 300, "prev": 0, "next": 0},
+    {"id": 6, "x1": 230, "x2": 320, "y1": 400, "y2": 400, "prev": 0, "next": 0},
+    {"id": 7, "x1": 100, "x2": 200, "y1": 200, "y2": 200, "prev": 0, "next": 0},
+    {"id": 8, "x1": 100, "x2": 100, "y1": 250, "y2": 320, "prev": 0, "next": 0},
+]
+NAVIGATION_ROPE = {"index": 2, "x": 140, "y1": 100, "y2": 320}
+
+
 def map_properties() -> dict:
     return {
         "info": {},
@@ -25,6 +40,23 @@ def map_properties() -> dict:
             "1": {"0": {str(row["id"]): {key: value for key, value in row.items() if key != "id"} for row in FOOTHOLDS}}
         },
         "ladderRope": {"1": {key: value for key, value in ROPE.items() if key != "index"}},
+    }
+
+
+def navigation_properties() -> dict:
+    return {
+        "info": {},
+        "foothold": {
+            "1": {
+                "0": {
+                    str(row["id"]): {key: value for key, value in row.items() if key != "id"}
+                    for row in NAVIGATION_FOOTHOLDS
+                }
+            }
+        },
+        "ladderRope": {
+            str(NAVIGATION_ROPE["index"]): {key: value for key, value in NAVIGATION_ROPE.items() if key != "index"}
+        },
     }
 
 
@@ -127,6 +159,7 @@ class SceneTerrainContract(unittest.TestCase):
             self.assertEqual(error, result["error"])
             self.assertNotIn("footholds", result["data"])
             self.assertNotIn("ropes", result["data"])
+            self.assertNotIn("navigation", result["data"])
 
     def test_flat_sloped_wall_and_rope_coordinates_keep_original_connections(self) -> None:
         for result in self.query(map_properties(), 123456789):
@@ -135,6 +168,102 @@ class SceneTerrainContract(unittest.TestCase):
             self.assertEqual(FOOTHOLDS, result["data"]["footholds"])
             self.assertEqual([ROPE], result["data"]["ropes"])
             self.assertNotIn("terrain", result["data"])
+
+    def test_static_navigation_topology_exposes_platforms_walls_ropes_and_candidates(self) -> None:
+        for result in self.query(navigation_properties(), 123456789):
+            self.assertEqual("ok", result["status"], result)
+            navigation = result["data"]["navigation"]
+            self.assertEqual(
+                {
+                    "stand_height": 70,
+                    "wall_margin": 12,
+                    "min_platform_width": 16,
+                    "jump_rise": 75,
+                    "drop_min": 4,
+                    "drop_max": 65,
+                    "rope_grab": 76,
+                },
+                navigation["model"],
+            )
+            self.assertEqual([-200, 560], [navigation["terrain_left"], navigation["terrain_right"]])
+            self.assertEqual([100, 250, 320], navigation["walls"])
+            self.assertEqual(
+                [
+                    {"index": 1, "left": -200, "right": 88, "open_left": True, "open_right": False},
+                    {"index": 2, "left": 112, "right": 200, "open_left": False, "open_right": True},
+                    {"index": 3, "left": 240, "right": 400, "open_left": True, "open_right": True},
+                    {"index": 4, "left": 402, "right": 560, "open_left": True, "open_right": True},
+                    {"index": 5, "left": 250, "right": 350, "open_left": True, "open_right": True},
+                    {"index": 6, "left": 230, "right": 320, "open_left": True, "open_right": True},
+                    {"index": 7, "left": 100, "right": 200, "open_left": True, "open_right": True},
+                ],
+                [
+                    {key: platform[key] for key in ("index", "left", "right", "open_left", "open_right")}
+                    for platform in navigation["platforms"]
+                ],
+            )
+            self.assertEqual([-200, 0, 300, 300, 0, 88, 300, 300], navigation["platforms"][0]["segments"])
+            self.assertEqual([112, 200, 300, 300], navigation["platforms"][1]["segments"])
+            self.assertEqual([100, 200, 200, 200], navigation["platforms"][6]["segments"])
+            self.assertEqual(
+                [{"index": 2, "x": 140, "y1": 100, "y2": 320, "platforms": [7, 200, 2, 300]}],
+                navigation["ropes"],
+            )
+            candidates = navigation["candidates"]
+            self.assertEqual([3, 4, 392, 416, 0, 4, 3, 410, 386, 0], candidates["walk"])
+            self.assertEqual([2, 3, 194, 250, 50, 3, 7, 246, 190, 50], candidates["step"])
+            self.assertEqual([5, 3, 300, 300, 50], candidates["jumpup"])
+            self.assertEqual(
+                [
+                    2,
+                    6,
+                    192,
+                    247.5,
+                    100,
+                    3,
+                    2,
+                    248,
+                    187.5,
+                    50,
+                    3,
+                    6,
+                    248,
+                    233,
+                    150,
+                    4,
+                    5,
+                    410,
+                    343.5,
+                    50,
+                    5,
+                    6,
+                    258,
+                    238,
+                    100,
+                    7,
+                    1,
+                    108,
+                    61.5,
+                    100,
+                    7,
+                    3,
+                    192,
+                    252.5,
+                    50,
+                    7,
+                    5,
+                    192,
+                    257.5,
+                    100,
+                    7,
+                    6,
+                    192,
+                    247.5,
+                    200,
+                ],
+                candidates["drop"],
+            )
+            self.assertEqual([7, 2, 140, 140, 100, 2, 2, 7, 140, 140, -100, 2], candidates["rope"])
 
     def test_empty_rope_is_available_and_minimal_rope_fields_are_sufficient(self) -> None:
         properties = map_properties()

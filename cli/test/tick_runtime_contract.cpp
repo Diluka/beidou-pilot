@@ -32,15 +32,16 @@ Value Field(const Value& object, const std::string& name) {
 }
 
 Observation Terrain(std::uint32_t mapId, int x) {
-    return {"ok",
-            Value::Object(
-                {{"map_id", mapId},
-                 {"source", "local-IMG-contract"},
-                 {"footholds",
-                  Value::Array({Value::Object(
-                      {{"id", 7}, {"x1", x}, {"y1", 0}, {"x2", x + 100}, {"y2", 0}, {"prev", 0}, {"next", 0}})})},
-                 {"ropes", Value::Array({Value::Object({{"index", 1}, {"x", x + 50}, {"y1", -50}, {"y2", 0}})})}}),
-            {}};
+    return {
+        "ok",
+        Value::Object({{"map_id", mapId},
+                       {"source", "local-IMG-contract"},
+                       {"footholds",
+                        Value::Array({Value::Object(
+                            {{"id", 7}, {"x1", x}, {"y1", 0}, {"x2", x + 100}, {"y2", 0}, {"prev", 0}, {"next", 0}})})},
+                       {"ropes", Value::Array({Value::Object({{"index", 1}, {"x", x + 50}, {"y1", -50}, {"y2", 0}})})},
+                       {"navigation", Value::Object({{"marker", x}})}}),
+        {}};
 }
 
 class NativeBoundary final : public TickAdapter {
@@ -612,6 +613,7 @@ local function main(c)
   assert(s.scene_generation==c.game.world.scene_generation)
   assert(s.terrain.status=='available' and s.terrain.source=='local-IMG-contract')
   assert(s.terrain.footholds[1].x1==xs[i] and s.terrain.ropes[1].x==xs[i]+50)
+  assert(s.terrain.navigation.marker==xs[i])
   assert(c.options.goal==50002 and c.route[2]==50001 and c.custom.label=='keep')
   c.state.calls=(c.state.calls or 0)+1
   assert(c.state.calls==i)
