@@ -945,8 +945,8 @@ void ReadCommand() {
             packageRoot.insert(0, "Z:");
         }
     }
-    // The tick runtime owns metadata validation: @mode has been removed, so
-    // any mode declaration is rejected before the script starts.
+    // The tick runtime validates optional @tick.* metadata before the script
+    // starts; other leading comments stay ordinary documentation.
     std::string error;
     const bool started =
         sourceValid

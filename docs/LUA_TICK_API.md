@@ -37,7 +37,7 @@ local function main(context)
 end
 ```
 
-运行元数据只读取首段可执行代码之前的前导单行注释，允许空行、普通注释与尾部 `--` 说明；Lua 长注释内部不解释元数据。脚本统一按 tick 引擎执行，无需声明引擎；`@tick.*` 可单独出现在前导注释中。`@mode` 已移除，仍写 `-- @mode ...`（任何值）的脚本会在发布前被明确拒绝，这是迁移期的有意行为；未知或重复的 `@tick.*`、格式错误同样在发布前拒绝。预算为正有限十进制毫秒数，支持小数，不接受符号、科学计数、NaN 或无穷；`overrun` 为 `abort/skip`，`abort_commit` 为小写 `true/false`。未配置时为 **第3档（30Hz）/ 100ms / abort / true**，单次预算与调用周期独立。
+运行元数据只读取首段可执行代码之前的前导单行注释，允许空行、普通注释与尾部 `--` 说明；Lua 长注释内部不解释元数据。脚本统一按 tick 引擎执行，无需声明引擎；`@tick.*` 可单独出现在前导注释中；未知或重复的 `@tick.*`、格式错误在发布前拒绝。预算为正有限十进制毫秒数，支持小数，不接受符号、科学计数、NaN 或无穷；`overrun` 为 `abort/skip`，`abort_commit` 为小写 `true/false`。未配置时为 **第3档（30Hz）/ 100ms / abort / true**，单次预算与调用周期独立。
 
 策略文件仍采用唯一顶层 `main(context)` 和既有 `@option` 参数规则。CLI 注入 `options` 和初始 `scene` 身份锚点；原生 tick 引擎随后维护当前只读 `scene`，调用方已有的 `route` 等额外上下文按原规则保留。编译结果返回 `{main=main, context=__beidou_context}`，不在装载阶段执行 `main`；初始 `scene` 身份由原生 tick 引擎核对。
 

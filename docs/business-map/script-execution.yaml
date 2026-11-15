@@ -33,7 +33,7 @@ nodes:
       - kind: symbol
         file: shared/lua-runtime/TickRuntime.cpp
         value: TickRuntime::Start
-        description: 编译受信 Lua 并创建独立会话，读取前导 @tick 配置并拒绝已移除的 @mode 声明。
+        description: 编译受信 Lua 并创建独立会话，读取前导 @tick 配置。
       - kind: symbol
         file: shared/lua-runtime/TickRuntime.cpp
         value: TickRuntime::Tick

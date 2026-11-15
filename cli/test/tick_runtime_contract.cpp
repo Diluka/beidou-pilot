@@ -282,12 +282,7 @@ void Declarations() {
                                                              "inf", "true", "1 2", "１", std::string(5000, '9')})
         Check(!ParseTickConfig("-- @tick.gear " + token, config, error) && !error.empty(),
               "gear must be an exact supported ASCII token");
-    const std::vector<std::string> invalid{"-- @mode unknown",
-                                           "-- @mode tick",
-                                           "-- @mode coroutine",
-                                           "-- @mode tick\n-- @mode tick",
-                                           "-- @mode coroutine\n-- @tick.gear 1",
-                                           "-- @tick.gear 1\n-- @tick.gear 1",
+    const std::vector<std::string> invalid{"-- @tick.gear 1\n-- @tick.gear 1",
                                            "-- @tick.budget_ms 0",
                                            "-- @tick.budget_ms -1",
                                            "-- @tick.budget_ms 1e2",
@@ -306,12 +301,12 @@ void Declarations() {
     Check(ParseTickConfig("---[[\n-- @tick.gear 2\nfunction main() end", config, error)
               && config.gear == TickGear::TwentyHz,
           "three-dash comments are not Lua long comments");
-    Check(ParseTickConfig("local x = 1\n-- @mode coroutine", config, error),
+    Check(ParseTickConfig("local x = 1\n-- @tick.gear 9", config, error),
           "body comments cannot declare metadata; the defaults apply");
     Check(ParseTickConfig("--[=[\n-- @tick.gear 1\n]=]\n-- @tick.gear 2\nreturn", config, error)
               && config.gear == TickGear::TwentyHz,
           "long-comment contents are not metadata");
-    Check(ParseTickConfig("local text = [[\n-- @mode coroutine\n]]", config, error),
+    Check(ParseTickConfig("local text = [[\n-- @tick.gear 9\n]]", config, error),
           "Lua string contents are not metadata");
     Check(ParseTickConfig("-- @tick.gear 1\n-- @tick.budget_ms 2.5", config, error) && config.gear == TickGear::TenHz
               && config.budgetMs == 2.5,
@@ -598,11 +593,6 @@ return {main=main, context={options={distance=5}, route={50001}, scene={
               "must validate initial CLI scene identity: " + error);
     }
     Check(!runtime.Start("missing", Source("return {}"), 0, error), "missing entry must fail at admission");
-    Check(!runtime.Start("removed-mode", "-- @mode tick\nfunction main() end", 0, error)
-              && error.find("@mode has been removed") != std::string::npos,
-          "a removed @mode declaration must be rejected at admission: " + error);
-    Check(Field(runtime.CurrentStatus("removed-mode"), "status").Text() == "rejected",
-          "a rejected metadata declaration leaves only a rejected session status");
     Check(runtime.CurrentStatus("absent").Type() == Value::Kind::Null, "unknown session is null");
 }
 
