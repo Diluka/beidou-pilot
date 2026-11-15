@@ -5,7 +5,6 @@
 
 #include <array>
 #include <chrono>
-#include <filesystem>
 #include <cstring>
 #include <sstream>
 
@@ -144,9 +143,8 @@ MapleControl::Observation WorldRoute(const std::string& dataRoot, std::int64_t s
     MapleControl::WorldMapModel model;
     std::string cacheState;
     std::string buildError;
-    if (!MapleControl::LoadOrBuildWorldMap(std::filesystem::u8path(dataRoot),
-                                           MapleControl::WorldMapCacheRootFromEnvironment(), model, cacheState,
-                                           buildError)) {
+    if (!MapleControl::LoadOrBuildWorldMap(dataRoot, MapleControl::WorldMapCacheRootFromEnvironment(), model,
+                                           cacheState, buildError)) {
         return {"unavailable",
                 Value::Object({{"source", "native_world_map"},
                                {"status", "unavailable"},

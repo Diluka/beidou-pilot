@@ -828,7 +828,7 @@ Json SharedLuaAdapter::RouteObservation(std::int64_t start, std::int64_t goal, s
     MapleControl::WorldMapModel model;
     std::string cacheState;
     std::string buildError;
-    if (!MapleControl::LoadOrBuildWorldMap(std::filesystem::current_path(),
+    if (!MapleControl::LoadOrBuildWorldMap(std::filesystem::current_path().string(),
                                            MapleControl::WorldMapCacheRootFromEnvironment(), model, cacheState,
                                            buildError)) {
         status = "unavailable";

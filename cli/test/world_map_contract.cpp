@@ -82,7 +82,7 @@ void ModelContract() {
     std::cout << "{\"model\":\"ok\",\"legs\":" << route.legs.size() << ",\"roundtrip\":true}\n";
 }
 
-void CacheContract(const std::filesystem::path& data, const std::string& cache) {
+void CacheContract(const std::string& data, const std::string& cache) {
     WorldMapModel model;
     std::string cacheState;
     std::string error;

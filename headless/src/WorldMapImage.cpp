@@ -6,6 +6,7 @@
 #include <array>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -218,10 +219,11 @@ std::string WorldMapCacheRootFromEnvironment() {
     return value == nullptr ? std::string{} : std::string(value);
 }
 
-bool LoadOrBuildWorldMap(const std::filesystem::path& dataRoot, std::string cacheRoot, WorldMapModel& model,
+bool LoadOrBuildWorldMap(const std::string& dataRootText, std::string cacheRoot, WorldMapModel& model,
                          std::string& cacheState, std::string& error) {
     cacheState.clear();
     error.clear();
+    const auto dataRoot = std::filesystem::u8path(dataRootText);
     const auto files = MapFiles(dataRoot);
     if (files.empty()) {
         error = "world_map_data_unavailable";
