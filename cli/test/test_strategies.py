@@ -243,20 +243,7 @@ class LuaStrategyContract(unittest.TestCase):
             backend.assert_not_called()
             run.assert_not_called()
 
-    def test_removed_mode_and_inputs_are_rejected(self) -> None:
-        for source in ("-- @mode coroutine\n" + POLICY, "-- @mode tick\n" + POLICY):
-            self.path.write_text(source, encoding="utf-8")
-            with (
-                self.subTest(source=source),
-                patch("beidou_pilot.cli.Backend") as backend,
-                patch.object(BridgeClient, "run_script") as run,
-            ):
-                code, output = self.cli("script", "run", str(self.path), "--mob-id", "12")
-            self.assertEqual(2, code)
-            self.assertEqual("invalid_strategy_metadata", json.loads(output)["error"]["code"])
-            backend.assert_not_called()
-            run.assert_not_called()
-
+    def test_removed_inputs_are_rejected(self) -> None:
         self.path.write_text(POLICY, encoding="utf-8")
         for arguments in (
             ("script", "run", "--code", "function main(context) end"),
@@ -325,7 +312,6 @@ class LuaStrategyContract(unittest.TestCase):
         source = header + POLICY
         compiled = compile_strategy(source, {"mob_id": 12}, self.scene, {"route": [{"map_id": 200}]})
         self.assertTrue(compiled.startswith(header))
-        self.assertNotIn("@mode", compiled)
         self.assertIn('["mob_id"]=12', compiled)
         self.assertIn('["scene_generation"]=1', compiled)
         self.assertIn('["route"]={{["map_id"]=200}}', compiled)
@@ -339,14 +325,6 @@ class LuaStrategyContract(unittest.TestCase):
 
     def test_execution_config_rejects_invalid_headers_before_backend_or_publication(self) -> None:
         invalid = (
-            "-- @mode coroutine",
-            "-- @mode tick",
-            "-- @mode unknown",
-            "-- @mode Tick",
-            "-- @mode",
-            "-- @mode tick junk",
-            "-- @mode tick\n-- @mode tick",
-            "-- @mode coroutine\n-- @tick.overrun skip",
             "-- @tick.unknown true",
             "-- @tick.budget_ms 10\n-- @tick.budget_ms 10",
             "-- @tick.budget_ms 0",
@@ -398,7 +376,7 @@ class LuaStrategyContract(unittest.TestCase):
         for source in (
             "--[[\n-- @tick.budget_ms invalid\n]]\nlocal function main(context)\nend\n",
             "--[=[\n-- @tick.gear invalid\n]=]\nlocal function main(context)\nend\n",
-            "local text = '-- @mode tick'\n-- @tick.budget_ms invalid\nlocal function main(context)\nend\n",
+            "local text = '-- @tick.gear 9'\n-- @tick.budget_ms invalid\nlocal function main(context)\nend\n",
         ):
             with self.subTest(source=source):
                 self.assertEqual(100, parse_script_execution(source).budget_ms)

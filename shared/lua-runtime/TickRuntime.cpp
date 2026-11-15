@@ -202,13 +202,9 @@ bool ParseTickConfig(const std::string& source, TickConfig& config, std::string&
             return !((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || (next >= '0' && next <= '9')
                      || next == '_');
         };
-        if (!declaration("@mode") && !declaration("@tick")) continue;
+        if (!declaration("@tick")) continue;
         if (!seen.insert(key).second) {
             error = "duplicate script declaration: " + key;
-            return false;
-        }
-        if (key == "@mode") {
-            error = "@mode has been removed; the tick engine is the only engine";
             return false;
         }
         auto value = split == std::string::npos ? std::string{} : line.substr(split + 1);

@@ -4,7 +4,7 @@
 
 用户脚本通过 `script run FILE --seconds N`、`script run DIR --seconds N` 或 `script start FILE --seconds N` 提交；文件或目录脚本包需要持续运行时显式 `--continuous`。这些方式复用同一装载、身份核对、错误、取消与放键链，可在现有实例中执行，无需重启客户端。客户端只有 tick 引擎：入口按会话频率档位到期调用顶层 `main(context)`，通过 `context.state` 保存跨调用状态，通过只读领域观察，并用 `context.game.player` 提交方向与动作意图。tick 入口可以提交目录脚本包：目录内固定 `main.lua` 为入口，其余文件按包内相对路径由入口用 Lua 原生 `require` 装载，装载器只把包目录交给会话，不复制模块文件。Python 只处理参数、文件读取、显式取消与结果投影，不做逐帧控制。
 
-文件必须包含顶层 `main(context)` 函数，并按 tick 引擎执行，无需声明引擎；`@tick.gear/budget_ms/overrun/abort_commit` 可单独出现在前导注释中。`@mode` 已移除，仍写 `-- @mode ...`（任何值）的脚本会在发布前被明确拒绝，这是迁移期的有意行为。`script describe FILE|DIR` 输出有效 `@tick` 配置和动态参数用法。CLI 注入 `context.options`、初始 `context.scene` 身份锚点与调用方已有的 `route` 等上下文；原生 tick 引擎随后维护当前只读 `scene`，换图与场景代次变化不需要 Python 回填。没有顶层 `main(context)` 的文件会在发布前被拒绝；目录脚本包的 `main.lua` 与单文件策略使用同一套声明和参数规则。
+文件必须包含顶层 `main(context)` 函数，并按 tick 引擎执行，无需声明引擎；`@tick.gear/budget_ms/overrun/abort_commit` 可单独出现在前导注释中。`script describe FILE|DIR` 输出有效 `@tick` 配置和动态参数用法。CLI 注入 `context.options`、初始 `context.scene` 身份锚点与调用方已有的 `route` 等上下文；原生 tick 引擎随后维护当前只读 `scene`，换图与场景代次变化不需要 Python 回填。没有顶层 `main(context)` 的文件会在发布前被拒绝；目录脚本包的 `main.lua` 与单文件策略使用同一套声明和参数规则。
 
 ```bash
 private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
