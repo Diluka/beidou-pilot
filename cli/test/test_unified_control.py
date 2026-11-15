@@ -159,6 +159,62 @@ class UnifiedControlContract(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(self.native.state["observed_at_ms"], result["data"]["state"]["observed_at_ms"])
 
+    def test_world_map_route_is_readonly_and_returns_route_status(self) -> None:
+        route = {
+            "source": "native_world_map",
+            "status": "no_route",
+            "error": "no_route",
+            "start": 100000000,
+            "goal": 200000000,
+            "legs": [],
+        }
+        with (
+            patch("beidou_pilot.observations.NativeObserver") as observer,
+            patch("beidou_pilot.cli.control") as control,
+        ):
+            observer.return_value.route.return_value = route
+            code, report = self.cli("beidou", "world-map", "route", "100000000", "200000000")
+        self.assertEqual(0, code, report)
+        self.assertEqual(("world-map", "beidou", "default"), (report["command"], report["backend"], report["instance"]))
+        self.assertEqual("no_route", report["data"]["status"])
+        self.assertEqual(route, report["data"])
+        observer.assert_called_once_with(self.files.root.resolve(), "beidou", "default")
+        observer.return_value.route.assert_called_once_with(100000000, 200000000)
+        control.assert_not_called()
+
+    def test_world_map_route_allows_headless_native_channel(self) -> None:
+        with (
+            patch("beidou_pilot.observations.NativeObserver") as observer,
+            patch("beidou_pilot.cli.control") as control,
+        ):
+            observer.return_value.route.return_value = {"status": "ok", "legs": []}
+            code, report = self.cli("headless", "world-map", "route", "100000000", "100000200")
+        self.assertEqual(0, code, report)
+        self.assertEqual("ok", report["data"]["status"])
+        observer.return_value.route.assert_called_once_with(100000000, 100000200)
+        control.assert_not_called()
+
+    def test_world_map_route_rejects_invalid_or_missing_map_numbers(self) -> None:
+        cases = (
+            ("world-map", "route"),
+            ("world-map", "route", "100000000"),
+            ("world-map", "route", "0", "100000200"),
+            ("world-map", "route", "-1", "100000200"),
+            ("world-map", "route", "abc", "100000200"),
+            ("world-map", "route", "100000000", "1e3"),
+        )
+        for arguments in cases:
+            with (
+                self.subTest(arguments=arguments),
+                patch("beidou_pilot.observations.NativeObserver") as observer,
+                patch("beidou_pilot.cli.control") as control,
+            ):
+                code, report = self.cli("beidou", *arguments)
+            self.assertEqual(2, code, report)
+            self.assertEqual("usage", report["error"]["code"])
+            observer.assert_not_called()
+            control.assert_not_called()
+
     def test_headless_reuse_rejects_a_different_explicit_server_or_actor(self) -> None:
         server = self.native.root / "server.json"
         server.write_text(json.dumps({**self.native.runtime["target"], "project": "different-validation"}))

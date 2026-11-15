@@ -52,6 +52,7 @@ class HeadlessHeldInputContract(unittest.TestCase):
                 "ImgKeys.cpp",
                 "SharedLuaAdapter.cpp",
                 "TickNativeAdapter.cpp",
+                "WorldMapImage.cpp",
             )
         ]
         sources += [

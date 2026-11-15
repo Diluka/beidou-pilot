@@ -32,6 +32,16 @@ class Parser(argparse.ArgumentParser):
         raise ClientError("usage", message)
 
 
+def map_number(text: str) -> int:
+    try:
+        value = int(text, 10)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("地图号须为正整数。") from error
+    if value <= 0:
+        raise argparse.ArgumentTypeError("地图号须为正整数。")
+    return value
+
+
 def parser() -> Parser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -72,6 +82,11 @@ def parser() -> Parser:
     command("status", "当前客户端阶段与角色，不启动、不输入")
     command("instances", "列出本目录已登记的无头实例，不启动客户端")
     command("capabilities", "读取原生动作能力与静态观察支持范围，不启动客户端")
+    q = command("world-map", "只读查询原生世界地图的跨图路线，不控制客户端")
+    actions = q.add_subparsers(dest="world_map_action", required=True, parser_class=Parser)
+    route = actions.add_parser("route", parents=[common], allow_abbrev=False)
+    route.add_argument("start", type=map_number, help="起点地图号")
+    route.add_argument("goal", type=map_number, help="终点地图号")
     command("doctor", "检查本地运行条件与读取能力，不启动客户端")
     q = command("bridge", "读取原生桥状态，或停止桥持有的按键")
     q.add_argument("action", choices=["status", "stop"], nargs="?", default="status")
@@ -238,6 +253,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "status",
         "instances",
         "capabilities",
+        "world-map",
         "doctor",
         "bridge",
         "script",
@@ -322,6 +338,10 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             "observation_domains": sorted(domains),
             "native_actions": cast(JsonObject | None, state.get("capabilities")) if state is not None else None,
         }
+    if cmd == "world-map":
+        from .observations import NativeObserver
+
+        return NativeObserver(backend.root, backend.name, backend.instance).route(args.start, args.goal)
     if cmd == "doctor":
         from .resources import load_resources
 
@@ -702,6 +722,7 @@ def main(argv: list[str] | None = None) -> int:
                 "character",
                 "instances",
                 "capabilities",
+                "world-map",
                 "doctor",
                 "snapshot",
                 "watch",

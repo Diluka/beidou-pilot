@@ -1,6 +1,7 @@
 """原生观察消费合同；文件对端只验证 IPC，不代表游戏效果。"""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
+import io
 import json
 import os
 from pathlib import Path
@@ -11,10 +12,11 @@ import unittest
 from unittest.mock import patch
 
 from beidou_pilot.backend import Backend
+from beidou_pilot.cli import main
 from beidou_pilot.engines.observe import read_observation
 from beidou_pilot.engines.stage import read_stage
 from beidou_pilot.errors import ClientError
-from beidou_pilot.observations import NativeObserver, Session, active_session
+from beidou_pilot.observations import DOMAINS, NativeObserver, Session, active_session
 from .test_bridge import BridgeFiles
 
 
@@ -26,6 +28,7 @@ class NativeObservationContract(unittest.TestCase):
         self.files = BridgeFiles(self.root)
         self.enterContext(patch.dict(os.environ, self.files.environment))
         self.directory = self.files.directory
+        self.requests: list[list[str]] = []
         self.session = Session(
             "bridge-container", "bridge-contract", Path(self.files.runtime["run_dir"]), "beidou", "sha256:image"
         )
@@ -53,7 +56,9 @@ class NativeObservationContract(unittest.TestCase):
             request = self.directory / "observation-request.txt"
             while not stop.wait(0.001):
                 if request.is_file():
-                    _, instance, request_id, domain = request.read_text().split()
+                    fields = request.read_text().split()
+                    _, instance, request_id, domain = fields[:4]
+                    self.requests.append(fields)
                     response = {
                         **self.state,
                         "instance_id": instance,
@@ -201,6 +206,97 @@ class NativeObservationContract(unittest.TestCase):
             with self.assertRaises(ClientError) as failure:
                 observer.observe("scene", timeout=0.03)
             self.assertEqual("native_observation_timeout", failure.exception.code)
+
+    def test_world_route_request_carries_both_maps_in_order_and_parses_success(self) -> None:
+        report = {
+            "source": "native_world_map",
+            "status": "ok",
+            "error": None,
+            "start": 100000000,
+            "goal": 100000100,
+            "model": {"logic_version": 1, "source_fingerprint": "0011223344556677", "maps": 3, "edges": 4},
+            "cache": "built",
+            "legs": [{"from": 100000000, "portal": "east00", "to": 100000100, "portal_at": [[1400, 300]]}],
+        }
+        with patch("beidou_pilot.observations.active_session", return_value=self.session):
+            observer = NativeObserver(self.root)
+            with self.responder(report):
+                result = observer.route(100000000, 100000100, timeout=0.2)
+        self.assertEqual(report, result)
+        self.assertEqual(1, len(self.requests))
+        fields = self.requests[0]
+        self.assertEqual(["1", "native-1", fields[2], "world-route", "100000000", "100000100"], fields)
+        self.assertRegex(fields[2], r"^[0-9a-f]{32}$")
+
+    def test_world_route_failure_returns_data_status_instead_of_observation_error(self) -> None:
+        report = {
+            "source": "native_world_map",
+            "status": "no_route",
+            "error": "no_route",
+            "start": 100000000,
+            "goal": 200000000,
+            "legs": [],
+        }
+        with patch("beidou_pilot.observations.active_session", return_value=self.session):
+            observer = NativeObserver(self.root)
+            with self.responder(report):
+                result = observer.route(100000000, 200000000, timeout=0.2)
+        self.assertEqual("no_route", result["status"])
+        self.assertEqual("no_route", result["error"])
+        self.assertEqual([], result["legs"])
+
+    def test_world_route_is_not_a_regular_observation_domain(self) -> None:
+        self.assertNotIn("world-route", DOMAINS)
+        with patch("beidou_pilot.observations.active_session", return_value=self.session):
+            with self.assertRaises(ClientError) as failure:
+                NativeObserver(self.root).observe("world-route", timeout=0.2)
+        self.assertEqual("unsupported_observation", failure.exception.code)
+
+    def test_world_route_channel_failures_keep_observation_errors(self) -> None:
+        with patch("beidou_pilot.observations.active_session", return_value=self.session):
+            observer = NativeObserver(self.root)
+            with self.responder({}, status="unsupported"), self.assertRaises(ClientError) as failure:
+                observer.route(100000000, 200000000, timeout=0.2)
+        self.assertEqual("unsupported_capability", failure.exception.code)
+
+    def test_cli_world_map_route_presents_route_status_without_observation_error(self) -> None:
+        report = {
+            "source": "native_world_map",
+            "status": "no_route",
+            "error": "no_route",
+            "start": 100000000,
+            "goal": 200000000,
+            "legs": [],
+        }
+        output = io.StringIO()
+        with patch("beidou_pilot.observations.active_session", return_value=self.session):
+            with self.responder(report), redirect_stdout(output):
+                code = main(
+                    [
+                        "--root",
+                        str(self.root),
+                        "--backend",
+                        "beidou",
+                        "--json",
+                        "world-map",
+                        "route",
+                        "100000000",
+                        "200000000",
+                    ]
+                )
+        self.assertEqual(0, code)
+        result = json.loads(output.getvalue())
+        self.assertIs(True, result["ok"])
+        self.assertEqual("world-map", result["command"])
+        self.assertEqual("no_route", result["data"]["status"])
+
+    def test_regular_observation_requests_keep_four_tokens(self) -> None:
+        with patch("beidou_pilot.observations.active_session", return_value=self.session):
+            observer = NativeObserver(self.root)
+            with self.responder({}):
+                observer.observe("scene", timeout=0.2)
+        self.assertEqual(4, len(self.requests[0]))
+        self.assertEqual(["1", "native-1", self.requests[0][2], "scene"], self.requests[0])
 
     def test_bootstrap_uses_this_container_before_native_observation_is_ready(self) -> None:
         with patch("beidou_pilot.observations.verify_binaries", return_value=True):

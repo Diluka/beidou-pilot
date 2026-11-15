@@ -59,8 +59,10 @@ Value Shop();
 Value Notifications();
 void PollNotifications(MapleControl::EventTransport& events, const MapleControl::State& state);
 MapleControl::Observation Collect(const std::string& domain);
+// Local read-only world-map route query; the returned model never enters Lua.
+MapleControl::Observation WorldRoute(const std::string& dataRoot, std::int64_t start, std::int64_t goal);
 
 // Separate read-only request lane; it never replaces a running action/script request.
 void Tick(const std::string& directory, const std::string& instance, const std::string& run, std::uint64_t generation,
-          std::uint64_t sequence);
+          std::uint64_t sequence, const std::string& dataRoot);
 }

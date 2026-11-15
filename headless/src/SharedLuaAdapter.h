@@ -42,6 +42,8 @@ private:
     void ReadCommand();
     void ReadObservation();
     nlohmann::json ObservationData(const std::string& domain, std::string& status, std::string& error) const;
+    nlohmann::json RouteObservation(std::int64_t start, std::int64_t goal, std::string& status,
+                                    std::string& error) const;
     std::string EquipmentReference(const ms::Equip* item) const;
     void Publish();
     void CaptureInteraction();

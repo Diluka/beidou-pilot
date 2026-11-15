@@ -1135,7 +1135,7 @@ void Tick() {
         commandReason = "stopped";
         stopCommand = false;
     }
-    NativeObservation::Tick(directory, instanceId, runId, sceneGeneration, sequence);
+    NativeObservation::Tick(directory, instanceId, runId, sceneGeneration, sequence, sceneDataRoot);
     BeiDouBridge::LoginAction::Tick(directory, instanceId, runId);
     if (now - lastPublishedAt >= 25) {
         NativeObservation::PollNotifications(*eventTransport, previousState);
