@@ -451,11 +451,6 @@ namespace ms
 		motion.ClearJumpRequests();
 	}
 
-	void Player::apply_motion_impulse(double vx, double vy)
-	{
-		motion.ApplyImpulse(vx, vy);
-	}
-
 	void Player::begin_motion_rush(double targetX)
 	{
 		motion.BeginRush(targetX, get_attackdelay(1));
@@ -729,9 +724,12 @@ namespace ms
 		{
 			if (motion.OwnsNormalState())
 			{
-				// Equivalent to the legacy per-step impulse (1.5px/8ms, 3.5px/step):
-				// the canonical state takes it so ordinary motion cannot overwrite it.
-				apply_motion_impulse(fromleft ? -187.5 : 187.5, -437.5);
+				// #252 real-client evidence (GUI, map 101040000, mob 0130100, 6 hits):
+				// the first post-hit sample is the queued impulse after directional
+				// merge/truncate plus one air step, which consistently resolves to
+				// (+-270, -270)px/s. The old 187.5/-437.5 per-step conversion was not the
+				// original ordinary touch-damage amplitude.
+				motion.QueueImpulse(fromleft ? -270.0 : 270.0, -270.0);
 			}
 			else
 			{

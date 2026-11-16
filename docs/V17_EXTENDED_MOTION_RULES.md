@@ -96,6 +96,15 @@
 | 保护时间 | `Character/Char.cpp:show_damage` 对任何显示伤害写 `invincible.set_for(2000)`，按 8ms 世界时间推进；原版已定位的是正负 1500、每次趋零30的计数 | 补齐 miss/正伤害/特殊攻击的对应关系后，按已确认原版保护计数及作用域调整 |
 | 死亡观察与复位 | `SharedLuaAdapter` 的 `dead/reviveRequestable` 仍为未知；`Stage::respawn` 由 portal 坐标求下方地面，`Player::respawn` 清速度规范状态、按键、held item、攻击与梯子关联 | 继续保留未知；分别取证死亡事件、复活包、落点与运动不连续清理，不以当前 respawn 函数名代替事实 |
 
+### 3.1 #252 已落地实现（本轮）
+
+- **冲量管线**：`Gameplay/Physics/V17NormalMotion.{h,cpp}` 增加 `QueueImpulse`/`HasPendingImpulse`：排队时清待消费跳键、按原版有方向限幅规则累积；下一个普通 30ms 提交在分派积分前消费——先脱地（清 foothold/地面），再以同一有方向限幅规则合并进世界速度并**向零截断**（对应 0xA62018 RC=11），随后同一步进入空中积分。`Reset` 清空待处理冲量，避免重定位后补发旧冲量。
+- **受击接入**：`Character/Player.cpp::damage` 的普通规范状态路径由“直接覆写 vx/vy”改为 `QueueImpulse`；非普通所有者仍保留 legacy 写 phobj 路径。
+- **普通触怪幅值（真机取证）**：GUI 真实角色 CID7（10级）在地图 `101040000` 被普通怪 `0130100` 连续触怪 6 次（伤害 2–8），按 `character.physics` 逐 30ms 样本反推：排队冲量取 `(±270, −270)px/s`——首样本 vx 与“原速度按方向限幅后截断+空气步微衰减”全部吻合（如原速 −125 遇 +270 → +145，观测 +144.97；vy 观测 −210 = −270+60）；方向由怪物相对角色位置决定。原静态候选 200/900/1900 在本路径未命中，当前实现改用 270。
+- **保护时间**：`Character/Char.cpp::show_damage` 的受击保护从旧 Journey 2000ms 改为 1500ms：原版正伤害路径写 `+1500` 保护计数、每 30ms 步减 30（50 步=1500ms）。真机 6 次连续触怪恰好每隔 **50 个 30ms 提交（1500ms）** 再次生效，动态印证该计数与时长；miss/特殊攻击的正负计数覆盖关系仍未闭环。
+- **合同**：`v17_normal_motion_contract.cpp` 新增 `hurt-impulse` 场景（脱地+截断+空中积分、方向限幅只抵消到零、较大同向速度不被削弱、连续同向冲量不叠加）；离线全套 527 tests 通过。
+- **仍未闭环**：普通触怪调用参数/概率抗击退分支、受击期间的输入锁、空中/绳梯/特殊状态门控、服务端修正与客户端预测关系、死亡/复活运动与观察；这些继续由 #252 的真机场景补证，不能用本实现替代。
+
 本地原始证据：`tmp/250-motion-rules/impulse-queue.asm`、`impulse-consume.asm`、`hit-terminal.asm`、`hit-counter.asm`、`hit-early-guard.asm`、`cast-trunc.asm`、`damage-impulse-branch.asm`；全量只读反汇编 `beidou.asm` 可检索调用者。VA 与公式已保留在本节，复核不依赖临时文件长期存在。后续最小验证应覆盖地面/空中受击、同向/反向已有速度、miss/正伤害、绳梯门控与保护计数终点；本节未进行受击、死亡或复活的真实游戏操作。
 
 

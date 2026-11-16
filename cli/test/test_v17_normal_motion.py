@@ -63,6 +63,9 @@ class V17NormalMotionContract(unittest.TestCase):
     def test_external_impulse_write_is_a_sample_and_integrates_next_step(self) -> None:
         self.run_scenario("impulse-write", "air")
 
+    def test_hurt_impulse_queue_detach_merge_truncate_then_air(self) -> None:
+        self.run_scenario("hurt-impulse", "flat")
+
     def test_withdrawn_jump_is_not_consumed_by_a_later_step(self) -> None:
         self.run_scenario("no-late-jump", "flat")
 
