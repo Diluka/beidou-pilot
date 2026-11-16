@@ -131,3 +131,6 @@ class HeadlessHeldInputContract(unittest.TestCase):
 
     def test_global_native_actions_do_not_fabricate_tick_ownership(self) -> None:
         self.run_contract("provenance")
+
+    def test_real_player_physics_record_is_one_step_identity_in_state_and_domain(self) -> None:
+        self.run_contract("physics")

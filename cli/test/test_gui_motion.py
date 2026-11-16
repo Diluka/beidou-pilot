@@ -68,6 +68,15 @@ class GuiMotionContract(unittest.TestCase):
     def test_only_read_errors_are_recovered_as_unknown(self) -> None:
         subprocess.run([str(self.executable), "boundary"], check=True, timeout=10)
 
+    def test_physical_pose_is_the_unrounded_vector_point_not_the_display_cache(self) -> None:
+        subprocess.run([str(self.executable), "physics"], check=True, timeout=10)
+
+    def test_unreadable_pose_fields_stay_unknown_without_zero_or_display_fill(self) -> None:
+        subprocess.run([str(self.executable), "physics-unknowns"], check=True, timeout=10)
+
+    def test_repeated_host_frames_reuse_one_physics_sample_and_update_id(self) -> None:
+        subprocess.run([str(self.executable), "physics-cache"], check=True, timeout=10)
+
     def test_each_entity_kind_owns_its_velocity_and_measured_zero(self) -> None:
         subprocess.run([str(self.executable), "entities"], check=True, timeout=10)
 
@@ -116,12 +125,24 @@ class GuiMotionContract(unittest.TestCase):
                     "#include <iostream>",
                     "#include <sstream>",
                     "int main(int argc, char**) {",
-                    "MapleControl::State state; state.characterKnown = argc == 1;",
+                    "MapleControl::State state; state.characterKnown = argc != 2;",
                     'state.character.id = 7; state.character.name = "observer";',
                     "state.character.SetPosition(10.5, -2.25);",
                     "state.character.velocity.source = MapleControl::MotionVector::Source::Native;",
                     "state.character.velocity.x = 123.5;",
                     "state.character.movement.known = true; state.character.movement.maxSpeed = 160;",
+                    "state.character.physics.known = argc == 1;",
+                    "state.character.physics.updateIdKnown = true;",
+                    "state.character.physics.updateId = 12;",
+                    "state.character.physics.stepMsKnown = true;",
+                    "state.character.physics.stepMs = 30;",
+                    "state.character.physics.positionKnown = argc == 1;",
+                    "state.character.physics.x = 2147.125;",
+                    "state.character.physics.y = 1239.0;",
+                    "state.character.physics.velocityKnown = argc == 1;",
+                    "state.character.physics.velocityX = 125.0;",
+                    "state.character.physics.velocityY = 0.0;",
+                    "state.character.physics.onGround = MapleControl::Fact::True;",
                     'std::ostringstream out; out << "{\\"character\\":";',
                     section,
                     "out << '}'; std::cout << out.str(); }",
@@ -147,7 +168,40 @@ class GuiMotionContract(unittest.TestCase):
         self.assertEqual((7, 10.5, -2.25), (character["id"], character["x"], character["y"]))
         self.assertEqual(123.5, character["velocity"]["x"])
         self.assertEqual(160, character["movement"]["max_speed"])
+        # The display cache and the whole physics record are distinct reference points.
+        physics = character["physics"]
+        self.assertNotEqual((character["x"], character["y"]), (physics["x"], physics["y"]))
+        self.assertEqual((12, 30), (physics["update_id"], physics["step_ms"]))
+        self.assertEqual((2147.125, 1239.0), (physics["x"], physics["y"]))
+        self.assertEqual({"x": 125.0, "y": 0.0}, physics["velocity"])
+        self.assertIs(True, physics["on_ground"])
         self.assertIsNone(json.loads(subprocess.check_output([str(executable), "unknown"], text=True))["character"])
+        # A known character without a native update still publishes an unknown record.
+        without_sample = json.loads(
+            subprocess.check_output([str(executable), "known", "no-physics-sample"], text=True)
+        )["character"]
+        self.assertEqual(7, without_sample["id"])
+        self.assertIsNone(without_sample["physics"])
+
+    def test_gui_pose_cache_is_the_single_source_for_state_and_cli_character(self) -> None:
+        bridge = (self.project / "AgentBridge.cpp").read_text(encoding="utf-8")
+        character = (self.project / "ObserveCharacter.cpp").read_text(encoding="utf-8")
+        motion = (self.project / "NativeMotion.cpp").read_text(encoding="utf-8")
+        hook = bridge.split("void AgentBridge::CharacterUpdated", 1)[1].split("\n}", 1)[0]
+        self.assertIn("++characterUpdates;", hook)
+        self.assertIn("NativeMotion::RecordLocalPhysics(current, characterUpdates);", hook)
+        capture = bridge.split("state.characterUpdatesKnown =", 1)[1].split("state.actionIdle", 1)[0]
+        self.assertIn("NativeMotion::CachedLocalPhysics()", capture)
+        self.assertIn("physics.user == native.user", capture)
+        self.assertNotIn("CapturePhysics", capture)
+        self.assertEqual(1, bridge.count("NativeMotion::RecordLocalPhysics("))
+        self.assertIn('character["physics"] = state.character.physics.Document();', bridge)
+        self.assertEqual(1, character.count("NativeMotion::CachedLocalPhysics()"))
+        self.assertIn('result["physics"] = physics.pose.Document();', character)
+        # One capture reads the whole sample from the same verified VecCtrl.
+        self.assertEqual(1, motion.count("ZtlDouble(vector + 0x20)"))
+        self.assertEqual(1, motion.count("ZtlDouble(vector + 0x38)"))
+        self.assertIn("pose.stepMs = 30;", motion)
 
     def test_windows_project_registers_the_motion_source_once(self) -> None:
         namespace = {"ms": "http://schemas.microsoft.com/developer/msbuild/2003"}

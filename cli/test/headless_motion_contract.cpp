@@ -2,6 +2,7 @@
 #include "Gameplay/Combat/Bullet.h"
 #include "Gameplay/MapleMap/Drop.h"
 #include "Gameplay/MapleMap/MapObjects.h"
+#include "PlayerPhysicsPose.h"
 #include "Contract.h"
 
 #include <cmath>
@@ -198,6 +199,89 @@ void Bullet() {
     Near(sample.delta_x, 6.0, "existing_bullet_integration_behavior_is_unchanged");
 }
 
+// The production local-character physics projection, not a test reimplementation.
+ms::PhysicsObject FlatGround(double x, double y, double hspeed, double vspeed) {
+    ms::PhysicsObject phobj;
+    phobj.type = ms::PhysicsObject::Type::NORMAL;
+    phobj.fhslope = 0.0;
+    phobj.onground = true;
+    phobj.set_x(x);
+    phobj.set_y(y);
+    phobj.hspeed = hspeed;
+    phobj.vspeed = vspeed;
+    return phobj;
+}
+
+void PhysicsPose() {
+    const auto phobj = FlatGround(10.125, -2.25, 0.5, -0.25);
+    const auto pose = ms::PlayerPhysicsPose(phobj, false, false, 123, 8);
+    Check(pose.known && pose.updateIdKnown && pose.updateId == 123, "pose keeps the current host-tick identity");
+    Check(pose.stepMsKnown && pose.stepMs == 8, "pose reports the real 8ms simulated step before the motion task");
+    Check(pose.positionKnown && pose.onGround == MapleControl::Fact::True, "physical position and native grounding");
+    Near(pose.x, 10.125, "unrounded physical x");
+    Near(pose.y, -2.25, "unrounded physical y");
+    Check(pose.velocityKnown, "flat normal ground can state an instantaneous speed");
+    Near(pose.velocityX, 62.5, "per-step speed converts to world px/s");
+    Near(pose.velocityY, -31.25, "sign keeps map pixel/s direction");
+    const auto document = pose.Document().Dump();
+    Check(document.find("\"update_id\":123") != std::string::npos, "update identity is exposed");
+    Check(document.find("\"step_ms\":8") != std::string::npos, "simulation step is not a publish interval");
+    Check(document.find("\"velocity\":{\"x\":62.5,\"y\":-31.25}") != std::string::npos,
+          "physics velocity has no interval-mean source label");
+    Check(document.find("native_update_delta") == std::string::npos
+              && document.find("interval_ms") == std::string::npos,
+          "physics velocity is not the old interval-mean vector");
+    // The pose is a different reference point from the rounded position cache.
+    Check(phobj.get_position() == ms::Point<int16_t>(10, -2), "integer display position would hide the fraction");
+}
+
+void PhysicsPoseUnknownVelocity() {
+    auto slope = FlatGround(10.125, -2.25, 0.5, 0.0);
+    slope.fhslope = 0.25; // update_fh writes y directly along a slope
+    auto pose = ms::PlayerPhysicsPose(slope, false, false, 2, 8);
+    Check(pose.known && pose.positionKnown && pose.onGround == MapleControl::Fact::True && !pose.velocityKnown,
+          "slope direct-y correction keeps velocity unknown, not converted");
+    Check(pose.Document().Dump().find("\"velocity\":null") != std::string::npos,
+          "unknown instantaneous velocity projects as null");
+
+    auto climbing = FlatGround(1.5, 2.5, 0.5, 0.0);
+    pose = ms::PlayerPhysicsPose(climbing, true, false, 3, 8);
+    Check(pose.positionKnown && !pose.velocityKnown, "climbing owns its motion; velocity stays unknown");
+
+    auto underwater = FlatGround(1.5, 2.5, 0.5, 0.0);
+    pose = ms::PlayerPhysicsPose(underwater, false, true, 4, 8);
+    Check(pose.positionKnown && !pose.velocityKnown, "underwater mode velocity stays unknown");
+
+    auto ice = FlatGround(1.5, 2.5, 0.5, 0.0);
+    ice.type = ms::PhysicsObject::Type::ICE;
+    pose = ms::PlayerPhysicsPose(ice, false, false, 5, 8);
+    Check(pose.positionKnown && !pose.velocityKnown, "non-normal physics type velocity stays unknown");
+
+    auto flying = FlatGround(1.5, 2.5, 0.5, 0.0);
+    flying.type = ms::PhysicsObject::Type::FLYING;
+    pose = ms::PlayerPhysicsPose(flying, false, false, 6, 8);
+    Check(pose.positionKnown && !pose.velocityKnown, "flying physics type velocity stays unknown");
+}
+
+void PhysicsPoseNotDeltaMean() {
+    auto phobj = FlatGround(10.125, 20.25, 0.5, 0.0);
+    phobj.begin_motion_sample(); // first real update only establishes continuity
+    phobj.end_motion_sample();
+    phobj.begin_motion_sample();
+    phobj.x += 0.125;
+    phobj.y += 0.25;
+    phobj.end_motion_sample();
+    const auto sample = phobj.get_motion();
+    Check(sample.known && sample.interval_ms == 8, "complete native step still has its 8ms interval mean");
+    Near(sample.delta_x * 1000.0 / sample.interval_ms, 15.625,
+         "the old vector remains a full-step displacement average");
+    const auto pose = ms::PlayerPhysicsPose(phobj, false, false, 7, 8);
+    Near(pose.x, phobj.crnt_x(), "physics x is the current unrounded physical point");
+    Near(pose.velocityX, 62.5, "physics velocity is the integrator speed, not the delta mean");
+    Check(pose.Document().Dump().find("native_update_delta") == std::string::npos,
+          "physics never reuses the interval-mean source label");
+}
+
 void Contract() {
     static_assert(std::is_base_of_v<MapleControl::MovableObject, MapleControl::Character>);
     static_assert(std::is_base_of_v<MapleControl::MovableObject, MapleControl::Monster>);
@@ -231,6 +315,12 @@ int main(int argc, char** argv) {
         PickupPhase();
     else if (scenario == "bullet")
         Bullet();
+    else if (scenario == "physics-pose")
+        PhysicsPose();
+    else if (scenario == "physics-pose-unknown")
+        PhysicsPoseUnknownVelocity();
+    else if (scenario == "physics-pose-not-delta")
+        PhysicsPoseNotDeltaMean();
     else if (scenario == "contract")
         Contract();
     else

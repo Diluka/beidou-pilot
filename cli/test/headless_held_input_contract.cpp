@@ -303,6 +303,72 @@ void Lifecycle(SharedLuaAdapter& host) {
 }
 }
 
+void physics_pose_shape(const MapleControl::State& state, std::uint64_t updateId, bool velocityKnown) {
+    Check(state.character.physics.known, "ready local player has a whole physics record");
+    Check(state.character.physics.updateIdKnown && state.character.physics.updateId == updateId,
+          "physics update id is the current host tick before the motion task");
+    Check(state.character.physics.stepMsKnown && state.character.physics.stepMs == ms::Constants::TIMESTEP,
+          "physics step is the real simulated integration time");
+    Check(state.character.physics.positionKnown, "physical position is known from the local player");
+    Check(state.character.physics.velocityKnown == velocityKnown,
+          "velocity is known only when the engine can state it");
+    Check(state.character.physics.onGround == MapleControl::Fact::True, "native grounding fact is preserved");
+}
+
+void Physics(SharedLuaAdapter& host) {
+    auto& player = ms::Stage::get().get_player();
+    auto& phobj = player.get_phobj();
+    if (player.is_climbing()) player.set_state(ms::Char::STAND);
+    phobj.type = ms::PhysicsObject::Type::NORMAL;
+    phobj.fhslope = 0.0;
+    phobj.onground = true;
+    phobj.set_x(2147.125);
+    phobj.set_y(1239.0);
+    phobj.hspeed = 0.5;   // 62.5 px/s with the real 8 ms step
+    phobj.vspeed = -0.25; // -31.25 px/s upward
+    host.Capture(11);
+
+    const auto& state = host.Observe();
+    physics_pose_shape(state, 11, true);
+    Check(state.character.physics.x == 2147.125 && state.character.physics.y == 1239.0, "physical point is unrounded");
+    Check(state.character.physics.velocityX == 62.5 && state.character.physics.velocityY == -31.25,
+          "same-step world velocity converts per-step displacement to px/s");
+    Check(state.character.physics.Document().Dump().find("native_update_delta") == std::string::npos,
+          "physics velocity is not the old interval-mean vector");
+
+    // The bridge state and the character observation domain read one record.
+    const auto document = host.StateDocument();
+    const auto& character = document["character"];
+    Check(character["physics"]["update_id"] == 11 && character["physics"]["step_ms"] == 8,
+          "bridge state character.physics exposes the same identity");
+    Check(character["physics"]["x"] == 2147.125 && character["physics"]["velocity"]["x"] == 62.5,
+          "bridge state character.physics exposes the same physical values");
+    Check(character["physics"]["on_ground"] == true, "bridge state keeps native grounding");
+    const auto observed = host.ObserveDomain("character");
+    Check(observed.status == "ok" && observed.data.Dump().find("\"physics\":{") != std::string::npos,
+          "character observation domain exposes the same whole record");
+    Check(observed.data.Dump().find("2147.125") != std::string::npos,
+          "character observation domain keeps the unrounded point");
+
+    // A slope directly corrects y in this legacy engine; the adapter must not
+    // convert the remaining per-step number into a fabricated instantaneous speed.
+    phobj.fhslope = 0.25;
+    host.Capture(12);
+    physics_pose_shape(state, 12, false);
+    Check(state.character.physics.positionKnown && !state.character.physics.velocityKnown,
+          "slope motion keeps instantaneous velocity unknown");
+    Check(state.character.physics.Document().Dump().find("\"velocity\":null") != std::string::npos,
+          "unknown instantaneous velocity projects as null");
+
+    // Without a ready local player there is no physics sample at all.
+    ms::headless_state().in_game = false;
+    host.Capture(13);
+    Check(!host.Observe().character.physics.known
+              && host.Observe().character.physics.Document().Type() == MapleControl::Value::Kind::Null,
+          "not-ready local player has no fabricated physics record");
+    ms::headless_state().in_game = true;
+}
+
 // Resource boundary: deterministic skill metadata, using the real native action
 // implementation and the real Player::can_use level/MP/cooldown checks.
 namespace ms {
@@ -380,6 +446,8 @@ int main(int argc, char** argv) {
         Lifecycle(host);
     else if (scenario == "provenance")
         Provenance(host);
+    else if (scenario == "physics")
+        Physics(host);
     else
         Check(false, "unknown_scenario");
     host.Shutdown();
