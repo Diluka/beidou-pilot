@@ -724,12 +724,12 @@ namespace ms
 		{
 			if (motion.OwnsNormalState())
 			{
-				// #250 §3: the original queues the impulse and consumes it at the next
-				// 30ms commit (detach + directional merge + truncate). The 187.5/-437.5
-				// amplitude is still the old per-step conversion until the ordinary
-				// touch-damage branch is dynamically confirmed; it is not an original
-				// constant yet.
-				motion.QueueImpulse(fromleft ? -187.5 : 187.5, -437.5);
+				// #252 real-client evidence (GUI, map 101040000, mob 0130100, 6 hits):
+				// the first post-hit sample is the queued impulse after directional
+				// merge/truncate plus one air step, which consistently resolves to
+				// (+-270, -270)px/s. The old 187.5/-437.5 per-step conversion was not the
+				// original ordinary touch-damage amplitude.
+				motion.QueueImpulse(fromleft ? -270.0 : 270.0, -270.0);
 			}
 			else
 			{
