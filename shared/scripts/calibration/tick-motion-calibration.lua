@@ -219,7 +219,10 @@ local function advance(context)
     local runup_seconds = context.options.runup_ms / 1000
     local hold_seconds = context.options.hold_ms / 1000
     local air_release_seconds = context.options.air_release_ms / 1000
-    local on_ground = physics ~= nil and physics.on_ground or nil
+    -- 不能用 `x and y or nil` 惯用法：on_ground=false 会被吞成 nil，
+    -- 导致跳跃场景永远停在 jump_input 直到超时。
+    local on_ground = nil
+    if physics ~= nil then on_ground = physics.on_ground end
 
     if scenario == "walk" then
         if state.phase == "arm" then

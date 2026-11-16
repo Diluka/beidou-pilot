@@ -176,10 +176,22 @@ end
         comparator = load_tool("motion_compare")
         scene = {"instance_id": "tick-contract", "character_id": 1, "map_id": 50000, "scene_generation": 1}
         cases = (
-            ("walk", ["--scenario", "walk", "--hold-ms", "100"]),
-            ("reverse", ["--scenario", "reverse", "--runup-ms", "100", "--hold-ms", "100"]),
+            ("walk", ["--scenario", "walk", "--hold-ms", "100"], False),
+            ("reverse", ["--scenario", "reverse", "--runup-ms", "100", "--hold-ms", "100"], False),
+            ("jump_stationary", ["--scenario", "jump_stationary"], True),
+            (
+                "air_release",
+                ["--scenario", "air_release", "--runup-ms", "100", "--air-release-ms", "30"],
+                True,
+            ),
+            (
+                "air_reverse",
+                ["--scenario", "air_reverse", "--runup-ms", "100", "--air-release-ms", "30"],
+                True,
+            ),
         )
-        for scenario, arguments in cases:
+        inputs = {"right", "left", "none", "jump", "right_jump", "left_jump"}
+        for scenario, arguments, jumping in cases:
             with self.subTest(scenario=scenario):
                 options = parse_options(metadata, [*arguments, "--timeout-ms", "1000"])
                 compiled = self.executable.parent / f"tick-motion-calibration-{scenario}.lua"
@@ -189,18 +201,50 @@ end
                 )
                 records = [json.loads(line) for line in output.splitlines() if line.strip()]
                 self.assertGreaterEqual(len(records), 4)
+                self.assertNotIn("timeout", [record.get("finish_reason") for record in records])
+                ends = [record for record in records if record["event"] == "end"]
+                self.assertEqual(1, len(ends))
+                self.assertEqual("scenario_completed", ends[0]["finish_reason"])
+                ticks = [record for record in records if record["event"] == "tick"]
+                self.assertGreaterEqual(len(ticks), 2)
                 for record in records:
                     self.assertEqual(scenario, record["scenario"])
                     self.assertIn(record["event"], {"begin", "tick", "end"})
-                    if record["event"] == "tick":
-                        physics = record["physics"]
-                        self.assertIsInstance(physics, dict)
-                        self.assertGreaterEqual(physics["step_ms"], 1)
-                        self.assertIsNotNone(physics["update_id"])
-                        self.assertIn(record["input"], ("right", "left", "none"))
-                        self.assertIn(
-                            record["sample"], ("first", "new", "repeat", "gap", "missing", "regressed", "unknown")
+                for record in ticks:
+                    physics = record["physics"]
+                    self.assertIsInstance(physics, dict)
+                    self.assertGreaterEqual(physics["step_ms"], 1)
+                    self.assertIsNotNone(physics["update_id"])
+                    self.assertIn(record["input"], inputs)
+                    self.assertIn(
+                        record["sample"], ("first", "new", "repeat", "gap", "missing", "regressed", "unknown")
+                    )
+                if jumping:
+                    airborne = [record for record in ticks if record["phase"] in ("air", "air_reverse")]
+                    self.assertTrue(airborne, records)
+                    self.assertTrue(all(record["physics"]["on_ground"] is False for record in airborne))
+                    self.assertGreaterEqual(len({record["physics"]["velocity"]["y"] for record in airborne}), 2)
+                    self.assertTrue(
+                        any(
+                            record["intent_edge"] and record["input"] in {"jump", "right_jump", "left_jump"}
+                            for record in ticks
                         )
+                    )
+                if scenario == "air_release":
+                    self.assertTrue(
+                        any(
+                            record["intent_edge"]
+                            and record["phase"] in {"air", "air_reverse"}
+                            and record["input"] == "jump"
+                            for record in ticks
+                        ),
+                        "air_release must withdraw the direction while airborne",
+                    )
+                if scenario == "air_reverse":
+                    self.assertTrue(
+                        any(record["phase"] == "air_reverse" and record["input"] == "left_jump" for record in ticks),
+                        "air_reverse must reverse the direction while airborne",
+                    )
                 result = comparator.compare(records, records)
                 self.assertEqual("comparable", result["status"], result)
                 if scenario == "reverse":

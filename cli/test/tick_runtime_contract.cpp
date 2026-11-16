@@ -195,7 +195,25 @@ public:
             const bool left = std::find(directions.begin(), directions.end(), "left") != directions.end();
             if (right) state.x += 1.0;
             if (left) state.x -= 1.0;
-            state.onGround = Fact::True;
+            // One real ordinary jump per held jump intent: airborne for a few
+            // host steps, then landing restores the native ground fact.
+            if (!calibrationJumping && !calibrationLanded && desired.kind == ActionKind::Jump) {
+                calibrationJumping = true;
+                calibrationAirTicks = 0;
+            }
+            if (calibrationJumping) {
+                ++calibrationAirTicks;
+                if (calibrationAirTicks < 8) {
+                    state.onGround = Fact::False;
+                    state.y -= 4.0;
+                } else {
+                    calibrationJumping = false;
+                    calibrationLanded = true;
+                    state.onGround = Fact::True;
+                }
+            } else {
+                state.onGround = Fact::True;
+            }
         }
         state.character.positionKnown = state.positionKnown;
         if (state.positionKnown) state.character.SetPosition(state.x, state.y);
@@ -213,8 +231,8 @@ public:
             physics.y = state.y;
             physics.velocityKnown = true;
             physics.velocityX = 0;
-            physics.velocityY = 0;
-            physics.onGround = Fact::True;
+            physics.velocityY = calibrationJumping ? -300.0 + 60.0 * calibrationAirTicks : 0.0;
+            physics.onGround = state.onGround;
         }
         // A native consumer may admit the current held input when A finishes.
         // Clearing/replacing B removes it here; there is no history to replay.
@@ -244,6 +262,8 @@ public:
     std::map<std::uint32_t, Observation> terrains;
     bool supportsItems = true, supportsSkills = true, rejectClear = false, nativeNpcDomain = true;
     bool calibration = false;
+    bool calibrationJumping = false, calibrationLanded = false;
+    int calibrationAirTicks = 0;
     bool actionActive = false, advanceCharacter = true, armed = false, allowStart = true;
     bool startsAnimation = true;
     int actionReleaseTicks = 0, directionTicks = 0, releases = 0, intentCalls = 0;
@@ -1703,13 +1723,30 @@ void CalibrationExample(const std::string& path) {
     Check(native.directions.empty(), "calibration session releases its own direction");
     const std::string prefix = "BEIDOU_MOTION_CAL v1 ";
     std::size_t records = 0;
+    bool ended = false, completed = false, timedOut = false, jumpUsed = false, airborne = false;
     for (const auto& line : native.logs) {
         const auto marker = line.find(prefix);
         Check(marker != std::string::npos, "calibration log lines use the stable prefix");
-        std::cout << line.substr(marker + prefix.size()) << '\n';
+        const auto record = line.substr(marker + prefix.size());
+        std::cout << record << '\n';
         ++records;
+        jumpUsed = jumpUsed || record.find("\"input\":\"jump\"") != std::string::npos
+                   || record.find("\"input\":\"right_jump\"") != std::string::npos
+                   || record.find("\"input\":\"left_jump\"") != std::string::npos;
+        airborne = airborne || record.find("\"phase\":\"air\"") != std::string::npos
+                   || record.find("\"phase\":\"air_reverse\"") != std::string::npos;
+        if (record.find("\"event\":\"end\"") != std::string::npos) {
+            ended = true;
+            completed = record.find("\"finish_reason\":\"scenario_completed\"") != std::string::npos;
+        }
+        timedOut = timedOut || record.find("\"finish_reason\":\"timeout\"") != std::string::npos;
     }
     Check(records >= 4, "calibration emits begin, bounded samples and end");
+    Check(ended && completed && !timedOut,
+          "calibration scenario must complete by its scenario, not the script timeout");
+    // A jump scenario must actually observe the airborne phase; the ground-only
+    // scenarios do not submit jump input and stay unaffected.
+    Check(!jumpUsed || airborne, "jump calibration must record the airborne phase");
 }
 
 void HeldSkillExample(const std::string& path) {
