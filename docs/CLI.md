@@ -121,6 +121,8 @@ private/workbenches/workbench /external/workbench character result REQUEST_ID --
 
 动作、脚本等客户端参数直接跟在命令后，属于客户端参数。比如 `script run FILE --seconds 20` 的文件路径按容器内部解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查。中断脚本 CLI 只结束等待，脚本取消另行显式 `script cancel --session`。
 
+`snapshot` 与 `inspect character` 的 `character.physics` 是本端同一次原生更新的未插值物理末态（`update_id/step_ms/x/y/velocity/on_ground`），未知字段为 `null`；它与 `character.x/y` 显示位置、`character.velocity` 区间均速语义分开，CLI 只校验并透传，不做运动计算或补齐。字段语义与校准采样见 [Tick Lua API](LUA_TICK_API.md#运动观察与静止参考)。
+
 短脚本返回或取消后容器继续运行。`close` 独立于输入锁，经Docker正常发SIGTERM，确认 `Running=false/Pid=0` 后保存退出日志并回收；活动Lua期间同样可关闭。容器内 `close` 返回 `host_lifecycle_required`。同一目录正在启停为 `lifecycle_busy`，活动脚本期间其他动作是 `input_busy`；失败先读状态和所属日志再决定重开。
 
 ## 世界门户图与路线查询
