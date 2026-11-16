@@ -80,6 +80,7 @@ def build_v17_contract(
     terrain: bool,
     climb: bool = False,
     mapinfo: bool = False,
+    movement_parser: bool = False,
 ) -> Path:
     """Compiles one contract against the real engine physics sources it needs."""
     engine = root / "third_party/maplestory-client"
@@ -101,6 +102,9 @@ def build_v17_contract(
         sources.append(engine / "Gameplay/Physics/V17ClimbMotion.cpp")
     if mapinfo:
         sources.append(engine / "Gameplay/MapleMap/MapInfo.cpp")
+    if movement_parser:
+        sources.append(engine / "Net/InPacket.cpp")
+        sources.append(engine / "Net/Handlers/Helpers/MovementParser.cpp")
     executable = build / contract.removesuffix(".cpp")
     common = [
         "g++",
