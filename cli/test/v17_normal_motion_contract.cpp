@@ -230,6 +230,29 @@ void Air(const ms::FootholdTree& terrain) {
     Sequence(gravity, {60.0, 120.0, 180.0, 240.0}, "air_gravity_step");
 }
 
+void ImpulseWrite(const ms::FootholdTree& terrain) {
+    // Ladder jump-off writes velocities and ends that update; the next update
+    // integrates the air step (GUI samples 539 then 540).
+    Runner runner(terrain);
+    runner.motion.Reset(0.0, 1000.0, false, 0);
+    runner.motion.ApplyImpulse(162.5, -277.5);
+    runner.motion.CommitExternalWrite(30);
+    Check(runner.motion.HasSample(), "written_state_is_a_committed_sample");
+    const auto& written = runner.motion.LastStep();
+    Near(written.x, 0.0, "written_state_keeps_position_x");
+    Near(written.y, 1000.0, "written_state_keeps_position_y");
+    Near(written.vx, 162.5, "written_state_reports_branch_vx");
+    Near(written.vy, -277.5, "written_state_reports_branch_vy");
+    Check(written.stepMs == 30, "written_state_uses_the_committed_step");
+
+    const auto after = runner.Step(0);
+    // GUI jump-off writes vx=162.5 and its first air step moves 4.875px; this
+    // ordinary air model starts its tiny release drag on the same step (4.87455px).
+    Near(after.x, 4.875, "first_air_step_x_is_trapezoid_from_written_vx", 1e-3);
+    Near(after.y, 992.575, "first_air_step_y_is_trapezoid_from_written_vy");
+    Near(after.vy, -217.5, "first_air_step_adds_one_gravity_step");
+}
+
 void JumpDown(const ms::FootholdTree& terrain) {
     Runner runner(terrain);
     runner.motion.Reset(0.0, 1000.0, true, 1);
@@ -278,6 +301,8 @@ int main(int argc, char** argv) {
         Jump(terrain);
     else if (scenario == "air")
         Air(terrain);
+    else if (scenario == "impulse-write")
+        ImpulseWrite(terrain);
     else if (scenario == "jumpdown")
         JumpDown(terrain);
     else if (scenario == "no-late-jump")

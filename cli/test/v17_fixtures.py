@@ -45,6 +45,31 @@ def foothold_img(directory: Path, footholds: list[dict[str, int]]) -> Path:
     return write_img(directory / "Test.img", {"foothold": tree})
 
 
+def map_img(directory: Path, ladders: list[dict[str, int]]) -> Path:
+    """Writes a minimal original-format map image with ladderRope entries."""
+    tree: dict[str, dict[str, dict[str, dict[str, int]]]] = {}
+    info = {
+        "VRLeft": -9999,
+        "VRRight": 9999,
+        "VRTop": -9999,
+        "VRBottom": 9999,
+        "bgm": "Bgm00/GoPicnic",
+        "cloud": 0,
+        "fieldLimit": 0,
+        "hideMinimap": 0,
+        "mapMark": "",
+        "swim": 0,
+        "town": 1,
+    }
+    tree["1"] = {key: value for key, value in ladders[0].items() if key != "index"} if ladders else {}
+    for number, ladder in enumerate(ladders[1:], start=2):
+        tree[str(number)] = {key: value for key, value in ladder.items() if key != "index"}
+    return write_img(
+        directory / "Test.img",
+        {"info": info, "seat": {}, "ladderRope": tree},
+    )
+
+
 def build_v17_contract(
     root: Path,
     build: Path,
@@ -53,6 +78,8 @@ def build_v17_contract(
     motion: bool,
     parameters: bool,
     terrain: bool,
+    climb: bool = False,
+    mapinfo: bool = False,
 ) -> Path:
     """Compiles one contract against the real engine physics sources it needs."""
     engine = root / "third_party/maplestory-client"
@@ -70,6 +97,10 @@ def build_v17_contract(
         sources.append(engine / "Gameplay/Physics/V17NormalMotion.cpp")
     if parameters:
         sources.append(engine / "Gameplay/Physics/V17PhysicsParameters.cpp")
+    if climb:
+        sources.append(engine / "Gameplay/Physics/V17ClimbMotion.cpp")
+    if mapinfo:
+        sources.append(engine / "Gameplay/MapleMap/MapInfo.cpp")
     executable = build / contract.removesuffix(".cpp")
     common = [
         "g++",

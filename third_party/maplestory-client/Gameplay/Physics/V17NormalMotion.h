@@ -82,6 +82,10 @@ public:
 	// External writers (touch damage, rush) enter the canonical state directly so a
 	// following ordinary step cannot silently overwrite them.
 	void ApplyImpulse(double vx, double vy);
+	// Publishes the written state as one committed sample without integrating it.
+	// Original ladder jump-off writes vx/vy and ends that 30ms update; the next
+	// update performs the air integration (GUI sample 539 then 540).
+	void CommitExternalWrite(uint32_t stepMs);
 	void BeginRush(double targetX, uint16_t delayMs);
 	void EndRush();
 	bool Rushing() const;

@@ -127,11 +127,10 @@ namespace ms
 	{
 	public:
 		void initialize(Player& player) const override;
-		void send_action(Player&, KeyAction::Id, bool) const override {}
-		void update(Player& player) const override;
-		void update_state(Player& player) const override;
-
-	private:
-		void cancel_ladder(Player& player) const;
+		// Attached climb movement and jump-off are committed by the 30ms
+		// V17ClimbMotion branch; this state only records the jump edge for it.
+		void send_action(Player& player, KeyAction::Id, bool down) const override;
+		void update(Player&) const override {}
+		void update_state(Player&) const override {}
 	};
 }

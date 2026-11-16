@@ -282,8 +282,38 @@ namespace ms
 		if (!player.can_climb() || player.is_climbing() || player.is_attacking())
 			return;
 
-		Optional<const Ladder> ladder = mapinfo.findladder(player.get_position(), up);
-		player.set_ladder(ladder);
+		const auto& phobj = player.get_phobj();
+		const Point<int16_t> position = player.get_physics_position();
+
+		if (up)
+		{
+			if (phobj.onground)
+			{
+				// Ground up-grab queries the branch above the foot point (0x9CC130).
+				if (auto ladder = mapinfo.findladder(Point<int16_t>(position.x(), position.y() - 20), position))
+					player.set_ladder(ladder);
+
+				return;
+			}
+
+			// Air up-grab: only while falling, using the native previous and current
+			// physical positions as the query segment and then clearing velocities.
+			if (phobj.vspeed > 0.0)
+				if (auto ladder = mapinfo.findladder(player.get_last_commit_start_position(), position))
+					player.set_ladder(ladder);
+
+			return;
+		}
+
+		if (!phobj.onground)
+			return;
+
+		// Ground down-grab queries ten pixels below and requires the ladder top to be
+		// inside that interval (0x9CC5Cx).
+		auto ladder = mapinfo.findladder(position, Point<int16_t>(position.x(), position.y() + 10));
+
+		if (ladder && ladder->get_top() >= position.y() && ladder->get_top() <= position.y() + 10)
+			player.set_ladder(ladder);
 	}
 
 	void Stage::check_drops()

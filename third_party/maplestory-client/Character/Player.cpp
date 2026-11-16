@@ -26,6 +26,8 @@
 #include "../IO/UITypes/UIStatsInfo.h"
 #include "../Net/Packets/GameplayPackets.h"
 #include "../Net/Packets/InventoryPackets.h"
+#include "../Gameplay/Physics/V17ClimbMotion.h"
+#include "../Gameplay/MapleMap/MapInfo.h"
 
 namespace ms
 {
@@ -238,6 +240,7 @@ namespace ms
 					break;
 
 				phobj.begin_motion_sample(30);
+				lastCommitStart = phobj.get_position();
 				const PlayerState* pst = get_state(state);
 
 				if (pst)
@@ -266,12 +269,80 @@ namespace ms
 				commit.normalStep = true;
 				commit.stepMs = 30;
 			}
+			else if (mode == MotionMode::CLIMB)
+			{
+				if (motionRemainderMs < 30)
+					break;
+
+				const Optional<const Ladder> attached = ladder;
+
+				if (!attached)
+				{
+					// Only an artificial state without an attachment reaches this; let
+					// the next loop iteration use the legacy fallback.
+					continue;
+				}
+
+				phobj.begin_motion_sample(30);
+				lastCommitStart = phobj.get_position();
+				const bool up = is_key_down(KeyAction::Id::UP);
+				const bool down = is_key_down(KeyAction::Id::DOWN);
+				const int vertical = up && !down ? -1 : down && !up ? 1 : 0;
+				const V17MotionInput input = capture_motion_input();
+				const V17ClimbGeometry geometry{ static_cast<double>(attached->get_x()), attached->get_top(),
+												 attached->get_bottom(), attached->exits_at_top() };
+				const V17ClimbStep step =
+					V17ClimbMotion::Step(geometry, phobj.crnt_x(), phobj.crnt_y(), vertical, input.direction,
+										 motion.HasPendingJump(), V17PhysicsParameters::Get(), motion_multipliers());
+				motion.ClearJumpRequests();
+
+				if (step.jumped)
+				{
+					// 0x9B1D3D jump-off: detach, write the branch velocities and run one
+					// ordinary air step for the same 30ms, as the native update does.
+					set_direction(step.vx > 0.0);
+					Sound(Sound::Name::JUMP).play();
+					set_ladder(nullptr);
+					set_state(State::FALL);
+					phobj.onground = false;
+					// The original climb branch writes the jump velocities and ends that
+					// 30ms update; the next update integrates the air step. Publish the
+					// written state as this commit's sample instead of integrating early.
+					motion.Reset(step.x, step.y, false, 0);
+					motion.ApplyImpulse(step.vx, step.vy);
+					motion.CommitExternalWrite(30);
+					motion.Project(phobj, physics.get_fht());
+				}
+				else
+				{
+					phobj.set_x(step.x);
+					phobj.set_y(step.y);
+					phobj.onground = false;
+
+					if (!step.attached)
+					{
+						set_ladder(nullptr);
+						set_state(State::FALL);
+						set_climb_cooldown();
+					}
+				}
+
+				phobj.end_motion_sample();
+				++motionCommitId;
+				lastMotionStepMs = 30;
+				send_movement_if_changed();
+				motionRemainderMs -= 30;
+				commit.motionCommitted = true;
+				commit.normalStep = false;
+				commit.stepMs = 30;
+			}
 			else if (mode == MotionMode::LEGACY)
 			{
 				if (motionRemainderMs < ms::Constants::TIMESTEP)
 					break;
 
 				phobj.begin_motion_sample(ms::Constants::TIMESTEP);
+				lastCommitStart = phobj.get_position();
 				legacy_update_8ms(physics);
 				phobj.end_motion_sample();
 				++motionCommitId;
@@ -342,6 +413,16 @@ namespace ms
 	bool Player::owns_normal_motion() const
 	{
 		return motion.OwnsNormalState();
+	}
+
+	Point<int16_t> Player::get_physics_position() const
+	{
+		return phobj.get_position();
+	}
+
+	Point<int16_t> Player::get_last_commit_start_position() const
+	{
+		return lastCommitStart;
 	}
 
 	V17MotionMultipliers Player::motion_multipliers() const
@@ -416,7 +497,10 @@ namespace ms
 		if (motion.OwnsNormalState())
 			return MotionMode::NORMAL;
 
-		if (state == State::LADDER || state == State::ROPE || state == State::SWIM)
+		if (state == State::LADDER || state == State::ROPE)
+			return ladder ? MotionMode::CLIMB : MotionMode::LEGACY;
+
+		if (state == State::SWIM)
 			return MotionMode::LEGACY;
 
 		return MotionMode::STATIC;
@@ -749,6 +833,7 @@ namespace ms
 			phobj.hspeed = 0.0;
 			phobj.vspeed = 0.0;
 			phobj.fhlayer = 7;
+			phobj.onground = false;
 
 			set_state(ldr->is_ladder() ? Char::State::LADDER : Char::State::ROPE);
 			suspend_motion();

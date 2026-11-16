@@ -116,6 +116,16 @@ void V17NormalMotion::ApplyImpulse(double vx, double vy) {
     state.vx = vx;
     state.vy = vy;
 }
+void V17NormalMotion::CommitExternalWrite(uint32_t stepMs) {
+    state.stepMs = stepMs;
+    state.jumped = false;
+    state.jumpedDown = false;
+    state.landed = false;
+    state.hitWall = false;
+    state.stoppedAtEdge = false;
+    state.leftGround = false;
+    sample = true;
+}
 
 void V17NormalMotion::BeginRush(double targetX, uint16_t delayMs) {
     rushTargetX = targetX;
