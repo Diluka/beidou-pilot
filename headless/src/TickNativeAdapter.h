@@ -41,6 +41,11 @@ private:
     std::uint64_t currentTick = 0;
     std::uint64_t intentTick = 0;
     std::uint64_t movementTick = 0;
+    // Movement and jump transitions are observed by the local character's real
+    // motion layer; other inputs keep their own native world-tick facts.
+    std::uint64_t motionTick = 0;
+    bool movementNeedsMotion = false;
+    bool jumpNeedsMotion = false;
     std::uint64_t moveSequence = 0;
     std::uint64_t itemSequence = 0;
     bool movementChanged = false;

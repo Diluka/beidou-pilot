@@ -31,11 +31,22 @@
 #include "../Gameplay/Combat/Skill.h"
 #include "../Gameplay/MapleMap/Layer.h"
 #include "../Gameplay/MapleMap/MapInfo.h"
+#include "../Gameplay/Physics/V17NormalMotion.h"
 
 #include <chrono>
+#include <cstdint>
 
 namespace ms
 {
+	// One world update's mixed-clock result for the local character: whether a real
+	// motion commit happened, whether it was an ordinary 30ms step, and its step time.
+	struct LocalMotionCommit
+	{
+		bool motionCommitted = false;
+		bool normalStep = false;
+		uint32_t stepMs = 0;
+	};
+
 	class Player : public Playable, public Char
 	{
 	public:
@@ -45,8 +56,33 @@ namespace ms
 
 		// Draw the player
 		void draw(Layer::Id layer, double viewx, double viewy, float alpha) const;
-		// Update the player's animation, physics and states.
+		// Presentation-only update (animation, attack lock end, climb cooldown): always
+		// runs on the world 8ms clock and never moves the physical state.
 		int8_t update(const Physics& physics) override;
+		void update_presentation(const Physics& physics);
+		// Mixed clock: accumulate world time and consume it in whole motion steps.
+		// Ordinary STAND/WALK/FALL/PRONE use a fixed 30ms step; climb/swim/fly keep
+		// the legacy 8ms PhysicsObject path; sit/dead only let time pass.
+		LocalMotionCommit advance_local_motion(const Physics& physics, uint32_t worldMs);
+
+		// Real character motion commit identity and the last committed step time.
+		uint64_t get_motion_commit_id() const;
+		uint32_t get_last_motion_step_ms() const;
+		V17NormalMotion& get_motion_state();
+		const V17NormalMotion& get_motion_state() const;
+		bool owns_normal_motion() const;
+		V17MotionMultipliers motion_multipliers() const;
+
+		// Single set of motion write entries: state writers must use these instead of
+		// writing PhysicsObject positions/forces directly while ordinary motion owns it.
+		void request_jump();
+		void request_jump_down();
+		void clear_motion_requests();
+		void apply_motion_impulse(double vx, double vy);
+		void begin_motion_rush(double targetX);
+		void suspend_motion();
+		void resume_motion_from_projection();
+		void reset_motion(Point<int16_t> position, bool onGround);
 		// Set flipped ignore if attacking
 		void set_direction(bool flipped) override;
 		// Set state ignore if attacking
@@ -124,7 +160,7 @@ namespace ms
 
 		// Return whether the player is underwater
 		bool is_underwater() const;
-		// Returns if a Keyaction is currently active 
+		// Returns if a Keyaction is currently active
 		bool is_key_down(KeyAction::Id action) const;
 		// Return a pointer to the ladder the player is on
 		Optional<const Ladder> get_ladder() const;
@@ -156,6 +192,20 @@ namespace ms
 		MonsterBook& get_monsterbook();
 
 	private:
+		enum class MotionMode
+		{
+			NORMAL,
+			LEGACY,
+			STATIC
+		};
+
+		static bool is_normal_state(State state);
+		MotionMode motion_mode() const;
+		void sync_motion_ownership();
+		V17MotionInput capture_motion_input() const;
+		void legacy_update_8ms(const Physics& physics);
+		void send_movement_if_changed();
+
 		CharStats stats;
 		Inventory inventory;
 		SkillBook skillbook;
@@ -172,6 +222,11 @@ namespace ms
 		std::map<KeyAction::Id, bool> keysdown;
 
 		Movement lastmove;
+
+		V17NormalMotion motion;
+		uint16_t motionRemainderMs = 0;
+		uint64_t motionCommitId = 0;
+		uint32_t lastMotionStepMs = 0;
 
 		Randomizer randomizer;
 

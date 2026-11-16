@@ -45,10 +45,13 @@ namespace ms
 
 		// Bracket one complete native update. First measurement and explicit
 		// repositioning stay unknown; measured zero remains distinguishable.
-		void begin_motion_sample()
+		// step_ms records the real simulated interval of this sample (8 for other
+		// entities, 30 for the local character's ordinary motion commit).
+		void begin_motion_sample(uint16_t step_ms = Constants::TIMESTEP)
 		{
 			motion_start_x = crnt_x();
 			motion_start_y = crnt_y();
+			motion_interval_ms = step_ms;
 			motion_continuous = motion_sampled;
 			motion_known = false;
 		}
@@ -66,6 +69,7 @@ namespace ms
 			motion_sampled = false;
 			motion_continuous = false;
 			motion_known = false;
+			motion_interval_ms = 0;
 		}
 
 		MotionSample get_motion() const
@@ -73,7 +77,16 @@ namespace ms
 			return { crnt_x(), crnt_y(), motion_known,
 				motion_known ? motion_delta_x : 0.0,
 				motion_known ? motion_delta_y : 0.0,
-				motion_known ? Constants::TIMESTEP : uint16_t{0} };
+				motion_known ? motion_interval_ms : uint16_t{0} };
+		}
+
+		// Legacy consumers (Movement packet, touch sweep) bracket one commit with
+		// Linear::last; after the sweep this collapses to the current point so the
+		// following world ticks do not replay the same segment.
+		void normalize_public_position()
+		{
+			x.normalize();
+			y.normalize();
 		}
 
 		void normalize()
@@ -224,6 +237,7 @@ namespace ms
 		double motion_start_y = 0.0;
 		double motion_delta_x = 0.0;
 		double motion_delta_y = 0.0;
+		uint16_t motion_interval_ms = 0;
 		bool motion_sampled = false;
 		bool motion_continuous = false;
 		bool motion_known = false;

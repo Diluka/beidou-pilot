@@ -96,18 +96,11 @@ namespace ms
 			return;
 
 		if (down && ka == KeyAction::Id::JUMP)
-		{
-			play_jumpsound();
-
-			player.get_phobj().vforce = -player.get_jumpforce();
-		}
+			player.request_jump();
 	}
 
 	void PlayerStandState::update(Player& player) const
 	{
-		if (player.get_phobj().enablejd == false)
-			player.get_phobj().set_flag(PhysicsObject::Flag::CHECKBELOW);
-
 		if (player.is_attacking())
 			return;
 
@@ -144,48 +137,29 @@ namespace ms
 		if (player.is_attacking())
 			return;
 
-		if (down && ka == KeyAction::Id::JUMP)
-		{
-			play_jumpsound();
+		if (!down || ka != KeyAction::Id::JUMP)
+			return;
 
-			player.get_phobj().vforce = -player.get_jumpforce();
-		}
-
-		if (down && ka == KeyAction::Id::JUMP && player.is_key_down(KeyAction::Id::DOWN) && player.get_phobj().enablejd)
-		{
-			play_jumpsound();
-
-			player.get_phobj().y = player.get_phobj().groundbelow;
-			player.set_state(Char::State::FALL);
-		}
+		if (player.is_key_down(KeyAction::Id::DOWN) && player.get_phobj().enablejd)
+			player.request_jump_down();
+		else
+			player.request_jump();
 	}
 
 	void PlayerWalkState::update(Player& player) const
 	{
-		if (player.get_phobj().enablejd == false)
-			player.get_phobj().set_flag(PhysicsObject::Flag::CHECKBELOW);
-
 		if (player.is_attacking())
 			return;
 
-		if (haswalkinput(player))
-		{
-			if (hasrightinput(player))
-			{
-				player.set_direction(true);
-				player.get_phobj().hforce += player.get_walkforce();
-			}
-			else if (hasleftinput(player))
-			{
-				player.set_direction(false);
-				player.get_phobj().hforce += -player.get_walkforce();
-			}
-		}
-		else
-		{
-			if (player.is_key_down(KeyAction::Id::DOWN))
-				player.set_state(Char::State::PRONE);
-		}
+		// The ordinary walk force is applied by the 30ms V17NormalMotion step from the
+		// held direction; this method only keeps the facing and state transition facts.
+		if (hasrightinput(player))
+			player.set_direction(true);
+		else if (hasleftinput(player))
+			player.set_direction(false);
+
+		if (!haswalkinput(player) && player.is_key_down(KeyAction::Id::DOWN))
+			player.set_state(Char::State::PRONE);
 	}
 
 	void PlayerWalkState::update_state(Player& player) const
@@ -213,13 +187,8 @@ namespace ms
 		if (player.is_attacking())
 			return;
 
-		auto& hspeed = player.get_phobj().hspeed;
-
-		if (hasleftinput(player) && hspeed > 0.0)
-			hspeed -= 0.025;
-		else if (hasrightinput(player) && hspeed < 0.0)
-			hspeed += 0.025;
-
+		// Air control (same/reverse/release) is part of the 30ms V17NormalMotion step;
+		// this only keeps the facing fact while airborne.
 		if (hasleftinput(player))
 			player.set_direction(false);
 		else if (hasrightinput(player))
@@ -245,23 +214,13 @@ namespace ms
 #pragma region Prone
 	void PlayerProneState::send_action(Player& player, KeyAction::Id ka, bool down) const
 	{
-		if (down && ka == KeyAction::Id::JUMP)
-		{
-			if (player.get_phobj().enablejd && player.is_key_down(KeyAction::Id::DOWN))
-			{
-				play_jumpsound();
-
-				player.get_phobj().y = player.get_phobj().groundbelow;
-				player.set_state(Char::State::FALL);
-			}
-		}
+		if (down && ka == KeyAction::Id::JUMP && player.get_phobj().enablejd
+			&& player.is_key_down(KeyAction::Id::DOWN))
+			player.request_jump_down();
 	}
 
 	void PlayerProneState::update(Player& player) const
 	{
-		if (player.get_phobj().enablejd == false)
-			player.get_phobj().set_flag(PhysicsObject::Flag::CHECKBELOW);
-
 		if (player.is_key_down(KeyAction::Id::UP) || !player.is_key_down(KeyAction::Id::DOWN))
 			player.set_state(Char::State::STAND);
 

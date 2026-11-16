@@ -156,7 +156,11 @@ namespace ms
 		mobs.update(physics);
 		chars.update(physics);
 		drops.update(physics);
-		player.sampled_update(physics);
+
+		// The local character keeps the world 8ms presentation clock while its
+		// ordinary motion is committed in fixed 30ms steps (legacy modes stay 8ms).
+		player.update_presentation(physics);
+		const LocalMotionCommit motion = player.advance_local_motion(physics, Constants::TIMESTEP);
 
 		portals.update(player.get_position());
 		camera.update(player.get_position());
@@ -186,16 +190,29 @@ namespace ms
 
 		player.update_held_item(std::chrono::steady_clock::now());
 
-		if (player.is_invincible())
-			return;
-
-		if (int32_t oid_id = mobs.find_colliding(player.get_phobj()))
-		{
-			if (MobAttack attack = mobs.create_attack(oid_id))
+		const auto apply_touch_damage = [&]() {
+			if (int32_t oid_id = mobs.find_colliding(player.get_phobj()))
 			{
-				MobAttackResult result = player.damage(attack);
-				TakeDamagePacket(result, TakeDamagePacket::From::TOUCH).dispatch();
+				if (MobAttack attack = mobs.create_attack(oid_id))
+				{
+					MobAttackResult result = player.damage(attack);
+					TakeDamagePacket(result, TakeDamagePacket::From::TOUCH).dispatch();
+				}
 			}
+		};
+
+		if (motion.motionCommitted)
+		{
+			// One whole motion segment is swept exactly once, then collapsed so the
+			// following world ticks only check the current point against moving mobs.
+			if (!player.is_invincible())
+				apply_touch_damage();
+
+			player.get_phobj().normalize_public_position();
+		}
+		else if (!player.is_invincible())
+		{
+			apply_touch_damage();
 		}
 	}
 

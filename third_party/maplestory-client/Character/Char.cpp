@@ -127,6 +127,9 @@ namespace ms
 		return look.update(stancespeed);
 	}
 
+	// Display/animation speed keeps the legacy per-8ms map-pixel unit here: the
+	// local ordinary-motion state is projected once in V17NormalMotion::Project
+	// (px/s ÷ 125), so callers must never feed a px/s value directly into this.
 	float Char::get_stancespeed() const
 	{
 		if (attacking)
@@ -375,6 +378,11 @@ namespace ms
 	}
 
 	PhysicsObject& Char::get_phobj()
+	{
+		return phobj;
+	}
+
+	const PhysicsObject& Char::get_phobj() const
 	{
 		return phobj;
 	}

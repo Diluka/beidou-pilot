@@ -72,8 +72,15 @@ bool TickNativeAdapter::SetHeldKeys(const std::vector<std::string>& keys, std::s
         }
     }
     if (movement != desired) {
+        bool pressed = false;
+        for (const auto key : desired)
+            if (std::find(movement.begin(), movement.end(), key) == movement.end()) pressed = true;
         movement = std::move(desired);
         movementTick = currentTick;
+        // A held direction is observed by the next real motion commit; releasing a
+        // direction is applied to the native key state synchronously and settles now.
+        movementNeedsMotion = pressed;
+        if (pressed) motionTick = ms::Stage::get().get_player().get_motion_commit_id();
         movementChanged = true;
         host.SyncKeys();
     }
@@ -81,7 +88,7 @@ bool TickNativeAdapter::SetHeldKeys(const std::vector<std::string>& keys, std::s
 }
 
 bool TickNativeAdapter::HeldKeysSettled() const {
-    return !movementChanged || currentTick > movementTick;
+    return !movementNeedsMotion;
 }
 
 bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std::string& error) {
@@ -121,6 +128,10 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
     intent = action;
     intentTick = currentTick;
     intentChanged = true;
+    // A jump press is consumed by the next motion commit; replacing it before then
+    // drops the edge instead of queuing a delayed jump.
+    jumpNeedsMotion = action.kind == MapleControl::ActionKind::Jump;
+    if (jumpNeedsMotion) motionTick = ms::Stage::get().get_player().get_motion_commit_id();
     result = {};
     result.sessionId = action.sessionId;
     result.reason = "native_input_intent_accepted";
@@ -143,6 +154,10 @@ const MapleControl::Action* TickNativeAdapter::ActiveAction() const {
 }
 
 bool TickNativeAdapter::ActionIntentSettled() const {
+    // Stop releases the native key path synchronously; jump is confirmed by a real
+    // motion commit; other held actions keep their own native world-tick facts.
+    if (intent.kind == MapleControl::ActionKind::Stop) return true;
+    if (intent.kind == MapleControl::ActionKind::Jump) return !jumpNeedsMotion;
     return !intentChanged || currentTick > intentTick;
 }
 
@@ -161,6 +176,7 @@ bool TickNativeAdapter::ReleasePending() const {
 void TickNativeAdapter::Release() {
     if (!movement.empty()) {
         movementTick = currentTick;
+        movementNeedsMotion = false;
         movementChanged = true;
     }
     movement.clear();
@@ -174,6 +190,7 @@ void TickNativeAdapter::ReleaseAction() {
     actionKeys.clear();
     intentTick = currentTick;
     intentChanged = true;
+    jumpNeedsMotion = false;
     result.controlReleased = false;
     auto& stage = ms::Stage::get();
     stage.get_combat().hold_move(std::nullopt);
@@ -185,9 +202,13 @@ void TickNativeAdapter::ReleaseAction() {
 void TickNativeAdapter::Advance(std::uint64_t nativeTick, bool sceneChanged) {
     using Kind = MapleControl::ActionKind;
     currentTick = nativeTick;
-    const auto& player = ms::Stage::get().get_player();
+    auto& player = ms::Stage::get().get_player();
     const auto& combat = ms::Stage::get().get_combat();
+    const auto motionId = player.get_motion_commit_id();
+    if (movementNeedsMotion && motionId > motionTick) movementNeedsMotion = false;
+    if (jumpNeedsMotion && motionId > motionTick) jumpNeedsMotion = false;
     if (sceneChanged || !Observe().ready) {
+        player.clear_motion_requests();
         Release();
         nativeActive = false;
         moveSequence = combat.get_move_sequence();
@@ -251,6 +272,8 @@ void TickNativeAdapter::Shutdown() {
     Release();
     intentChanged = false;
     movementChanged = false;
+    movementNeedsMotion = false;
+    jumpNeedsMotion = false;
     nativeActive = false;
     result.controlReleased = true;
     result.settled = MapleControl::Fact::Unknown;

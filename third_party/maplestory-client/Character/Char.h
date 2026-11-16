@@ -137,6 +137,8 @@ namespace ms
 		const CharLook& get_look() const;
 		// Return a reference to this characters's physics
 		PhysicsObject& get_phobj();
+		// Return a const reference to this characters's physics
+		const PhysicsObject& get_phobj() const;
 
 		// Initialize character effects
 		static void init();

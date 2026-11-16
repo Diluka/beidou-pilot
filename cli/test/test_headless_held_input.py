@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
+from test.v17_fixtures import foothold_img, physics_img
+
 
 class HeadlessHeldInputContract(unittest.TestCase):
     @classmethod
@@ -16,6 +18,13 @@ class HeadlessHeldInputContract(unittest.TestCase):
         cls.addClassCleanup(temporary.cleanup)
         build = Path(temporary.name)
         cls.executable = build / "headless-held-input-contract"
+        cls.physics_directory = build / "physics"
+        physics_img(cls.physics_directory)
+        cls.map_directory = build / "map"
+        foothold_img(
+            cls.map_directory,
+            [{"id": 1, "x1": -1000, "x2": 1000, "y1": 1000, "y2": 1000, "prev": 0, "next": 0}],
+        )
         sources = [
             path
             for directory in ("Character", "Data", "Gameplay", "Graphics", "Audio", "Util")
@@ -112,7 +121,12 @@ class HeadlessHeldInputContract(unittest.TestCase):
         )
 
     def run_contract(self, scenario: str) -> None:
-        subprocess.run([str(self.executable), scenario], cwd=self.executable.parent, check=True, timeout=10)
+        subprocess.run(
+            [str(self.executable), scenario, str(self.physics_directory), str(self.map_directory)],
+            cwd=self.executable.parent,
+            check=True,
+            timeout=10,
+        )
 
     def test_native_keys_hold_without_lua_replay_and_clear_only_owned_input(self) -> None:
         self.run_contract("keys")
@@ -132,5 +146,17 @@ class HeadlessHeldInputContract(unittest.TestCase):
     def test_global_native_actions_do_not_fabricate_tick_ownership(self) -> None:
         self.run_contract("provenance")
 
-    def test_real_player_physics_record_is_one_step_identity_in_state_and_domain(self) -> None:
+    def test_real_player_physics_record_is_bound_to_real_motion_commits(self) -> None:
         self.run_contract("physics")
+
+    def test_mixed_8ms_30ms_schedule_commits_only_real_motion_steps(self) -> None:
+        self.run_contract("schedule")
+
+    def test_move_player_packets_follow_commits_without_wire_changes(self) -> None:
+        self.run_contract("packets")
+
+    def test_real_stage_ground_walk_brake_jump_use_30ms_commits(self) -> None:
+        self.run_contract("ground")
+
+    def test_move_and_jump_are_confirmed_by_the_motion_layer_not_world_ticks(self) -> None:
+        self.run_contract("motion-input")

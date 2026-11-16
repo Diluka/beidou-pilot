@@ -116,7 +116,7 @@ void SharedLuaAdapter::Cancel(const std::string& reason) {
     tickRuntime.CancelAll(reason);
 }
 
-void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
+void SharedLuaAdapter::Capture() {
     ++state.sequence;
     state.observedAtMs = UnixMs();
     state.sceneGeneration = ms::headless_state().map_generation;
@@ -143,7 +143,7 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     }
     state.dead = state.reviveRequestable = state.onGround = state.attacking = state.actionIdle = Fact::Unknown;
     state.characterUpdatesKnown = state.ready;
-    state.characterUpdates = nativeTick;
+    state.characterUpdates = 0;
     state.character.positionKnown = false;
     state.character.velocity = {};
     state.character.physics = {};
@@ -187,20 +187,20 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.onGround = ph.onground ? Fact::True : Fact::False;
     state.attacking = player.is_attacking() ? Fact::True : Fact::False;
     state.actionIdle = player.is_attacking() ? Fact::False : Fact::True;
-    const double stepsPerSecond = 1000.0 / ms::Constants::TIMESTEP;
+    // Real character update identity: one increment per actual motion commit
+    // (ordinary 30ms step, or the legacy 8ms step of an attached mode).
+    state.characterUpdates = player.get_motion_commit_id();
     state.character.SetPosition(pos.x(), pos.y());
     CaptureVelocity(state.character, player.get_motion());
-    // Update identity is the host tick until the local-motion task binds the
-    // real character motion-commit number; step_ms=8 is the actual integration
-    // time, so physics.update_id is not a 30ms motion submission.
-    state.character.physics =
-        ms::PlayerPhysicsPose(ph, player.is_climbing(), player.is_underwater(), nativeTick, ms::Constants::TIMESTEP);
+    state.character.physics = ms::PlayerPhysicsPose(player);
     state.character.movement.known = true;
-    state.character.movement.model = "headless_normal_v1";
+    state.character.movement.model = "v17_normal_continuous_v1";
     state.character.movement.effectiveSpeed = stats.get_total(ms::EquipStat::Id::SPEED);
     state.character.movement.effectiveJump = stats.get_total(ms::EquipStat::Id::JUMP);
-    state.character.movement.maxSpeed = ms::Physics::walk_reference_speed(player.get_walkforce()) * stepsPerSecond;
-    state.character.movement.maxJumpHeight = ms::Physics::jump_reference_height(player.get_jumpforce());
+    state.character.movement.maxSpeed =
+        ms::V17NormalMotion::ReferenceWalkSpeed(ms::V17PhysicsParameters::Get(), player.motion_multipliers());
+    state.character.movement.maxJumpHeight =
+        ms::V17NormalMotion::ReferenceJumpHeight(ms::V17PhysicsParameters::Get(), player.motion_multipliers());
     const bool settled =
         !player.is_attacking() && !ph.mobile() && (ph.onground || player.is_climbing() || player.is_underwater());
     state.settled = settled ? Fact::True : Fact::False;
@@ -584,7 +584,7 @@ void SharedLuaAdapter::ReadCommand() {
 
 void SharedLuaAdapter::Tick(std::uint64_t nativeTick) {
     const auto generation = state.sceneGeneration;
-    Capture(nativeTick);
+    Capture();
     const bool changed = generation != state.sceneGeneration;
     // Read the just-consumed native input before the scheduler can change the
     // key union and erase the dispatch's ownership evidence.
