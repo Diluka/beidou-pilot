@@ -154,12 +154,11 @@ void Drop() {
     Check(native->get_position() == rounded, "integer_position_would_hide_low_speed_hover");
     Check(std::abs(second.delta_y - 3.0 * std::sin(ms::DropFloatingPhasePerWorldStep())) < 1e-6,
           "real_drop_sine_displacement_is_captured");
-    native->expire(0, nullptr); // Real stationary fade path; not mode-2 pickup trajectory.
+    // V17 leave handling removes the drop from the DropPool immediately and plays a
+    // separate pickup effect; headless keeps the pool-removal timing only.
+    native->expire(0, nullptr);
     objects.update(physics);
-    Check(!native->is_landed() && native->get_motion().known, "pickup_fade_remains_a_current_entity");
-    Near(native->get_motion().delta_y, 0.0, "real_stationary_fade_has_measured_zero");
-    for (int step = 0; step < 64 && objects.contains(20); ++step) objects.update(physics);
-    Check(!objects.contains(20), "real_drop_fade_returns_minus_one_and_removes_entity");
+    Check(!objects.contains(20), "drop_leave_removes_entity_on_next_update");
 }
 
 void PickupPhase() {
@@ -170,18 +169,11 @@ void PickupPhase() {
     ms::PhysicsObject looter;
     looter.set_x(200.0);
     looter.set_y(0.0);
-    // No map assets are loaded: exercise the airborne/no-foothold branch and
-    // only assert the real update's horizontal sampling phase, not a map trajectory.
     drop.no_foothold();
+    // V17 leaves the DropPool immediately and plays the pickup as a separate
+    // effect; headless has no effect object, so the drop update returns -1 at once.
     drop.expire(2, &looter);
-    const auto before = drop.get_motion();
-    drop.sampled_update(physics);
-    const auto sample = drop.get_motion();
-    Check(sample.known, "real_mode2_pickup_has_a_complete_update_sample");
-    Near(sample.delta_x, sample.x - before.x, "real_pickup_sample_matches_completed_horizontal_displacement");
-    Near(sample.delta_x, 0.0, "first_pickup_step_used_the_previous_horizontal_speed");
-    Check(drop.next_horizontal_speed() > 0.0, "real_pickup_prepares_nonzero_speed_after_moving");
-    Check(sample.delta_x != drop.next_horizontal_speed(), "next_step_speed_is_not_mislabeled_as_current_displacement");
+    Check(drop.sampled_update(physics) == -1, "mode2_leave_removes_entity_immediately");
 }
 
 void Bullet() {

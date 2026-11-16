@@ -57,6 +57,9 @@ namespace ms
 
 	int8_t Drop::update(const Physics& physics)
 	{
+		if (instantRemove)
+			return -1;
+
 		if (state == Drop::State::PICKEDUP)
 		{
 			physics.move_object(phobj);
@@ -137,22 +140,12 @@ namespace ms
 
 	void Drop::expire(int8_t type, const PhysicsObject* lt)
 	{
-		switch (type)
-		{
-		case 0:
-			state = Drop::State::PICKEDUP;
-			break;
-		case 1:
-			deactivate();
-			break;
-		case 2:
-			angle.set(0.0f);
-			state = Drop::State::PICKEDUP;
-			looter = lt;
-			phobj.vspeed = -4.5f;
-			phobj.type = PhysicsObject::Type::NORMAL;
-			break;
-		}
+		// V17 OnLeaveField 0x50663E removes the drop from the DropPool immediately for
+		// every leave type and plays the pickup effect as a separate object. headless
+		// has no separate effect, so keep the pool-removal timing (next object update
+		// returns -1) instead of the old 48-step fade / fly-to-looter lifecycles.
+		(void)lt;
+		instantRemove = true;
 	}
 
 	Rectangle<int16_t> Drop::bounds() const

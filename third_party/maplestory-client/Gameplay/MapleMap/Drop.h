@@ -60,6 +60,7 @@ namespace ms
 
 		const PhysicsObject* looter;
 		State state;
+		bool instantRemove = false;
 
 		Point<int16_t> dest;
 		Point<int16_t> start;
