@@ -49,6 +49,7 @@ namespace ms
 		enum State
 		{
 			DROPPED,
+			DESCENDING,
 			FLOATING,
 			PICKEDUP
 		};
@@ -61,6 +62,9 @@ namespace ms
 		State state;
 
 		Point<int16_t> dest;
+		Point<int16_t> start;
+		int8_t mode;
+		int32_t fallMs;
 		double moved;
 	};
 }

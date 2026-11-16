@@ -17,13 +17,16 @@
 //////////////////////////////////////////////////////////////////////////////////
 #include "Drop.h"
 #include "DropDisplay.h"
+#include "DropFallDisplay.h"
 
 namespace ms
 {
 	Drop::Drop(int32_t id, int32_t own, Point<int16_t> start, Point<int16_t> dst, int8_t type, int8_t mode, bool pldrp) : MapObject(id)
 	{
 		owner = own;
-		set_position(start.x(), start.y() - 4);
+		this->start = start;
+		this->mode = mode;
+		set_position(start.x(), start.y());
 		dest = dst;
 		pickuptype = type;
 		playerdrop = pldrp;
@@ -31,6 +34,7 @@ namespace ms
 		angle.set(0.0f);
 		opacity.set(1.0f);
 		moved = 0.0f;
+		fallMs = 0;
 		looter = nullptr;
 
 		switch (mode)
@@ -38,12 +42,11 @@ namespace ms
 		case 0:
 		case 1:
 			state = Drop::State::DROPPED;
-			phobj.vspeed = -5.0f;
-			phobj.hspeed = static_cast<double>(dest.x() - start.x()) / 48;
 			break;
 		case 2:
 			state = Drop::State::FLOATING;
 			phobj.type = PhysicsObject::Type::FIXATED;
+			set_position(dest.x(), dest.y() - get_icon_half_height());
 			break;
 		case 3:
 			state = Drop::State::PICKEDUP;
@@ -54,24 +57,50 @@ namespace ms
 
 	int8_t Drop::update(const Physics& physics)
 	{
-		physics.move_object(phobj);
-
-		if (state == Drop::State::DROPPED)
+		if (state == Drop::State::PICKEDUP)
 		{
-			if (phobj.onground)
+			physics.move_object(phobj);
+		}
+
+		if (state == Drop::State::DROPPED || state == Drop::State::DESCENDING)
+		{
+			static const float SPINSTEP = 0.2f;
+			fallMs += Constants::TIMESTEP;
+			angle += SPINSTEP;
+
+			if (state == Drop::State::DROPPED)
 			{
-				phobj.hspeed = 0.0;
-				phobj.type = PhysicsObject::Type::FIXATED;
-				state = Drop::State::FLOATING;
-				angle.set(0.0f);
-				// Display anchor is the icon centre, half an icon above the packet
-				// destination.
-				set_position(dest.x(), dest.y() - get_icon_half_height());
+				const double anchorY = dest.y() - get_icon_half_height();
+				set_position(DropFallX(start.x(), dest.x(), fallMs), DropFallY(start.y(), fallMs));
+
+				if (fallMs >= DropFallDurationMs)
+				{
+					if (DropFallNeedsDescent(start.y(), anchorY))
+					{
+						state = Drop::State::DESCENDING;
+						fallMs = 0;
+					}
+					else
+					{
+						phobj.type = PhysicsObject::Type::FIXATED;
+						state = Drop::State::FLOATING;
+						angle.set(0.0f);
+						set_position(dest.x(), anchorY);
+					}
+				}
 			}
 			else
 			{
-				static const float SPINSTEP = 0.2f;
-				angle += SPINSTEP;
+				const double anchorY = dest.y() - get_icon_half_height();
+				set_position(dest.x(), DropDescendY(start.y(), fallMs));
+
+				if (phobj.crnt_y() >= anchorY)
+				{
+					phobj.type = PhysicsObject::Type::FIXATED;
+					state = Drop::State::FLOATING;
+					angle.set(0.0f);
+					set_position(dest.x(), anchorY);
+				}
 			}
 		}
 
