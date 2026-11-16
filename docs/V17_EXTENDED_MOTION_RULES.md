@@ -146,6 +146,7 @@
   - 黑木妖（1110101）：39.80/49.80 vs 19.92/22.28 → 2.00 倍。
 - 已落地：`MobWalkForceFromTemplate((raw+100)*0.002)` 用于地面怪物 hforce；改动后 headless 控制器 p50/p90 = 39.83/49.79、59.79/79.67、39.84/49.80（与原版比值均 0.999），`mob_walk_speed_contract` 覆盖映射值。
 - 保留差异（未对齐）：headless 暂停比例约 0.21–0.23，原版约 0.30–0.36（AI 决策/暂停节奏不同）；飞行、追击、跳跃参数与边界 override、控制权授予/回收仍无原版证据。
+- **AI 节奏动态证据（2026-11-17，同两份 20 秒记录）**：连续静止样本长度（100ms/样本）原版 p50 0.5s、p90 3.6s、max 9.0s（分布宽），headless p50=p90≈1.6s（对应固定 `counter > 200`×8ms，节奏僵硬）；每只怪方向变化次数原版约 5.3、headless 约 4.1；跳跃上升高度 p50 原版 14px/headless 12px、p90 58/59px（样本含坠落，未单独闭环）。静态规则 `(1000+rng%2000)/90` 与 `rng%3-1` 已定位，但计数单位（90ms vs 30ms 步）与有目标分支语义未闭环，本轮不按猜测替换 AI。
 - 证据：所属环境 `tmp/253-mob-evidence/phaseA-controller.jsonl`、`phaseB-headless-controller.jsonl`、`phaseB2-headless-doubled.jsonl`。
 
 ### 证据索引与剩余边界
