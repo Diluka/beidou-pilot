@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "Gameplay/Combat/Bullet.h"
 #include "Gameplay/MapleMap/Drop.h"
+#include "Gameplay/MapleMap/DropDisplay.h"
 #include "Gameplay/MapleMap/MapObjects.h"
 #include "Contract.h"
 
@@ -151,7 +152,8 @@ void Drop() {
     Check(second.delta_y != 0.0, "actual_drop_hover_is_not_reported_as_zero_velocity");
     Near(second.delta_y, second.y - first.y, "sample_covers_the_entire_real_drop_update");
     Check(native->get_position() == rounded, "integer_position_would_hide_low_speed_hover");
-    Near(second.delta_y, (std::cos(0.025) - 1.0) * 2.5, "real_drop_cosine_displacement_is_captured");
+    Check(std::abs(second.delta_y - 3.0 * std::sin(ms::DropFloatingPhasePerWorldStep())) < 1e-6,
+          "real_drop_sine_displacement_is_captured");
     native->expire(0, nullptr); // Real stationary fade path; not mode-2 pickup trajectory.
     objects.update(physics);
     Check(!native->is_landed() && native->get_motion().known, "pickup_fade_remains_a_current_entity");
