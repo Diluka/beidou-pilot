@@ -17,6 +17,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 #include "Player.h"
 #include "MovePlayerFragment.h"
+#include "MovePlayerBounds.h"
 
 #include "PlayerStates.h"
 
@@ -409,7 +410,11 @@ namespace ms
 		Movement encoded = newmove;
 		encoded.lastx = MovePlayerFragmentVelocity(vx);
 		encoded.lasty = MovePlayerFragmentVelocity(vy);
-		MovePlayerPacket(encoded).dispatch();
+
+		const Point<int16_t> pathStart =
+			lastmove.type == Movement::NONE ? Point<int16_t>(newmove.xpos, newmove.ypos)
+			                               : Point<int16_t>(lastmove.xpos, lastmove.ypos);
+		MovePlayerPacket(pathStart, encoded).dispatch();
 		lastmove = newmove;
 	}
 

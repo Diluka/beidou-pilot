@@ -17,6 +17,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 #pragma once
 
+#include "../../Character/MovePlayerBounds.h"
 #include "MovementPacket.h"
 
 namespace ms
@@ -65,12 +66,25 @@ namespace ms
 	class MovePlayerPacket : public MovementPacket
 	{
 	public:
-		// Updates the player's position with the server
-		MovePlayerPacket(const Movement& movement) : MovementPacket(OutPacket::Opcode::MOVE_PLAYER)
+		// Updates the player's position with the server. The leading 1+4 bytes are the
+		// original global context fields (producer unknown, written as zero); the path
+		// start, fragment count, fragment, direction-record count and bounding box
+		// follow the verified 0x68A563 layout.
+		MovePlayerPacket(Point<int16_t> start, const Movement& movement) : MovementPacket(OutPacket::Opcode::MOVE_PLAYER)
 		{
-			skip(9);
+			write_byte(0);
+			write_int(0);
+			write_point(start);
 			write_byte(1);
 			writemovement(movement);
+			write_byte(0); // no direction records in this single-fragment path
+
+			const MovePlayerBounds bounds =
+				MovePlayerPathBounds(start, Point<int16_t>(movement.xpos, movement.ypos));
+			write_short(bounds.minX);
+			write_short(bounds.minY);
+			write_short(bounds.maxX);
+			write_short(bounds.maxY);
 		}
 	};
 
