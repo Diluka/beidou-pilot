@@ -17,6 +17,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 #pragma once
 
+#include "MovePlayerPath.h"
 #include "ActiveBuffs.h"
 #include "MonsterBook.h"
 #include "PassiveBuffs.h"
@@ -227,6 +228,8 @@ namespace ms
 		std::map<KeyAction::Id, bool> keysdown;
 
 		Movement lastmove;
+		MovePlayerPath movementPath;
+		bool movementPathInitialized = false;
 
 		V17NormalMotion motion;
 		Point<int16_t> lastCommitStart;

@@ -18,6 +18,7 @@
 #include "Player.h"
 #include "MovePlayerFragment.h"
 #include "MovePlayerBounds.h"
+#include "MovePlayerPath.h"
 
 #include "PlayerStates.h"
 
@@ -87,6 +88,8 @@ namespace ms
 	{
 		set_position(pos.x(), pos.y());
 		reset_motion(pos, true);
+		movementPath.Reset(pos);
+		movementPathInitialized = true;
 		underwater = uw;
 		keysdown.clear();
 		held_item = 0;
@@ -411,11 +414,31 @@ namespace ms
 		encoded.lastx = MovePlayerFragmentVelocity(vx);
 		encoded.lasty = MovePlayerFragmentVelocity(vy);
 
-		const Point<int16_t> pathStart =
-			lastmove.type == Movement::NONE ? Point<int16_t>(newmove.xpos, newmove.ypos)
-			                               : Point<int16_t>(lastmove.xpos, lastmove.ypos);
-		MovePlayerPacket(pathStart, encoded).dispatch();
+		if (!movementPathInitialized)
+		{
+			movementPath.Reset(Point<int16_t>(newmove.xpos, newmove.ypos));
+			movementPathInitialized = true;
+		}
+
+		const auto held = [this](KeyAction::Id action) {
+			auto entry = keysdown.find(action);
+			return entry != keysdown.end() && entry->second;
+		};
+		const uint8_t direction = static_cast<uint8_t>((held(KeyAction::LEFT) ? 8 : 0)
+		                                                | (held(KeyAction::RIGHT) ? 4 : 0)
+		                                                | (held(KeyAction::UP) ? 2 : 0)
+		                                                | (held(KeyAction::DOWN) ? 1 : 0));
+
+		const uint32_t stepMs = lastMotionStepMs != 0 ? lastMotionStepMs : ms::Constants::TIMESTEP;
+		movementPath.Append(stepMs, encoded, direction);
 		lastmove = newmove;
+
+		if (!movementPath.ShouldSend())
+			return;
+
+		const Point<int16_t> nextStart = movementPath.LastEndpoint();
+		MovePlayerPacket(movementPath).dispatch();
+		movementPath.Reset(nextStart);
 	}
 
 	uint64_t Player::get_motion_commit_id() const
