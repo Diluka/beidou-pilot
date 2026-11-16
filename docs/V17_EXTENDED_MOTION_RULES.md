@@ -425,7 +425,8 @@ y = y0 - v*t + 400*t*t
 - **合同**：新增 `movement_replay_contract.cpp`（线性绝对段、速度约束 Hermite、30/33 追赶、零时长段跳过）与 `movement_parser_contract.cpp`；离线全套 529 tests 通过。
 - **双客户端真机验收（2026-11-17）**：常驻服 CID6 GUI 控制器 + CID7 headless 观察端同图 `102010000`；headless 先入图、GUI 后入图后观察端 35 只怪物全部 `controlled=false`（确认走回放路径）。12 秒 10Hz 采样中双端怪物均持续运动（各约 1.2 万 px 总位移），同一时间点位置中位差 **1.0px**、p90 5.1px，35/35 静止时刻位置完全相等；无解析错位/冻结。证据在所属环境 `tmp/263-two-client/`。
 - **控制权观察**：`scene.monsters[].controlled` 由 headless 本地控制标记给出 true/false；GUI 桥无已验证读取路径，保持未知并在 `not_covered` 声明 `monster_controlled`（`docs/LUA_TICK_API.md` 同步）。
-- 未变：出站 `writemovement` 仍是 legacy 单元素格式；MoveMob 序号/标志/哨兵、路径批量/gate、远端角色回放仍在后续项。
+- **MoveMob 出站序号**：`Mob::update_movement` 不再固定写 `1`，改为按 §4/§10 的静态事实每包递增 U16 序号（`Mob.movementSequence`，对应原版 `mob+0x13C` 加 1 写回）；包内其余 2×U8/U32/U8/3×U32 语义与两个 `0x00FFDDCC` 哨兵仍未闭环，保持现状并记录缺口。
+- 未变：出站 `writemovement` 仍是 legacy 单元素格式；MoveMob 标志/哨兵、路径批量/gate、远端角色回放仍在后续项。
 
 【未知】既有证据没有构成所有 command 的动态触发覆盖，也未证明服务器依赖哪些历史宽容行为。本轮保留 headless 全部现值；后续 wire 调整仍需对应提交的字节级合同、服务器无拉回、换图/重登和另一客户端观察证据。原版发包与入站包布局分别核对，不能直接把出站尾部附加记录套到服务器广播包。
 
