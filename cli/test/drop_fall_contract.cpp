@@ -7,6 +7,9 @@
 #include <iostream>
 
 namespace {
+constexpr double V400 = ms::DropFallVelocity;
+constexpr double V720 = ms::DropFallVelocityPickupTypeThree;
+
 void Near(double actual, double expected, const char* message) {
     if (std::fabs(actual - expected) > 1e-6) {
         std::cerr << message << ": actual=" << actual << " expected=" << expected << '\n';
@@ -17,19 +20,26 @@ void Near(double actual, double expected, const char* message) {
 
 int main() {
     // Static formula: u=min(0.002*m,1); w=0 (m<=500) or (m-500)/500; x follows
-    // (u+w)/2; y = y0 - 400t + 400t^2; D=1000 (dynamic landed latency evidence).
+    // (u+w)/2; y = y0 - v*t + 400t^2; D=1000 (dynamic landed latency evidence).
     Near(ms::DropFallX(0.0, 100.0, 0), 0.0, "x_at_0");
     Near(ms::DropFallX(0.0, 100.0, 250), 25.0, "x_at_250");
     Near(ms::DropFallX(0.0, 100.0, 500), 50.0, "x_at_500");
     Near(ms::DropFallX(0.0, 100.0, 1000), 100.0, "x_at_duration");
 
-    Near(ms::DropFallY(200.0, 0), 200.0, "y_at_0");
-    Near(ms::DropFallY(200.0, 250), 125.0, "y_at_250");
-    Near(ms::DropFallY(200.0, 500), 100.0, "y_at_500");
-    Near(ms::DropFallY(200.0, 1000), 200.0, "y_at_duration");
+    Near(ms::DropFallY(200.0, 0, V400), 200.0, "y_at_0");
+    Near(ms::DropFallY(200.0, 250, V400), 125.0, "y_at_250");
+    Near(ms::DropFallY(200.0, 500, V400), 100.0, "y_at_500");
+    Near(ms::DropFallY(200.0, 1000, V400), 200.0, "y_at_duration");
 
-    Near(ms::DropDescendY(200.0, 0), 200.0, "descend_at_0");
-    Near(ms::DropDescendY(200.0, 250), 300.0, "descend_at_250");
+    Near(ms::DropDescendY(200.0, 0, V400), 200.0, "descend_at_0");
+    Near(ms::DropDescendY(200.0, 250, V400), 300.0, "descend_at_250");
+
+    // drop+0x2C == 3 selects v=720; the field is the DropLoot pickuptype byte.
+    Near(ms::DropFallVelocityForPickupType(3), 720.0, "pickup_type_three_uses_720");
+    Near(ms::DropFallVelocityForPickupType(0), 400.0, "pickup_type_zero_uses_400");
+    Near(ms::DropFallVelocityForPickupType(2), 400.0, "pickup_type_two_uses_400");
+    Near(ms::DropFallY(200.0, 250, V720), 45.0, "y720_at_250");
+    Near(ms::DropDescendY(200.0, 250, V720), 380.0, "descend720_at_250");
 
     if (!ms::DropFallNeedsDescent(100.0, 200.0)) {
         std::cerr << "start_above_anchor_needs_descent\n";
