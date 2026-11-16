@@ -331,6 +331,8 @@ y = y0 - v*t + 400*t*t
 
 【同对象字段对账（2026-11-17，#267 双客户端同一批 DropPool）】相同 oid/x 的两个对象：GUI 公开锚点 y=1957（oid60）/1943（oid61），headless `dest.y`（悬浮均值）为 1971/1955，差 +14/+12；headless 的抛物线起点采样两者同为 y≈1955（共享出生点）。说明两端对同一 DropLoot 包的 `dropto/dropfrom` 字段映射或锚点偏移并不一致，不能直接把差值归给显示公式。下一步需抓取/反汇编原版 Drop 创建时 `drop+0x0C/+0x00/+0x74/+0x68` 与包的写入顺序，确认 GUI 公开锚点到底对应哪个包字段，再决定 headless `dest` 的赋值。
 
+【已落地调整（2026-11-17，#269）】落下显示已改为 §9 的 30ms 分段公式（`DropFallDisplay.h`）：`m` 每世界步 +8ms；`u=min(0.002*m,1)`、`w=0`（m≤500）或 `min((m-500)/(D-500),1)`；`x=x0+(xd-x0)*(u+w)/2`、`y=y0-400t+400t²`；到 D 后按 `y0` 与锚点关系直接落地或进入 state2 `y=y0+400t`。**D 取 1000ms**：GUI 20Hz 生命周期采样（15 个 DropPool 对象）spawn→landed = 1.009–1.06s，与物品类型/高度无关；`drop+0x2C==3` 的 v=720 分支生产字段未闭环，统一用 400 并保留缺口。真机复核（headless 击杀，20Hz）：9 个新掉落 spawn→landed = 0.957–1.008s、p50 1.007s，与 GUI 时序一致；旧 8ms 物理落下路径已被替换（`PICKEDUP` 物理拾取保留）。
+
 【已落地调整（2026-11-17，#267/#268）】headless 悬浮显示已按 state3 静态公式实现：`y = yd + 3*sin(phase)`、相位按 30ms 的 `0.0942477` 换算到 8ms 世界步（π rad/s、2s 周期），落地显示点改为锚点 `yd`（`DropDisplay.h` + `drop_display_contract`）。双客户端真机（GUI 击杀者 + headless 观察者）测得悬浮范围 6px（±3）、周期 1.95–2.0s，与静态公式一致。
 
 锚点字段差异已由 #268 闭环：GUI 公开锚点与 headless 包目的地差 12–14px，对应图标半高（`4000003` iconRaw 28px→14、meso `09000000` iconRaw 24px→12）；原版 `yd` 是图标中心，即 `yd = 包目的地 − 图标半高`。headless 已加 `virtual get_icon_half_height()`（ItemDrop/MesoDrop 按图标尺寸/2）并按 `dest.y − half + 3sin` 显示。同批 10 个 DropPool 对象复测：headless 落地 x 与 GUI 锚点完全一致、悬浮均值与 GUI 锚点差 ≤0.7px（改动前 12–14px）。证据在所属环境 `tmp/258-drops/`。
