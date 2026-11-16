@@ -176,6 +176,7 @@ namespace ms
 
 		std::vector<Movement> movements;
 		MovementReplay replay;
+		uint16_t movementSequence = 0;
 		uint16_t replayAccumulator = 0;
 		bool replayActive = false;
 		uint16_t counter;

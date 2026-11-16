@@ -352,7 +352,7 @@ namespace ms
 	void Mob::update_movement()
 	{
 		MoveMobPacket(
-			oid, 1, 0, 0, 0, 0, 0, 0,
+			oid, static_cast<int16_t>(movementSequence++), 0, 0, 0, 0, 0, 0,
 			get_position(),
 			Movement(phobj, value_of(stance, flip))
 		).dispatch();
