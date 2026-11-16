@@ -18,6 +18,7 @@
 #pragma once
 
 #include "Char.h"
+#include "../Gameplay/MovementReplay.h"
 
 #include "Look/CharLook.h"
 
@@ -56,9 +57,10 @@ namespace ms
 	private:
 		uint16_t level;
 		int16_t job;
-		std::queue<Movement> movements;
+		MovementReplay replay;
+		uint16_t replayAccumulator = 0;
+		bool replayActive = false;
 		Movement lastmove;
-		uint16_t timer;
 
 		std::unordered_map<int32_t, uint8_t> skilllevels;
 		uint8_t attackspeed;
