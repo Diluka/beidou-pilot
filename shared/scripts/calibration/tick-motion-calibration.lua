@@ -1,9 +1,9 @@
 -- @tick.gear 4
 -- @option[type=string,default=walk,choices=walk|brake|reverse|jump_stationary|jump_directional|air_release|air_reverse] scenario 校准场景
 -- @option[type=string,default=right,choices=left|right] direction 移动方向
--- @option[type=int,default=800,min=100,max=5000] runup_ms 助跑时长（制动/反向/带方向跳）
--- @option[type=int,default=800,min=100,max=5000] hold_ms 保持采样时长（行走/制动/反向）
--- @option[type=int,default=150,min=0,max=2000] air_release_ms 起跳后松向或反向的延迟
+-- @option[type=int,default=800,min=100,max=5000] runup_ms 助跑时长（按30ms物理步取整为步数）
+-- @option[type=int,default=800,min=100,max=5000] hold_ms 保持采样时长（按30ms物理步取整为步数）
+-- @option[type=int,default=150,min=0,max=2000] air_release_ms 起跳后松向或反向的延迟（按30ms物理步取整）
 -- @option[type=int,default=6000,min=500,max=20000] timeout_ms 脚本自限时长，超过后放键结束
 
 -- 本地角色普通运动校准采样脚本。只做一次有界移动或跳跃输入，不攻击、不用药、
@@ -207,6 +207,25 @@ local function start_scenario(context)
     state.phase = "arm"
 end
 
+-- 阶段推进按“已消费的物理更新数”而不是墙钟秒数：GUI 约 60Hz、headless 约
+-- 125Hz 的宿主回调下，同一毫秒阈值可能落在相差一个 30ms 物理步的位置，导致
+-- 两端输入边沿虽经对齐，跳跃/空中阶段仍相差一步。按 update_id 步数触发后，
+-- 两端执行完全相同的物理步序列，轨迹和接触事件可以逐物理步比较。
+local PHYSICS_STEP_MS = 30
+
+local function steps_for(milliseconds)
+    local steps = math.floor(milliseconds / PHYSICS_STEP_MS + 0.5)
+    if steps < 1 then steps = 1 end
+    return steps
+end
+
+local function new_updates(state, physics)
+    if physics == nil or physics.update_id == nil or state.phase_update == nil then return 0 end
+    return physics.update_id - state.phase_update
+end
+
+local function mark_phase(state, physics) state.phase_update = physics ~= nil and physics.update_id or nil end
+
 local function advance(context)
     local state = context.state
     local player = context.game.player
@@ -215,10 +234,9 @@ local function advance(context)
     local scenario = state.scenario
     local direction = state.direction
     local opposite = direction == "right" and "left" or "right"
-    local elapsed = context.tick.time - state.start_time
-    local runup_seconds = context.options.runup_ms / 1000
-    local hold_seconds = context.options.hold_ms / 1000
-    local air_release_seconds = context.options.air_release_ms / 1000
+    local runup_steps = steps_for(context.options.runup_ms)
+    local hold_steps = steps_for(context.options.hold_ms)
+    local air_release_steps = steps_for(context.options.air_release_ms)
     -- 不能用 `x and y or nil` 惯用法：on_ground=false 会被吞成 nil，
     -- 导致跳跃场景永远停在 jump_input 直到超时。
     local on_ground = nil
@@ -228,43 +246,42 @@ local function advance(context)
         if state.phase == "arm" then
             state.phase = "walk"
             set_move(state, player, direction)
-        elseif state.phase == "walk" and elapsed >= hold_seconds then
+            mark_phase(state, physics)
+        elseif state.phase == "walk" and new_updates(state, physics) >= hold_steps then
             return finish(context, "scenario_completed")
         end
     elseif scenario == "brake" then
         if state.phase == "arm" then
             state.phase = "runup"
             set_move(state, player, direction)
-        elseif state.phase == "runup" and elapsed >= runup_seconds then
+            mark_phase(state, physics)
+        elseif state.phase == "runup" and new_updates(state, physics) >= runup_steps then
             state.phase = "brake"
-            state.brake_time = context.tick.time
             set_move(state, player, nil)
-        elseif state.phase == "brake" then
-            local stopped = physics ~= nil and physics.velocity ~= nil and physics.velocity.x == 0
-            local held = context.tick.time - (state.brake_time or context.tick.time)
-            if stopped and held >= 0.1 or held >= hold_seconds then return finish(context, "scenario_completed") end
+            mark_phase(state, physics)
+        elseif state.phase == "brake" and new_updates(state, physics) >= hold_steps then
+            return finish(context, "scenario_completed")
         end
     elseif scenario == "reverse" then
         if state.phase == "arm" then
             state.phase = "runup"
             set_move(state, player, direction)
-        elseif state.phase == "runup" and elapsed >= runup_seconds then
+            mark_phase(state, physics)
+        elseif state.phase == "runup" and new_updates(state, physics) >= runup_steps then
             state.phase = "reverse"
-            state.reverse_time = context.tick.time
             set_move(state, player, opposite)
-        elseif
-            state.phase == "reverse"
-            and context.tick.time - (state.reverse_time or context.tick.time) >= hold_seconds
-        then
+            mark_phase(state, physics)
+        elseif state.phase == "reverse" and new_updates(state, physics) >= hold_steps then
             return finish(context, "scenario_completed")
         end
     elseif scenario == "jump_stationary" then
         if state.phase == "arm" then
             state.phase = "jump_input"
             set_jump(state, player, true)
+            mark_phase(state, physics)
         elseif state.phase == "jump_input" and on_ground == false then
             state.phase = "air"
-            state.takeoff_time = context.tick.time
+            state.takeoff_update = physics ~= nil and physics.update_id or nil
         elseif state.phase == "air" and on_ground == true then
             return finish(context, "scenario_completed")
         end
@@ -273,16 +290,21 @@ local function advance(context)
         if state.phase == "arm" then
             state.phase = "runup"
             set_move(state, player, direction)
-        elseif state.phase == "runup" and elapsed >= runup_seconds then
+            mark_phase(state, physics)
+        elseif state.phase == "runup" and new_updates(state, physics) >= runup_steps then
             state.phase = "jump_input"
             set_jump(state, player, true)
+            mark_phase(state, physics)
         elseif state.phase == "jump_input" and on_ground == false then
             state.phase = "air"
-            state.takeoff_time = context.tick.time
+            state.takeoff_update = physics ~= nil and physics.update_id or nil
         elseif state.phase == "air" or state.phase == "air_reverse" then
             if on_ground == true then return finish(context, "scenario_completed") end
-            local airborne = context.tick.time - (state.takeoff_time or context.tick.time)
-            if airborne >= air_release_seconds then
+            local airborne_steps = 0
+            if physics ~= nil and physics.update_id ~= nil and state.takeoff_update ~= nil then
+                airborne_steps = physics.update_id - state.takeoff_update
+            end
+            if airborne_steps >= air_release_steps then
                 if scenario == "air_release" and state.move ~= nil then
                     set_move(state, player, nil)
                 elseif scenario == "air_reverse" and state.move ~= opposite then
