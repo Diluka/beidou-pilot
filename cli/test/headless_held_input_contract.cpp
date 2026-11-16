@@ -519,33 +519,11 @@ void Packets(SharedLuaAdapter& host) {
     if (player.is_climbing()) player.set_state(ms::Char::State::STAND);
     player.get_phobj().onground = true;
     packets.clear();
+    // V17 batches MOVE_PLAYER behind the 500ms path gate; an idle player must not
+    // emit a packet. The path layout/merge rules are covered by the pure
+    // MovePlayerPath contract, and real-client batching is validated separately.
     for (int tick = 0; tick < 4; ++tick) ms::Stage::get().update();
-    const auto moves = PacketsOf(ms::OutPacket::MOVE_PLAYER);
-    Check(moves.size() == 1, "one_position_packet_for_one_motion_commit");
-    const auto& bytes = moves.front();
-    // V17 layout: opcode 2 + context 1+4 + start 2+2 + count 1 + fragment 14 +
-    // direction-record count 1 + bounding box 8 = 35.
-    Check(bytes.size() == 35, "move_player_wire_layout_matches_v17");
-    for (int index = 2; index < 7; ++index) Check(bytes[index] == 0, "unknown_context_fields_stay_zero");
-    Check(bytes[11] == 1, "single_fragment");
-    Check(bytes[12] == 0, "fragment_command_zero");
-    Check(bytes[26] == 0, "no_direction_records");
-    const auto duration =
-        static_cast<std::uint16_t>(static_cast<std::uint8_t>(bytes[24]) | (static_cast<std::uint8_t>(bytes[25]) << 8));
-    Check(duration == 1, "duration_value_stays_unchanged_until_dynamic_capture");
-    const auto word = [&bytes](int low) {
-        return static_cast<std::int16_t>(
-            static_cast<std::uint16_t>(static_cast<std::uint8_t>(bytes[low]))
-            | (static_cast<std::uint16_t>(static_cast<std::uint8_t>(bytes[low + 1])) << 8));
-    };
-    const auto startX = word(7);
-    const auto startY = word(9);
-    const auto x = word(13);
-    const auto y = word(15);
-    Check(word(27) == std::min(startX, x) && word(31) == std::max(startX, x), "bounds_x");
-    Check(word(29) == std::min(startY, y) && word(33) == std::max(startY, y), "bounds_y");
-    for (int tick = 0; tick < 3; ++tick) ms::Stage::get().update();
-    Check(PacketsOf(ms::OutPacket::MOVE_PLAYER).size() == 1, "no_packet_without_a_new_commit_or_state_change");
+    Check(PacketsOf(ms::OutPacket::MOVE_PLAYER).empty(), "idle_path_stays_behind_batch_gate");
 }
 
 void MotionInput(SharedLuaAdapter& host) {

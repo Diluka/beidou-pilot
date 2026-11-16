@@ -18,6 +18,7 @@
 #pragma once
 
 #include "../../Character/MovePlayerBounds.h"
+#include "../../Character/MovePlayerPath.h"
 #include "MovementPacket.h"
 
 namespace ms
@@ -66,21 +67,29 @@ namespace ms
 	class MovePlayerPacket : public MovementPacket
 	{
 	public:
-		// Updates the player's position with the server. The leading 1+4 bytes are the
-		// original global context fields (producer unknown, written as zero); the path
-		// start, fragment count, fragment, direction-record count and bounding box
-		// follow the verified 0x68A563 layout.
-		MovePlayerPacket(Point<int16_t> start, const Movement& movement) : MovementPacket(OutPacket::Opcode::MOVE_PLAYER)
+		// Updates the player's position with the server. Leading 1+4 bytes are the
+		// unknown original context fields (0), followed by path start, fragment count,
+		// fragments, direction-record count/nibbles and the endpoint bounding box.
+		MovePlayerPacket(const MovePlayerPath& path) : MovementPacket(OutPacket::Opcode::MOVE_PLAYER)
 		{
 			write_byte(0);
 			write_int(0);
-			write_point(start);
-			write_byte(1);
-			writemovement(movement);
-			write_byte(0); // no direction records in this single-fragment path
+			write_point(path.StartPoint());
 
-			const MovePlayerBounds bounds =
-				MovePlayerPathBounds(start, Point<int16_t>(movement.xpos, movement.ypos));
+			const auto& fragments = path.Fragments();
+			write_byte(static_cast<uint8_t>(fragments.size()));
+			for (const Movement& fragment : fragments) writemovement(fragment);
+
+			const auto& directions = path.Directions();
+			write_byte(static_cast<uint8_t>(directions.size()));
+			for (std::size_t index = 0; index < directions.size(); index += 2)
+			{
+				const uint8_t low = directions[index];
+				const uint8_t high = index + 1 < directions.size() ? directions[index + 1] : 0;
+				write_byte(static_cast<uint8_t>(low | (high << 4)));
+			}
+
+			const MovePlayerBounds bounds = path.Bounds();
 			write_short(bounds.minX);
 			write_short(bounds.minY);
 			write_short(bounds.maxX);
