@@ -408,15 +408,25 @@ local function advance(context)
                 and physics.x ~= nil
                 and math.abs(physics.x - state.rope.x) <= 2
             then
-                state.silent = false
-                emit(context, "begin")
+                -- 高处平台起步前的走位不进入记录：两端起点 x 对齐有亚像素误差时，
+                -- 越过平台边缘的步数可能相差一步。只比较“已经离地”的自由落体段。
                 set_move(state, player, direction)
-                mark_phase(state, physics)
-                state.phase = "walk"
+                state.phase = "walk_silent"
             elseif context.tick.time - (state.top_started or context.tick.time) > 8.0 then
                 return finish(context, "setup_top_failed")
             end
-        elseif state.phase == "walk" and on_ground == false then
+        elseif state.phase == "walk_silent" then
+            if on_ground == false then
+                -- 离地那一 tick 先清方向并发布 begin（无输入），下一 tick 重新按下方向，
+                -- 形成可被比较器识别的消费边沿；两端执行完全相同的步序列。
+                set_move(state, player, nil)
+                state.silent = false
+                emit(context, "begin")
+                state.phase = "fall_start"
+            end
+        elseif state.phase == "fall_start" then
+            set_move(state, player, direction)
+            mark_phase(state, physics)
             state.phase = "fall"
         elseif state.phase == "fall" and on_ground == true then
             return finish(context, "scenario_completed")
