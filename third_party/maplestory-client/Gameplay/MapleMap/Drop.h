@@ -37,6 +37,11 @@ namespace ms
 		Drop(int32_t oid, int32_t owner, Point<int16_t> start,
 			Point<int16_t> dest, int8_t type, int8_t mode, bool playerdrop);
 
+		// Original drop destination anchor is the icon centre: the stored anchor is
+		// the packet destination minus half the drop icon height (dynamic evidence
+		// 2026-11-17: 4000003 icon height 28 -> 14px; meso icon 24 -> 12px).
+		virtual int16_t get_icon_half_height() const { return 0; }
+
 		Linear<float> opacity;
 		Linear<float> angle;
 

@@ -30,6 +30,9 @@ namespace ms
 
 		void draw(double viewx, double viewy, float alpha) const override;
 
+	protected:
+		int16_t get_icon_half_height() const override;
+
 	private:
 		const Animation& icon;
 	};

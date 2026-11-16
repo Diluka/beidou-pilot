@@ -21,6 +21,11 @@ namespace ms
 {
 	MesoDrop::MesoDrop(int32_t oid, int32_t owner, Point<int16_t> start, Point<int16_t> dest, int8_t type, int8_t mode, bool pd, const Animation& icn) : Drop(oid, owner, start, dest, type, mode, pd), icon(icn) {}
 
+	int16_t MesoDrop::get_icon_half_height() const
+	{
+		return icon.get_dimensions().y() / 2;
+	}
+
 	void MesoDrop::draw(double viewx, double viewy, float alpha) const
 	{
 		if (!active)

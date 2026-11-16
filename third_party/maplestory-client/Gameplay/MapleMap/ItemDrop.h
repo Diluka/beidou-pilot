@@ -31,6 +31,9 @@ namespace ms
 		void draw(double viewx, double viewy, float alpha) const override;
 		int32_t get_item_id() const { return itemid; }
 
+	protected:
+		int16_t get_icon_half_height() const override;
+
 	private:
 		const Texture& icon;
 		int32_t itemid;
