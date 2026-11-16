@@ -1,5 +1,5 @@
 -- @tick.gear 4
--- @option[type=string,default=walk,choices=walk|brake|reverse|jump_stationary|jump_directional|air_release|air_reverse] scenario 校准场景
+-- @option[type=string,default=walk,choices=walk|brake|reverse|jump_stationary|jump_directional|air_release|air_reverse|drop] scenario 校准场景
 -- @option[type=string,default=right,choices=left|right] direction 移动方向
 -- @option[type=int,default=800,min=100,max=5000] runup_ms 助跑时长（按30ms物理步取整为步数）
 -- @option[type=int,default=800,min=100,max=5000] hold_ms 保持采样时长（按30ms物理步取整为步数）
@@ -226,6 +226,27 @@ end
 
 local function mark_phase(state, physics) state.phase_update = physics ~= nil and physics.update_id or nil end
 
+local function find_setup_rope(context)
+    local character = context.game.character
+    local physics = character.physics
+    local terrain = context.scene and context.scene.terrain
+    if terrain == nil or terrain.status ~= "available" or physics == nil or physics.x == nil or physics.y == nil then
+        return nil
+    end
+    local ground_y = physics.y
+    local candidates = {}
+    for _, rope in ipairs(terrain.ropes or {}) do
+        local x, y1, y2 = tonumber(rope.x), tonumber(rope.y1), tonumber(rope.y2)
+        -- 目标：绳底略高于当前站立脚点（原版抓取要求 y-5 落在绳段内，需要跳跃进入）。
+        if x ~= nil and y1 ~= nil and y2 ~= nil and y2 <= ground_y - 2 and y2 >= ground_y - 80 then
+            candidates[#candidates + 1] = { x = x, y1 = y1, y2 = y2 }
+        end
+    end
+    if #candidates == 0 then return nil end
+    table.sort(candidates, function(a, b) return math.abs(a.x - physics.x) < math.abs(b.x - physics.x) end)
+    return candidates[1]
+end
+
 local function advance(context)
     local state = context.state
     local player = context.game.player
@@ -272,6 +293,132 @@ local function advance(context)
             set_move(state, player, opposite)
             mark_phase(state, physics)
         elseif state.phase == "reverse" and new_updates(state, physics) >= hold_steps then
+            return finish(context, "scenario_completed")
+        end
+    elseif scenario == "drop" then
+        -- 简单 drop：先从底层抓绳爬到高处平台，再沿水平方向走出平台边缘自由落下。
+        -- setup（抓绳/攀爬）不进入比较记录：攀爬沿用各端 legacy 路径、两端不承诺
+        -- 一致；只有到达同一高处起点后的“走位→离地→落地”段纳入双端比较。
+        -- 抓取方式按端能力自适应：GUI 原版站着按上即可；headless 旧绳梯判定要求
+        -- 脚点 y-5 落在绳段内，需要先跳起再按上。
+        if state.phase == "arm" then
+            state.rope = find_setup_rope(context)
+            if state.rope == nil then return finish(context, "setup_no_rope") end
+            state.phase = "rope_approach"
+        elseif state.phase == "rope_approach" then
+            if physics == nil or physics.x == nil then
+                if context.tick.time - state.start_time > 5.0 then return finish(context, "setup_no_physics") end
+                p.stop()
+                return nil
+            end
+            local delta = state.rope.x - physics.x
+            if math.abs(delta) <= 12 then
+                -- 提前撤方向，制动滑行后再用短脉冲对齐到绳 x（±2px）。
+                set_move(state, player, nil)
+                state.base_y = physics.y
+                state.phase = "rope_settle"
+                state.align_attempts = 0
+            else
+                set_move(state, player, delta > 0 and "right" or "left")
+            end
+        elseif state.phase == "rope_settle" then
+            set_move(state, player, nil)
+            local speed = physics ~= nil and physics.velocity and physics.velocity.x or nil
+            if speed ~= nil and math.abs(speed) < 1 then
+                local delta = state.rope.x - physics.x
+                if math.abs(delta) <= 2 then
+                    state.base_y = physics.y
+                    state.phase = "stand_grab"
+                    state.grab_started = context.tick.time
+                elseif state.align_attempts >= 40 then
+                    return finish(context, "setup_align_failed")
+                else
+                    state.align_attempts = state.align_attempts + 1
+                    state.phase = "rope_nudge"
+                    state.nudge_from = physics.x
+                    set_move(state, player, delta > 0 and "right" or "left")
+                end
+            end
+        elseif state.phase == "rope_nudge" then
+            -- 一次只推一个回调的方向，下一 tick 立刻松开并等待制动，避免冲过头。
+            set_move(state, player, state.rope.x > physics.x and "right" or "left")
+            state.phase = "rope_nudge_done"
+        elseif state.phase == "rope_nudge_done" then
+            set_move(state, player, nil)
+            state.phase = "rope_settle"
+        elseif state.phase == "stand_grab" then
+            set_move(state, player, "up")
+            if physics ~= nil and physics.y ~= nil and physics.y <= state.base_y - 4 then
+                state.phase = "climb"
+                state.climb_started = context.tick.time
+            elseif context.tick.time - (state.grab_started or context.tick.time) > 1.2 then
+                state.phase = "jump_grab"
+                state.jump_started = context.tick.time
+            end
+        elseif state.phase == "jump_grab" then
+            if not state.jump_sent then
+                set_move(state, player, nil)
+                set_jump(state, player, true)
+                state.jump_sent = true
+            elseif on_ground == false then
+                context.game.log(
+                    "calibration_drop jump_airborne x="
+                        .. tostring(physics and physics.x)
+                        .. " y="
+                        .. tostring(physics and physics.y)
+                )
+                set_jump(state, player, false)
+                set_move(state, player, "up")
+                state.phase = "climb"
+                state.climb_started = context.tick.time
+            elseif context.tick.time - (state.jump_started or context.tick.time) > 2.0 then
+                return finish(context, "setup_jump_grab_failed")
+            end
+        elseif state.phase == "climb" then
+            set_move(state, player, "up")
+            if physics ~= nil and physics.update_id ~= nil and physics.update_id % 20 == 0 then
+                context.game.log(
+                    "calibration_drop climb y=" .. tostring(physics.y) .. " g=" .. tostring(physics.on_ground)
+                )
+            end
+            if physics == nil or physics.y == nil then
+                if context.tick.time - (state.climb_started or context.tick.time) > 10.0 then
+                    return finish(context, "setup_climb_timeout")
+                end
+            elseif on_ground == true and physics.y <= state.base_y - 80 then
+                -- GUI 原版爬到顶端自动站上平台。
+                set_move(state, player, nil)
+                state.phase = "rope_top"
+                state.top_started = context.tick.time
+            elseif physics.y <= state.rope.y1 - 6 then
+                -- headless 越过绳顶后旧绳梯判定会让角色脱离并落到平台。
+                set_move(state, player, nil)
+                state.phase = "rope_top"
+                state.top_started = context.tick.time
+            elseif on_ground == true and physics.y > state.base_y - 30 then
+                return finish(context, "setup_grab_failed")
+            elseif context.tick.time - (state.climb_started or context.tick.time) > 10.0 then
+                return finish(context, "setup_climb_timeout")
+            end
+        elseif state.phase == "rope_top" then
+            set_move(state, player, nil)
+            if
+                on_ground == true
+                and physics ~= nil
+                and physics.x ~= nil
+                and math.abs(physics.x - state.rope.x) <= 2
+            then
+                state.silent = false
+                emit(context, "begin")
+                set_move(state, player, direction)
+                mark_phase(state, physics)
+                state.phase = "walk"
+            elseif context.tick.time - (state.top_started or context.tick.time) > 8.0 then
+                return finish(context, "setup_top_failed")
+            end
+        elseif state.phase == "walk" and on_ground == false then
+            state.phase = "fall"
+        elseif state.phase == "fall" and on_ground == true then
             return finish(context, "scenario_completed")
         end
     elseif scenario == "jump_stationary" then
@@ -338,7 +485,9 @@ local function main(context)
         state.phase = "preflight"
         state.move = nil
         state.jump = false
-        emit(context, "begin")
+        -- drop 的绳梯 setup 不进入比较记录：只在到达高处平台起点后开始 emit。
+        state.silent = context.options.scenario == "drop"
+        if not state.silent then emit(context, "begin") end
         start_scenario(context)
         return
     end
@@ -349,6 +498,6 @@ local function main(context)
     end
     advance(context)
     if state.finished then return "done" end
-    emit(context, "tick")
+    if not state.silent then emit(context, "tick") end
     return
 end
