@@ -162,8 +162,8 @@ class MotionCompareContract(unittest.TestCase):
         ]
         result = comparator.compare(left, right)
         self.assertEqual("comparable", result["status"], result)
-        self.assertEqual([2], result["left"]["takeoffs"])
-        self.assertEqual([1], result["right"]["takeoffs"])
+        self.assertEqual([[0, 2]], result["left"]["takeoffs"])
+        self.assertEqual([[0, 1]], result["right"]["takeoffs"])
         late = [
             record(1, x=0.0, edge=True),
             record(2, x=1.0),

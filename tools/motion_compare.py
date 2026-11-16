@@ -163,6 +163,7 @@ def _dedupe_series(
     gaps: list[int] = []
     missing_physics = 0
     last_update: int | None = None
+    observed_edges: list[tuple[int, str]] = []
     for record in ticks:
         record_map, record_generation = _record_scene(record)
         if record_map is not None:
@@ -175,6 +176,10 @@ def _dedupe_series(
             scene_generation = record_generation
         physics = _physics(record)
         update_id = _integer(physics.get("update_id")) if physics is not None else None
+        if update_id is not None and record.get("intent_edge") is True:
+            # 保留全部意图边沿，包括落在同一物理更新的重复宿主帧上的边沿：
+            # 去重只保留每个 update_id 的第一份样本，不能因此丢掉边沿。
+            observed_edges.append((update_id, str(record.get("input"))))
         if update_id is None:
             missing_physics += 1
             continue
@@ -197,10 +202,10 @@ def _dedupe_series(
     step_ms_values = {_integer((_physics(samples[update]) or {}).get("step_ms")) for update in order}
     if len(step_ms_values) != 1 or None in step_ms_values:
         raise EvidenceError(f"{side} 的 step_ms 不唯一或未知。", {"side": side})
-    edges = _edges(samples, order, side)
+    edges, edge_inputs, non_consumed = _edges(observed_edges, samples, order, side)
     edge_update = edges[0]
     prepared = {update: samples[update] for update in order if update >= edge_update}
-    takeoffs, landings = _contacts(prepared)
+    takeoffs, landings = _contacts(prepared, edges)
     ground_unknown = sum(1 for record in prepared.values() if _ground(record) is None)
     series: Series = {
         "records": len(ticks),
@@ -210,8 +215,9 @@ def _dedupe_series(
         "map_id": map_id,
         "scene_generation": scene_generation,
         "edge_update_id": edge_update,
-        "edge_input": str(samples[edge_update].get("input")),
-        "input_edges": [{"update_id": update, "input": str(samples[update].get("input"))} for update in edges],
+        "edge_input": edge_inputs[0],
+        "input_edges": [{"update_id": update, "input": input_name} for update, input_name in zip(edges, edge_inputs)],
+        "non_consumed_intents": non_consumed,
         "first_step": 0,
         "last_step": order[-1] - edge_update,
         "gaps": gaps,
@@ -228,31 +234,64 @@ def _dedupe_series(
     }
 
 
-def _edges(samples: dict[int, dict[str, object]], order: list[int], side: str) -> list[int]:
-    """实际输入消费边沿：每次意图变化后的第一份物理样本。"""
-    edges = [update for update in order if samples[update].get("intent_edge") is True]
-    if not edges:
+def _edges(
+    observed: list[tuple[int, str]],
+    samples: dict[int, dict[str, object]],
+    order: list[int],
+    side: str,
+) -> tuple[list[int], list[str], int]:
+    """把观测到的意图变化对齐到共用的相对步序号。
+
+    tick 记录在物理提交之后采集：脚本在这一次回调里改变输入，只可能被下一次
+    运动提交消费。两端记录都从“改变输入时所在物理更新”的末态开始切段，因此
+    每段的第 0 步是旧输入的最后一步、第 1 步起是消费后的步，两端相位一致。
+    同一提交窗口内的多次意图变化取最后一次有效输入；没有后续物理更新的意图
+    视为未被消费（例如脚本结束时释放输入），不计入边沿。
+    """
+    if not observed:
         raise EvidenceError(f"{side} 没有输入意图边沿。", {"side": side})
-    return edges
-
-
-def _contacts(samples: dict[int, dict[str, object]]) -> tuple[list[int], list[int]]:
-    """按去重后的物理步序号返回离地与落地边沿。"""
-    order = sorted(samples)
-    takeoffs: list[int] = []
-    landings: list[int] = []
-    previous: bool | None = None
-    for update in order:
-        ground = _ground(samples[update])
-        if ground is None:
-            previous = None
+    last_update = order[-1]
+    starts: list[int] = []
+    inputs: list[str] = []
+    non_consumed = 0
+    for observed_update, input_name in observed:
+        if observed_update not in samples or observed_update >= last_update:
+            non_consumed += 1
             continue
-        if previous is not None and previous != ground:
-            if ground:
-                landings.append(update - order[0])
-            else:
-                takeoffs.append(update - order[0])
-        previous = ground
+        if starts and starts[-1] == observed_update:
+            inputs[-1] = input_name
+            continue
+        starts.append(observed_update)
+        inputs.append(input_name)
+    if not starts:
+        raise EvidenceError(f"{side} 的意图边沿没有被任何物理提交消费。", {"side": side})
+    return starts, inputs, non_consumed
+
+
+def _contacts(samples: dict[int, dict[str, object]], edges: list[int]) -> tuple[list[list[int]], list[list[int]]]:
+    """返回离地/落地边沿，以 [输入段序号, 段内相对物理步] 表示。
+
+    不同宿主频率下，同一脚本阶段(如 200ms 助跑)落在的物理步可能相差一步；按
+    全局步号比较会把“助跑长短”误判为“接触事件不同”。按输入段内的相对步对齐，
+    与 trajectory/velocity 的段内比较口径一致。
+    """
+    segments = _segments(samples, edges)
+    takeoffs: list[list[int]] = []
+    landings: list[list[int]] = []
+    for index, segment in enumerate(segments):
+        order = sorted(segment)
+        previous: bool | None = None
+        for update in order:
+            ground = _ground(segment[update])
+            if ground is None:
+                previous = None
+                continue
+            if previous is not None and previous != ground:
+                if ground:
+                    landings.append([index, update - order[0]])
+                else:
+                    takeoffs.append([index, update - order[0]])
+            previous = ground
     return takeoffs, landings
 
 
@@ -334,11 +373,18 @@ def _compare_metric(
     }
 
 
-def _compare_contacts(left: list[int], right: list[int], limit: int) -> dict[str, object]:
+def _compare_contacts(left: list[list[int]], right: list[list[int]], limit: int) -> dict[str, object]:
     if len(left) != len(right):
         return {"status": "failed", "reason": "contact_count_mismatch", "left": left, "right": right}
     worst = 0
-    for left_step, right_step in zip(left, right):
+    for (left_segment, left_step), (right_segment, right_step) in zip(left, right):
+        if left_segment != right_segment:
+            return {
+                "status": "failed",
+                "reason": "contact_segment_mismatch",
+                "left": left,
+                "right": right,
+            }
         worst = max(worst, abs(left_step - right_step))
     return {
         "status": "passed" if worst <= limit else "failed",
@@ -423,8 +469,8 @@ def compare(
     result["alignment"] = {
         "method": "consumed_input_edge_update_id",
         "edge_update_id": {"left": left_series["edge_update_id"], "right": right_series["edge_update_id"]},
-        "step_index": "physics.update_id - edge_update_id",
-        "edge_sample_may_include_one_update": True,
+        "step_index": "physics.update_id - consumed_edge_update_id",
+        "edge_definition": "physics update observed at the tick whose next commit consumes the intent",
     }
     if issues:
         return result
