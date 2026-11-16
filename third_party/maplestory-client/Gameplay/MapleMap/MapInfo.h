@@ -43,15 +43,21 @@ namespace ms
 		Ladder(nl::node source);
 
 		bool is_ladder() const;
-		bool inrange(Point<int16_t> position, bool upwards) const;
-		bool felloff(int16_t y, bool downwards) const;
 		int16_t get_x() const;
+		// Original ladder object +0x10/+0x14 (map y1/y2).
+		int16_t get_top() const;
+		int16_t get_bottom() const;
+		// Original ladder object +0x08; top exits at top-5 when set, otherwise clamps
+		// to top and stays attached (0x9CC727-0x9CC779). Map field mapping is the
+		// #250 inference (uf); a direct uf=0 top probe remains open.
+		bool exits_at_top() const;
 
 	private:
 		int16_t x;
 		int16_t y1;
 		int16_t y2;
 		bool ladder;
+		bool exitsAtTop;
 	};
 
 	class MapInfo
@@ -67,9 +73,9 @@ namespace ms
 
 		// Find a seat the player's position
 		Optional<const Seat> findseat(Point<int16_t> position) const;
-		// Find a ladder at the player's position
-		// !upwards - implies downwards
-		Optional<const Ladder> findladder(Point<int16_t> position, bool upwards) const;
+		// Original ladder query 0xA45B03: the segment's x range is expanded by 10 on
+		// both sides and its y range must overlap [top, bottom]; the first hit wins.
+		Optional<const Ladder> findladder(Point<int16_t> start, Point<int16_t> end) const;
 
 	private:
 		int32_t fieldlimit;

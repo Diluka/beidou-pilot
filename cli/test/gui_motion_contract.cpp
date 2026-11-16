@@ -58,6 +58,15 @@ void Near(double actual, double expected, const std::string& message) {
     Check(std::abs(actual - expected) < 1e-9, message);
 }
 
+// ZtlSecure<int> layout used by the ladder association at VecCtrl+0x124 (0x9CC0F5):
+// three words, value ^= original(key), checksum = key + mixed(encoded ^ 0xBAADF00D).
+std::array<std::uint32_t, 3> SecureInt(std::uint32_t value, std::uint32_t key = 0x12345678) {
+    const std::uint32_t mixedKey = (key << 5) | (key >> 27);
+    const std::uint32_t encoded = value ^ mixedKey;
+    const std::uint32_t mixed = encoded ^ 0xBAADF00D;
+    return {encoded, key, key + ((mixed >> 5) | (mixed << 27))};
+}
+
 template <class T> void Put(std::uintptr_t address, const T& value) {
     const auto bytes = reinterpret_cast<const unsigned char*>(&value);
     for (std::size_t index = 0; index < sizeof(value); ++index) memory[address + index] = bytes[index];
@@ -86,6 +95,8 @@ void Fixture(bool enhanced = false) {
     Put(Vector + 0x50, Right128);
     Put(Vector + 0x68, Up360);
     Put(Vector + 0x110, std::uint32_t{0x700000});
+    // No ladder/rope attachment: the world velocity fields apply.
+    Put(Vector + 0x124, SecureInt(0));
     Put(Vector + 0x1A8, Attributes);
     Attribute(Attributes + 0x24, SpeedBacking, enhanced ? Speed140 : Ratio100);
     Attribute(Attributes + 0x48, JumpBacking, enhanced ? Jump123 : Ratio100);
@@ -281,6 +292,20 @@ void PhysicsPose() {
           "physics velocity is a plain same-step world vector");
     Check(std::find(reads.begin(), reads.end(), User + 0x116C) == reads.end(),
           "physics pose never reads the integer display position cache");
+
+    // Attached ladder/rope: the original climb branch only writes y, so the cleared
+    // world velocity fields must stay unknown while position/grounding remain facts.
+    Fixture();
+    Put(Vector + 0x124, SecureInt(1));
+    pose = NativeMotion::CapturePhysics(User, 10);
+    Check(pose.known && pose.positionKnown && !pose.velocityKnown, "attached climb keeps velocity unknown");
+    Check(pose.onGround == MapleControl::Fact::True, "attached climb keeps independent grounding fact");
+
+    // An unreadable association leaves the velocity applicability unproven.
+    Fixture();
+    memory.erase(Vector + 0x124);
+    pose = NativeMotion::CapturePhysics(User, 11);
+    Check(pose.positionKnown && !pose.velocityKnown, "unreadable ladder association keeps velocity unknown");
 }
 
 void PhysicsPoseUnknowns() {

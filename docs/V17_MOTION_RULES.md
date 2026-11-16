@@ -440,7 +440,7 @@ StepAir(state, input, dt):
 - **普通运动核心**：`third_party/maplestory-client/Gameplay/Physics/V17NormalMotion.{h,cpp}` 是普通模式唯一规范状态所有者；`Step()` 按第 4 节实现地面/起跳/空中/下跳分支与梯形积分，`Project()` 是唯一 px/s→px/8ms 兼容投影，`ReferenceWalkSpeed/ReferenceJumpHeight` 提供与 GUI 同名模型 `v17_normal_continuous_v1` 的连续参考。
 - **碰撞**：`third_party/maplestory-client/Gameplay/Physics/FootholdTree.{h,cpp}` 的 `SweepLocalMotion`（起点+完整 30ms 位移扫掠）与 `QueryGroundBelow`/`JumpDownAvailable`；旧 `limit_movement/update_fh` 只保留给其他实体。
 - **调度与接线**：`Character/Player.{h,cpp}` 的 `advance_local_motion`/`update_presentation`/`motionCommitId` 实现 8ms 世界与 30ms 本地运动的混合时钟与模式交接；`Gameplay/Stage.cpp` 拆分提交时的完整段触怪扫掠；`headless/src/TickNativeAdapter.cpp` 拆分 move/jump 与 pickup/技能/用药/keyup 的消费确认；`headless/src/PlayerPhysicsPose.h` + `headless/src/SharedLuaAdapter.cpp` 把 `character.physics` 的 update_id/step_ms/velocity 改绑真实运动提交。
-- 频率与档位语义见 [TICK_FREQUENCY.md](TICK_FREQUENCY.md)；Lua 观察字段见 [LUA_TICK_API.md](LUA_TICK_API.md)。
+- 频率与档位语义见 [TICK_FREQUENCY.md](TICK_FREQUENCY.md)；Lua 观察字段见 [LUA_TICK_API.md](LUA_TICK_API.md)。攀爬/绳索的 30ms 分支与抓取查询映射见 [V17 其余运动规则](V17_EXTENDED_MOTION_RULES.md#climb) §2。
 - 验收（#239，PR #248，merge `63924d0`）：两端同提交构建在常驻服授权角色、`102000000` 勇士部落平地上做 13 个普通运动场景 × 5 次 + simple drop × 5 次的 `character.physics` 逐步比较，**75/75 全部 comparable**；最大相对轨迹差 0.65px、速度差 0.39px/s、离地/落地事件差 0 步（门槛 1px/1px·s⁻¹/1 个 30ms 步）。攀爬/绳梯、portal/换图、水下/飞行、特殊技能、移动平台等仍未与 GUI 逐步对齐（见第 6 节）。
 
 ### 8.4 对 #243 预测器的约束

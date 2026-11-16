@@ -17,6 +17,8 @@
 //////////////////////////////////////////////////////////////////////////////////
 #include "MapInfo.h"
 
+#include <algorithm>
+
 namespace ms
 {
 	MapInfo::MapInfo(nl::node src, Range<int16_t> walls, Range<int16_t> borders)
@@ -83,10 +85,16 @@ namespace ms
 		return nullptr;
 	}
 
-	Optional<const Ladder> MapInfo::findladder(Point<int16_t> position, bool upwards) const
+	Optional<const Ladder> MapInfo::findladder(Point<int16_t> start, Point<int16_t> end) const
 	{
+		const int16_t minx = std::min(start.x(), end.x()) - 10;
+		const int16_t maxx = std::max(start.x(), end.x()) + 10;
+		const int16_t miny = std::min(start.y(), end.y());
+		const int16_t maxy = std::max(start.y(), end.y());
+
 		for (auto& ladder : ladders)
-			if (ladder.inrange(position, upwards))
+			if (ladder.get_x() >= minx && ladder.get_x() <= maxx && miny <= ladder.get_bottom()
+				&& ladder.get_top() <= maxy)
 				return ladder;
 
 		return nullptr;
@@ -116,6 +124,7 @@ namespace ms
 		y1 = src["y1"];
 		y2 = src["y2"];
 		ladder = src["l"].get_bool();
+		exitsAtTop = src["uf"].get_bool();
 	}
 
 	bool Ladder::is_ladder() const
@@ -123,27 +132,23 @@ namespace ms
 		return ladder;
 	}
 
-	bool Ladder::inrange(Point<int16_t> position, bool upwards) const
-	{
-		auto hor = Range<int16_t>::symmetric(position.x(), 10);
-		auto ver = Range<int16_t>(y1, y2);
-
-		int16_t y = upwards ?
-			position.y() - 5 :
-			position.y() + 5;
-
-		return hor.contains(x) && ver.contains(y);
-	}
-
-	bool Ladder::felloff(int16_t y, bool downwards) const
-	{
-		int16_t dy = downwards ? y + 5 : y - 5;
-
-		return dy > y2 || y + 5 < y1;
-	}
-
 	int16_t Ladder::get_x() const
 	{
 		return x;
+	}
+
+	int16_t Ladder::get_top() const
+	{
+		return y1;
+	}
+
+	int16_t Ladder::get_bottom() const
+	{
+		return y2;
+	}
+
+	bool Ladder::exits_at_top() const
+	{
+		return exitsAtTop;
 	}
 }

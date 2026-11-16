@@ -61,8 +61,8 @@ namespace ms
 		int8_t update(const Physics& physics) override;
 		void update_presentation(const Physics& physics);
 		// Mixed clock: accumulate world time and consume it in whole motion steps.
-		// Ordinary STAND/WALK/FALL/PRONE use a fixed 30ms step; climb/swim/fly keep
-		// the legacy 8ms PhysicsObject path; sit/dead only let time pass.
+		// Ordinary STAND/WALK/FALL/PRONE and attached climb use a fixed 30ms step;
+		// swim keeps the legacy 8ms PhysicsObject path; sit/dead only let time pass.
 		LocalMotionCommit advance_local_motion(const Physics& physics, uint32_t worldMs);
 
 		// Real character motion commit identity and the last committed step time.
@@ -72,6 +72,9 @@ namespace ms
 		const V17NormalMotion& get_motion_state() const;
 		bool owns_normal_motion() const;
 		V17MotionMultipliers motion_multipliers() const;
+		// Rounded physical foot point and the start point of the last committed step.
+		Point<int16_t> get_physics_position() const;
+		Point<int16_t> get_last_commit_start_position() const;
 
 		// Single set of motion write entries: state writers must use these instead of
 		// writing PhysicsObject positions/forces directly while ordinary motion owns it.
@@ -195,6 +198,9 @@ namespace ms
 		enum class MotionMode
 		{
 			NORMAL,
+			// Attached ladder/rope: the original branch only moves y by 3px per 30ms
+			// step (0x9CC627); unattached LADDER/ROPE states keep the legacy fallback.
+			CLIMB,
 			LEGACY,
 			STATIC
 		};
@@ -224,6 +230,7 @@ namespace ms
 		Movement lastmove;
 
 		V17NormalMotion motion;
+		Point<int16_t> lastCommitStart;
 		uint16_t motionRemainderMs = 0;
 		uint64_t motionCommitId = 0;
 		uint32_t lastMotionStepMs = 0;

@@ -40,6 +40,9 @@ struct LocalPhysics {
 
 // Reads the physical position (VecCtrl +0x20/+0x38), world velocity
 // (+0x50/+0x68) and grounding (+0x110) from the same verified primary vector.
+// While the ladder/rope association (+0x124, 0x9CC0F5) is non-zero the velocity
+// stays unknown: the original climb branch moves only y and the grab path clears
+// the world velocity fields.
 // Positions are not rounded or interpolated. Recoverable read failures leave the
 // affected fact unknown; an unreadable primary vector leaves the whole record
 // unknown. updateId is the real character-update identity of the sample and the

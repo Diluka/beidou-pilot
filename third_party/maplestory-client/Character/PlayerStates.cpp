@@ -337,51 +337,10 @@ namespace ms
 		player.get_phobj().type = PhysicsObject::Type::FIXATED;
 	}
 
-	void PlayerClimbState::update(Player& player) const
+	void PlayerClimbState::send_action(Player& player, KeyAction::Id ka, bool down) const
 	{
-		if (player.is_key_down(KeyAction::Id::UP) && !player.is_key_down(KeyAction::Id::DOWN))
-		{
-			player.get_phobj().vspeed = -player.get_climbforce();
-		}
-		else if (player.is_key_down(KeyAction::Id::DOWN) && !player.is_key_down(KeyAction::Id::UP))
-		{
-			player.get_phobj().vspeed = player.get_climbforce();
-		}
-		else
-		{
-			player.get_phobj().vspeed = 0.0;
-		}
-
-		if (player.is_key_down(KeyAction::Id::JUMP) && haswalkinput(player))
-		{
-			play_jumpsound();
-
-			const auto& walkforce = player.get_walkforce() * 8.0;
-
-			player.set_direction(player.is_key_down(KeyAction::Id::RIGHT));
-
-			player.get_phobj().hspeed = player.is_key_down(KeyAction::Id::LEFT) ? -walkforce : walkforce;
-			player.get_phobj().vspeed = -player.get_jumpforce() / 1.5;
-
-			cancel_ladder(player);
-		}
-	}
-
-	void PlayerClimbState::update_state(Player& player) const
-	{
-		int16_t y = player.get_phobj().get_y();
-		bool downwards = player.is_key_down(KeyAction::Id::DOWN);
-		auto ladder = player.get_ladder();
-
-		if (ladder && ladder->felloff(y, downwards))
-			cancel_ladder(player);
-	}
-
-	void PlayerClimbState::cancel_ladder(Player& player) const
-	{
-		player.set_state(Char::State::FALL);
-		player.set_ladder(nullptr);
-		player.set_climb_cooldown();
+		if (down && ka == KeyAction::Id::JUMP)
+			player.request_jump();
 	}
 #pragma endregion
 }

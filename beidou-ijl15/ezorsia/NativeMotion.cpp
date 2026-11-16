@@ -74,6 +74,18 @@ double ZtlDouble(std::uintptr_t address) {
     return value;
 }
 
+// 0x9CC0F5 / 0x9CC6C0 read the ladder/rope association as a ZtlSecure<int> at
+// vector+0x124 and branch to the climb routine when it is non-zero. The climb
+// branch only writes y (3px per 30ms); it never writes the world velocity fields,
+// and the grab path clears them, so those fields cannot represent climb motion.
+bool LadderAttached(std::uintptr_t vector) {
+    const auto data = Read<std::array<std::uint32_t, 3>>(vector + 0x124);
+    const std::uint32_t mixed = data[0] ^ 0xBAADF00D;
+    const std::uint32_t checksum = data[1] + ((mixed >> 5) | (mixed << 27));
+    if (checksum != data[2]) throw ReadError("native ladder association checksum unavailable");
+    return (data[0] ^ ((data[1] << 5) | (data[1] >> 27))) != 0;
+}
+
 MapleControl::MotionVector Velocity(std::uintptr_t vector) {
     // Ground tangent projection (0x9B1646), air integration (0x9B2C3C), and
     // remote movement-path writeback (0x9B1719) all own these world-space fields.
@@ -226,10 +238,16 @@ MapleControl::PhysicsPose CapturePhysics(std::uintptr_t user, std::uint64_t upda
     } catch (const ReadError&) {
     }
     try {
-        const auto velocity = Velocity(vector);
-        pose.velocityKnown = true;
-        pose.velocityX = velocity.x;
-        pose.velocityY = velocity.y;
+        // While a ladder/rope is attached the world velocity fields are cleared on
+        // grab and never written by the climb branch, so publishing them would turn
+        // an inapplicable zero into a known speed. Any unreadable association also
+        // leaves the applicability unproven and the velocity unknown.
+        if (!LadderAttached(vector)) {
+            const auto velocity = Velocity(vector);
+            pose.velocityKnown = true;
+            pose.velocityX = velocity.x;
+            pose.velocityY = velocity.y;
+        }
     } catch (const ReadError&) {
     }
     try {

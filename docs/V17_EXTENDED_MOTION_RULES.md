@@ -54,6 +54,14 @@
 | 绳/梯差异 | headless 读取 `l` 选择 ROPE/LADDER动作，积分相同；原版已见专用关联对象与顶端标志 | 先核实原版类型与顶端标志的各自消费者；本轮不能宣称绳与梯所有状态完全相同 |
 | 观察 | `headless/src/PlayerPhysicsPose.h` 对legacy攀爬保留8ms位姿且速度未知；GUI普通速度字段存在上述适用性限制 | 补可判断的攀爬末态、附着身份和速度语义，再比较抓取/移动/松键/端点/跳梯；未知不补零 |
 
+### 2.1 #251 已落地的 headless 实现（本轮）
+
+- **30ms 攀爬步**：`Gameplay/Physics/V17ClimbMotion.{h,cpp}` 实现原版附着分支（0x9CC627）：每 30ms `y += inputY*3.0`，无重力/加速/梯形积分；顶底退出与跳梯按 §2 规则；`Character/Player.cpp::advance_local_motion` 新增 `MotionMode::CLIMB`（仅附着时；无附着的 LADDER/ROPE 人工状态保留 legacy 兜底）。攀爬提交推进真实 `motionCommitId`/`step_ms=30`。
+- **抓取查询**：`Gameplay/MapleMap/MapInfo` 的 `Ladder` 增加 `top/bottom/exits_at_top` 与 `findladder(start,end)`（0xA45B03 的 x 两侧各扩 10、y 区间与 `[top,bottom]` 求交、首个命中）；`Gameplay/Stage.cpp::check_ladders` 按原版路径分别查询地面向上（y−20）、地面向下（y+10 且要求 top 落在区间）和空中向上（`vy>0`，用上一提交起点到当前物理位置）。
+- **跳梯**：附着且 pending jump 时，横向输入非零才脱梯，写入 `vx=input*speedRatio*walkSpeed*1.3`、`vy=−jumpSpeed*jumpRatio/fieldGravity*0.5`（普通 profile），并在同一步走普通空中积分；横向为零时丢弃请求、保持附着。`PlayerClimbState::send_action` 记录 jump 边沿。
+- **观察**：GUI 桥 `NativeMotion.cpp::CapturePhysics` 读取绳梯关联（`V+0x124` 的 `ZtlSecure<int>`，0x9CC0F5），附着时速度保持未知而不是把抓梯清零后的世界速度字段发布为已知 0；headless 攀爬的速度同样未知，位置/`update_id`/`step_ms` 可比。文档同步见 `LUA_TICK_API.md`、`TICK_FREQUENCY.md`。
+- **仍未闭环**：`+0x08` 顶端标志的资源字段映射是推导（`l` 已被实测排除、`page` 恒非零、`uf` 是唯一含零候选；尚缺 uf=0 顶端的直接 GUI 实测，clamp 分支不作为已验证行为）；攀爬冷却、完整动作锁与绳/梯类型语义未取证；特殊 profile 的 0.3 纵向系数与 fly/G4 门控属 #254/#256；本轮只有离线合同，双端真机比较待后续提交验证。
+
 本地证据：`tmp/250-motion-rules/raw/user-frame.txt`、`climb-dynamics.txt`、`ladder-query.txt`，跳梯引用既有 `tmp/237-params/raw/asm-jump-alt-0x9B1D3D.txt`。本节保留了原件VA、常量和公式，不依赖临时文件长期存在。
 
 <a id="hurt"></a>
