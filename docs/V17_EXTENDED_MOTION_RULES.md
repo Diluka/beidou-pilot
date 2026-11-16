@@ -104,7 +104,7 @@
 - **保护时间**：`Character/Char.cpp::show_damage` 的受击保护从旧 Journey 2000ms 改为 1500ms：原版正伤害路径写 `+1500` 保护计数、每 30ms 步减 30（50 步=1500ms）。真机 6 次连续触怪恰好每隔 **50 个 30ms 提交（1500ms）** 再次生效，动态印证该计数与时长；miss/特殊攻击的正负计数覆盖关系仍未闭环。
 - **合同**：`v17_normal_motion_contract.cpp` 新增 `hurt-impulse` 场景（脱地+截断+空中积分、方向限幅只抵消到零、较大同向速度不被削弱、连续同向冲量不叠加）；离线全套 527 tests 通过。
 - **双端真机**（2026-11-17，常驻服角色 CID7）：GUI 地图 `101040000` 普通怪 `0130100` 6 次触怪、headless 地图 `106000000` 普通怪 `1130100` 2 次触怪，按 `character.physics` 逐 30ms 样本反推：冲量均为 `(±270,−270)px/s`；如原速 −125 遇 +270 → +145（观测 144.97），原速 +125 遇 −270 → −145（headless 观测 −144.97），vy 首样本均为 −210（−270+60）；方向随怪物相对位置变化。保护计数：GUI 连续触怪间隔恰为 50 个 30ms 提交（1500ms），headless 为 51 个提交（保护 50 步 + 1 步判定相位），动态一致。
-- **死亡/复活观察（附带取得，未对齐）**：hp 归零后 headless `dead=true`、不再接受移动；GUI `revive` 返回 `status=revived, changed=true`，复活到同地图固定复活点，位置/速度重置，HP=50（max169）而非满血；复活 HP 公式与死亡过程逐物理步轨迹尚未取证，死亡/复活运动对齐仍留在 #252。
+- **死亡/复活观察（附带取得，未对齐）**：hp 归零后 headless `dead=true`、移动意图返回 `state_unavailable_or_dead`、后续 30ms 提交位置冻结；GUI 死亡态 `dead/revive_requestable` 字段仍未知，`revive` 命令返回 `status=revived, changed=true`，两次均复活到同地图固定复活点（`(2581,567)`/`(2385,-71)`），位置/速度重置，HP=50（max169）而非满血。复活 HP 公式、死亡过程逐物理步轨迹与 GUI 死亡观察语义尚未取证，死亡/复活运动对齐仍留在 #252。
 - **仍未闭环**：miss/特殊攻击的正负保护计数覆盖关系、受击期间输入锁、空中/绳梯/特殊状态门控、服务端修正与客户端预测关系、死亡/复活运动；这些继续由 #252 补证。
 
 本地原始证据：`tmp/250-motion-rules/impulse-queue.asm`、`impulse-consume.asm`、`hit-terminal.asm`、`hit-counter.asm`、`hit-early-guard.asm`、`cast-trunc.asm`、`damage-impulse-branch.asm`；全量只读反汇编 `beidou.asm` 可检索调用者。VA 与公式已保留在本节，复核不依赖临时文件长期存在。后续最小验证应覆盖地面/空中受击、同向/反向已有速度、miss/正伤害、绳梯门控与保护计数终点；本节未进行受击、死亡或复活的真实游戏操作。
