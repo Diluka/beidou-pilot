@@ -60,6 +60,9 @@ class V17NormalMotionContract(unittest.TestCase):
     def test_down_jump_uses_native_impulse_and_drops_through(self) -> None:
         self.run_scenario("jumpdown", "drop")
 
+    def test_external_impulse_write_is_a_sample_and_integrates_next_step(self) -> None:
+        self.run_scenario("impulse-write", "air")
+
     def test_withdrawn_jump_is_not_consumed_by_a_later_step(self) -> None:
         self.run_scenario("no-late-jump", "flat")
 

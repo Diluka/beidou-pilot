@@ -305,10 +305,12 @@ namespace ms
 					set_ladder(nullptr);
 					set_state(State::FALL);
 					phobj.onground = false;
+					// The original climb branch writes the jump velocities and ends that
+					// 30ms update; the next update integrates the air step. Publish the
+					// written state as this commit's sample instead of integrating early.
 					motion.Reset(step.x, step.y, false, 0);
 					motion.ApplyImpulse(step.vx, step.vy);
-					motion.Step(physics.get_fht(), V17PhysicsParameters::Get(), motion_multipliers(), input, false,
-								0.030);
+					motion.CommitExternalWrite(30);
 					motion.Project(phobj, physics.get_fht());
 				}
 				else
