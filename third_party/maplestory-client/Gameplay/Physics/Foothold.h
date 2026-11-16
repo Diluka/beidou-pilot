@@ -83,6 +83,8 @@ namespace ms
 		int16_t hdelta() const;
 		// Returns the height
 		int16_t vdelta() const;
+		// Returns the segment length in map pixels
+		double length() const;
 		// Returns the slope as a ratio of vertical/horizontal
 		double slope() const;
 		// Returns a y-coordinate right below the given x-coordinate

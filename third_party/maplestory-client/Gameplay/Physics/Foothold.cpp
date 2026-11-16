@@ -17,6 +17,8 @@
 //////////////////////////////////////////////////////////////////////////////////
 #include "Foothold.h"
 
+#include <cmath>
+
 namespace ms
 {
 	Foothold::Foothold() : m_id(0), m_layer(0), m_next(0), m_prev(0) {}
@@ -135,6 +137,13 @@ namespace ms
 	int16_t Foothold::vdelta() const
 	{
 		return m_vertical.delta();
+	}
+
+	double Foothold::length() const
+	{
+		const double x = static_cast<double>(x2()) - static_cast<double>(x1());
+		const double y = static_cast<double>(y2()) - static_cast<double>(y1());
+		return std::sqrt(x * x + y * y);
 	}
 
 	double Foothold::slope() const
