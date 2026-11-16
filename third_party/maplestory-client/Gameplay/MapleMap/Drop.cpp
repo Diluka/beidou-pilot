@@ -16,6 +16,7 @@
 //	along with this program.  If not, see <https://www.gnu.org/licenses/>.		//
 //////////////////////////////////////////////////////////////////////////////////
 #include "Drop.h"
+#include "DropDisplay.h"
 
 namespace ms
 {
@@ -37,13 +38,11 @@ namespace ms
 		case 0:
 		case 1:
 			state = Drop::State::DROPPED;
-			basey = static_cast<double>(dest.y() - 4);
 			phobj.vspeed = -5.0f;
 			phobj.hspeed = static_cast<double>(dest.x() - start.x()) / 48;
 			break;
 		case 2:
 			state = Drop::State::FLOATING;
-			basey = phobj.crnt_y();
 			phobj.type = PhysicsObject::Type::FIXATED;
 			break;
 		case 3:
@@ -65,7 +64,8 @@ namespace ms
 				phobj.type = PhysicsObject::Type::FIXATED;
 				state = Drop::State::FLOATING;
 				angle.set(0.0f);
-				set_position(dest.x(), dest.y() - 4);
+				// Floating display is anchored at the public drop destination.
+				set_position(dest.x(), dest.y());
 			}
 			else
 			{
@@ -76,8 +76,8 @@ namespace ms
 
 		if (state == Drop::State::FLOATING)
 		{
-			phobj.y = basey + 5.0f + (cos(moved) - 1.0f) * 2.5f;
-			moved = (moved < 360.0f) ? moved + 0.025f : 0.0f;
+			phobj.y = dest.y() + DropFloatingOffsetY(moved);
+			moved = DropFloatingNextPhase(moved);
 		}
 
 		if (state == Drop::State::PICKEDUP)

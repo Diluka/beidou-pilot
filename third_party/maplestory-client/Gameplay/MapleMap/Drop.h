@@ -56,7 +56,6 @@ namespace ms
 		State state;
 
 		Point<int16_t> dest;
-		double basey;
 		double moved;
 	};
 }
