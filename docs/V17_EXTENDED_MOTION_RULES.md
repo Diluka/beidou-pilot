@@ -60,6 +60,8 @@
 - **抓取查询**：`Gameplay/MapleMap/MapInfo` 的 `Ladder` 增加 `top/bottom/exits_at_top` 与 `findladder(start,end)`（0xA45B03 的 x 两侧各扩 10、y 区间与 `[top,bottom]` 求交、首个命中）；`Gameplay/Stage.cpp::check_ladders` 按原版路径分别查询地面向上（y−20）、地面向下（y+10 且要求 top 落在区间）和空中向上（`vy>0`，用上一提交起点到当前物理位置）。
 - **跳梯**：附着且 pending jump 时，横向输入非零才脱梯，写入 `vx=input*speedRatio*walkSpeed*1.3`、`vy=−jumpSpeed*jumpRatio/fieldGravity*0.5`（普通 profile），并在同一步走普通空中积分；横向为零时丢弃请求、保持附着。`PlayerClimbState::send_action` 记录 jump 边沿。
 - **观察**：GUI 桥 `NativeMotion.cpp::CapturePhysics` 读取绳梯关联（`V+0x124` 的 `ZtlSecure<int>`，0x9CC0F5），附着时速度保持未知而不是把抓梯清零后的世界速度字段发布为已知 0；headless 攀爬的速度同样未知，位置/`update_id`/`step_ms` 可比。文档同步见 `LUA_TICK_API.md`、`TICK_FREQUENCY.md`。
+- **跳梯两段式与观察语义（双端真机补充）**：原版跳梯的解绑更新只写入 `vx/vy` 并结束，该 30ms 步位置不变；下一次更新才做空中积分。GUI 实测写入样本 `(x=975,y=345,vx=162.5,vy=-277.5)`，下一步 `(979.875,337.575,vy=-217.5)`；headless 已按此修正（`V17NormalMotion::CommitExternalWrite` 发布写入样本，下一普通提交积分），双端写入值、积分、落地一致。唯一可见差异是 GUI 首个积分步不衰减 vx 而当前 headless 空气模型衰减 0.03px/s（累计约 0.0005px，门槛内）。因此 `character.physics` 的单个 30ms 样本可能表示“纯写入态”（速度已知、位置未积分），消费方按普通 update 对齐即可，不把它当位置异常。
+- **仍未闭环**：`uf=0` 顶端 clamp 分支的直接真机实测尚未取得（当前可安全到达的测试地图只有 `uf=1` 资源），该分支不作为已验证行为；攀爬冷却/完整动作锁/绳梯类型语义同样未取证。
 - **仍未闭环**：`+0x08` 顶端标志的资源字段映射是推导（`l` 已被实测排除、`page` 恒非零、`uf` 是唯一含零候选；尚缺 uf=0 顶端的直接 GUI 实测，clamp 分支不作为已验证行为）；攀爬冷却、完整动作锁与绳/梯类型语义未取证；特殊 profile 的 0.3 纵向系数与 fly/G4 门控属 #254/#256；本轮只有离线合同，双端真机比较待后续提交验证。
 
 本地证据：`tmp/250-motion-rules/raw/user-frame.txt`、`climb-dynamics.txt`、`ladder-query.txt`，跳梯引用既有 `tmp/237-params/raw/asm-jump-alt-0x9B1D3D.txt`。本节保留了原件VA、常量和公式，不依赖临时文件长期存在。
