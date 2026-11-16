@@ -29,6 +29,9 @@ SOURCES = {
         "cli/test/test_headless_held_input.py",
         "cli/test/test_native_action_state.py",
         "cli/test/test_gui_motion.py",
+        "cli/test/test_motion_compare.py",
+        "cli/test/test_bridge_physics.py",
+        "tools/motion_compare.py",
         "cli/test/test_tick_cli.py",
         "cli/test/test_tick_gui_input.py",
         "cli/test/test_native_observations.py",
@@ -44,6 +47,7 @@ SOURCES = {
         "shared/lua-runtime/*.h",
         "headless/src/SharedLuaAdapter.cpp",
         "headless/src/SharedLuaAdapter.h",
+        "headless/src/PlayerPhysicsPose.h",
         "headless/src/TickNativeAdapter.cpp",
         "headless/src/TickNativeAdapter.h",
         "headless/src/Interaction.cpp",
@@ -71,7 +75,7 @@ SOURCES = {
         "beidou-ijl15/ezorsia/ObserveNotifications.cpp",
         "cli/test/*_contract.cpp",
     ),
-    "stylua": ("shared/scripts/examples/*.lua",),
+    "stylua": ("shared/scripts/examples/*.lua", "shared/scripts/calibration/*.lua"),
 }
 
 

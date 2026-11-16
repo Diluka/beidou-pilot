@@ -1,11 +1,23 @@
 """以真实 Lua 和共享 tick 引擎验证公开 API；替身仅提供原生 I/O。"""
 
+import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
 from beidou_pilot.strategies import compile_strategy, parse_options, read_strategy_file, split_script_header
+
+
+TOOLS = Path(__file__).resolve().parents[2] / "tools"
+
+
+def load_tool(name: str):
+    spec = importlib.util.spec_from_file_location(name, TOOLS / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class TickRuntimeContract(unittest.TestCase):
@@ -155,6 +167,44 @@ end
             compile_strategy(source, {"skill_id": 1001004, "hold_seconds": 0.1}, scene), encoding="utf-8"
         )
         subprocess.run([str(self.executable), "held-skill-example", str(compiled)], check=True, timeout=10)
+
+    def test_motion_calibration_script_emits_records_the_offline_comparator_accepts(self) -> None:
+        path = Path(__file__).resolve().parents[2] / "shared/scripts/calibration/tick-motion-calibration.lua"
+        source, metadata = read_strategy_file(path)
+        self.assertIsNotNone(metadata)
+        self.assertEqual(4, metadata.execution.gear)
+        comparator = load_tool("motion_compare")
+        scene = {"instance_id": "tick-contract", "character_id": 1, "map_id": 50000, "scene_generation": 1}
+        cases = (
+            ("walk", ["--scenario", "walk", "--hold-ms", "100"]),
+            ("reverse", ["--scenario", "reverse", "--runup-ms", "100", "--hold-ms", "100"]),
+        )
+        for scenario, arguments in cases:
+            with self.subTest(scenario=scenario):
+                options = parse_options(metadata, [*arguments, "--timeout-ms", "1000"])
+                compiled = self.executable.parent / f"tick-motion-calibration-{scenario}.lua"
+                compiled.write_text(compile_strategy(source, options, scene), encoding="utf-8")
+                output = subprocess.check_output(
+                    [str(self.executable), "calibration-example", str(compiled)], text=True
+                )
+                records = [json.loads(line) for line in output.splitlines() if line.strip()]
+                self.assertGreaterEqual(len(records), 4)
+                for record in records:
+                    self.assertEqual(scenario, record["scenario"])
+                    self.assertIn(record["event"], {"begin", "tick", "end"})
+                    if record["event"] == "tick":
+                        physics = record["physics"]
+                        self.assertIsInstance(physics, dict)
+                        self.assertGreaterEqual(physics["step_ms"], 1)
+                        self.assertIsNotNone(physics["update_id"])
+                        self.assertIn(record["input"], ("right", "left", "none"))
+                        self.assertIn(
+                            record["sample"], ("first", "new", "repeat", "gap", "missing", "regressed", "unknown")
+                        )
+                result = comparator.compare(records, records)
+                self.assertEqual("comparable", result["status"], result)
+                if scenario == "reverse":
+                    self.assertEqual(["right", "left"], result["left"]["edge_inputs"])
 
     def test_moving_jump_attack_example_holds_direction_until_landing(self) -> None:
         path = Path(__file__).resolve().parents[2] / "shared/scripts/examples/tick-jump-attack.lua"
