@@ -423,6 +423,8 @@ y = y0 - v*t + 400*t*t
 - 【观测·静态 + 动态】普通绝对片段中，headless 命名为 `lastx/lasty` 的两个 word 对应原版 **当前片段端点速度 vx/vy（px/s）**：创建者 `0x9B108A` 从 VecCtrl 的 x/y/vx/vy 四个加密 double 读取并整数化后交给 `0x68AB85`。既有样本直接出现 `vx=±125`、`vy=-555/670`，与普通运动规则相符。
 - 【观测·静态】包尾 8 字节是路径端点的 **minX/minY/maxX/maxY**。`0x68A597–0x68A5BB` 先用起点初始化上下界，`0x68A6A9–0x68A6D6` 对绝对坐标更新 min/max，`0x68A78D–0x68A7C0` 输出四个 word。旧记录“末尾=当前 x,y”需要更正：单调向右平地时，最后一对 maxX/maxY 恰好等于终点；向左、往返和跳跃时不成立。此包围盒覆盖已记录的端点，不保证是连续曲线的精确几何包围盒。
 
+【已落地调整（2026-11-17，#272）】headless MOVE_PLAYER 出站布局补齐为 §10 结构：1+4 字节未知上下文写 0（生产链未闭环）、路径起点（上一发送端点；首包用当前端点）、片段数 1、fragment 0、方向记录计数 K=0（未逐帧记录输入方向，不伪造 nibble）、尾部 4 word 包围盒（起点/端点分量 min/max，`MovePlayerBounds.h` + `moveplayer_bounds_contract` 覆盖）。`headless_held_input_contract` 的 packets 场景更新为 35 字节布局断言（上下文 0、单片段、K=0、bbox 与 start/end 一致）。双客户端真机（CID6 GUI 观察者 + CID7 headless 移动端，城镇 `102000000`）：headless 位移 76.9px，GUI `players[]` 显示范围 56–124，移动样本相位 0 中位差 3.7px、p90 5.2px，无断线/传送/回拉。剩余：上下文字段生产链、K 的逐帧方向记录、批量/合并/gate 与 ACK。
+
 【已落地调整（2026-11-17，#271）】headless MOVE_PLAYER 片段 0/5/17 的两个速度 word 已按 §10 语义修正：普通 V17 运动写 `LastStep().vx/vy`（px/s），legacy 附着模式用 `PhysicsObject` 8ms 速度换算 px/s；新增 `MovePlayerFragment.h` 做取整/int16 夹取与 `moveplayer_fragment_contract`（0/±125/−555/取整/夹取）。移动检测仍按位置版本 `hasmoved`，只改包内速度字。双客户端真机（CID6 GUI 观察端 + CID7 headless 移动端，同图 `102010000`）：headless 自身位移 124px，GUI `players[]` 显示范围一致（2169–2293），移动样本相位 0 中位差 4.9px（GUI 整数显示/采样量化），无传送/回拉/断开。剩余：上下文 5 字节业务含义、方向记录/包围盒、批量/合并/gate 与 ACK。
 
 ### 原版 MOVE_PLAYER 包结构
