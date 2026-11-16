@@ -331,7 +331,9 @@ y = y0 - v*t + 400*t*t
 
 【同对象字段对账（2026-11-17，#267 双客户端同一批 DropPool）】相同 oid/x 的两个对象：GUI 公开锚点 y=1957（oid60）/1943（oid61），headless `dest.y`（悬浮均值）为 1971/1955，差 +14/+12；headless 的抛物线起点采样两者同为 y≈1955（共享出生点）。说明两端对同一 DropLoot 包的 `dropto/dropfrom` 字段映射或锚点偏移并不一致，不能直接把差值归给显示公式。下一步需抓取/反汇编原版 Drop 创建时 `drop+0x0C/+0x00/+0x74/+0x68` 与包的写入顺序，确认 GUI 公开锚点到底对应哪个包字段，再决定 headless `dest` 的赋值。
 
-【已落地调整（2026-11-17，#267）】headless 悬浮显示已按 state3 静态公式实现：`y = yd + 3*sin(phase)`、相位按 30ms 的 `0.0942477` 换算到 8ms 世界步（π rad/s、2s 周期），落地显示点改为锚点 `yd`（`DropDisplay.h` + `drop_display_contract`）。双客户端真机（GUI 击杀者 + headless 观察者）测得悬浮范围 6px（±3）、周期 1.95–2.0s，与静态公式一致；旧 `dest.y-1.5` 均值/2.5px 幅度已移除。同一批对象的 GUI 锚点与 headless 显示均值仍相差 12–14px（`dest.y` 来源未闭环，保留待办）。
+【已落地调整（2026-11-17，#267/#268）】headless 悬浮显示已按 state3 静态公式实现：`y = yd + 3*sin(phase)`、相位按 30ms 的 `0.0942477` 换算到 8ms 世界步（π rad/s、2s 周期），落地显示点改为锚点 `yd`（`DropDisplay.h` + `drop_display_contract`）。双客户端真机（GUI 击杀者 + headless 观察者）测得悬浮范围 6px（±3）、周期 1.95–2.0s，与静态公式一致。
+
+锚点字段差异已由 #268 闭环：GUI 公开锚点与 headless 包目的地差 12–14px，对应图标半高（`4000003` iconRaw 28px→14、meso `09000000` iconRaw 24px→12）；原版 `yd` 是图标中心，即 `yd = 包目的地 − 图标半高`。headless 已加 `virtual get_icon_half_height()`（ItemDrop/MesoDrop 按图标尺寸/2）并按 `dest.y − half + 3sin` 显示。同批 10 个 DropPool 对象复测：headless 落地 x 与 GUI 锚点完全一致、悬浮均值与 GUI 锚点差 ≤0.7px（改动前 12–14px）。证据在所属环境 `tmp/258-drops/`。
 
 【动态证据（2026-11-17，同图 `102010000`）】GUI CID6 击杀怪物后观察 DropPool：掉落物公开锚点 x/y 在生命周期内保持不变，`landed` 在约 1.0–1.06 秒后为真，观察到的生命周期约 2.4/4.6 秒（服务器侧产生）。同图 headless CID6 击杀后观察显示点：落地悬浮稳定后 x 与锚点一致，显示 y 在 1931–1936 间摆动（均值 1933.5，幅度 ±2.5），而 GUI 同 x 的锚点 y 为 1921–1924；即 headless 显示均值比原版锚点低约 11–12px，原版显示公式为 `yd+3*sin(phase)`（锚点均值、幅度 3），headless 为 `dest.y-1.5` 均值、幅度 2.5。headless 新掉落的抛物线落下轨迹已在该窗口观察到（x≈1970–2005、y 1843→1933）。参考点差异与 dest.y 的来源（服务器锚点还是 foothold）仍需闭环，不能直接按屏幕坐标比较两端轨迹。证据在所属环境 `tmp/258-drops/`。
 
