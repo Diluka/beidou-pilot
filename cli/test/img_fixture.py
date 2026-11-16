@@ -7,6 +7,11 @@ from typing import TypeAlias
 
 
 @dataclass(frozen=True)
+class Real:
+    value: float
+
+
+@dataclass(frozen=True)
 class Vector:
     x: int
     y: int
@@ -24,7 +29,7 @@ class Uol:
     path: str
 
 
-ImgValue: TypeAlias = int | str | dict[str, "ImgValue"] | Vector | Canvas | Uol
+ImgValue: TypeAlias = int | str | dict[str, "ImgValue"] | Real | Vector | Canvas | Uol
 
 
 def _cint(value: int) -> bytes:
@@ -40,8 +45,7 @@ def _encoded_string(value: str) -> bytes:
     count = len(encoded) // 2
     length = bytes([count]) if count < 127 else b"\x7f" + struct.pack("<I", count)
     words = struct.unpack("<" + "H" * count, encoded)
-    return length + b"".join(struct.pack("<H", word ^ ((0xAAAA + index) & 0xFFFF))
-                               for index, word in enumerate(words))
+    return length + b"".join(struct.pack("<H", word ^ ((0xAAAA + index) & 0xFFFF)) for index, word in enumerate(words))
 
 
 def _property_string(value: str) -> bytes:
@@ -54,6 +58,8 @@ def _property_entries(properties: dict[str, ImgValue], base: int) -> bytearray:
         output.extend(_property_string(name))
         if isinstance(value, int):
             output.extend(b"\x03" + _cint(value))
+        elif isinstance(value, Real):
+            output.extend(b"\x05" + struct.pack("<d", value.value))
         elif isinstance(value, str):
             output.extend(b"\x08" + _property_string(value))
         else:

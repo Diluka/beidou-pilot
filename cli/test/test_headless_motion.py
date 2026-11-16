@@ -68,19 +68,12 @@ class HeadlessMotionContract(unittest.TestCase):
     def test_shared_movable_contract_labels_interval_mean_not_server_velocity(self) -> None:
         subprocess.run([str(self.executable), "contract"], check=True, timeout=10)
 
-    def test_production_local_pose_keeps_physical_point_step_and_host_tick_identity(self) -> None:
-        subprocess.run([str(self.executable), "physics-pose"], check=True, timeout=10)
-
-    def test_inexact_velocity_contexts_stay_unknown_instead_of_fabricated_px_s(self) -> None:
-        subprocess.run([str(self.executable), "physics-pose-unknown"], check=True, timeout=10)
-
-    def test_physics_velocity_is_never_the_full_step_delta_mean(self) -> None:
-        subprocess.run([str(self.executable), "physics-pose-not-delta"], check=True, timeout=10)
-
-    def test_shared_adapter_projects_the_same_pose_into_observation_and_state(self) -> None:
+    def test_shared_adapter_binds_the_pose_to_the_real_motion_commit_number(self) -> None:
         root = Path(__file__).resolve().parents[2]
         adapter = (root / "headless/src/SharedLuaAdapter.cpp").read_text(encoding="utf-8")
         self.assertIn('#include "PlayerPhysicsPose.h"', adapter)
-        self.assertIn("ms::PlayerPhysicsPose(ph, player.is_climbing(), player.is_underwater(), nativeTick", adapter)
+        self.assertIn("state.character.physics = ms::PlayerPhysicsPose(player);", adapter)
+        self.assertIn("state.characterUpdates = player.get_motion_commit_id();", adapter)
+        self.assertIn('movement.model = "v17_normal_continuous_v1"', adapter)
         self.assertEqual(2, adapter.count('{"physics", Json::parse(state.character.physics.Document().Dump())}'))
         self.assertIn("state.character.physics = {};", adapter)

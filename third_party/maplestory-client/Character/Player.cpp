@@ -19,6 +19,7 @@
 
 #include "PlayerStates.h"
 
+#include "../Audio/Audio.h"
 #include "../Data/WeaponData.h"
 #include "../IO/UI.h"
 
@@ -62,7 +63,9 @@ namespace ms
 		}
 	}
 
-	Player::Player(const CharEntry& entry) : Char(entry.id, entry.look, entry.stats.name), stats(entry.stats)
+	Player::Player(const CharEntry& entry) :
+		Char(entry.id, entry.look, entry.stats.name),
+		stats(entry.stats)
 	{
 		attacking = false;
 		underwater = false;
@@ -71,11 +74,15 @@ namespace ms
 		set_direction(true);
 	}
 
-	Player::Player() : Char(0, {}, "") {}
+	Player::Player() :
+		Char(0, {}, "")
+	{
+	}
 
 	void Player::respawn(Point<int16_t> pos, bool uw)
 	{
 		set_position(pos.x(), pos.y());
+		reset_motion(pos, true);
 		underwater = uw;
 		keysdown.clear();
 		held_item = 0;
@@ -92,6 +99,11 @@ namespace ms
 			pst->send_action(*this, action, down);
 
 		keysdown[action] = down;
+
+		// A jump key-up immediately drops an edge that no motion commit consumed yet;
+		// an already started trajectory keeps its physical state.
+		if (action == KeyAction::JUMP && !down)
+			clear_motion_requests();
 	}
 
 	void Player::recalc_stats(bool equipchanged)
@@ -186,39 +198,261 @@ namespace ms
 
 	int8_t Player::update(const Physics& physics)
 	{
+		// Kept as the 8ms presentation entry for existing callers; physical motion is
+		// owned by advance_local_motion and never applied here.
+		update_presentation(physics);
+		return get_layer();
+	}
+
+	void Player::update_presentation(const Physics& physics)
+	{
 		const PlayerState* pst = get_state(state);
 
 		if (pst)
 		{
-			pst->update(*this);
-			physics.move_object(phobj);
-
-			bool aniend = Char::update(physics, get_stancespeed());
+			const bool aniend = Char::update(physics, get_stancespeed());
 
 			if (aniend && attacking)
 			{
 				attacking = false;
 				nullstate.update_state(*this);
 			}
-			else
-			{
-				pst->update_state(*this);
-			}
-		}
-
-		uint8_t stancebyte = facing_right ? state : state + 1;
-		Movement newmove(phobj, stancebyte);
-		bool needupdate = lastmove.hasmoved(newmove);
-
-		if (needupdate)
-		{
-			MovePlayerPacket(newmove).dispatch();
-			lastmove = newmove;
 		}
 
 		climb_cooldown.update();
+		send_movement_if_changed();
+	}
 
-		return get_layer();
+	LocalMotionCommit Player::advance_local_motion(const Physics& physics, uint32_t worldMs)
+	{
+		LocalMotionCommit commit;
+		motionRemainderMs = static_cast<uint16_t>(motionRemainderMs + worldMs);
+
+		for (;;)
+		{
+			const MotionMode mode = motion_mode();
+
+			if (mode == MotionMode::NORMAL)
+			{
+				if (motionRemainderMs < 30)
+					break;
+
+				phobj.begin_motion_sample(30);
+				const PlayerState* pst = get_state(state);
+
+				if (pst)
+					pst->update(*this);
+
+				const V17MotionInput input = capture_motion_input();
+				const bool jumpDownAllowed = phobj.enablejd && is_key_down(KeyAction::Id::DOWN);
+				const V17MotionStep step = motion.Step(physics.get_fht(), V17PhysicsParameters::Get(), motion_multipliers(),
+													   input, jumpDownAllowed, 0.030);
+
+				if (step.jumped || step.jumpedDown)
+					Sound(Sound::Name::JUMP).play();
+
+				pst = get_state(state);
+
+				if (pst)
+					pst->update_state(*this);
+
+				motion.Project(phobj, physics.get_fht());
+				phobj.end_motion_sample();
+				++motionCommitId;
+				lastMotionStepMs = 30;
+				send_movement_if_changed();
+				motionRemainderMs -= 30;
+				commit.motionCommitted = true;
+				commit.normalStep = true;
+				commit.stepMs = 30;
+			}
+			else if (mode == MotionMode::LEGACY)
+			{
+				if (motionRemainderMs < ms::Constants::TIMESTEP)
+					break;
+
+				phobj.begin_motion_sample(ms::Constants::TIMESTEP);
+				legacy_update_8ms(physics);
+				phobj.end_motion_sample();
+				++motionCommitId;
+				lastMotionStepMs = ms::Constants::TIMESTEP;
+				send_movement_if_changed();
+				motionRemainderMs -= ms::Constants::TIMESTEP;
+				commit.motionCommitted = true;
+				commit.normalStep = false;
+				commit.stepMs = ms::Constants::TIMESTEP;
+			}
+			else
+			{
+				// Sitting/dead: the world clock advances but no motion sample exists.
+				if (motionRemainderMs < 30)
+					break;
+
+				motionRemainderMs -= 30;
+			}
+		}
+
+		return commit;
+	}
+
+	void Player::legacy_update_8ms(const Physics& physics)
+	{
+		const PlayerState* pst = get_state(state);
+
+		if (!pst)
+			return;
+
+		pst->update(*this);
+		physics.move_object(phobj);
+		pst->update_state(*this);
+	}
+
+	void Player::send_movement_if_changed()
+	{
+		const uint8_t stancebyte = facing_right ? state : state + 1;
+		const Movement newmove(phobj, stancebyte);
+
+		if (!lastmove.hasmoved(newmove))
+			return;
+
+		MovePlayerPacket(newmove).dispatch();
+		lastmove = newmove;
+	}
+
+	uint64_t Player::get_motion_commit_id() const
+	{
+		return motionCommitId;
+	}
+
+	uint32_t Player::get_last_motion_step_ms() const
+	{
+		return lastMotionStepMs;
+	}
+
+	V17NormalMotion& Player::get_motion_state()
+	{
+		return motion;
+	}
+
+	const V17NormalMotion& Player::get_motion_state() const
+	{
+		return motion;
+	}
+
+	bool Player::owns_normal_motion() const
+	{
+		return motion.OwnsNormalState();
+	}
+
+	V17MotionMultipliers Player::motion_multipliers() const
+	{
+		V17MotionMultipliers multipliers;
+		multipliers.mass = 100.0;		  // character attribute constructor default
+		multipliers.walkForceRatio = 1.0; // C+0x18 constructor/update default
+		multipliers.speedRatio = static_cast<double>(stats.get_total(EquipStat::Id::SPEED)) / 100.0;
+		multipliers.frictionRatio = 1.0; // C+0x30 constructor default
+		multipliers.jumpRatio = static_cast<double>(stats.get_total(EquipStat::Id::JUMP)) / 100.0;
+		return multipliers;
+	}
+
+	void Player::request_jump()
+	{
+		motion.RequestJump();
+	}
+
+	void Player::request_jump_down()
+	{
+		motion.RequestJumpDown();
+	}
+
+	void Player::clear_motion_requests()
+	{
+		motion.ClearJumpRequests();
+	}
+
+	void Player::apply_motion_impulse(double vx, double vy)
+	{
+		motion.ApplyImpulse(vx, vy);
+	}
+
+	void Player::begin_motion_rush(double targetX)
+	{
+		motion.BeginRush(targetX, get_attackdelay(1));
+	}
+
+	void Player::suspend_motion()
+	{
+		motion.Suspend();
+		// No motion sample belongs to the static/legacy owner until it commits one.
+		lastMotionStepMs = 0;
+	}
+
+	void Player::resume_motion_from_projection()
+	{
+		motion.ResumeFromProjection(phobj);
+	}
+
+	void Player::reset_motion(Point<int16_t> position, bool onGround)
+	{
+		motionRemainderMs = 0;
+		lastMotionStepMs = 0;
+		phobj.fhid = 0;
+		phobj.fhslope = 0.0;
+		phobj.fhlayer = 0;
+		phobj.type = PhysicsObject::Type::NORMAL;
+		phobj.onground = onGround;
+		phobj.enablejd = false;
+		phobj.groundbelow = 0.0;
+		motion.Reset(position.x(), position.y(), onGround, 0);
+	}
+
+	bool Player::is_normal_state(State st)
+	{
+		return st == State::STAND || st == State::WALK || st == State::FALL || st == State::PRONE;
+	}
+
+	Player::MotionMode Player::motion_mode() const
+	{
+		if (motion.OwnsNormalState())
+			return MotionMode::NORMAL;
+
+		if (state == State::LADDER || state == State::ROPE || state == State::SWIM)
+			return MotionMode::LEGACY;
+
+		return MotionMode::STATIC;
+	}
+
+	void Player::sync_motion_ownership()
+	{
+		if (is_normal_state(state))
+		{
+			if (!motion.OwnsNormalState())
+				resume_motion_from_projection();
+
+			return;
+		}
+
+		if (motion.OwnsNormalState())
+			suspend_motion();
+
+		// Only attached legacy modes (ladder/rope/swim) keep committing 8ms motion
+		// samples; a static state has none until ordinary motion resumes.
+		if (state != State::LADDER && state != State::ROPE && state != State::SWIM)
+			lastMotionStepMs = 0;
+	}
+
+	V17MotionInput Player::capture_motion_input() const
+	{
+		V17MotionInput input;
+
+		if (attacking)
+			return input;
+
+		const bool left = is_key_down(KeyAction::Id::LEFT);
+		const bool right = is_key_down(KeyAction::Id::RIGHT);
+		input.direction = left == right ? 0 : right ? 1
+													: -1;
+		return input;
 	}
 
 	int8_t Player::get_integer_attackspeed() const
@@ -252,6 +486,8 @@ namespace ms
 
 			if (pst)
 				pst->initialize(*this);
+
+			sync_motion_ownership();
 		}
 	}
 
@@ -367,12 +603,20 @@ namespace ms
 
 	void Player::rush(double targetx)
 	{
-		if (phobj.onground)
+		if (!phobj.onground)
+			return;
+
+		if (motion.OwnsNormalState())
 		{
-			uint16_t delay = get_attackdelay(1);
-			phobj.movexuntil(targetx, delay);
-			phobj.set_flag(PhysicsObject::Flag::TURNATEDGES);
+			// Same equivalent speed as the legacy movexuntil (px/8ms -> px/s), but the
+			// canonical state owns it so the next ordinary step cannot erase the rush.
+			begin_motion_rush(targetx);
+			return;
 		}
+
+		const uint16_t delay = get_attackdelay(1);
+		phobj.movexuntil(targetx, delay);
+		phobj.set_flag(PhysicsObject::Flag::TURNATEDGES);
 	}
 
 	bool Player::is_invincible() const
@@ -399,8 +643,17 @@ namespace ms
 
 		if (knockback && randomizer.above(stats.get_stance()))
 		{
-			phobj.hspeed = fromleft ? -1.5 : 1.5;
-			phobj.vforce -= 3.5;
+			if (motion.OwnsNormalState())
+			{
+				// Equivalent to the legacy per-step impulse (1.5px/8ms, 3.5px/step):
+				// the canonical state takes it so ordinary motion cannot overwrite it.
+				apply_motion_impulse(fromleft ? -187.5 : 187.5, -437.5);
+			}
+			else
+			{
+				phobj.hspeed = fromleft ? -1.5 : 1.5;
+				phobj.vforce -= 3.5;
+			}
 		}
 
 		uint8_t direction = fromleft ? 0 : 1;
@@ -477,8 +730,10 @@ namespace ms
 	{
 		if (seat)
 		{
+			clear_motion_requests();
 			set_position(seat->getpos());
 			set_state(Char::State::SIT);
+			suspend_motion();
 		}
 	}
 
@@ -488,6 +743,7 @@ namespace ms
 
 		if (ladder)
 		{
+			clear_motion_requests();
 			phobj.set_x(ldr->get_x());
 
 			phobj.hspeed = 0.0;
@@ -495,6 +751,7 @@ namespace ms
 			phobj.fhlayer = 7;
 
 			set_state(ldr->is_ladder() ? Char::State::LADDER : Char::State::ROPE);
+			suspend_motion();
 		}
 	}
 

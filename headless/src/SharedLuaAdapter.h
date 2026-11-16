@@ -38,7 +38,7 @@ private:
     void SyncKeys();
     nlohmann::json ScriptState(const std::string& id) const;
     nlohmann::json ScriptsDocument() const;
-    void Capture(std::uint64_t nativeTick);
+    void Capture();
     void ReadCommand();
     void ReadObservation();
     nlohmann::json ObservationData(const std::string& domain, std::string& status, std::string& error) const;

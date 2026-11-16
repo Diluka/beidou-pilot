@@ -10,10 +10,13 @@
 #include "Gameplay/Stage.h"
 #include "Gameplay/MapleMap/MapPortals.h"
 #include "Gameplay/Combat/DamageNumber.h"
+#include "Gameplay/Physics/V17PhysicsParameters.h"
 #include "IO/UI.h"
 #include "Net/Session.h"
 #include "Net/Packets/LoginPackets.h"
 #include "Util/ImgFiles.h"
+
+#include <nlnx/nx.hpp>
 
 #include <chrono>
 #include <csignal>
@@ -68,6 +71,7 @@ int main(int argc, char** argv)
         std::filesystem::current_path(resources);
         const auto resource_error = ms::ImgFiles::init();
         if (resource_error) throw std::runtime_error(resource_error.get_message());
+        ms::V17PhysicsParameters::Init(nl::nx::Map["Physics.img"]);
         ms::Char::init();
         ms::DamageNumber::init();
         ms::MapPortals::init();

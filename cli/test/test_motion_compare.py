@@ -176,6 +176,22 @@ class MotionCompareContract(unittest.TestCase):
         self.assertEqual("failed", result["status"], result)
         self.assertEqual("failed", result["comparisons"]["contacts"]["takeoffs"]["status"])
 
+    def test_setup_boundary_scenario_aligns_at_first_recorded_sample(self) -> None:
+        # drop 场景在静默 setup（抓绳爬到同一高处平台）之后才开始记录；此时记录里
+        # 没有输入边沿，但首个样本就是离地落体的第一份物理样本，可直接作为段起点。
+        def falling(start_x: float, shift_x: float = 0.0) -> list[dict]:
+            return [
+                record(10, x=start_x, on_ground=False, scenario="drop"),
+                record(11, x=start_x + 3.41 + shift_x, on_ground=False, scenario="drop"),
+                record(12, x=start_x + 6.83 + shift_x, on_ground=False, scenario="drop"),
+                record(13, x=start_x + 10.24 + shift_x, on_ground=True, scenario="drop"),
+            ]
+
+        result = comparator.compare(falling(2363.5), falling(2366.91))
+        self.assertEqual("comparable", result["status"], result)
+        drifted = comparator.compare(falling(2363.5), falling(2366.91, shift_x=2.0))
+        self.assertEqual("failed", drifted["status"], drifted)
+
     def test_each_intent_edge_starts_its_own_relative_comparison_segment(self) -> None:
         def reversing(shift: float = 0.0) -> list[dict]:
             return [

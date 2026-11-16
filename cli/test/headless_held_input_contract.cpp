@@ -2,6 +2,8 @@
 // Offline fixture: private access only seeds an empty native stage and reads its
 // real adapter/counters. No production test mode, asset files, sockets or account.
 #include <bits/stdc++.h>
+#include "ImgResourceFile.h"
+#include "Gameplay/Physics/V17PhysicsParameters.h"
 #include <nlohmann/json.hpp>
 #define private public
 #include "SharedLuaAdapter.h"
@@ -30,6 +32,14 @@ std::size_t PacketCount(int opcode) {
     return std::count_if(packets.begin(), packets.end(), [opcode](const auto& bytes) {
         return bytes.size() >= 2 && (static_cast<uint8_t>(bytes[0]) | (static_cast<uint8_t>(bytes[1]) << 8)) == opcode;
     });
+}
+
+std::vector<std::vector<int8_t>> PacketsOf(int opcode) {
+    std::vector<std::vector<int8_t>> found;
+    for (const auto& bytes : packets)
+        if (bytes.size() >= 2 && (static_cast<uint8_t>(bytes[0]) | (static_cast<uint8_t>(bytes[1]) << 8)) == opcode)
+            found.push_back(bytes);
+    return found;
 }
 
 MapleControl::Action Attack(int skill = 0) {
@@ -69,7 +79,7 @@ void Prepare(SharedLuaAdapter& host) {
     player.get_inventory().add_item(ms::InventoryType::USE, 2, PotionB, false, 0, 10, "", 0);
     player.get_phobj().onground = true;
     ms::headless_state().in_game = true;
-    host.Capture(0);
+    host.Capture();
     Check(host.Observe().ready, "fixture_is_ready_without_a_network_or_resource_file");
     Check(player.can_attack(), "actual_player_native_admission_has_a_weapon");
 }
@@ -94,25 +104,38 @@ void Keys(SharedLuaAdapter& host) {
     auto jump = Attack();
     jump.kind = MapleControl::ActionKind::Jump;
     Check(adapter.SetActionIntent(jump, error), error);
-    const auto edges = host.inputEvents;
     Check(player.is_key_down(ms::KeyAction::RIGHT) && player.is_key_down(ms::KeyAction::JUMP), "real_native_down_keys");
-    const auto launch = player.get_phobj().vforce;
-    Check(launch < 0, "real_jump_down_executes_the_native_launch");
-    player.get_phobj().vforce = 0;
-    for (int i = 0; i < 20; ++i) {
-        Check(adapter.SetActionIntent(jump, error), error);
-        adapter.Advance(i + 1, false);
+    Check(player.get_motion_state().HasPendingJump(), "jump_keydown_records_a_motion_edge");
+    Check(!adapter.HeldKeysSettled() && !adapter.ActionIntentSettled(), "move_and_jump_wait_for_the_real_motion_layer");
+
+    // Three world ticks do not reach a 30ms commit; the fourth does. The empty
+    // fixture stage has no foothold, so the recorded jump edge cannot launch and is
+    // dropped at the commit instead of being queued for later.
+    for (std::uint64_t tick = 1; tick <= 3; ++tick) {
+        Consume(host, tick);
+        Check(!adapter.HeldKeysSettled() && !adapter.ActionIntentSettled(),
+              "world_ticks_without_a_commit_do_not_settle_movement_or_jump");
     }
-    Check(host.inputEvents == edges && player.get_phobj().vforce == 0, "same_hold_never_replays_jump_down");
-    Check(adapter.ActionIntentSettled() && !adapter.Released(), "a_still_held_input_can_be_settled");
+    Consume(host, 4);
+    Check(adapter.HeldKeysSettled(), "movement_settles_on_the_real_motion_commit");
+    Check(!player.get_motion_state().HasPendingJump(), "jump_edge_is_consumed_or_dropped_at_the_commit");
+    Consume(host, 5);
+    Check(adapter.ActionIntentSettled() && !adapter.Released(), "a_still_held_jump_intent_can_be_settled");
     Check(adapter.Result().dispatched && adapter.Result().reason == "native_jump_input_consumed",
           "jump_reports_confirmed_native_input_not_a_fabricated_game_effect");
+    const auto edges = host.inputEvents;
+    for (std::uint64_t tick = 6; tick <= 20; ++tick) {
+        Check(adapter.SetActionIntent(jump, error), error);
+        Consume(host, tick);
+    }
+    Check(host.inputEvents == edges, "same_hold_never_replays_jump_down");
+
     adapter.ReleaseAction();
     Check(!player.is_key_down(ms::KeyAction::JUMP) && player.is_key_down(ms::KeyAction::RIGHT),
           "action_withdrawal_keeps_direction");
-    Check(adapter.ReleasePending(), "real_key_up_requires_a_later_native_frame");
-    adapter.Advance(21, false);
-    Check(adapter.Released(), "native_frame_confirms_key_up");
+    Check(adapter.ActionIntentSettled() && !adapter.ReleasePending() && adapter.Released(),
+          "key_up_is_confirmed_immediately_by_the_native_release_path");
+
     Check(adapter.SetActionIntent(Attack(), error), error);
     const auto attackEdges = host.inputEvents;
     for (int i = 0; i < 20; ++i) Check(adapter.SetActionIntent(Attack(), error), error);
@@ -251,7 +274,7 @@ void Provenance(SharedLuaAdapter& host) {
     std::string error;
     Check(adapter.SetActionIntent(Attack(SkillA), error), error);
     Check(combat.use_move(SkillA) == ms::SpecialMove::FBR_NONE, "direct_native_move_starts");
-    host.Capture(1);
+    host.Capture();
     adapter.Advance(1, false);
     Check(adapter.ActiveAction() && adapter.ActiveAction()->skillId == SkillA
               && adapter.ActiveAction()->sessionId.empty() && !adapter.Result().dispatched,
@@ -278,7 +301,7 @@ void Lifecycle(SharedLuaAdapter& host) {
     std::string error;
     player.get_phobj().onground = false;
     player.get_phobj().hspeed = 1.5;
-    host.Capture(1);
+    host.Capture();
     Check(host.Observe().actionIdle == MapleControl::Fact::True && host.Observe().settled == MapleControl::Fact::False,
           "native_action_idle_is_true_while_physically_unsettled");
     Check(adapter.SetHeldKeys({"left"}, error), error);
@@ -297,76 +320,238 @@ void Lifecycle(SharedLuaAdapter& host) {
     adapter.Shutdown();
     Check(adapter.Keys().empty() && adapter.Released(), "shutdown_releases_owned_input");
     ms::headless_state().in_game = false;
-    host.Capture(5);
+    host.Capture();
     Check(host.Observe().actionIdle == MapleControl::Fact::Unknown,
           "unavailable_player_has_unknown_not_fabricated_idle");
 }
 }
 
-void physics_pose_shape(const MapleControl::State& state, std::uint64_t updateId, bool velocityKnown) {
-    Check(state.character.physics.known, "ready local player has a whole physics record");
-    Check(state.character.physics.updateIdKnown && state.character.physics.updateId == updateId,
-          "physics update id is the current host tick before the motion task");
-    Check(state.character.physics.stepMsKnown && state.character.physics.stepMs == ms::Constants::TIMESTEP,
-          "physics step is the real simulated integration time");
-    Check(state.character.physics.positionKnown, "physical position is known from the local player");
-    Check(state.character.physics.velocityKnown == velocityKnown,
-          "velocity is known only when the engine can state it");
-    Check(state.character.physics.onGround == MapleControl::Fact::True, "native grounding fact is preserved");
+void physics_pose_shape(const MapleControl::State& state, bool known) {
+    Check(state.character.physics.known == known, "pose sample existence is explicit");
+    Check(state.character.physics.updateIdKnown, "ready local player exposes a motion commit identity");
 }
 
 void Physics(SharedLuaAdapter& host) {
     auto& player = ms::Stage::get().get_player();
     auto& phobj = player.get_phobj();
-    if (player.is_climbing()) player.set_state(ms::Char::STAND);
-    phobj.type = ms::PhysicsObject::Type::NORMAL;
-    phobj.fhslope = 0.0;
+    if (player.is_climbing()) player.set_state(ms::Char::State::STAND);
     phobj.onground = true;
-    phobj.set_x(2147.125);
-    phobj.set_y(1239.0);
-    phobj.hspeed = 0.5;   // 62.5 px/s with the real 8 ms step
-    phobj.vspeed = -0.25; // -31.25 px/s upward
-    host.Capture(11);
 
+    // A freshly loaded player has no motion commit yet: the whole pose stays unknown
+    // instead of reusing the constructor position as a physical sample.
+    host.Capture();
+    physics_pose_shape(host.Observe(), false);
+
+    // Four world ticks commit one ordinary 30ms step.
+    for (int tick = 0; tick < 4; ++tick) ms::Stage::get().update();
+    host.Capture();
     const auto& state = host.Observe();
-    physics_pose_shape(state, 11, true);
-    Check(state.character.physics.x == 2147.125 && state.character.physics.y == 1239.0, "physical point is unrounded");
-    Check(state.character.physics.velocityX == 62.5 && state.character.physics.velocityY == -31.25,
-          "same-step world velocity converts per-step displacement to px/s");
+    physics_pose_shape(state, true);
+    const std::uint64_t updateId = player.get_motion_commit_id();
+    Check(state.character.physics.updateId == updateId, "physics update id is the real motion commit number");
+    Check(state.character.physics.stepMsKnown && state.character.physics.stepMs == 30,
+          "ordinary motion reports the real simulated step, not a publish interval");
+    const auto& step = player.get_motion_state().LastStep();
+    Check(state.character.physics.positionKnown && state.character.physics.x == step.x
+              && state.character.physics.y == step.y,
+          "physics point is the unrounded same-step physical foot point");
+    Check(state.character.physics.velocityKnown && state.character.physics.velocityX == step.vx
+              && state.character.physics.velocityY == step.vy,
+          "physics velocity is the same-step world instantaneous speed");
     Check(state.character.physics.Document().Dump().find("native_update_delta") == std::string::npos,
           "physics velocity is not the old interval-mean vector");
 
     // The bridge state and the character observation domain read one record.
     const auto document = host.StateDocument();
     const auto& character = document["character"];
-    Check(character["physics"]["update_id"] == 11 && character["physics"]["step_ms"] == 8,
-          "bridge state character.physics exposes the same identity");
-    Check(character["physics"]["x"] == 2147.125 && character["physics"]["velocity"]["x"] == 62.5,
-          "bridge state character.physics exposes the same physical values");
-    Check(character["physics"]["on_ground"] == true, "bridge state keeps native grounding");
+    Check(character["physics"]["update_id"] == updateId, "bridge state exposes the same commit identity");
+    Check(document["character_updates"] == updateId, "old character_updates aliases the real motion commit");
+    Check(character["physics"]["step_ms"] == 30, "bridge state exposes the real step time");
+    Check(character["physics"]["velocity"]["x"] == step.vx, "bridge state exposes the canonical velocity");
     const auto observed = host.ObserveDomain("character");
     Check(observed.status == "ok" && observed.data.Dump().find("\"physics\":{") != std::string::npos,
           "character observation domain exposes the same whole record");
-    Check(observed.data.Dump().find("2147.125") != std::string::npos,
-          "character observation domain keeps the unrounded point");
 
-    // A slope directly corrects y in this legacy engine; the adapter must not
-    // convert the remaining per-step number into a fabricated instantaneous speed.
-    phobj.fhslope = 0.25;
-    host.Capture(12);
-    physics_pose_shape(state, 12, false);
-    Check(state.character.physics.positionKnown && !state.character.physics.velocityKnown,
-          "slope motion keeps instantaneous velocity unknown");
-    Check(state.character.physics.Document().Dump().find("\"velocity\":null") != std::string::npos,
-          "unknown instantaneous velocity projects as null");
+    // A legacy attached mode commits on the 8ms clock and keeps instantaneous
+    // velocity unknown; the motion record and identity rotate with that commit.
+    player.set_state(ms::Char::State::LADDER);
+    host.Capture();
+    Check(!host.Observe().character.physics.stepMsKnown, "a suspended ownership has no current motion sample");
+    ms::Stage::get().update();
+    host.Capture();
+    Check(host.Observe().character.physics.known && host.Observe().character.physics.stepMs == 8,
+          "legacy mode reports its own 8ms step");
+    Check(host.Observe().character.physics.updateId == player.get_motion_commit_id(),
+          "legacy step keeps the real commit identity");
+    Check(host.Observe().character.physics.positionKnown && !host.Observe().character.physics.velocityKnown,
+          "legacy per-step motion keeps instantaneous velocity unknown");
+
+    // Sitting has no motion owner at all until motion resumes.
+    player.set_state(ms::Char::State::SIT);
+    host.Capture();
+    Check(!host.Observe().character.physics.known, "static mode has no fabricated motion sample");
+    player.set_state(ms::Char::State::STAND);
 
     // Without a ready local player there is no physics sample at all.
     ms::headless_state().in_game = false;
-    host.Capture(13);
+    host.Capture();
     Check(!host.Observe().character.physics.known
               && host.Observe().character.physics.Document().Type() == MapleControl::Value::Kind::Null,
           "not-ready local player has no fabricated physics record");
     ms::headless_state().in_game = true;
+}
+
+void Ground(SharedLuaAdapter& host, const char* mapDirectory) {
+    auto map = load_img_directory(mapDirectory);
+    auto& stage = ms::Stage::get();
+    stage.physics = ms::Physics(map.root()["Test.img"]["foothold"]);
+    auto& player = stage.get_player();
+    auto& adapter = host.tickAdapter;
+
+    player.respawn(ms::Point<int16_t>(0, 1000), false);
+    for (std::uint64_t tick = 1; tick <= 4; ++tick) Consume(host, tick);
+    Check(player.get_phobj().onground, "respawn_attaches_to_the_platform");
+    Check(std::abs(player.get_phobj().crnt_y() - 1000.0) < 1e-9, "respawn_foot_point_is_the_surface");
+
+    std::string error;
+    Check(adapter.SetHeldKeys({"right"}, error), error);
+    std::vector<double> speeds;
+    for (std::uint64_t tick = 5; tick <= 16; ++tick) {
+        const auto before = player.get_motion_commit_id();
+        Consume(host, tick);
+        if (player.get_motion_commit_id() != before) speeds.push_back(player.get_motion_state().LastStep().vx);
+    }
+    const std::vector<double> walk = {42.0, 84.0, 125.0};
+    Check(speeds == walk, "ground_walk_uses_real_30ms_commits");
+    Check(player.get_phobj().crnt_x() > 4.0, "ground_walk_moves_the_character");
+    Check(std::abs(player.get_phobj().hspeed - 1.0) < 1e-9, "animation_projection_uses_per_8ms_units_not_px_s");
+    const auto sample = player.get_motion();
+    Check(sample.known && sample.interval_ms == 30 && sample.delta_x > 0.0,
+          "player_interval_mean_covers_the_real_30ms_commit");
+    Check(player.get_phobj().get_last_x() == player.get_phobj().get_x(),
+          "touch_sweep_segment_is_collapsed_after_consumption");
+
+    Check(adapter.SetHeldKeys({}, error), error);
+    speeds.clear();
+    for (std::uint64_t tick = 17; tick <= 44 && speeds.size() < 6; ++tick) {
+        const auto before = player.get_motion_commit_id();
+        Consume(host, tick);
+        if (player.get_motion_commit_id() != before) speeds.push_back(player.get_motion_state().LastStep().vx);
+    }
+    const std::vector<double> brake = {101.0, 77.0, 53.0, 29.0, 5.0, 0.0};
+    Check(speeds == brake, "ground_release_brakes_by_24_per_commit");
+
+    auto jump = Attack();
+    jump.kind = MapleControl::ActionKind::Jump;
+    Check(adapter.SetActionIntent(jump, error), error);
+    bool launched = false;
+    bool landed = false;
+    for (std::uint64_t tick = 45; tick <= 160 && !landed; ++tick) {
+        Consume(host, tick);
+        if (player.get_motion_state().LastStep().jumped) launched = true;
+        if (launched && player.get_motion_state().LastStep().onGround) landed = true;
+    }
+    Check(launched, "jump_edge_is_consumed_by_a_real_motion_commit");
+    Check(landed, "jump_lands_on_the_same_platform");
+    Check(std::abs(player.get_phobj().crnt_y() - 1000.0) < 1e-9, "landing_commits_the_ground_contact");
+}
+
+void Schedule(SharedLuaAdapter& host) {
+    auto& player = ms::Stage::get().get_player();
+    player.get_phobj().onground = true;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> commits;
+    std::uint64_t last = player.get_motion_commit_id();
+    for (std::uint64_t tick = 1; tick <= 8; ++tick) {
+        Consume(host, tick);
+        if (player.get_motion_commit_id() != last) {
+            commits.emplace_back(tick, player.get_last_motion_step_ms());
+            last = player.get_motion_commit_id();
+        }
+    }
+    Check(commits.size() == 2, "two_30ms_commits_in_eight_world_ticks");
+    Check(commits[0] == std::make_pair(std::uint64_t{4}, std::uint32_t{30}), "first_commit_after_four_world_ticks");
+    Check(commits[1] == std::make_pair(std::uint64_t{8}, std::uint32_t{30}), "second_commit_after_next_four_ticks");
+
+    std::uint64_t simulatedMs = 0;
+    for (const auto& commit : commits) simulatedMs += commit.second;
+
+    // Entering a legacy attached mode hands the same accumulated clock to 8ms steps.
+    player.set_state(ms::Char::State::LADDER);
+    for (std::uint64_t tick = 9; tick <= 11; ++tick) {
+        const auto before = player.get_motion_commit_id();
+        Consume(host, tick);
+        Check(player.get_motion_commit_id() == before + 1 && player.get_last_motion_step_ms() == 8,
+              "legacy_commits_each_8ms_step");
+        simulatedMs += 8;
+    }
+
+    // Back to ordinary motion: the remaining world time is not lost and the next
+    // commit is again a fixed 30ms step.
+    player.set_state(ms::Char::State::STAND);
+    bool committed = false;
+    std::uint64_t committedAt = 0;
+    for (std::uint64_t tick = 12; tick <= 16 && !committed; ++tick) {
+        const auto before = player.get_motion_commit_id();
+        Consume(host, tick);
+        if (player.get_motion_commit_id() != before) {
+            committed = true;
+            committedAt = tick;
+            Check(player.get_last_motion_step_ms() == 30, "ordinary_step_after_handoff_is_30ms");
+        }
+    }
+    Check(committed && committedAt == 15, "handoff_consumes_time_once_and_resumes_after_four_ticks");
+    simulatedMs += 30;
+
+    // Long-run invariant: every world millisecond is consumed by exactly one commit
+    // or remains in the single remainder (no 32ms integration step and no lost time).
+    for (std::uint64_t tick = 16; tick <= 400; ++tick) {
+        const auto before = player.get_motion_commit_id();
+        Consume(host, tick);
+        if (player.get_motion_commit_id() != before) simulatedMs += player.get_last_motion_step_ms();
+        if (tick % 50 == 0)
+            Check(simulatedMs + player.motionRemainderMs == tick * 8, "8ms_and_30ms_accumulation_never_drifts");
+    }
+    Check(simulatedMs + player.motionRemainderMs == 400 * 8, "mixed_clock_time_is_conserved");
+}
+
+void Packets(SharedLuaAdapter& host) {
+    auto& player = ms::Stage::get().get_player();
+    if (player.is_climbing()) player.set_state(ms::Char::State::STAND);
+    player.get_phobj().onground = true;
+    packets.clear();
+    for (int tick = 0; tick < 4; ++tick) ms::Stage::get().update();
+    const auto moves = PacketsOf(ms::OutPacket::MOVE_PLAYER);
+    Check(moves.size() == 1, "one_position_packet_for_one_motion_commit");
+    const auto& bytes = moves.front();
+    Check(bytes.size() == 26, "move_player_wire_layout_unchanged");
+    const auto duration =
+        static_cast<std::uint16_t>(static_cast<std::uint8_t>(bytes[24]) | (static_cast<std::uint8_t>(bytes[25]) << 8));
+    Check(duration == 1, "duration_value_stays_unchanged_until_dynamic_capture");
+    for (int tick = 0; tick < 3; ++tick) ms::Stage::get().update();
+    Check(PacketsOf(ms::OutPacket::MOVE_PLAYER).size() == 1, "no_packet_without_a_new_commit_or_state_change");
+}
+
+void MotionInput(SharedLuaAdapter& host) {
+    auto& adapter = host.tickAdapter;
+    auto& player = ms::Stage::get().get_player();
+    std::string error;
+    Check(adapter.SetHeldKeys({"right"}, error), error);
+    for (std::uint64_t tick = 40; tick <= 42; ++tick) adapter.Advance(tick, false);
+    Check(!adapter.HeldKeysSettled(), "world_ticks_without_commit_do_not_settle_held_direction");
+    for (std::uint64_t tick = 43; tick <= 47; ++tick) Consume(host, tick);
+    Check(adapter.HeldKeysSettled(), "held_direction_settles_on_a_real_motion_commit");
+    adapter.Release();
+    Check(adapter.HeldKeysSettled() && !player.is_key_down(ms::KeyAction::RIGHT),
+          "direction_release_is_confirmed_immediately");
+
+    auto jump = Attack();
+    jump.kind = MapleControl::ActionKind::Jump;
+    Check(adapter.SetActionIntent(jump, error), error);
+    Check(player.get_motion_state().HasPendingJump(), "jump_keydown_records_a_motion_edge");
+    Check(!adapter.ActionIntentSettled(), "jump_is_not_settled_by_world_ticks_alone");
+    adapter.ReleaseAction();
+    Check(adapter.ActionIntentSettled() && adapter.Released(), "jump_release_settles_immediately");
+    Check(!player.get_motion_state().HasPendingJump(), "withdrawn_jump_is_cleared_not_queued");
 }
 
 // Resource boundary: deterministic skill metadata, using the real native action
@@ -430,7 +615,11 @@ void Session::write(int8_t* bytes, size_t size) {
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2, "scenario_required");
+    Check(argc == 4, "scenario_physics_and_map_resource_required");
+    // Physics.img is a required resource for real local-character motion; the map
+    // fixture supplies foothold geometry for the integrated ground scenarios.
+    auto physics = load_img_directory(argv[2]);
+    ms::V17PhysicsParameters::Init(physics.root()["Physics.img"]);
     SharedLuaAdapter host({}, "offline-contract");
     Prepare(host);
     const std::string scenario = argv[1];
@@ -448,6 +637,14 @@ int main(int argc, char** argv) {
         Provenance(host);
     else if (scenario == "physics")
         Physics(host);
+    else if (scenario == "ground")
+        Ground(host, argv[3]);
+    else if (scenario == "schedule")
+        Schedule(host);
+    else if (scenario == "packets")
+        Packets(host);
+    else if (scenario == "motion-input")
+        MotionInput(host);
     else
         Check(false, "unknown_scenario");
     host.Shutdown();

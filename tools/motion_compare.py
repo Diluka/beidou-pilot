@@ -202,7 +202,15 @@ def _dedupe_series(
     step_ms_values = {_integer((_physics(samples[update]) or {}).get("step_ms")) for update in order}
     if len(step_ms_values) != 1 or None in step_ms_values:
         raise EvidenceError(f"{side} 的 step_ms 不唯一或未知。", {"side": side})
-    edges, edge_inputs, non_consumed = _edges(observed_edges, samples, order, side)
+    if scenario == "drop":
+        # drop 场景在 setup（抓绳爬到同一高处平台）之后才开始记录，记录边界本身
+        # 就是“离地落体”的第一份物理样本；此时不依赖输入边沿对齐，直接用首个
+        # 样本作为段起点（两端都从各自第一份离地样本开始比较）。
+        edges = [order[0]]
+        edge_inputs = [str(samples[order[0]].get("input"))]
+        non_consumed = 0
+    else:
+        edges, edge_inputs, non_consumed = _edges(observed_edges, samples, order, side)
     edge_update = edges[0]
     prepared = {update: samples[update] for update in order if update >= edge_update}
     takeoffs, landings = _contacts(prepared, edges)

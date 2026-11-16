@@ -36,20 +36,6 @@ namespace ms
 
 	Physics::Physics() {}
 
-	double Physics::walk_reference_speed(double walkforce)
-	{
-		// At zero foothold slope, input balances (FRICTION + SLOPEFACTOR) * speed / GROUNDSLIP.
-		return walkforce * GROUNDSLIP / (FRICTION + SLOPEFACTOR);
-	}
-
-	double Physics::jump_reference_height(double jumpforce)
-	{
-		// The grounded launch step receives the impulse without gravity. Each later
-		// step adds GRAVFORCE before moving, so sum the nonpositive vertical steps.
-		const double steps = std::ceil(jumpforce / GRAVFORCE);
-		return steps * jumpforce - GRAVFORCE * steps * (steps - 1.0) / 2.0;
-	}
-
 	void Physics::move_object(PhysicsObject& phobj) const
 	{
 		// Determine which platform the object is currently on
