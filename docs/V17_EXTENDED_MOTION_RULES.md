@@ -421,7 +421,9 @@ y = y0 - v*t + 400*t*t
 
 - **入站路径解析**：`MovementParser` 按本节表格修正全部已确认 command 的宽度与字段身份：0/5/17 读 x,y,vx,vy,fh,state,duration（vx/vy 同时写入 `Movement.vx/vy` 与 legacy `lastx/lasty`）；15 读 x,y,vx,vy,fh,u,state,duration 并保留未知附加 word 到 `Movement.extra`；1/2/6/12/13/16/18/19/20/22 读 vx,vy,state,duration（legacy 消费者仍把 vx/vy 放在 `xpos/ypos`，回放消费者将改用 `vx/vy`）；3/4/7/8/9/11 读 x,y,fh,state,duration；14 读 vx,vy,u,state,duration；10 消费附加字节；21 读 state,duration。未知 command 仍只消费 command 字节，不猜布局。
 - **合同**：新增 `movement_parser_contract.cpp`，用构造字节覆盖上述 command 的宽度/字段与“整包恰好消费完”，离线测试通过。真实双端效果需要第二客户端/远端移动包场景，尚未执行。
-- 未变：出站 `writemovement` 仍是 legacy 单元素格式；MoveMob 序号/标志/哨兵、路径批量/gate、回放队列与插值仍在后续项。
+- **路径回放**：新增 `Gameplay/MovementReplay.{h,cpp}`：把入站片段转换为带时长/端点位置/端点速度的段，未完成段按 §10 的三次 Hermite（h00/h10/h01/h11，速度项乘 duration/1000）求位置；缓冲高于 `1000*1.1`ms 时每步用 33ms，否则 30ms（mode!=0 的 500ms 阈值变体未实现，mode 生产者未知）。非受控怪物（`Mob::update`）改为消费该回放而不是继续本地 Journey 物理；控制权切回本地时清空回放。缓冲超过阈值+5000ms 的 command 3 快照重建尚未实现（保留 TODO 证据边界）。
+- **合同**：新增 `movement_replay_contract.cpp`（线性绝对段、速度约束 Hermite、30/33 追赶、零时长段跳过）与 `movement_parser_contract.cpp`；离线全套 529 tests 通过。
+- 未变：出站 `writemovement` 仍是 legacy 单元素格式；MoveMob 序号/标志/哨兵、路径批量/gate、远端角色回放仍在后续项。
 
 【未知】既有证据没有构成所有 command 的动态触发覆盖，也未证明服务器依赖哪些历史宽容行为。本轮保留 headless 全部现值；后续 wire 调整仍需对应提交的字节级合同、服务器无拉回、换图/重登和另一客户端观察证据。原版发包与入站包布局分别核对，不能直接把出站尾部附加记录套到服务器广播包。
 

@@ -81,6 +81,7 @@ def build_v17_contract(
     climb: bool = False,
     mapinfo: bool = False,
     movement_parser: bool = False,
+    replay: bool = False,
 ) -> Path:
     """Compiles one contract against the real engine physics sources it needs."""
     engine = root / "third_party/maplestory-client"
@@ -105,6 +106,8 @@ def build_v17_contract(
     if movement_parser:
         sources.append(engine / "Net/InPacket.cpp")
         sources.append(engine / "Net/Handlers/Helpers/MovementParser.cpp")
+    if replay:
+        sources.append(engine / "Gameplay/MovementReplay.cpp")
     executable = build / contract.removesuffix(".cpp")
     common = [
         "g++",

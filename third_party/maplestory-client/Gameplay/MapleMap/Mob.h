@@ -20,6 +20,7 @@
 #include "MapObject.h"
 
 #include "../Movement.h"
+#include "../MovementReplay.h"
 
 #include "../Combat/Attack.h"
 #include "../Combat/Bullet.h"
@@ -173,6 +174,9 @@ namespace ms
 		TimedBool showhp;
 
 		std::vector<Movement> movements;
+		MovementReplay replay;
+		uint16_t replayAccumulator = 0;
+		bool replayActive = false;
 		uint16_t counter;
 
 		int32_t id;
