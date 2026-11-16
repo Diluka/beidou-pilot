@@ -215,6 +215,7 @@ void SharedLuaAdapter::Capture() {
         projected.SetPosition(p.x(), p.y());
         CaptureVelocity(projected, mob.get_motion());
         projected.active = mob.is_active() && mob.is_alive();
+        projected.controlled = mob.is_controlled() ? Fact::True : Fact::False;
         projected.hpSequence = mob.get_hp_update_sequence();
         if (projected.hpSequence != 0) projected.hpPercent = mob.get_hp_percent();
         state.monsters.push_back(std::move(projected));
@@ -648,6 +649,7 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
                                 {"y", monster.y},
                                 {"velocity", Json::parse(monster.velocity.Document().Dump())},
                                 {"active", monster.active},
+                                {"controlled", FactValue(monster.controlled)},
                                 {"hp_percent", monster.hpSequence != 0 ? Json(monster.hpPercent) : Json(nullptr)},
                                 {"hp_sequence", monster.hpSequence != 0 ? Json(monster.hpSequence) : Json(nullptr)},
                                 {"hp_source", monster.hpSequence != 0 ? Json("server_mob_hp") : Json(nullptr)}});
@@ -1024,6 +1026,7 @@ Json SharedLuaAdapter::StateDocument() const {
                                         {"y", mob.y},
                                         {"velocity", Json::parse(mob.velocity.Document().Dump())},
                                         {"active", mob.active},
+                                        {"controlled", FactValue(mob.controlled)},
                                         {"hp_percent", mob.hpSequence != 0 ? Json(mob.hpPercent) : Json(nullptr)},
                                         {"hp_sequence", mob.hpSequence != 0 ? Json(mob.hpSequence) : Json(nullptr)},
                                         {"hp_source", mob.hpSequence != 0 ? Json("server_mob_hp") : Json(nullptr)}});
