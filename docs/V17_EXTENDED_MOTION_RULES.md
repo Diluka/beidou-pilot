@@ -130,13 +130,23 @@
 | 消费路径 | 当前 headless 实现 | 与原版证据的差异；后续调整记录 |
 | --- | --- | --- |
 | 运动与时钟 | `Gameplay/MapleMap/Mob.cpp::update` 每个世界 8ms update 调 `Physics::move_object`；`Physics.cpp` 使用旧 NORMAL/FLYING 算式 | 缺少原版90ms路径生成、每30ms调用回放及内部30/33ms追赶的层次。后续先取得同怪物样本和生成/回放时序，再确定本端持有者；不能只把 8 改 30 或 90。 |
-| 地面/飞行参数 | `Mob::Mob` 把资源 speed 改为 `(speed+100)*0.001`，flySpeed 为 `(flySpeed+100)*0.0005`；跳跃施加 `vforce=-5`，受击 `hforce=±0.2/±0.1` | 这些是 Journey 当前实现值，尚无原版对应公式。后续闭合原版怪物属性对象及模板→倍率，再替换；当前不能据此宣称与 GUI 一致。 |
+| 地面/飞行参数 | `Mob::Mob` 地面 speed 已按动态证据改为 `(speed+100)*0.002`（`MobWalkSpeed.h`，2026-11-17 #265）；flySpeed 仍为 `(flySpeed+100)*0.0005`；跳跃施加 `vforce=-5`，受击 `hforce=±0.2/±0.1` | 地面基础速度已对齐（同图 3 模板 p50/p90 与原版比值 0.999）；飞行/追击/跳跃参数与 AI 暂停节奏尚无原版公式，继续保留 Journey 值并记录差异。 |
 | 边界/掉边 | `TURNATEDGES` + `FootholdTree::update_fh/limit_movement`，清旗后翻转 | 缺少 Mob override 按模式、活动范围、目标、相邻 foothold 的裁决。后续按静态谓词和有代表性的怪物场景覆盖，普通角色 Sweep 不能直接代替该规则。 |
 | AI 方向/动作 | `Mob::next_move` 随机漫游、25% 起跳；`update` 通常等待 `counter>200` 和动画结束；`aggro` 被赋值但没有后续读取 | 计数与目标分支结构不同。随机数不要求逐次一致；应先核实实际追击/触怪消费者所需行为，避免把随机 AI 也纳入逐样本相等承诺。 |
 | 非控制怪物回放 | `Mob::send_movement` 先 `set_position(start)`，再保存完整 `movements`，仅读 `front()` 更新 stance/fhid；`update` 不消费保存队列，仍运行本地 Physics | 与原版推进路径并回写 x/y/vx/vy 的事实存在直接差异。后续需实现被消费的路径/时长语义，并区分控制权；单纯使用包首位置会丢失其余路径元素。 |
 | MoveMob 出站 | `Mob::update_movement` 序号已改为每包递增 U16（2026-11-17 #264，GUI 观察端真机跟随通过）；其余字段仍为 0；`MoveMobPacket` 写入 13 个零；`Movement(phobj,...)` 固定单元素、duration=1 | 原版 U16 序号递增已对齐；13 字节区域含状态与条件哨兵及 ACK 语义仍未闭环，后续按原件编码/实际包对账。 |
 | 控制权 | `set_control(mode)` 将 `mode>0` 视为 control、`mode==2` 视为 aggro；受控忽略收到的移动；`SpawnMobControllerHandler` 处理控制器包 | 本端已有控制器结构。原版控制权授予/回收、重算时机和 ACK 全链尚未闭环，不据此断言所有怪物永远由本地模拟。 |
 | 观察/触怪 | 当前实体速度为各实体完整 native update 的派生平均值；触怪消费客户端怪物位置 | 先确定怪物路径推进事实和碰撞的同一步口径；不得把模板 speed 或 90ms 生成态直接作为屏幕当前速度。 |
+
+### 受控怪物动态证据与已落地调整（2026-11-17）
+
+- 同图 `102010000`，原版 GUI 控制器（CID6）与 headless 控制器（CID7，`controlled=true`）各 20 秒、10Hz 记录；按模板统计速度分布：
+  - 木妖（130100）：原版 p50/p90 = 39.80/49.80 px/s，改动前 headless = 19.92/22.29 → 恰好 2.00 倍；
+  - 红蜗牛（130101）：59.76/79.66 vs 29.89/39.81 → 2.00 倍；
+  - 黑木妖（1110101）：39.80/49.80 vs 19.92/22.28 → 2.00 倍。
+- 已落地：`MobWalkForceFromTemplate((raw+100)*0.002)` 用于地面怪物 hforce；改动后 headless 控制器 p50/p90 = 39.83/49.79、59.79/79.67、39.84/49.80（与原版比值均 0.999），`mob_walk_speed_contract` 覆盖映射值。
+- 保留差异（未对齐）：headless 暂停比例约 0.21–0.23，原版约 0.30–0.36（AI 决策/暂停节奏不同）；飞行、追击、跳跃参数与边界 override、控制权授予/回收仍无原版证据。
+- 证据：所属环境 `tmp/253-mob-evidence/phaseA-controller.jsonl`、`phaseB-headless-controller.jsonl`、`phaseB2-headless-doubled.jsonl`。
 
 ### 证据索引与剩余边界
 
