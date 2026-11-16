@@ -385,6 +385,8 @@ y = y0 - v*t + 400*t*t
 
 ### 普通 bullet：原生时间窗口与 headless 目标阈值
 
+【补充取证（2026-11-17）】记录更新函数 `0x43FEEE` 已复核：入参 `now` 与记录 `+0x4` 比较，`now > +0x4` 时返回 true 并由列表移除；`+0x2C` 显示 COM 为空且 `now > +0x0` 时才创建显示 COM。唯一调用方是列表 update `0x445146`（列表入口 `0x445117`）；记录对象由其它攻击/显示路径创建，其 `+0x0/+0x4` 的绝对开始/结束时刻生产规则尚未定位到写入点，因此仍不能实现或验收 bullet 时间窗。GUI 桥不暴露 projectile（`capabilities.projectiles=false`），也无法做双端轨迹对账。
+
 【观测·静态】已确认的范围是普通 bullet 显示记录子集：owner `*(0xBEBF6C)` 的 `+0x58` 列表，owner update `0x43796B` 调 `0x445117`，遍历后调用记录更新 `0x43FEEE`。资源加载 `0x440DA7` 读取 `bullet`（StringPool sid `0x03D7`）；`bulletSpeed` 是资源参数，不能当当前向量。
 
 本轮补核 `0x43FEEE` 的头部：
