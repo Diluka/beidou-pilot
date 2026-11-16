@@ -134,7 +134,7 @@
 | 边界/掉边 | `TURNATEDGES` + `FootholdTree::update_fh/limit_movement`，清旗后翻转 | 缺少 Mob override 按模式、活动范围、目标、相邻 foothold 的裁决。后续按静态谓词和有代表性的怪物场景覆盖，普通角色 Sweep 不能直接代替该规则。 |
 | AI 方向/动作 | `Mob::next_move` 随机漫游、25% 起跳；`update` 通常等待 `counter>200` 和动画结束；`aggro` 被赋值但没有后续读取 | 计数与目标分支结构不同。随机数不要求逐次一致；应先核实实际追击/触怪消费者所需行为，避免把随机 AI 也纳入逐样本相等承诺。 |
 | 非控制怪物回放 | `Mob::send_movement` 先 `set_position(start)`，再保存完整 `movements`，仅读 `front()` 更新 stance/fhid；`update` 不消费保存队列，仍运行本地 Physics | 与原版推进路径并回写 x/y/vx/vy 的事实存在直接差异。后续需实现被消费的路径/时长语义，并区分控制权；单纯使用包首位置会丢失其余路径元素。 |
-| MoveMob 出站 | `Mob::update_movement` 固定传序号 1、其余字段为 0；`MoveMobPacket` 写入 13 个零；`Movement(phobj,...)` 固定单元素、duration=1 | 原版 U16 序号递增，13 字节区域含状态与条件哨兵。后续按原件编码/实际包和 ACK 语义分别对账，验证无拉回；“服务器能接受”不能替代逐字节证据。 |
+| MoveMob 出站 | `Mob::update_movement` 序号已改为每包递增 U16（2026-11-17 #264，GUI 观察端真机跟随通过）；其余字段仍为 0；`MoveMobPacket` 写入 13 个零；`Movement(phobj,...)` 固定单元素、duration=1 | 原版 U16 序号递增已对齐；13 字节区域含状态与条件哨兵及 ACK 语义仍未闭环，后续按原件编码/实际包对账。 |
 | 控制权 | `set_control(mode)` 将 `mode>0` 视为 control、`mode==2` 视为 aggro；受控忽略收到的移动；`SpawnMobControllerHandler` 处理控制器包 | 本端已有控制器结构。原版控制权授予/回收、重算时机和 ACK 全链尚未闭环，不据此断言所有怪物永远由本地模拟。 |
 | 观察/触怪 | 当前实体速度为各实体完整 native update 的派生平均值；触怪消费客户端怪物位置 | 先确定怪物路径推进事实和碰撞的同一步口径；不得把模板 speed 或 90ms 生成态直接作为屏幕当前速度。 |
 
@@ -426,6 +426,7 @@ y = y0 - v*t + 400*t*t
 - **双客户端真机验收（2026-11-17）**：常驻服 CID6 GUI 控制器 + CID7 headless 观察端同图 `102010000`；headless 先入图、GUI 后入图后观察端 35 只怪物全部 `controlled=false`（确认走回放路径）。12 秒 10Hz 采样中双端怪物均持续运动（各约 1.2 万 px 总位移），同一时间点位置中位差 **1.0px**、p90 5.1px，35/35 静止时刻位置完全相等；无解析错位/冻结。证据在所属环境 `tmp/263-two-client/`。
 - **控制权观察**：`scene.monsters[].controlled` 由 headless 本地控制标记给出 true/false；GUI 桥无已验证读取路径，保持未知并在 `not_covered` 声明 `monster_controlled`（`docs/LUA_TICK_API.md` 同步）。
 - **MoveMob 出站序号**：`Mob::update_movement` 不再固定写 `1`，改为按 §4/§10 的静态事实每包递增 U16 序号（`Mob.movementSequence`，对应原版 `mob+0x13C` 加 1 写回）；包内其余 2×U8/U32/U8/3×U32 语义与两个 `0x00FFDDCC` 哨兵仍未闭环，保持现状并记录缺口。
+  - **真机验收（2026-11-17）**：常驻服 CID6 GUI（观察端）+ CID7 headless（控制器，`controlled=true` 35/35）同图 `102010000`；12 秒 10Hz 采样中 GUI 端持续回放 headless 的 MoveMob，按每只怪物最佳相位对齐后中位残差 7.0px、35/35 静止时刻位置全等，GUI 怪物总位移约 7.2k px，无断开/冻结/回拉；GUI 回放相对控制器约有 0.4–1.4s 批次延迟。无逐字节抓包，序号递增由“服务器接受 + 原版观察端持续回放”间接验证。证据在所属环境 `tmp/259-movemob-seq/`。
 - 未变：出站 `writemovement` 仍是 legacy 单元素格式；MoveMob 标志/哨兵、路径批量/gate、远端角色回放仍在后续项。
 
 【未知】既有证据没有构成所有 command 的动态触发覆盖，也未证明服务器依赖哪些历史宽容行为。本轮保留 headless 全部现值；后续 wire 调整仍需对应提交的字节级合同、服务器无拉回、换图/重登和另一客户端观察证据。原版发包与入站包布局分别核对，不能直接把出站尾部附加记录套到服务器广播包。
