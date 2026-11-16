@@ -10,9 +10,6 @@
 
 namespace MapleControl {
 
-// Unknown is kept separate from a known false value in both Lua and host results.
-enum class Fact { Unknown, False, True };
-
 // Native player inputs owned by the tick engine. Movement is a held-input
 // direction, not an action; every other kind is a held action intent.
 enum class ActionKind { Jump, Attack, UseItem, Pickup, Stop };
@@ -24,6 +21,9 @@ struct Character : MovableObject {
     std::array<std::uint32_t, 13> values{};
     std::array<bool, 13> known{};
     MovementReference movement;
+    // Same-step native physics end state, independent of the display x/y in the
+    // shared MovableObject snapshot and of the interval-mean MotionVector.
+    PhysicsPose physics;
 };
 
 struct Monster : MovableObject {

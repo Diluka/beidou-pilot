@@ -2,6 +2,7 @@
 #include "SharedLuaAdapter.h"
 #include "HeadlessState.h"
 #include "LoginState.h"
+#include "PlayerPhysicsPose.h"
 #include "WorldMapImage.h"
 
 #include "Character/Player.h"
@@ -145,6 +146,7 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     state.characterUpdates = nativeTick;
     state.character.positionKnown = false;
     state.character.velocity = {};
+    state.character.physics = {};
     state.character.movement = {};
     if (!state.ready) {
         state.settled = Fact::Unknown;
@@ -188,6 +190,11 @@ void SharedLuaAdapter::Capture(std::uint64_t nativeTick) {
     const double stepsPerSecond = 1000.0 / ms::Constants::TIMESTEP;
     state.character.SetPosition(pos.x(), pos.y());
     CaptureVelocity(state.character, player.get_motion());
+    // Update identity is the host tick until the local-motion task binds the
+    // real character motion-commit number; step_ms=8 is the actual integration
+    // time, so physics.update_id is not a 30ms motion submission.
+    state.character.physics =
+        ms::PlayerPhysicsPose(ph, player.is_climbing(), player.is_underwater(), nativeTick, ms::Constants::TIMESTEP);
     state.character.movement.known = true;
     state.character.movement.model = "headless_normal_v1";
     state.character.movement.effectiveSpeed = stats.get_total(ms::EquipStat::Id::SPEED);
@@ -757,6 +764,7 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
              {"validation_source", "native_objects"},
              {"skills", std::move(knownSkills)},
              {"skills_complete", true},
+             {"physics", Json::parse(state.character.physics.Document().Dump())},
              {"movement", Json::parse(state.character.movement.Document().Dump())},
              {"on_ground", FactValue(state.onGround)},
              {"attacking", FactValue(state.attacking)},
@@ -996,6 +1004,7 @@ Json SharedLuaAdapter::StateDocument() const {
         Json character = MotionDocument(state.character);
         character.update({{"id", state.character.id},
                           {"name", state.character.name},
+                          {"physics", Json::parse(state.character.physics.Document().Dump())},
                           {"movement", Json::parse(state.character.movement.Document().Dump())}});
         const std::array<const char*, 13> names{
             "level",  "job", "strength", "dexterity",      "intelligence", "luck",      "hp",

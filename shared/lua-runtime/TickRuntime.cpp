@@ -610,6 +610,9 @@ struct TickRuntime::Impl {
                 }
             }
             Merge(value, observed.character.MotionDocument());
+            // Whole same-step physics sample: unknown record is nil, unknown
+            // fields are nil, never the display x/y or the interval-mean vector.
+            value["physics"] = observed.character.physics.Document();
             value["movement"] = observed.character.movement.Document();
             if (observed.characterUpdatesKnown) value["native_updates"] = observed.characterUpdates;
             SetFact(value, "on_ground", observed.onGround);
