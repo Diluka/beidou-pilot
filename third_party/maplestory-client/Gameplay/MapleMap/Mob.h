@@ -180,6 +180,12 @@ namespace ms
 		uint16_t replayAccumulator = 0;
 		bool replayActive = false;
 		uint16_t counter;
+		// V17 no-target decision cadence (docs §4, 0x9BCEB5-0x9BCF0A):
+		// (1000 + rng % 2000) / 90 steps of the mob AI clock; dynamic evidence
+		// (2026-11-17) shows a ~0.33-1.0s interval, so one step is 30ms.
+		uint16_t decisionCounter = 0;
+		uint16_t decisionTarget = 11;
+		uint16_t decisionAccumulatorMs = 0;
 
 		int32_t id;
 		int8_t effect;

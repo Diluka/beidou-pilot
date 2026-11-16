@@ -102,6 +102,9 @@ namespace ms
 		set_stance(st);
 		flydirection = STRAIGHT;
 		counter = 0;
+		decisionCounter = 0;
+		decisionAccumulatorMs = 0;
+		decisionTarget = 11 + randomizer.next_int(23);
 
 		namelabel = Text(Text::Font::A13M, Text::Alignment::CENTER, Color::Name::WHITE, Text::Background::NAMETAG, name);
 
@@ -269,6 +272,15 @@ namespace ms
 				{
 					counter++;
 
+					// Advance the original no-target decision counter once per 30ms.
+					decisionAccumulatorMs = static_cast<uint16_t>(decisionAccumulatorMs + Constants::TIMESTEP);
+
+					while (decisionAccumulatorMs >= 30)
+					{
+						decisionAccumulatorMs = static_cast<uint16_t>(decisionAccumulatorMs - 30);
+						decisionCounter++;
+					}
+
 					bool next;
 
 					switch (stance)
@@ -280,7 +292,7 @@ namespace ms
 						next = phobj.onground;
 						break;
 					default:
-						next = aniend && counter > 200;
+						next = aniend && decisionCounter >= decisionTarget;
 						break;
 					}
 
@@ -289,6 +301,9 @@ namespace ms
 						next_move();
 						update_movement();
 						counter = 0;
+						decisionCounter = 0;
+						decisionAccumulatorMs = 0;
+						decisionTarget = static_cast<uint16_t>(11 + randomizer.next_int(23));
 					}
 				}
 			}
