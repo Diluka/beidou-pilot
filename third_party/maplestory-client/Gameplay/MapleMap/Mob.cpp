@@ -324,9 +324,21 @@ namespace ms
 			switch (stance)
 			{
 			case Stance::HIT:
-			case Stance::STAND:
 				set_stance(Stance::MOVE);
 				flip = randomizer.next_bool();
+				break;
+			case Stance::STAND:
+				// V17 no-target direction rule rng%3-1: one outcome keeps the
+				// current standing state, so stand runs can extend geometrically.
+				if (randomizer.next_int(3) == 0)
+				{
+					set_stance(Stance::STAND);
+				}
+				else
+				{
+					set_stance(Stance::MOVE);
+					flip = randomizer.next_bool();
+				}
 				break;
 			case Stance::MOVE:
 			case Stance::JUMP:
