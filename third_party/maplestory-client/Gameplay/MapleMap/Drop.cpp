@@ -64,8 +64,9 @@ namespace ms
 				phobj.type = PhysicsObject::Type::FIXATED;
 				state = Drop::State::FLOATING;
 				angle.set(0.0f);
-				// Floating display is anchored at the public drop destination.
-				set_position(dest.x(), dest.y());
+				// Display anchor is the icon centre, half an icon above the packet
+				// destination.
+				set_position(dest.x(), dest.y() - get_icon_half_height());
 			}
 			else
 			{
@@ -76,7 +77,7 @@ namespace ms
 
 		if (state == Drop::State::FLOATING)
 		{
-			phobj.y = dest.y() + DropFloatingOffsetY(moved);
+			phobj.y = dest.y() - get_icon_half_height() + DropFloatingOffsetY(moved);
 			moved = DropFloatingNextPhase(moved);
 		}
 
