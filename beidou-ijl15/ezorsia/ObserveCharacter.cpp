@@ -118,7 +118,8 @@ Value Character() {
         {"source", "client-native-observation"}, {"readonly", true},
         {"mesos", Value{}}, {"mesos_checksum_valid", false}, {"skills", Value::Object()},
         {"skills_complete", false}, {"read_seconds", 0},
-        {"velocity", Value{}}, {"movement", Value{}}, {"on_ground", Value{}}, {"action_idle", Value{}},
+        {"velocity", Value{}}, {"physics", Value{}}, {"movement", Value{}}, {"on_ground", Value{}},
+        {"action_idle", Value{}},
         {"not_covered", StringArray({"skill_names", "skill_requirements", "skill_effects",
             "skill_expirations", "master_level_when_absent_from_client_records"})}
     });
@@ -134,12 +135,17 @@ Value Character() {
     }
     catch (const ReadError& error) { unavailable.Add(error.what()); }
     try {
-        const auto motion = NativeMotion::Capture(U32(0x00BEBF98));
+        const auto user = U32(0x00BEBF98);
+        const auto motion = NativeMotion::Capture(user);
         result["velocity"] = motion.velocity.Document();
         result["movement"] = motion.movement.Document();
         if (motion.onGround != MapleControl::Fact::Unknown)
             result["on_ground"] = motion.onGround == MapleControl::Fact::True;
         for (const auto& reason : motion.unavailable) unavailable.Add(reason);
+        // The CLI character domain and the bridge state publish the same cached
+        // record; this domain never re-reads pose fields with another update id.
+        const auto& physics = NativeMotion::CachedLocalPhysics();
+        if (user != 0 && physics.user == user) result["physics"] = physics.pose.Document();
     }
     catch (const ReadError& error) { unavailable.Add(error.what()); }
     try {

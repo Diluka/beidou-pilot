@@ -6,7 +6,7 @@
 | --- | --- |
 | `private/workbenches/workbench` | 宿主 Bash 薄入口；从提交构建、核验目标、管理 Docker 生命周期与 exec 路由 |
 | `cli/beidou-pilot`、`cli/beidou_pilot/` | 两个镜像共用的容器内 CLI、原生观察投影、参数和结果边界 |
-| `shared/scripts/` | 随镜像固定的 tick 示例；不含内置策略或函数库 |
+| `shared/scripts/` | 随镜像固定的 tick 示例与有界运动校准探针；不含内置策略或函数库 |
 | `shared/lua-runtime/` | 两端共用的 tick Lua 运行环境：调度、预算、只读领域、共享 player 状态机及输入生命周期 |
 | `headless/src/` | 无渲染登录、网络与游戏更新宿主、共享桥适配 |
 | `docker/` | 无头与 GUI 镜像构建定义、唯一 Compose、资源装配和容器启动脚本；`docker/harness/` 从客户端镜像派生 AI 运行环境 |
@@ -73,7 +73,7 @@ private/workbenches/workbench /external/workbench resources-check
 
 GUI 保留 `/client` 只读挂载用于启动原版客户端；原版 `Data/` 另以 `/data` 只读挂载，Python Catalog 与无头客户端从同一配置读取。客户端运行副本的 `Data/` 仍映射到原件，不写入资源目录。
 
-用户 Lua 是工作台中的明确输入，直接位于 `/work/scripts`，随工作台挂载生效。内置 `shared/scripts/` 只含 tick 示例并随镜像固定；用户 Lua 文件可在运行中提交生效。脚本只承载玩法判断，模型、养成与生命周期由各自组件管理。
+用户 Lua 是工作台中的明确输入，直接位于 `/work/scripts`，随工作台挂载生效。内置 `shared/scripts/` 只含 tick 示例与运动校准探针并随镜像固定；用户 Lua 文件可在运行中提交生效。脚本只承载玩法判断，模型、养成与生命周期由各自组件管理。
 
 名称、物品恢复属性、NPC 范围和地图地形由同一个 `Catalog` 投影，现有 `inspect` 与静态查询共用；tick 脚本通过 `context.scene` 读取本图地形。Catalog 通过无头镜像和 GUI 镜像共同打包的原生 IMG 解析库查询属性、Canvas 尺寸、origin、帧时序和几何，不读取像素或音频。结果列出实际消费的 IMG 路径及 SHA256；`resource_version=null` 表示没有可证明的游戏版本，客户端版本另行核对。Map 类别按资源目录中的 `Map002/`、`Map/` 顺序选择；缺少文件或链接目标时保留未知。
 

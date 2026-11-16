@@ -155,6 +155,20 @@ end
 
 `character.on_ground` 来自本端地面事实，未知时不能靠重复坐标推断；`character.attacking` 的攻击动画仅在无头已知，GUI保持未知，不把任意单次动画伪装成攻击。`character.action_idle` 是独立的原生动作锁事实：无头读取本地Player攻击动画锁，GUI读取已校验Avatar单次动作索引及其原生结束清理；负值代表无该单次动作。行走、腾空、输入保持或按键释放不单独决定此值。它不承诺MP、武器、目标、冷却、攀爬或UI等其他准入条件满足；未知时为nil。`character.native_updates` 只随真实角色更新增加，不是输入消费或服务器效果成功的凭据。
 
+`character.physics` 是本角色**同一次原生更新**的整份物理末态，与显示位置、区间均速向量和静止参考分开：
+
+| 字段 | 含义 |
+| --- | --- |
+| `update_id` | 该样本对应的真实角色更新号，与 `character.native_updates` 复用同一更新源，不新增计数器。GUI 为原生角色更新计数；无头当前仍为宿主世界 tick（8ms），不是 30ms 运动提交号，#239 接入本地运动后改绑。不能在混合模式里用更新号差乘固定30ms换算全部时间 |
+| `step_ms` | 本样本实际模拟积分时间，不是宿主发布间隔。GUI 为 V17 固定30ms角色逻辑步；无头当前为8ms世界步 |
+| `x`、`y` | 当前未插值、未圆整的物理脚点，地图像素坐标。不是 `character.x/y` 的显示/插值缓存，两者不能混用参考点 |
+| `velocity` | 同一步末态的世界瞬时速度 `{x,y}`（px/s，右/下为正）。本端不能如实给出时为 `nil`，不用完整步位移均值或另一后端补齐 |
+| `on_ground` | 同一步末态的原生接地事实；不能靠重复坐标、显示位置或另一后端推断 |
+
+整个记录未知时 `character.physics=nil`；记录存在但单个字段未知时为 `nil`，不填0。旧 `character.x/y`、`game.world.position/x/y` 与 `character.velocity` 语义保持不变：`character.velocity` 仍是本端原生速度或完整原生更新位移均值（`source="native_update_delta"` 且带 `interval_ms`），不能当作 `physics.velocity` 的替代。
+
+GUI 在真实原生角色更新之后缓存整份记录，重复宿主帧和 CLI 读取复用同一样本，不重新拼装不同参考点。无头只在普通平地（`PhysicsObject::Type::NORMAL`、无沿坡直接 y 修正、非攀爬/水下）给出瞬时速度；旧引擎斜坡直接修正和接地相位的差异由后继运动任务修复，观察层不伪造。两端校准前先按[运动校准脚本与离线比较器](#运动校准脚本与离线比较器)采样。
+
 `game.character.movement` 与当前速度分开，是**静止平地、正常行走/普通跳跃、无额外外力和障碍**的模型参考。已知时提供：
 
 | 字段 | 含义 |
@@ -167,6 +181,26 @@ end
 无头 `headless_normal_v1` 使用当前 `get_walkforce/get_jumpforce` 和同一 `Physics` 实现的摩擦、重力及8ms步长：参考移速由地面递推的稳态求得；跳高按首个地面起跳步不加重力的离散积分推算。GUI `v17_normal_continuous_v1` 使用原版当前属性对象的已校验比例及本端已加载物理系数，以正常场地系数为1、平地坡度为0推算连续参考；实际离散更新及整数位置可造成高度差异。不能互换两端公式。有效属性变化后参考随采样更新；来源或校验不可用时为 `nil`，不用另一后端、静态模板或属性cap补齐。
 
 无头行走渐近趋于稳态，不能用速度严格等于参考值作为起跳条件；示例按目标方向达到参考移速的99%判断，不用固定时长、距离或仅凭速度不再变化。斜坡、墙、绳梯、水下、技能、推力、平台运动、天花板等不符合参考条件，需另行判断。
+
+### 运动校准脚本与离线比较器
+
+`shared/scripts/calibration/tick-motion-calibration.lua` 是随镜像固定的有界运动采样探针，用于建立双端物理pose基线；它不修改运动规则、导航控制阈值或任何观察语义。脚本固定 `@tick.gear 4`，只通过 `player.move/jump` 施加一次行走、制动、反向、静止跳、方向跳、空中松向或空中反向输入，不攻击、不用药、不换图。开始前要求：世界就绪、本图怪物列表可读且为空、`character.physics` 的 x/y 与 `character.movement` 可用、`character.on_ground=true`；会话用 `--seconds` 限时，脚本另按 `timeout_ms` 主动放键结束。只在安全平地、无怪且仅本脚本控制角色时使用。
+
+每个 tick 通过 `game.log` 输出一行稳定前缀 `BEIDOU_MOTION_CAL v1 ` 的 JSON，字段包括：场景身份、tick 时间/档位、`character.physics`、旧 `character.x/y` 与 `character.velocity`、`movement` 有效属性、当前输入与意图边沿，以及本帧样本相对上一样本的 `first/new/repeat/gap/missing/regressed` 标记。脚本不插值、不补造掉样，样本缺失或更新号跳变由比较器判证据不足并重采。
+
+```bash
+# 两端各选一个安全平地场景，按同一 scenario 和 direction 分别运行一次。
+private/workbenches/workbench /external/gui-workbench script run \
+  /opt/beidou-pilot/shared/scripts/calibration/tick-motion-calibration.lua \
+  --scenario walk --direction right --seconds 10
+private/workbenches/workbench /external/workbench script run \
+  /opt/beidou-pilot/shared/scripts/calibration/tick-motion-calibration.lua \
+  --scenario walk --direction right --seconds 10
+# 记录写入所属实例桥目录的 script-events.jsonl（容器内 `$CLIENT_ROOT/runtime/bridge/script-events.jsonl`），复制两端该文件后离线比较。
+python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.jsonl
+```
+
+比较器按物理 `update_id` 去重（同一更新号的多条宿主帧记录只取一份并校验位姿一致），以意图变化后的第一份物理样本作为输入消费边沿、用 `update_id - edge_update_id` 对齐相同物理步，不按 Lua tick 或墙钟对齐。逐物理步比较相对轨迹、速度和离地/落地事件；默认候选门槛为对应物理步相对轨迹≤1px、速度≤1px/s、接触事件≤1步，真机物理pose基线确认前这些仍是候选值，确认后才冻结。`step_ms` 不同、更新号缺口、物理样本/接地事实缺失或记录跨越地图/场景代次时输出 `evidence_insufficient`（退出码3）要求重采，不通过平移整段轨迹或放宽容差掩盖。两端当前 `step_ms` 为 GUI 30ms、无头8ms，因此本工具先用于单端基线复核与同一步长比较，跨端逐步比较要等本地运动任务统一 30ms 物理步后才有定义。
 
 ### 角色状态机与动作槽
 

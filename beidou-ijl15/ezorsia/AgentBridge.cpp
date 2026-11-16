@@ -447,6 +447,10 @@ MapleControl::State CaptureState(NativeContext& native) {
     state.characterUpdatesKnown = state.ready && updatedCharacter == native.user;
     state.characterUpdates = characterUpdates;
     if (state.ready) {
+        // Reuse the whole record cached by the real character update; host frames
+        // that do not advance the native step must not re-read a mixed pose.
+        const auto& physics = NativeMotion::CachedLocalPhysics();
+        if (state.characterUpdatesKnown && physics.user == native.user) state.character.physics = physics.pose;
         auto motion = NativeMotion::Capture(native.user);
         state.character.velocity = std::move(motion.velocity);
         state.character.movement = std::move(motion.movement);
@@ -678,6 +682,7 @@ bool Publish(const MapleControl::State& state) {
         auto character = state.character.MotionDocument();
         character["id"] = state.character.id;
         character["name"] = state.character.name;
+        character["physics"] = state.character.physics.Document();
         character["movement"] = state.character.movement.Document();
         character["action_idle"] = state.actionIdle == MapleControl::Fact::Unknown
                                        ? MapleControl::Value{}
@@ -1224,5 +1229,8 @@ void AgentBridge::CharacterUpdated(std::uintptr_t player) {
     if (ReadAt(0x00BEBF98, current) && current == player) {
         updatedCharacter = current;
         ++characterUpdates;
+        // One whole physics record per real character update. Repeated host
+        // frames and CLI character reads reuse it with this update identity.
+        NativeMotion::RecordLocalPhysics(current, characterUpdates);
     }
 }

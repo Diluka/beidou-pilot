@@ -114,6 +114,10 @@ double TSecDouble(std::uintptr_t address) {
     if (!std::isfinite(value)) throw ReadError("native motion attribute is not finite");
     return value;
 }
+
+// Recorded only when the native character update advances; every consumer of one
+// update reuses this record instead of reading a second reference point.
+LocalPhysics recordedLocalPhysics;
 }
 
 MapleControl::MotionVector CaptureVelocity(EntityKind kind, std::uintptr_t object) {
@@ -191,6 +195,57 @@ Observation Capture(std::uintptr_t user) {
         result.unavailable.emplace_back(std::string("native movement reference: ") + error.what());
     }
     return result;
+}
+
+MapleControl::PhysicsPose CapturePhysics(std::uintptr_t user, std::uint64_t updateId) {
+    MapleControl::PhysicsPose pose;
+    std::uintptr_t vector = 0;
+    try {
+        vector = PrimaryVector(EntityKind::LocalUser, user);
+    } catch (const ReadError&) {
+        // Without the verified primary VecCtrl no field may claim this update.
+        return pose;
+    }
+    // V17 CUserLocal::Update advances one fixed 30 ms character logic step; many
+    // render host frames reuse it. step_ms is the sample's simulated integration
+    // time, not the interval between observations or bridge publications.
+    pose.known = true;
+    pose.updateIdKnown = true;
+    pose.updateId = updateId;
+    pose.stepMsKnown = true;
+    pose.stepMs = 30;
+    try {
+        // +0x20/+0x38 are the unrounded physical foot point (ZtlSecure<double>,
+        // same fuse 0x539338 decoded above). One unreadable limb keeps the whole
+        // point unknown rather than publishing a mixed reference point.
+        const auto x = ZtlDouble(vector + 0x20);
+        const auto y = ZtlDouble(vector + 0x38);
+        pose.positionKnown = true;
+        pose.x = x;
+        pose.y = y;
+    } catch (const ReadError&) {
+    }
+    try {
+        const auto velocity = Velocity(vector);
+        pose.velocityKnown = true;
+        pose.velocityX = velocity.x;
+        pose.velocityY = velocity.y;
+    } catch (const ReadError&) {
+    }
+    try {
+        pose.onGround = Read<std::uint32_t>(vector + 0x110) != 0 ? MapleControl::Fact::True : MapleControl::Fact::False;
+    } catch (const ReadError&) {
+    }
+    return pose;
+}
+
+void RecordLocalPhysics(std::uintptr_t user, std::uint64_t updateId) {
+    recordedLocalPhysics.user = user;
+    recordedLocalPhysics.pose = CapturePhysics(user, updateId);
+}
+
+const LocalPhysics& CachedLocalPhysics() {
+    return recordedLocalPhysics;
 }
 
 }

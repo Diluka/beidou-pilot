@@ -49,6 +49,31 @@ private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
 
 可以从这个结构扩展更多阶段，不要加入阻塞等待或 `game.sleep()` 等旧接口。tick 多会话共享 player，同客户端其他会话可能覆盖方向；初学试用只运行这一份动作示例。完整契约见 [tick API](../../docs/LUA_TICK_API.md#tick-环境)。
 
+## 校准探针：`calibration/`
+
+| 文件 | 用途 | 使用边界 |
+| --- | --- | --- |
+| [tick-motion-calibration.lua](calibration/tick-motion-calibration.lua) | 有界采样本地角色物理末态：行走、制动、反向、静止跳、方向跳、空中松向或空中反向各一次，每个宿主帧输出一行结构化 JSON 供离线比较。 | 只做一次移动/跳跃输入，不攻击、不用药、不换图，也不改动运动规则或导航阈值；只在安全平地、无怪且仅本脚本控制角色时使用。采样缺失/更新号跳变由比较器判证据不足，不插值补造。 |
+
+示例演示公共 API 用法；校准探针是观察工具：固定 `@tick.gear 4`、按 `--seconds` 和脚本自身 `timeout_ms` 限时，把同一份 `character.physics` 契约记录到脚本事件日志，再由 `tools/motion_compare.py` 离线按物理 `update_id` 去重与对齐。运行和比较方法见 [tick API 的运动校准章节](../../docs/LUA_TICK_API.md#运动校准脚本与离线比较器)。
+
+### 运动校准采样
+
+`calibration/tick-motion-calibration.lua` 用于建立双端物理pose基线，不参与玩法控制。先确认角色站在安全平地、本图没有可见怪物且没有其他脚本控制角色，再在两端各运行一次同场景同方向的会话：
+
+```bash
+SCRIPT=/opt/beidou-pilot/shared/scripts/calibration/tick-motion-calibration.lua
+private/workbenches/workbench "$DIR" script run "$SCRIPT" --scenario walk --direction right --seconds 10
+```
+
+场景可选 `walk/brake/reverse/jump_stationary/jump_directional/air_release/air_reverse`，方向为 `left/right`；`runup_ms/hold_ms/air_release_ms/timeout_ms` 控制各阶段时长。每个宿主帧通过 `game.log` 输出一行前缀 `BEIDOU_MOTION_CAL v1 ` 的 JSON，写入该实例桥目录的 `script-events.jsonl`；把两端文件复制到同一开发环境后运行离线比较器：
+
+```bash
+python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.jsonl
+```
+
+比较器按真实 `physics.update_id` 去重（重复宿主帧校验位姿一致）、以意图变化后的第一份物理样本为消费边沿对齐，逐物理步比较相对轨迹、速度和离地/落地事件；`step_ms` 不同、更新号缺口、字段缺失或记录跨场景时返回证据不足并要求重采，不通过平移或放宽容差掩盖。当前 GUI `step_ms=30`、无头 `step_ms=8`，跨端逐步比较在本地运动统一30ms物理步后才成立。
+
 ## 调用与维护
 
 示例文件声明 `main(context)` 与 `@option`；`script describe FILE` 可查看参数，`script run FILE` 可按同一声明传值。内置示例随镜像位于 `/opt/beidou-pilot/shared/scripts/examples/`，可以通过通用入口直接查看和调用，例如：

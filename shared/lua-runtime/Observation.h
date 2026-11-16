@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #pragma once
 
+#include <cstdint>
 #include <initializer_list>
 #include <string>
 #include <type_traits>
@@ -54,6 +55,9 @@ private:
     std::vector<std::pair<std::string, Value>> object;
 };
 
+// Unknown is kept separate from a known false value in both Lua and host results.
+enum class Fact { Unknown, False, True };
+
 // Dynamic velocity and model-derived mobility remain distinct observations.
 // Coordinates are map pixels: right/down positive; velocity is pixels/second.
 struct MotionVector {
@@ -62,6 +66,28 @@ struct MotionVector {
     double x = 0;
     double y = 0;
     double intervalMs = 0; // Known only for an actual native-update displacement sample.
+    Value Document() const;
+};
+
+// One whole local-character physics sample. x/y are the unrounded physical foot
+// point and velocity is the same-step instantaneous world velocity, not the
+// interval-mean MotionVector. Unknown fields stay unknown (Lua nil / JSON null):
+// they are never filled from display coordinates, another backend or zero.
+struct PhysicsPose {
+    // A native sample of this local character exists for updateId. Individual
+    // fields stay independent; a known pose may still have an unknown field.
+    bool known = false;
+    bool updateIdKnown = false;
+    std::uint64_t updateId = 0;
+    bool stepMsKnown = false;
+    std::uint32_t stepMs = 0; // Simulated integration time, never a publish interval.
+    bool positionKnown = false;
+    double x = 0;
+    double y = 0;
+    bool velocityKnown = false;
+    double velocityX = 0;
+    double velocityY = 0;
+    Fact onGround = Fact::Unknown;
     Value Document() const;
 };
 

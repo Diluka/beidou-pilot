@@ -32,6 +32,18 @@ Value MotionVector::Document() const {
     return value;
 }
 
+Value PhysicsPose::Document() const {
+    if (!known) return {};
+    // Keys are always present for the whole record; an unknown fact projects as
+    // null (Lua nil) instead of disappearing and being mistaken for a zero.
+    return Value::Object({{"update_id", updateIdKnown ? Value(updateId) : Value{}},
+                          {"step_ms", stepMsKnown ? Value(stepMs) : Value{}},
+                          {"x", positionKnown ? Value(x) : Value{}},
+                          {"y", positionKnown ? Value(y) : Value{}},
+                          {"velocity", velocityKnown ? Value::Object({{"x", velocityX}, {"y", velocityY}}) : Value{}},
+                          {"on_ground", onGround == Fact::Unknown ? Value{} : Value(onGround == Fact::True)}});
+}
+
 void MovableObject::SetPosition(double currentX, double currentY) {
     positionKnown = true;
     x = currentX;

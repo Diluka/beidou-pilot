@@ -80,6 +80,9 @@ void Fixture(bool enhanced = false) {
     Put(Vector, std::uint32_t{0x00B3EAA8});
     Put(Vector + 0x0C, std::uint32_t{0x00B3E9F8});
     Put(User + 0x11A4, Vector + 0x0C);
+    // Unrounded physical foot point: x=-128.25, y=128.25 with the same fuse.
+    Put(Vector + 0x20, Left128);
+    Put(Vector + 0x38, Right128);
     Put(Vector + 0x50, Right128);
     Put(Vector + 0x68, Up360);
     Put(Vector + 0x110, std::uint32_t{0x700000});
@@ -256,6 +259,112 @@ void Numeric() {
     Fixture();
     Put(Coefficients + 0x70, std::numeric_limits<double>::max());
     Check(!NativeMotion::Capture(User).movement.known, "overflowed analytic apex remains unknown");
+}
+
+void PhysicsPose() {
+    Fixture();
+    const auto before = memory;
+    auto pose = NativeMotion::CapturePhysics(User, 9);
+    Check(memory == before, "physics pose capture is a pure native read");
+    Check(pose.known && pose.updateIdKnown && pose.updateId == 9, "physics sample keeps its native update identity");
+    Check(pose.stepMsKnown && pose.stepMs == 30, "V17 fixed logic step is the simulated integration time");
+    Check(pose.positionKnown && pose.velocityKnown && pose.onGround == MapleControl::Fact::True,
+          "verified primary vector yields position, velocity and grounding");
+    Near(pose.x, -128.25, "physical x is the unrounded VecCtrl +0x20 double");
+    Near(pose.y, 128.25, "physical y is the unrounded VecCtrl +0x38 double");
+    Near(pose.velocityX, 128.25, "same-step world vx is the verified +0x50 double");
+    Near(pose.velocityY, -360.5, "same-step world vy is the verified +0x68 double");
+    const auto document = pose.Document().Dump();
+    Check(document.find("\"update_id\":9") != std::string::npos, "update id is projected");
+    Check(document.find("\"step_ms\":30") != std::string::npos, "simulated step is projected");
+    Check(document.find("\"velocity\":{\"x\":128.25,\"y\":-360.5}") != std::string::npos,
+          "physics velocity is a plain same-step world vector");
+    Check(std::find(reads.begin(), reads.end(), User + 0x116C) == reads.end(),
+          "physics pose never reads the integer display position cache");
+}
+
+void PhysicsPoseUnknowns() {
+    memory.clear();
+    const auto whole = NativeMotion::CapturePhysics(User, 1);
+    Check(!whole.known && whole.Document().Type() == MapleControl::Value::Kind::Null,
+          "unverified primary vector leaves the whole physics record unknown");
+
+    Fixture();
+    memory.erase(Vector + 0x20);
+    auto pose = NativeMotion::CapturePhysics(User, 2);
+    Check(pose.known && !pose.positionKnown && pose.velocityKnown && pose.onGround == MapleControl::Fact::True,
+          "one unreadable position limb leaves both coordinates unknown only");
+    Check(pose.Document().Dump().find("\"x\":null") != std::string::npos
+              && pose.Document().Dump().find("\"y\":null") != std::string::npos,
+          "unknown coordinates project as null, not zero");
+
+    Fixture();
+    memory.at(Vector + 0x38) ^= 1;
+    pose = NativeMotion::CapturePhysics(User, 3);
+    Check(!pose.positionKnown && pose.velocityKnown, "position checksum is authenticated independently");
+
+    Fixture();
+    Put(Vector + 0x20, NotFinite);
+    pose = NativeMotion::CapturePhysics(User, 4);
+    Check(!pose.positionKnown && pose.velocityKnown, "non-finite position is unknown, not clamped");
+
+    Fixture();
+    memory.erase(Vector + 0x50);
+    pose = NativeMotion::CapturePhysics(User, 5);
+    Check(pose.positionKnown && !pose.velocityKnown && pose.onGround == MapleControl::Fact::True,
+          "missing velocity preserves independent position and grounding");
+    Check(pose.Document().Dump().find("\"velocity\":null") != std::string::npos,
+          "unknown physics velocity projects as null");
+
+    Fixture();
+    Put(Vector + 0x68, NotFinite);
+    pose = NativeMotion::CapturePhysics(User, 6);
+    Check(pose.positionKnown && !pose.velocityKnown, "non-finite velocity is unknown, not zero");
+
+    Fixture();
+    memory.erase(Vector + 0x110);
+    pose = NativeMotion::CapturePhysics(User, 7);
+    Check(pose.positionKnown && pose.velocityKnown && pose.onGround == MapleControl::Fact::Unknown,
+          "missing grounding is unknown, not false");
+    Check(pose.Document().Dump().find("\"on_ground\":null") != std::string::npos, "unknown grounding projects as null");
+}
+
+void PhysicsPoseCache() {
+    Fixture();
+    NativeMotion::RecordLocalPhysics(User, 5);
+    const auto& first = NativeMotion::CachedLocalPhysics();
+    Check(first.user == User && first.pose.known && first.pose.updateId == 5,
+          "recorded sample keeps the local user and native update id");
+    const auto x = first.pose.x;
+    const auto y = first.pose.y;
+    const auto velocityX = first.pose.velocityX;
+    // A repeated host frame must reuse the recorded sample, not re-read the pose.
+    Put(Vector + 0x20, Right128);
+    Put(Vector + 0x38, Left128);
+    Put(Vector + 0x50, Left128);
+    const auto& reused = NativeMotion::CachedLocalPhysics();
+    Check(reused.pose.x == x && reused.pose.y == y && reused.pose.velocityX == velocityX && reused.pose.updateId == 5,
+          "repeated host frames reuse the same whole sample and update id");
+
+    // A real native update records a new sample with the advanced identity.
+    NativeMotion::RecordLocalPhysics(User, 6);
+    const auto& updated = NativeMotion::CachedLocalPhysics();
+    Check(updated.pose.updateId == 6, "a real character update advances the recorded update id");
+    Near(updated.pose.x, 128.25, "a new native update replaces the whole pose");
+
+    memory.erase(Vector + 0x38);
+    NativeMotion::RecordLocalPhysics(User, 7);
+    const auto& partial = NativeMotion::CachedLocalPhysics();
+    Check(partial.pose.known && !partial.pose.positionKnown && partial.pose.updateId == 7,
+          "partial native reads keep the record identity but not a partial point");
+    Check(partial.pose.velocityKnown && partial.pose.onGround == MapleControl::Fact::True,
+          "independent physics facts survive one unavailable field");
+
+    Fixture();
+    Put(User, std::array<std::uint32_t, 2>{{0, 0}});
+    NativeMotion::RecordLocalPhysics(User, 8);
+    Check(!NativeMotion::CachedLocalPhysics().pose.known,
+          "an unverified object type never stores a fabricated physics sample");
 }
 
 struct EntityFixture {
@@ -580,6 +689,12 @@ int main(int argc, char** argv) {
         Numeric();
     else if (test == "boundary")
         BoundaryFailure();
+    else if (test == "physics")
+        PhysicsPose();
+    else if (test == "physics-unknowns")
+        PhysicsPoseUnknowns();
+    else if (test == "physics-cache")
+        PhysicsPoseCache();
     else if (test == "entities")
         EntityKinds();
     else if (test == "entity_types")

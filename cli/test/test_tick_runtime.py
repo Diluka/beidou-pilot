@@ -1,11 +1,23 @@
 """以真实 Lua 和共享 tick 引擎验证公开 API；替身仅提供原生 I/O。"""
 
+import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
 from beidou_pilot.strategies import compile_strategy, parse_options, read_strategy_file, split_script_header
+
+
+TOOLS = Path(__file__).resolve().parents[2] / "tools"
+
+
+def load_tool(name: str):
+    spec = importlib.util.spec_from_file_location(name, TOOLS / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class TickRuntimeContract(unittest.TestCase):
@@ -155,6 +167,88 @@ end
             compile_strategy(source, {"skill_id": 1001004, "hold_seconds": 0.1}, scene), encoding="utf-8"
         )
         subprocess.run([str(self.executable), "held-skill-example", str(compiled)], check=True, timeout=10)
+
+    def test_motion_calibration_script_emits_records_the_offline_comparator_accepts(self) -> None:
+        path = Path(__file__).resolve().parents[2] / "shared/scripts/calibration/tick-motion-calibration.lua"
+        source, metadata = read_strategy_file(path)
+        self.assertIsNotNone(metadata)
+        self.assertEqual(4, metadata.execution.gear)
+        comparator = load_tool("motion_compare")
+        scene = {"instance_id": "tick-contract", "character_id": 1, "map_id": 50000, "scene_generation": 1}
+        cases = (
+            ("walk", ["--scenario", "walk", "--hold-ms", "100"], False),
+            ("reverse", ["--scenario", "reverse", "--runup-ms", "100", "--hold-ms", "100"], False),
+            ("jump_stationary", ["--scenario", "jump_stationary"], True),
+            (
+                "air_release",
+                ["--scenario", "air_release", "--runup-ms", "100", "--air-release-ms", "30"],
+                True,
+            ),
+            (
+                "air_reverse",
+                ["--scenario", "air_reverse", "--runup-ms", "100", "--air-release-ms", "30"],
+                True,
+            ),
+        )
+        inputs = {"right", "left", "none", "jump", "right_jump", "left_jump"}
+        for scenario, arguments, jumping in cases:
+            with self.subTest(scenario=scenario):
+                options = parse_options(metadata, [*arguments, "--timeout-ms", "1000"])
+                compiled = self.executable.parent / f"tick-motion-calibration-{scenario}.lua"
+                compiled.write_text(compile_strategy(source, options, scene), encoding="utf-8")
+                output = subprocess.check_output(
+                    [str(self.executable), "calibration-example", str(compiled)], text=True
+                )
+                records = [json.loads(line) for line in output.splitlines() if line.strip()]
+                self.assertGreaterEqual(len(records), 4)
+                self.assertNotIn("timeout", [record.get("finish_reason") for record in records])
+                ends = [record for record in records if record["event"] == "end"]
+                self.assertEqual(1, len(ends))
+                self.assertEqual("scenario_completed", ends[0]["finish_reason"])
+                ticks = [record for record in records if record["event"] == "tick"]
+                self.assertGreaterEqual(len(ticks), 2)
+                for record in records:
+                    self.assertEqual(scenario, record["scenario"])
+                    self.assertIn(record["event"], {"begin", "tick", "end"})
+                for record in ticks:
+                    physics = record["physics"]
+                    self.assertIsInstance(physics, dict)
+                    self.assertGreaterEqual(physics["step_ms"], 1)
+                    self.assertIsNotNone(physics["update_id"])
+                    self.assertIn(record["input"], inputs)
+                    self.assertIn(
+                        record["sample"], ("first", "new", "repeat", "gap", "missing", "regressed", "unknown")
+                    )
+                if jumping:
+                    airborne = [record for record in ticks if record["phase"] in ("air", "air_reverse")]
+                    self.assertTrue(airborne, records)
+                    self.assertTrue(all(record["physics"]["on_ground"] is False for record in airborne))
+                    self.assertGreaterEqual(len({record["physics"]["velocity"]["y"] for record in airborne}), 2)
+                    self.assertTrue(
+                        any(
+                            record["intent_edge"] and record["input"] in {"jump", "right_jump", "left_jump"}
+                            for record in ticks
+                        )
+                    )
+                if scenario == "air_release":
+                    self.assertTrue(
+                        any(
+                            record["intent_edge"]
+                            and record["phase"] in {"air", "air_reverse"}
+                            and record["input"] == "jump"
+                            for record in ticks
+                        ),
+                        "air_release must withdraw the direction while airborne",
+                    )
+                if scenario == "air_reverse":
+                    self.assertTrue(
+                        any(record["phase"] == "air_reverse" and record["input"] == "left_jump" for record in ticks),
+                        "air_reverse must reverse the direction while airborne",
+                    )
+                result = comparator.compare(records, records)
+                self.assertEqual("comparable", result["status"], result)
+                if scenario == "reverse":
+                    self.assertEqual(["right", "left"], result["left"]["edge_inputs"])
 
     def test_moving_jump_attack_example_holds_direction_until_landing(self) -> None:
         path = Path(__file__).resolve().parents[2] / "shared/scripts/examples/tick-jump-attack.lua"

@@ -20,6 +20,22 @@ from .strategies import TickGear, parse_script_execution
 CONTINUOUS_STATE_MAX_AGE = 5.0
 
 
+class BridgePhysicsVelocity(TypedDict):
+    x: float
+    y: float
+
+
+class BridgePhysicsPose(TypedDict, total=False):
+    """同一原生更新的未插值物理末态；未知字段为 None，不做运动计算。"""
+
+    update_id: int
+    step_ms: int
+    x: float
+    y: float
+    velocity: BridgePhysicsVelocity
+    on_ground: bool | None
+
+
 class BridgeCharacter(TypedDict):
     id: int
     name: str
@@ -36,6 +52,7 @@ class BridgeCharacter(TypedDict):
     ability_points: int
     skill_points: int
     experience: int
+    physics: NotRequired[BridgePhysicsPose | None]
 
 
 class BridgePosition(TypedDict):
@@ -149,6 +166,34 @@ class BridgeSnapshot(TypedDict):
 def script_by_id(state: BridgeSnapshot, script_id: str) -> BridgeScript | None:
     """按会话数组定位 tick 脚本。"""
     return next((script for script in state.get("scripts", []) if script["id"] == script_id), None)
+
+
+def _validate_physics_pose(physics: object) -> None:
+    """校验同一原生更新的物理末态记录；未知字段保持 None，不补零或换算。"""
+    if physics is None:
+        return
+    if not isinstance(physics, dict):
+        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态字段无效。")
+    if any(type(physics.get(field)) is not int or physics[field] < 0 for field in ("update_id", "step_ms")):
+        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态更新号或步长无效。")
+    if physics["step_ms"] <= 0:
+        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态步长无效。")
+    for field in ("x", "y"):
+        value = physics.get(field)
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+            raise ClientError("invalid_bridge_state", "原生桥的角色物理坐标无效。")
+    if ("x" in physics) != ("y" in physics):
+        raise ClientError("invalid_bridge_state", "原生桥的角色物理坐标不成对。")
+    if "x" in physics and (physics["x"] is None) != (physics["y"] is None):
+        raise ClientError("invalid_bridge_state", "原生桥的角色物理坐标不成对。")
+    velocity = physics.get("velocity")
+    if velocity is not None and (
+            not isinstance(velocity, dict)
+            or any(type(velocity.get(field)) not in (int, float) or not math.isfinite(velocity[field])
+                   for field in ("x", "y"))):
+        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态速度无效。")
+    if "on_ground" in physics and physics["on_ground"] is not None and type(physics["on_ground"]) is not bool:
+        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态接地字段无效。")
 
 
 def _validate_script(script: object) -> None:
@@ -275,6 +320,8 @@ class BridgeClient:
                            ("id", "level", "job", "hp", "max_hp", "mp", "max_mp", "strength",
                             "dexterity", "intelligence", "luck", "ability_points", "skill_points", "experience"))))):
             raise ClientError("invalid_bridge_state", "原生桥的角色、坐标或命令结果字段无效。")
+        if character is not None:
+            _validate_physics_pose(character.get("physics"))
         if "script" in raw and raw["script"] is not None:
             _validate_script(raw["script"])
         if "scripts" in raw:

@@ -190,10 +190,50 @@ public:
     }
 
     void Advance() {
+        if (calibration) {
+            const bool right = std::find(directions.begin(), directions.end(), "right") != directions.end();
+            const bool left = std::find(directions.begin(), directions.end(), "left") != directions.end();
+            if (right) state.x += 1.0;
+            if (left) state.x -= 1.0;
+            // One real ordinary jump per held jump intent: airborne for a few
+            // host steps, then landing restores the native ground fact.
+            if (!calibrationJumping && !calibrationLanded && desired.kind == ActionKind::Jump) {
+                calibrationJumping = true;
+                calibrationAirTicks = 0;
+            }
+            if (calibrationJumping) {
+                ++calibrationAirTicks;
+                if (calibrationAirTicks < 8) {
+                    state.onGround = Fact::False;
+                    state.y -= 4.0;
+                } else {
+                    calibrationJumping = false;
+                    calibrationLanded = true;
+                    state.onGround = Fact::True;
+                }
+            } else {
+                state.onGround = Fact::True;
+            }
+        }
         state.character.positionKnown = state.positionKnown;
         if (state.positionKnown) state.character.SetPosition(state.x, state.y);
         ++state.sequence;
         if (advanceCharacter) ++state.characterUpdates;
+        if (calibration) {
+            auto& physics = state.character.physics;
+            physics.known = true;
+            physics.updateIdKnown = true;
+            physics.updateId = state.characterUpdates;
+            physics.stepMsKnown = true;
+            physics.stepMs = 30;
+            physics.positionKnown = true;
+            physics.x = state.x;
+            physics.y = state.y;
+            physics.velocityKnown = true;
+            physics.velocityX = 0;
+            physics.velocityY = calibrationJumping ? -300.0 + 60.0 * calibrationAirTicks : 0.0;
+            physics.onGround = state.onGround;
+        }
         // A native consumer may admit the current held input when A finishes.
         // Clearing/replacing B removes it here; there is no history to replay.
         if (armed && allowStart && !actionActive) {
@@ -221,6 +261,9 @@ public:
     mutable std::map<std::string, int> queries;
     std::map<std::uint32_t, Observation> terrains;
     bool supportsItems = true, supportsSkills = true, rejectClear = false, nativeNpcDomain = true;
+    bool calibration = false;
+    bool calibrationJumping = false, calibrationLanded = false;
+    int calibrationAirTicks = 0;
     bool actionActive = false, advanceCharacter = true, armed = false, allowStart = true;
     bool startsAnimation = true;
     int actionReleaseTicks = 0, directionTicks = 0, releases = 0, intentCalls = 0;
@@ -1553,6 +1596,18 @@ void MotionObservations() {
     native.state.character.velocity.source = MapleControl::MotionVector::Source::Native;
     native.state.character.velocity.x = 100;
     native.state.character.velocity.y = -200;
+    native.state.character.physics.known = true;
+    native.state.character.physics.updateIdKnown = true;
+    native.state.character.physics.updateId = 7;
+    native.state.character.physics.stepMsKnown = true;
+    native.state.character.physics.stepMs = 30;
+    native.state.character.physics.positionKnown = true;
+    native.state.character.physics.x = 2147.125;
+    native.state.character.physics.y = 1239.0;
+    native.state.character.physics.velocityKnown = true;
+    native.state.character.physics.velocityX = 125.0;
+    native.state.character.physics.velocityY = 0.0;
+    native.state.character.physics.onGround = Fact::True;
     native.state.character.movement.known = true;
     native.state.character.movement.model = "contract_reference";
     native.state.character.movement.maxSpeed = 100;
@@ -1566,6 +1621,12 @@ function main(c)
   assert(c.game.world.velocity==nil and c.game.world.on_ground==nil)
   assert(w.x~=nil and w.y~=nil and w.native_updates~=nil)
   if c.tick.index==1 then
+    local physics=w.physics
+    assert(physics~=nil and physics.update_id==7 and physics.step_ms==30)
+    assert(physics.x==2147.125 and physics.y==1239.0)
+    assert(physics.velocity.x==125.0 and physics.velocity.y==0.0)
+    assert(physics.on_ground==true)
+    assert(w.x~=physics.x and w.y~=physics.y) -- display snapshot is another reference point
     assert(w.velocity.source=='native' and w.velocity.x==100 and w.velocity.y==-200)
     assert(movement.kind=='model' and movement.model=='contract_reference')
     assert(movement.max_speed==100 and movement.max_jump_height==75)
@@ -1581,11 +1642,14 @@ function main(c)
     assert(scene.projectiles[1].velocity.source=='native_update_delta')
     assert(scene.projectiles[1].velocity.interval_ms==8 and scene.projectiles_complete==false)
   elseif c.tick.index==2 then
+    local physics=w.physics
+    assert(physics~=nil and physics.update_id==8 and physics.step_ms==30)
+    assert(physics.x==nil and physics.y==nil and physics.velocity==nil and physics.on_ground==nil)
     assert(w.velocity.x==-10 and w.velocity.y==0 and movement.max_speed==127.5)
     assert(c.game.scene.monsters[1].velocity==nil)
     assert(c.game.scene.npcs[1].velocity.x==0 and c.game.scene.npcs[1].ref==nil)
   elseif c.tick.index==3 then
-    assert(w.velocity==nil and movement==nil)
+    assert(w.velocity==nil and movement==nil and w.physics==nil)
     assert(c.game.scene.players==nil) -- unreadable membership is not an empty collection
     return 'done'
   end
@@ -1596,21 +1660,34 @@ end
     native.state.character.velocity.x = -10;
     native.state.character.velocity.y = 0;
     native.state.character.movement.maxSpeed = 127.5;
+    // One record may exist while its individual facts stay unknown.
+    native.state.character.physics = {};
+    native.state.character.physics.known = true;
+    native.state.character.physics.updateIdKnown = true;
+    native.state.character.physics.updateId = 8;
+    native.state.character.physics.stepMsKnown = true;
+    native.state.character.physics.stepMs = 30;
     native.state.monsters.front().velocity = {};
     native.nativeNpcDomain = false;
     Step(native, runtime);
     StatusIs(runtime, "motion", "running");
     native.state.character.velocity = {};
     native.state.character.movement = {};
+    native.state.character.physics = {};
     native.state.playersKnown = false;
     Step(native, runtime);
     Drain(native, runtime, "motion", "completed");
     native.state.character.velocity.source = MapleControl::MotionVector::Source::Native;
     native.state.character.movement.known = true;
+    native.state.character.physics.known = true;
+    native.state.character.physics.positionKnown = true;
+    native.state.character.physics.x = 1;
+    native.state.character.physics.y = 2;
     native.state.playersKnown = true;
     for (const auto& field :
-         {"game.character.velocity.x", "game.character.movement.max_speed", "game.scene.players[1].velocity.x",
-          "game.scene.npcs[1].velocity.x", "game.scene.drops[1].velocity.x", "game.scene.projectiles[1].velocity.x"}) {
+         {"game.character.velocity.x", "game.character.physics.x", "game.character.movement.max_speed",
+          "game.scene.players[1].velocity.x", "game.scene.npcs[1].velocity.x", "game.scene.drops[1].velocity.x",
+          "game.scene.projectiles[1].velocity.x"}) {
         const std::string id = field;
         Start(runtime, id, Source("function main(c) " + id + "=0 end"));
         Step(native, runtime);
@@ -1618,6 +1695,58 @@ end
         Check(Field(runtime.CurrentStatus(id), "error").Text().find("read-only") != std::string::npos,
               "nested motion data must reject writes, not fail because a field is missing");
     }
+}
+
+void CalibrationExample(const std::string& path) {
+    std::ifstream input(path);
+    Check(input.good(), "compiled calibration script required");
+    const std::string source{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    using Clock = std::chrono::steady_clock;
+    NativeBoundary native;
+    native.calibration = true;
+    native.state.monstersKnown = true;
+    native.state.monsters.clear(); // calibration refuses a non-empty monster list
+    native.state.character.movement.known = true;
+    native.state.character.movement.model = "contract_reference";
+    native.state.character.movement.maxSpeed = 125;
+    native.state.character.movement.maxJumpHeight = 75;
+    native.state.character.movement.effectiveSpeed = 100;
+    native.state.character.movement.effectiveJump = 100;
+    auto now = Clock::time_point(std::chrono::seconds(100));
+    TickRuntime runtime(native, [&] { return now; });
+    Start(runtime, "calibration", source);
+    for (int i = 0; i < 500 && runtime.Running(); ++i) {
+        now += std::chrono::milliseconds(16);
+        Step(native, runtime);
+    }
+    StatusIs(runtime, "calibration", "completed", "script_returned");
+    Check(native.directions.empty(), "calibration session releases its own direction");
+    const std::string prefix = "BEIDOU_MOTION_CAL v1 ";
+    std::size_t records = 0;
+    bool ended = false, completed = false, timedOut = false, jumpUsed = false, airborne = false;
+    for (const auto& line : native.logs) {
+        const auto marker = line.find(prefix);
+        Check(marker != std::string::npos, "calibration log lines use the stable prefix");
+        const auto record = line.substr(marker + prefix.size());
+        std::cout << record << '\n';
+        ++records;
+        jumpUsed = jumpUsed || record.find("\"input\":\"jump\"") != std::string::npos
+                   || record.find("\"input\":\"right_jump\"") != std::string::npos
+                   || record.find("\"input\":\"left_jump\"") != std::string::npos;
+        airborne = airborne || record.find("\"phase\":\"air\"") != std::string::npos
+                   || record.find("\"phase\":\"air_reverse\"") != std::string::npos;
+        if (record.find("\"event\":\"end\"") != std::string::npos) {
+            ended = true;
+            completed = record.find("\"finish_reason\":\"scenario_completed\"") != std::string::npos;
+        }
+        timedOut = timedOut || record.find("\"finish_reason\":\"timeout\"") != std::string::npos;
+    }
+    Check(records >= 4, "calibration emits begin, bounded samples and end");
+    Check(ended && completed && !timedOut,
+          "calibration scenario must complete by its scenario, not the script timeout");
+    // A jump scenario must actually observe the airborne phase; the ground-only
+    // scenarios do not submit jump input and stay unaffected.
+    Check(!jumpUsed || airborne, "jump calibration must record the airborne phase");
 }
 
 void HeldSkillExample(const std::string& path) {
@@ -1856,7 +1985,9 @@ void Packages() {
 
 int main(int argc, char** argv) {
     Check(argc == 2
-              || (argc == 3 && (std::string(argv[1]) == "held-skill-example" || std::string(argv[1]) == "scene-script"))
+              || (argc == 3
+                  && (std::string(argv[1]) == "held-skill-example" || std::string(argv[1]) == "scene-script"
+                      || std::string(argv[1]) == "calibration-example"))
               || (argc == 4 && std::string(argv[1]) == "jump-attack-example"),
           "scenario required");
     const std::string scenario = argv[1];
@@ -1904,7 +2035,10 @@ int main(int argc, char** argv) {
         Packages();
     else if (scenario == "motion")
         MotionObservations();
-    else if (scenario == "held-skill-example") {
+    else if (scenario == "calibration-example") {
+        Check(argc == 3, "compiled calibration script path required");
+        CalibrationExample(argv[2]);
+    } else if (scenario == "held-skill-example") {
         Check(argc == 3, "compiled held-skill example path required");
         HeldSkillExample(argv[2]);
     } else if (scenario == "jump-attack-example") {
