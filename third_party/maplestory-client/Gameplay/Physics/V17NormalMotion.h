@@ -79,8 +79,13 @@ public:
 	bool HasPendingJump() const;
 	bool HasPendingJumpDown() const;
 
-	// External writers (touch damage, rush) enter the canonical state directly so a
-	// following ordinary step cannot silently overwrite them.
+	// Queue an external impulse for the next ordinary commit (original 0x7A6353):
+	// clears pending jump, directional-limits both components into the pending
+	// accumulator and never changes the current velocity immediately.
+	void QueueImpulse(double vx, double vy);
+	bool HasPendingImpulse() const;
+	// Direct write used by branch-written velocities (ladder jump-off), not a hurt
+	// impulse: the written state becomes one committed sample without integration.
 	void ApplyImpulse(double vx, double vy);
 	// Publishes the written state as one committed sample without integrating it.
 	// Original ladder jump-off writes vx/vy and ends that 30ms update; the next
@@ -115,6 +120,7 @@ private:
 									const V17MotionMultipliers& multipliers, double dt);
 	double TangentCos() const;
 	double TangentSin() const;
+	static double MergeImpulseComponent(double current, double delta);
 
 	V17MotionStep state;
 	bool owns = false;
@@ -122,6 +128,9 @@ private:
 	bool pendingJumpDown = false;
 	bool rushing = false;
 	bool sample = false;
+	bool pendingImpulse = false;
+	double pendingImpulseX = 0.0;
+	double pendingImpulseY = 0.0;
 	double rushTargetX = 0.0;
 	uint16_t rushDelayMs = 0;
 	uint16_t dropThroughId = 0;

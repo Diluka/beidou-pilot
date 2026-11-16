@@ -47,6 +47,9 @@ Tangent TangentFor(double slope) {
 }
 
 void V17NormalMotion::Reset(double x, double y, bool onGround, uint16_t footholdId) {
+    pendingImpulse = false;
+    pendingImpulseX = 0.0;
+    pendingImpulseY = 0.0;
     state = {};
     state.x = x;
     state.y = y;
@@ -116,6 +119,32 @@ void V17NormalMotion::ApplyImpulse(double vx, double vy) {
     state.vx = vx;
     state.vy = vy;
 }
+
+double V17NormalMotion::MergeImpulseComponent(double current, double delta) {
+    // 0x7A6353/0x9B222A directional limit: an opposite-direction impulse only cancels
+    // up to zero and cannot reverse an existing larger same-direction speed.
+    if (delta < 0.0 && current > delta) return std::max(delta, current + delta);
+    if (delta > 0.0 && current < delta) return std::min(delta, current + delta);
+    return current;
+}
+
+void V17NormalMotion::QueueImpulse(double vx, double vy) {
+    // 0x9591CA only calls 0x7A6353 when the computed impulse is not all zero; an
+    // all-zero impulse neither queues nor clears the pending jump latch.
+    if (vx == 0.0 && vy == 0.0) return;
+    ClearJumpRequests();
+    if (!pendingImpulse) {
+        pendingImpulseX = 0.0;
+        pendingImpulseY = 0.0;
+        pendingImpulse = true;
+    }
+    pendingImpulseX = MergeImpulseComponent(pendingImpulseX, vx);
+    pendingImpulseY = MergeImpulseComponent(pendingImpulseY, vy);
+}
+
+bool V17NormalMotion::HasPendingImpulse() const {
+    return pendingImpulse;
+}
 void V17NormalMotion::CommitExternalWrite(uint32_t stepMs) {
     state.stepMs = stepMs;
     state.jumped = false;
@@ -162,6 +191,23 @@ V17MotionStep V17NormalMotion::Step(const FootholdTree& terrain, const V17Physic
     state.hitWall = false;
     state.stoppedAtEdge = false;
     state.leftGround = false;
+
+    // 0x9B222A: a queued impulse is consumed before this commit's integration. It
+    // detaches the foothold first, merges into the world velocity with the same
+    // directional limit and truncates both components toward zero (0xA62018 RC=11).
+    if (pendingImpulse) {
+        const double impulseX = pendingImpulseX;
+        const double impulseY = pendingImpulseY;
+        pendingImpulse = false;
+        pendingImpulseX = 0.0;
+        pendingImpulseY = 0.0;
+        state.onGround = false;
+        state.footholdId = 0;
+        state.footholdSlope = 0.0;
+        state.footholdLayer = 0;
+        state.vx = std::trunc(MergeImpulseComponent(state.vx, impulseX));
+        state.vy = std::trunc(MergeImpulseComponent(state.vy, impulseY));
+    }
 
     // Attach a freshly respawned/repositioned foot point (onGround with no foothold).
     if (state.onGround && state.footholdId == 0) {

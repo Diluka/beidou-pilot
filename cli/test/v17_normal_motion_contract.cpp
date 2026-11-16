@@ -253,6 +253,43 @@ void ImpulseWrite(const ms::FootholdTree& terrain) {
     Near(after.vy, -217.5, "first_air_step_adds_one_gravity_step");
 }
 
+void HurtImpulse(const ms::FootholdTree& terrain) {
+    // Original 0x7A6353 queue -> 0x9B222A consume: detach foothold, directional-limited
+    // merge into world velocity, truncate toward zero (0xA62018), then air integration.
+    Runner runner(terrain);
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.QueueImpulse(-187.5, -437.5);
+    auto result = runner.Step(0);
+    Check(!result.onGround && result.footholdId == 0, "hurt_impulse_detaches_foothold");
+    Check(result.leftGround && !result.landed, "hurt_impulse_records_ground_exit");
+    Near(result.vy, -377.0, "hurt_impulse_truncates_vy_then_adds_gravity");
+    Near(result.y, 987.79, "hurt_impulse_first_air_trapezoid_y", 1e-6);
+    Check(result.vx > -188.0 && result.vx < -186.0, "hurt_impulse_keeps_negative_vx");
+
+    // Directional limit cancels only up to zero; existing 125px/s becomes -75, not -200.
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    for (int step = 0; step < 3; ++step) runner.Step(1);
+    runner.motion.QueueImpulse(-200.0, -200.0);
+    result = runner.Step(0);
+    Check(result.vx > -76.0 && result.vx < -74.0, "hurt_impulse_directional_merge_x");
+    Near(result.vy, -140.0, "hurt_impulse_directional_merge_vy_truncated");
+
+    // Larger same-direction speed is not reduced by a smaller impulse.
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.ApplyImpulse(-300.0, 0.0);
+    runner.motion.QueueImpulse(-200.0, 0.0);
+    result = runner.Step(0);
+    Check(result.vx > -301.0 && result.vx < -299.0, "hurt_impulse_does_not_weaken_larger_speed");
+
+    // Two same-direction queue calls merge without stacking (-200 stays -200).
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.QueueImpulse(-200.0, -200.0);
+    runner.motion.QueueImpulse(-200.0, -200.0);
+    result = runner.Step(0);
+    Near(result.vy, -140.0, "hurt_impulse_queue_does_not_stack_same_direction");
+    Check(result.vx > -201.0 && result.vx < -199.0, "hurt_impulse_queue_vx_kept");
+}
+
 void JumpDown(const ms::FootholdTree& terrain) {
     Runner runner(terrain);
     runner.motion.Reset(0.0, 1000.0, true, 1);
@@ -303,6 +340,8 @@ int main(int argc, char** argv) {
         Air(terrain);
     else if (scenario == "impulse-write")
         ImpulseWrite(terrain);
+    else if (scenario == "hurt-impulse")
+        HurtImpulse(terrain);
     else if (scenario == "jumpdown")
         JumpDown(terrain);
     else if (scenario == "no-late-jump")

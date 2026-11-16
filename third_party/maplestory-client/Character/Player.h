@@ -81,7 +81,6 @@ namespace ms
 		void request_jump();
 		void request_jump_down();
 		void clear_motion_requests();
-		void apply_motion_impulse(double vx, double vy);
 		void begin_motion_rush(double targetX);
 		void suspend_motion();
 		void resume_motion_from_projection();

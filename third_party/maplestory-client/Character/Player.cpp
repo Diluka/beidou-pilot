@@ -451,11 +451,6 @@ namespace ms
 		motion.ClearJumpRequests();
 	}
 
-	void Player::apply_motion_impulse(double vx, double vy)
-	{
-		motion.ApplyImpulse(vx, vy);
-	}
-
 	void Player::begin_motion_rush(double targetX)
 	{
 		motion.BeginRush(targetX, get_attackdelay(1));
@@ -729,9 +724,12 @@ namespace ms
 		{
 			if (motion.OwnsNormalState())
 			{
-				// Equivalent to the legacy per-step impulse (1.5px/8ms, 3.5px/step):
-				// the canonical state takes it so ordinary motion cannot overwrite it.
-				apply_motion_impulse(fromleft ? -187.5 : 187.5, -437.5);
+				// #250 §3: the original queues the impulse and consumes it at the next
+				// 30ms commit (detach + directional merge + truncate). The 187.5/-437.5
+				// amplitude is still the old per-step conversion until the ordinary
+				// touch-damage branch is dynamically confirmed; it is not an original
+				// constant yet.
+				motion.QueueImpulse(fromleft ? -187.5 : 187.5, -437.5);
 			}
 			else
 			{

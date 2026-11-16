@@ -200,7 +200,10 @@ namespace ms
 		damagenumbers.emplace_back(DamageNumber::Type::TOPLAYER, damage, start_y, x);
 
 		look.set_alerted(5000);
-		invincible.set_for(2000);
+		// #250 §3: the original damage handler writes a +1500 protection counter that
+		// decreases by 30 per 30ms character step (50 steps = 1500ms). The old 2000ms
+		// came from the Journey implementation, not from the native counter.
+		invincible.set_for(1500);
 	}
 
 	void Char::speak(const std::string& line)
