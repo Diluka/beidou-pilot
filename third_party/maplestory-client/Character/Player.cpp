@@ -16,6 +16,7 @@
 //	along with this program.  If not, see <https://www.gnu.org/licenses/>.		//
 //////////////////////////////////////////////////////////////////////////////////
 #include "Player.h"
+#include "MovePlayerFragment.h"
 
 #include "PlayerStates.h"
 
@@ -386,7 +387,29 @@ namespace ms
 		if (!lastmove.hasmoved(newmove))
 			return;
 
-		MovePlayerPacket(newmove).dispatch();
+		// The two words headless exposed as lastx/lasty are the original fragment's
+		// endpoint vx/vy (px/s). The ordinary V17 motion owns the px/s state; legacy
+		// attached modes project through the 8ms PhysicsObject velocity.
+		double vx = 0.0;
+		double vy = 0.0;
+
+		if (motion.HasSample())
+		{
+			const V17MotionStep& sample = motion.LastStep();
+			vx = sample.vx;
+			vy = sample.vy;
+		}
+		else
+		{
+			constexpr double STEP_TO_SECOND = 1000.0 / 8.0;
+			vx = phobj.hspeed * STEP_TO_SECOND;
+			vy = phobj.vspeed * STEP_TO_SECOND;
+		}
+
+		Movement encoded = newmove;
+		encoded.lastx = MovePlayerFragmentVelocity(vx);
+		encoded.lasty = MovePlayerFragmentVelocity(vy);
+		MovePlayerPacket(encoded).dispatch();
 		lastmove = newmove;
 	}
 
