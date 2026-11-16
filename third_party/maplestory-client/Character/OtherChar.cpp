@@ -19,6 +19,9 @@
 
 #include "../Constants.h"
 
+#include <cmath>
+#include "../Gameplay/MovementReplay.h"
+
 namespace ms
 {
 	OtherChar::OtherChar(int32_t charid, const CharLook& look, uint16_t level, int16_t job, const std::string& name, int8_t stance, Point<int16_t> position) : Char(charid, look, name), level(level), job(job)
@@ -28,7 +31,6 @@ namespace ms
 		lastmove.xpos = position.x();
 		lastmove.ypos = position.y();
 		lastmove.newstate = stance;
-		timer = 0;
 
 		attackspeed = 6;
 		attacking = false;
@@ -36,32 +38,37 @@ namespace ms
 
 	int8_t OtherChar::update(const Physics& physics)
 	{
-		if (timer > 1)
+		if (replayActive)
 		{
-			timer--;
-		}
-		else if (timer == 1)
-		{
-			if (!movements.empty())
-			{
-				lastmove = movements.front();
-				movements.pop();
-			}
-			else
-			{
-				timer = 0;
-			}
-		}
+			replayAccumulator = static_cast<uint16_t>(replayAccumulator + Constants::TIMESTEP);
 
-		if (!attacking)
+			while (!replay.Empty() && replayAccumulator >= replay.StepMs())
+			{
+				const uint16_t step = replay.StepMs();
+				replayAccumulator = static_cast<uint16_t>(replayAccumulator - step);
+				replay.Advance(step);
+			}
+
+			if (replay.Empty())
+				replayActive = false;
+
+			const MovementReplay::Sample& sample = replay.LastSample();
+			phobj.x = sample.x;
+			phobj.y = sample.y;
+			phobj.hspeed = 0.0;
+			phobj.vspeed = 0.0;
+
+			if (sample.fh != 0)
+				phobj.fhid = sample.fh;
+
+			if (!attacking)
+				set_state(sample.state);
+		}
+		else if (!attacking)
 		{
 			uint8_t laststate = lastmove.newstate;
 			set_state(laststate);
 		}
-
-		phobj.hspeed = lastmove.xpos - phobj.crnt_x();
-		phobj.vspeed = lastmove.ypos - phobj.crnt_y();
-		phobj.move();
 
 		physics.get_fht().update_fh(phobj);
 
@@ -75,13 +82,17 @@ namespace ms
 
 	void OtherChar::send_movement(const std::vector<Movement>& newmoves)
 	{
-		movements.push(newmoves.back());
+		if (newmoves.empty())
+			return;
 
-		if (timer == 0)
-		{
-			constexpr uint16_t DELAY = 50;
-			timer = DELAY;
-		}
+		// Remote users advance the received path with the same 30/33ms replay clock
+		// as the original Remote User update (docs/V17_EXTENDED_MOTION_RULES.md §10).
+		replay.Reset(Point<int16_t>(static_cast<int16_t>(std::llround(phobj.crnt_x())),
+		                            static_cast<int16_t>(std::llround(phobj.crnt_y()))),
+		             std::vector<Movement>(newmoves));
+		replayAccumulator = 0;
+		replayActive = true;
+		lastmove = newmoves.back();
 	}
 
 	void OtherChar::update_skill(int32_t skillid, uint8_t skilllevel)
