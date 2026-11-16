@@ -342,9 +342,11 @@ V17MotionStep V17NormalMotion::DetachAndJump(const FootholdTree& terrain, const 
                                              double dt) {
     const FootholdInfo foothold = terrain.GetFoothold(state.footholdId);
     const Tangent tangent = TangentFor(state.footholdSlope);
-    double tangentSpeed = state.vx * tangent.cos + state.vy * tangent.sin;
-
-    if (foothold.valid) tangentSpeed = std::clamp(tangentSpeed, 0.0, foothold.length);
+    // #237 D.5: only the local *position* is clamped to [0, foothold length] before
+    // projection; the local *speed* keeps its sign and magnitude. Clamping the
+    // tangent speed collapsed a leftward run-up to zero and then the boost produced
+    // -0.8*Vmax for a leftward jump (caught in the GUI/headless dual-end comparison).
+    const double tangentSpeed = state.vx * tangent.cos + state.vy * tangent.sin;
 
     V17MotionStep detached = state;
     detached.vx = tangentSpeed * tangent.cos;
@@ -381,12 +383,9 @@ V17MotionStep V17NormalMotion::DetachAndJump(const FootholdTree& terrain, const 
 V17MotionStep V17NormalMotion::DetachAndJumpDown(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
                                                  const V17MotionMultipliers& multipliers, double dt) {
     const FootholdInfo foothold = terrain.GetFoothold(state.footholdId);
-    const Tangent tangent = TangentFor(state.footholdSlope);
-    double tangentSpeed = state.vx * tangent.cos + state.vy * tangent.sin;
     const double groundY = state.y;
 
     if (foothold.valid) {
-        tangentSpeed = std::clamp(tangentSpeed, 0.0, foothold.length);
         dropThroughId = foothold.id;
         dropThroughY = terrain.GroundBelow(state.x, foothold);
     } else {
@@ -395,8 +394,6 @@ V17MotionStep V17NormalMotion::DetachAndJumpDown(const FootholdTree& terrain, co
     }
 
     V17MotionStep detached = state;
-    detached.vx = tangentSpeed * tangent.cos;
-    detached.vy = tangentSpeed * tangent.sin;
 
     if (foothold.valid)
         detached.x = std::clamp(detached.x, static_cast<double>(std::min(foothold.x1, foothold.x2)),

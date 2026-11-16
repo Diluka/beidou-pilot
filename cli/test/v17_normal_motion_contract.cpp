@@ -149,6 +149,39 @@ void Jump(const ms::FootholdTree& terrain) {
     result = runner.Step(1);
     Near(result.vx, 125.0, "jump_clamp_after_boost");
 
+    // Leftward jump cases: a leftward run-up must keep its signed speed. The boost
+    // adds in the input direction; it must never clamp the tangent speed magnitude
+    // back to 0.8*Vmax or collapse negative motion (the dual-end comparison caught
+    // that regression, so both directions stay in this contract).
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.ApplyImpulse(-125.0, 0.0);
+    runner.motion.RequestJump();
+    result = runner.Step(-1);
+    Near(result.vx, -125.0, "left_jump_keeps_full_runup_speed");
+
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.RequestJump();
+    result = runner.Step(-1);
+    Near(result.vx, -100.0, "left_jump_boost_from_rest");
+
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.ApplyImpulse(-20.0, 0.0);
+    runner.motion.RequestJump();
+    result = runner.Step(-1);
+    Near(result.vx, -120.0, "left_jump_boost_adds_to_existing_speed");
+
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.ApplyImpulse(-110.0, 0.0);
+    runner.motion.RequestJump();
+    result = runner.Step(-1);
+    Near(result.vx, -110.0, "left_jump_boost_threshold_is_not_a_minimum");
+
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.ApplyImpulse(-130.0, 0.0);
+    runner.motion.RequestJump();
+    result = runner.Step(-1);
+    Near(result.vx, -125.0, "left_jump_clamp_after_boost");
+
     runner.motion.Reset(0.0, 1000.0, true, 1);
     runner.multipliers.jumpRatio = 1.23;
     runner.motion.RequestJump();
