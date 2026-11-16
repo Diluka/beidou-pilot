@@ -74,7 +74,8 @@ namespace ms
 			if (state == Drop::State::DROPPED)
 			{
 				const double anchorY = dest.y() - get_icon_half_height();
-				set_position(DropFallX(start.x(), dest.x(), fallMs), DropFallY(start.y(), fallMs));
+				const double velocity = DropFallVelocityForPickupType(pickuptype);
+				set_position(DropFallX(start.x(), dest.x(), fallMs), DropFallY(start.y(), fallMs, velocity));
 
 				if (fallMs >= DropFallDurationMs)
 				{
@@ -95,7 +96,8 @@ namespace ms
 			else
 			{
 				const double anchorY = dest.y() - get_icon_half_height();
-				set_position(dest.x(), DropDescendY(start.y(), fallMs));
+				const double velocity = DropFallVelocityForPickupType(pickuptype);
+				set_position(dest.x(), DropDescendY(start.y(), fallMs, velocity));
 
 				if (phobj.crnt_y() >= anchorY)
 				{
