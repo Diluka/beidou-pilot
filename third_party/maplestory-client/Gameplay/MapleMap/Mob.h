@@ -20,6 +20,7 @@
 #include "MapObject.h"
 
 #include "../Movement.h"
+#include "../MovementReplay.h"
 
 #include "../Combat/Attack.h"
 #include "../Combat/Bullet.h"
@@ -79,6 +80,7 @@ namespace ms
 		// Change this mob's control mode:
 		// 0 - no control, 1 - control, 2 - aggro
 		void set_control(int8_t mode);
+		bool is_controlled() const { return control; }
 		// Send movement to the mob
 		void send_movement(Point<int16_t> start, std::vector<Movement>&& movements);
 		// Kill the mob with the appropriate type:
@@ -173,6 +175,9 @@ namespace ms
 		TimedBool showhp;
 
 		std::vector<Movement> movements;
+		MovementReplay replay;
+		uint16_t replayAccumulator = 0;
+		bool replayActive = false;
 		uint16_t counter;
 
 		int32_t id;

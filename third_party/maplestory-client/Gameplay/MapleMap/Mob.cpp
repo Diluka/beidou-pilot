@@ -235,32 +235,61 @@ namespace ms
 				break;
 			}
 
-			physics.move_object(phobj);
-
-			if (control)
+			if (!control && replayActive)
 			{
-				counter++;
+				// Play the received path with its own 30ms/33ms catch-up clock.
+				replayAccumulator = static_cast<uint16_t>(replayAccumulator + Constants::TIMESTEP);
 
-				bool next;
-
-				switch (stance)
+				while (!replay.Empty() && replayAccumulator >= replay.StepMs())
 				{
-				case Stance::HIT:
-					next = counter > 200;
-					break;
-				case Stance::JUMP:
-					next = phobj.onground;
-					break;
-				default:
-					next = aniend && counter > 200;
-					break;
+					const uint16_t step = replay.StepMs();
+					replayAccumulator = static_cast<uint16_t>(replayAccumulator - step);
+					replay.Advance(step);
 				}
 
-				if (next)
+				if (replay.Empty())
+					replayActive = false;
+
+				const MovementReplay::Sample& sample = replay.LastSample();
+				phobj.x = sample.x;
+				phobj.y = sample.y;
+				phobj.hspeed = 0.0;
+				phobj.vspeed = 0.0;
+
+				if (sample.fh != 0)
+					phobj.fhid = sample.fh;
+
+				set_stance(sample.state);
+			}
+			else
+			{
+				physics.move_object(phobj);
+
+				if (control)
 				{
-					next_move();
-					update_movement();
-					counter = 0;
+					counter++;
+
+					bool next;
+
+					switch (stance)
+					{
+					case Stance::HIT:
+						next = counter > 200;
+						break;
+					case Stance::JUMP:
+						next = phobj.onground;
+						break;
+					default:
+						next = aniend && counter > 200;
+						break;
+					}
+
+					if (next)
+					{
+						next_move();
+						update_movement();
+						counter = 0;
+					}
 				}
 			}
 		}
@@ -358,6 +387,15 @@ namespace ms
 	{
 		control = mode > 0;
 		aggro = mode == 2;
+
+		if (control)
+		{
+			// The local simulation owns the monster again; the replayed remote path is
+			// no longer authoritative.
+			replay = MovementReplay();
+			replayActive = false;
+			replayAccumulator = 0;
+		}
 	}
 
 	void Mob::send_movement(Point<int16_t> start, std::vector<Movement>&& in_movements)
@@ -378,6 +416,12 @@ namespace ms
 		set_stance(laststance);
 
 		phobj.fhid = lastmove.fh;
+
+		// Non-controlled monsters play back the controller's V17 path instead of
+		// running local Journey physics (docs/V17_EXTENDED_MOTION_RULES.md §4/§10).
+		replay.Reset(start, std::vector<Movement>(movements));
+		replayAccumulator = 0;
+		replayActive = true;
 	}
 
 	Point<int16_t> Mob::get_head_position(Point<int16_t> position) const

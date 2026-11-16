@@ -116,6 +116,9 @@ Value Monsters() {
         document["template_id"] = definition != 0 ? Value(SecureInt(definition + 0x0C)) : Value();
         document["name"] = definition != 0 ? TemplateName(definition + 0x30) : Value();
         document["active"] = SecureInt(monster + 0x124) != 0;
+        // The original client's monster controller ownership is not exposed by this
+        // verified read-only layout; keep it unknown rather than inferring it.
+        document["controlled"] = Value{};
         output.Add(std::move(document));
         const auto node = Read<Address>(position - 12);
         position = node != 0 ? node + 16 : 0;
@@ -538,7 +541,8 @@ Value Scene() {
         {"projectiles", Value{}}, {"projectiles_complete", Value{}},
         {"capabilities", Value::Object({{"projectiles", false}})},
         {"players", players}, {"players_complete", playersComplete},
-        {"not_covered", Value::Array({"other_player_hp", "other_player_equipment", "other_player_party_relation"})},
+        {"not_covered", Value::Array({"other_player_hp", "other_player_equipment", "other_player_party_relation",
+                                       "monster_controlled"})},
         {"player_facing", flags & 1 ? "Left" : "Right"}, {"raw_flags", flags}, {"pending_dynamic", false},
         {"unavailable", unavailable}
     });

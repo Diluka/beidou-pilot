@@ -642,6 +642,7 @@ struct TickRuntime::Impl {
                     auto item = monster.MotionDocument();
                     item["object_id"] = monster.objectId;
                     item["active"] = monster.active;
+                    SetFact(item, "controlled", monster.controlled);
                     if (monster.templateKnown) item["template_id"] = monster.templateId;
                     if (!monster.name.empty()) item["name"] = monster.name;
                     if (monster.hpSequence != 0) {

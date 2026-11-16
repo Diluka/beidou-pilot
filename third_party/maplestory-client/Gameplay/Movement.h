@@ -37,6 +37,14 @@ namespace ms
 		Movement(const PhysicsObject& phobj, uint8_t s) : Movement(Type::ABSOLUTE, 0, phobj.get_x(), phobj.get_y(), phobj.get_last_x(), phobj.get_last_y(), phobj.fhid, s, 1) {}
 		Movement() : Movement(Type::NONE, 0, 0, 0, 0, 0) {}
 
+		// Inbound V17 path payload: documented command layouts carry either a position
+		// endpoint or a velocity for the next endpoint. These fields keep the parsed
+		// facts explicit instead of overloading xpos/ypos for both.
+		int16_t vx = 0;
+		int16_t vy = 0;
+		// Command 15's trailing extra word; identity/consumer not closed yet.
+		uint16_t extra = 0;
+
 		bool hasmoved(const Movement& newmove) const
 		{
 			return newmove.newstate != newstate || newmove.xpos != xpos || newmove.ypos != ypos || newmove.lastx != lastx || newmove.lasty != lasty;

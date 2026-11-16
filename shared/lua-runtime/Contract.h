@@ -32,6 +32,9 @@ struct Monster : MovableObject {
     bool templateKnown = false;
     std::string name;
     bool active = false;
+    // Local controller ownership of this monster. Only the headless engine can
+    // report it; the original client observation leaves it unknown.
+    Fact controlled = Fact::Unknown;
     int hpPercent = 0;
     std::uint64_t hpSequence = 0; // Zero means no server HP observation for this native object.
 };
