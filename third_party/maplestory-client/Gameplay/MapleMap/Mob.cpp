@@ -16,6 +16,7 @@
 //	along with this program.  If not, see <https://www.gnu.org/licenses/>.		//
 //////////////////////////////////////////////////////////////////////////////////
 #include "Mob.h"
+#include "MobWalkSpeed.h"
 
 #include "../../Util/Misc.h"
 
@@ -79,8 +80,7 @@ namespace ms
 		hitsound = sndsrc["Damage"];
 		diesound = sndsrc["Die"];
 
-		speed += 100;
-		speed *= 0.001f;
+		speed = MobWalkForceFromTemplate(speed);
 
 		flyspeed += 100;
 		flyspeed *= 0.0005f;
