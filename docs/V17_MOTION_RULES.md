@@ -422,22 +422,24 @@ StepAir(state, input, dt):
 
 ## 8. headless 实现映射
 
-### 8.1 当前 main（仅作对照，不是对齐依据）
+### 8.1 #239 之前的 headless（历史对照，不再对应当前 main）
 
-- 【观测·静态】基线 `main=639c700` 的 headless 仍是 Journey/HeavenClient 的 8ms 模型：`third_party/maplestory-client/Gameplay/Physics/Physics.cpp` 的每步递推（`.8V+20` → 稳态 100px/s）、`Character/Player.cpp` 的 8ms 步位移；旧参考模型 `max_speed=100 / max_jump_height=74.58` 仍在。
-- 因此 `TICK_FREQUENCY.md` 里 headless 的 100px/s / 74.58 只是现状，不是本文规则；实现新模型前不得用 headless 轨迹校验预测器。
+- 【观测·静态】`main=639c700` 及更早的 headless 使用 Journey/HeavenClient 的 8ms 模型：`third_party/maplestory-client/Gameplay/Physics/Physics.cpp` 的每步递推（`.8V+20` → 稳态 100px/s）、`Character/Player.cpp` 的 8ms 步位移；旧参考模型 `max_speed=100 / max_jump_height=74.58`。
+- #239 合入后这段只用于理解历史证据与旧合同；当前 main 的本地角色普通运动以第 8.3 节为准。
 
 ### 8.2 #238 已提供的同步物理末态
 
 - #238 已合入 main（PR #241，merge commit `d8f4d84`，最终提交 `1b4d905`；本文件初稿基线仍按 `639c700` 阅读，与 #238 相关的契约以合入后 main 为准）提供 `character.physics` 同步末态契约：字段为 `update_id / step_ms / x / y / velocity{x,y} / on_ground`，x/y 是**未圆整物理脚点**、velocity 是**同一步世界瞬时速度**（未知保持未知，不补零），旧 `character.x/y`（显示缓存）与 `character.velocity`（区间均速）语义保留。
 - 该契约是本文规则与真机测量之间的比较基准：#243 预测器与 #239 实现都应按 `update_id` 对齐、只用 `character.physics` 做物理比较（`tmp/236-validation/plan.md` 的观察规则）。
 
-### 8.3 #239 实现状态（进行中）
+### 8.3 #239 已落地的 headless 实现映射（实际指针）
 
-- 工作树 `feat/239-normal-motion` 正在实现。截至本文初版，已提交参数表接入（`2ae63a7`：新增 `V17PhysicsParameters.{h,cpp}`、`headless/src/main.cpp` 装载接线与参数合同；缺失/非 real/非有限值报带键名的资源错误，不回退旧 Journey 常量）；`V17NormalMotion` 与 `FootholdTree::SweepLocalMotion` 仍在进行。
-- 入口目标是：`V17PhysicsParameters`（本端 `Physics.img` 只读参数与校验）、`V17NormalMotion`（普通模式规范状态与本文分支/积分/投影）、`FootholdTree::SweepLocalMotion`（起点 + 完整 30ms 位移的碰撞扫掠），并把 `physics.update_id` 绑定到真实运动提交号、把本地位移包发出时机收拢到 30ms 提交。
-- 设计依据见 `tmp/239-design/design.md` §2（模块边界）与 §3（算法）、§4（碰撞）、§6（采样/输入/出包）。
-- **实际文件/类/接口指针待 #239 落地后由 lead 在本节补充**；本文不写未实现的函数签名，其他任务不要按假设签名编码。
+- **参数**：`third_party/maplestory-client/Gameplay/Physics/V17PhysicsParameters.{h,cpp}` 从本端 `Data/Map/Physics.img` 只读 19 个 real；键名→系数表偏移、访问器与缺键/非有限=资源错误的语义见第 2 节；`headless/src/main.cpp` 在 IMG 初始化后装载并校验。
+- **普通运动核心**：`third_party/maplestory-client/Gameplay/Physics/V17NormalMotion.{h,cpp}` 是普通模式唯一规范状态所有者；`Step()` 按第 4 节实现地面/起跳/空中/下跳分支与梯形积分，`Project()` 是唯一 px/s→px/8ms 兼容投影，`ReferenceWalkSpeed/ReferenceJumpHeight` 提供与 GUI 同名模型 `v17_normal_continuous_v1` 的连续参考。
+- **碰撞**：`third_party/maplestory-client/Gameplay/Physics/FootholdTree.{h,cpp}` 的 `SweepLocalMotion`（起点+完整 30ms 位移扫掠）与 `QueryGroundBelow`/`JumpDownAvailable`；旧 `limit_movement/update_fh` 只保留给其他实体。
+- **调度与接线**：`Character/Player.{h,cpp}` 的 `advance_local_motion`/`update_presentation`/`motionCommitId` 实现 8ms 世界与 30ms 本地运动的混合时钟与模式交接；`Gameplay/Stage.cpp` 拆分提交时的完整段触怪扫掠；`headless/src/TickNativeAdapter.cpp` 拆分 move/jump 与 pickup/技能/用药/keyup 的消费确认；`headless/src/PlayerPhysicsPose.h` + `headless/src/SharedLuaAdapter.cpp` 把 `character.physics` 的 update_id/step_ms/velocity 改绑真实运动提交。
+- 频率与档位语义见 [TICK_FREQUENCY.md](TICK_FREQUENCY.md)；Lua 观察字段见 [LUA_TICK_API.md](LUA_TICK_API.md)。
+- 验收（#239，PR #248，merge `63924d0`）：两端同提交构建在常驻服授权角色、`102000000` 勇士部落平地上做 13 个普通运动场景 × 5 次 + simple drop × 5 次的 `character.physics` 逐步比较，**75/75 全部 comparable**；最大相对轨迹差 0.65px、速度差 0.39px/s、离地/落地事件差 0 步（门槛 1px/1px·s⁻¹/1 个 30ms 步）。攀爬/绳梯、portal/换图、水下/飞行、特殊技能、移动平台等仍未与 GUI 逐步对齐（见第 6 节）。
 
 ### 8.4 对 #243 预测器的约束
 
@@ -446,11 +448,13 @@ StepAir(state, input, dt):
 - 状态输入必须显式包含：位置/瞬时速度/落地与附着（foothold 或空中）/影响下一步的输入保持与边沿、能力（SPEED/JUMP 等有效值）与适用环境（普通/特例）；不得把 SPEED/JUMP=100 或“普通城镇倍率=1”当任意角色的永真常量。
 - 首批覆盖面与缺口按第 6 节声明：普通地面直线/反向/制动、普通起跳/空中/落地可承诺；特殊技能、坡度特例、游泳/飞行、移动平台、下跳等未取证前不得宣称可预测。
 - 与真实 GUI 的对账使用 `character.physics` 的 `update_id` 序列，不按 CLI 请求时刻或 Lua 回调数。
+- 规则复用入口：参数用 `V17PhysicsParameters`，一步规则用 `V17NormalMotion::Step` + `Multipliers`/`Input`；当前 `Step` 驱动其内部规范状态，预测器应使用独立状态实例或无副作用的规则入口（#243 定义），不得读写真实 `Player`/输入槽。
 
 ---
 
 ## 9. 维护
 
-- 本文初版：2026-11-16，撰写基线 `main=639c700`，同日 #238 合并入 main（`d8f4d84`）、最终提交 `1b4d905`；原件 SHA256 上述；#237 动态探针分支 `tmp/237-native-probe`。
-- 需要同步更新的时机：#239 落地（补 8.3 实际指针）、#238 合入 main 且契约若有调整、第 6 节任一缺口闭环、原版客户端版本变化（SHA256 变化即作废重取证）。
+- 本文初版：2026-11-16，撰写基线 `main=639c700`；同日 #238 合并入 main（`d8f4d84`，最终提交 `1b4d905`）、#239 合并入 main（`63924d0`，最终提交 `396f5e7`）；原件 SHA256 上述；#237 动态探针分支 `tmp/237-native-probe`。
+- 本次更新：按 #239 落地结果补第 8.3 节实际文件/接口指针与双端验收结论；第 8.4 节预测器约束不变。
+- 需要同步更新的时机：#238/#239 契约或实现调整、第 6 节任一缺口闭环、原版客户端版本变化（SHA256 变化即作废重取证）。
 - 本文只记录已验证事实与明确未闭环项；新增规则请同时更新证据来源与“观测/推导/推断/未知”标注。
