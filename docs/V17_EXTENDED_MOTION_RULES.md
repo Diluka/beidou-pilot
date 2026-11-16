@@ -269,6 +269,49 @@ position += (v_old+v)/2*dt
 
 证据：既有 REA `tmp/tick-motion-gui/decompile-9b2c3c.json`/`.c` 与本轮重新读取原件的 `tmp/250-motion-rules/raw/special-air-9b2ee3.txt`；虚槽和 fabs 可由上列 VA 复取。未新增原版动态样本。
 
+## 本轮次对齐结论与交接（2026-11-17，30 轮结束）
+
+本段汇总本轮次（#250）实际落地与仍被证据门槛阻塞的内容，供后续会话直接接续；详细证据仍留在所属环境 `tmp/` 与各 Issue。
+
+### 已合并实现（均有离线合同/真机证据）
+
+| PR | 内容 |
+| --- | --- |
+| #261 | 攀爬 30ms 步、顶端/底端退出、跳离两段式（#251） |
+| #262 | 受击排队冲量/方向限幅/向零截断/脱地、`(±270,−270)`、1500ms 保护（#252 受击部分） |
+| #263 | 入站路径 command 布局修正 + `MovementReplay` 非受控回放（#253/#259） |
+| #264 | MoveMob 出站 U16 序号递增（#259） |
+| #265 | 受控地面怪物行走力 `(raw+100)*0.002`，3 模板 p50/p90 与原版比值 0.999（#253） |
+| #266 | 远端玩家路径回放（OpenChar→MovementReplay；双端相位对齐中位差 1.0px）（#258） |
+| #267 | Drop 悬浮 `yd+3sin`（范围 6px、周期 2s）（#258） |
+| #268 | Drop 目标锚点=图标中心（同批 10 对象差 ≤0.7px）（#258） |
+| #269 | Drop 落下 30ms 分段公式，D=1000ms（landed 时序与 GUI 一致）（#258） |
+| #270 | 受控怪决策节奏 30ms×11–33 步 + STAND 1/3 保持（#253） |
+| #271 | MOVE_PLAYER 片段速度字写入真实 vx/vy（#259） |
+| #272 | MOVE_PLAYER 完整布局（上下文 0/起点/片段/K=0/bbox）（#259） |
+| #273 | MOVE_PLAYER 路径记录/合并/500ms 批量/逐帧方向 nibble（#259） |
+| #274 | Drop leave 即时池移除（GUI 0.036s vs headless 16–64ms）（#258） |
+| #275 | Drop v=720 分支按 pickuptype 选择（字段来源反汇编闭环）（#258） |
+
+### 当前验证基线
+
+- main 全量离线测试 **535 tests OK**；CI 五项（Python/Headless/Windows bridge/format/harness contract）在对应提交均绿。
+- 双端证据目录：`tmp/251-climb/`、`tmp/252-hurt/`、`tmp/253-mob-evidence/`、`tmp/258-otherchar/`、`tmp/258-drops/`、`tmp/259-moveplayer/`、`tmp/259-moveplayer-layout/`、`tmp/259-moveplayer-batch/`、`tmp/263-two-client/`、`tmp/264-*` 等（所属环境保留）。
+
+### 仍被阻塞（不按猜测实现）
+
+- **#258 bullet 时间窗**：记录对象 `+0x0/+0x4` 的绝对开始/结束时刻生产写入点未定位（更新函数 0x43FEEE/列表 0x445117 已核实）；GUI 桥不暴露 projectile，无法双端对账。需进一步 RE 创建路径或抓到实际 bullet 记录。
+- **#259 收尾**：抑制分支完整条件、强制 flush（换图/受击/瞬移）、服务器 ACK 未逐项追完。
+- **#253 收尾**：AI 长尾（原版站立 p90 3.65s/max 10.6s 非单一几何模型）、飞行/追击/跳跃参数、边界 override、控制权授予/回收。
+- **#252 死亡/复活**：复活 HP 公式（观察值 50/max169）、死亡过程物理与 GUI 观察语义未闭环。
+- **#254–#257**：需移动技能角色、特殊地形/水域地图或动态平台场景，当前授权角色/地图无法构造。
+
+### 复位/恢复入口
+
+- 工作台统一入口 `private/workbenches/workbench DIR COMMAND`；常驻服与账号池规则见 `AGENTS.md`。
+- 离线验证：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli`；格式 `python3 tools/format.py --check`（需 `STYLUA`）。
+- 双端验证脚本/记录：`tmp/` 下各证据目录；GUI 桥工件在 `tmp/client-images/bridges/<sha>`。
+
 ## 剩余对齐工作与证据门槛（状态快照 2026-11-17）
 
 本节汇总 #250 子任务已经落地与仍未闭环的部分，供后续会话按证据门槛继续，不把未验证的推断写成实现依据。
