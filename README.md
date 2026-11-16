@@ -87,6 +87,7 @@ private/workbenches/workbench /external/workbench close
 - [Lua 与控制协议](docs/CONTROL.md)：脚本、控制权、取消和效果边界。
 - [架构与支持范围](docs/ARCHITECTURE.md)：代码职责、外部资源、两端能力和限制。
 - [V17 普通运动规则](docs/V17_MOTION_RULES.md)：原版 GUI 普通地面/跳跃/空中运动的参数、倍率缺省、分支公式、真机基线与未闭环项；供 headless 普通运动对齐与 C++ 运动预测复用。
+- [V17 其余运动规则与差异](docs/V17_EXTENDED_MOTION_RULES.md)：攀爬、受击、移动技能、场地特例、实体及运动包的原版规则、headless差异和后续调整记录。
 - [客户端能力边界与缺口索引](docs/CLIENT_LIMITATIONS.md)：实际使用成本、已入池用户结果和已有能力的适用范围。
 - [依赖管理](docs/DEPENDENCIES.md)：子模块、派生源码与许可来源。
 - [CI 与合并验收](docs/CI.md)：PR 自动检查、本地复现入口及与真实游戏试用的分工。
