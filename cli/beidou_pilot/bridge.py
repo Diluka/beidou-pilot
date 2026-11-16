@@ -20,6 +20,22 @@ from .strategies import TickGear, parse_script_execution
 CONTINUOUS_STATE_MAX_AGE = 5.0
 
 
+class BridgePhysicsVelocity(TypedDict):
+    x: float
+    y: float
+
+
+class BridgePhysicsPose(TypedDict, total=False):
+    """同一原生更新的未插值物理末态；未知字段为 None，不做运动计算。"""
+
+    update_id: int
+    step_ms: int
+    x: float
+    y: float
+    velocity: BridgePhysicsVelocity
+    on_ground: bool | None
+
+
 class BridgeCharacter(TypedDict):
     id: int
     name: str
@@ -42,22 +58,6 @@ class BridgeCharacter(TypedDict):
 class BridgePosition(TypedDict):
     x: float
     y: float
-
-
-class BridgePhysicsVelocity(TypedDict):
-    x: float
-    y: float
-
-
-class BridgePhysicsPose(TypedDict, total=False):
-    """同一原生更新的未插值物理末态；未知字段为 None，不做运动计算。"""
-
-    update_id: int
-    step_ms: int
-    x: float
-    y: float
-    velocity: BridgePhysicsVelocity
-    on_ground: bool | None
 
 
 class BridgeCommand(TypedDict):

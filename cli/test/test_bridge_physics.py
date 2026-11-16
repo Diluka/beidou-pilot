@@ -1,14 +1,30 @@
 """桥状态 character.physics 严格校验合同；临时文件只验证 IPC 字段，不代表游戏事实。"""
 
+import importlib
 import os
 from pathlib import Path
 import tempfile
+import typing
 import unittest
 from unittest.mock import patch
 
 from beidou_pilot.bridge import BridgeClient
 from beidou_pilot.errors import ClientError
 from .test_bridge import BridgeFiles
+
+
+class BridgeTypeAnnotationOrder(unittest.TestCase):
+    def test_bridge_typed_dict_annotations_resolve(self) -> None:
+        # 镜像内 CLI 运行 Python 3.11，TypedDict 注解在类创建时立即求值；这里显式
+        # 解析全部桥 TypedDict 注解，避免只在本机 Python 3.14 惰性求值下通过、
+        # 到镜像里才因前向引用顺序抛 NameError。
+        module = importlib.import_module("beidou_pilot.bridge")
+        definitions = [
+            value for value in vars(module).values() if isinstance(value, type) and typing.is_typeddict(value)
+        ]
+        self.assertTrue(definitions)
+        for definition in definitions:
+            typing.get_type_hints(definition)
 
 
 class BridgePhysicsContract(unittest.TestCase):
