@@ -369,6 +369,8 @@ y = y0 - v*t + 400*t*t
 
 【同对象字段对账（2026-11-17，#267 双客户端同一批 DropPool）】相同 oid/x 的两个对象：GUI 公开锚点 y=1957（oid60）/1943（oid61），headless `dest.y`（悬浮均值）为 1971/1955，差 +14/+12；headless 的抛物线起点采样两者同为 y≈1955（共享出生点）。说明两端对同一 DropLoot 包的 `dropto/dropfrom` 字段映射或锚点偏移并不一致，不能直接把差值归给显示公式。下一步需抓取/反汇编原版 Drop 创建时 `drop+0x0C/+0x00/+0x74/+0x68` 与包的写入顺序，确认 GUI 公开锚点到底对应哪个包字段，再决定 headless `dest` 的赋值。
 
+【已落地调整（2026-11-17，#274）】Drop leave 已按 §9 的“先出池再播放独立效果”对齐池移除时序：`Drop::expire` 对任意 leave type 置 `instantRemove`，下一次 update 直接返回 -1，由 `MapObjects` 删除；headless 无独立拾取效果对象，因此只保留池移除时序（不再有 48 步淡出/飞行）。`headless_motion_contract` 两个 Drop 场景改为“leave 后一次更新移除”。双端真机：GUI 拾取 `PRESS→GONE` 0.036s；headless 拾取 6 个对象为 0.016/0.040/0.024/0.048/0.064/0.032s（均值约 37ms），同量级；旧实现约 384ms 后才会从公开列表消失。证据 `tmp/258-drop-lifecycle/`。
+
 【已落地调整（2026-11-17，#269）】落下显示已改为 §9 的 30ms 分段公式（`DropFallDisplay.h`）：`m` 每世界步 +8ms；`u=min(0.002*m,1)`、`w=0`（m≤500）或 `min((m-500)/(D-500),1)`；`x=x0+(xd-x0)*(u+w)/2`、`y=y0-400t+400t²`；到 D 后按 `y0` 与锚点关系直接落地或进入 state2 `y=y0+400t`。**D 取 1000ms**：GUI 20Hz 生命周期采样（15 个 DropPool 对象）spawn→landed = 1.009–1.06s，与物品类型/高度无关；`drop+0x2C==3` 的 v=720 分支生产字段未闭环，统一用 400 并保留缺口。真机复核（headless 击杀，20Hz）：9 个新掉落 spawn→landed = 0.957–1.008s、p50 1.007s，与 GUI 时序一致；旧 8ms 物理落下路径已被替换（`PICKEDUP` 物理拾取保留）。
 
 【已落地调整（2026-11-17，#267/#268）】headless 悬浮显示已按 state3 静态公式实现：`y = yd + 3*sin(phase)`、相位按 30ms 的 `0.0942477` 换算到 8ms 世界步（π rad/s、2s 周期），落地显示点改为锚点 `yd`（`DropDisplay.h` + `drop_display_contract`）。双客户端真机（GUI 击杀者 + headless 观察者）测得悬浮范围 6px（±3）、周期 1.95–2.0s，与静态公式一致。
