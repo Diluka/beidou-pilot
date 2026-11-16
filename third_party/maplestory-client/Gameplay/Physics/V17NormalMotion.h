@@ -65,6 +65,10 @@ class V17NormalMotion
 public:
 	// Adopts an explicit physical state (respawn/reposition). Clears edge latches.
 	void Reset(double x, double y, bool onGround, uint16_t footholdId);
+	// Adopts one complete committed state, used by the pure motion predictor.
+	// It carries the same fields as a normal step end state, including slope/layer,
+	// so a prediction can start from any explicit contact state without guessing.
+	void ResetState(const V17MotionStep& state);
 	// Drains the attached PhysicsObject after a legacy mode hands the ownership back.
 	void ResumeFromProjection(const PhysicsObject& projection);
 	// Leaves the ordinary mode; the projection keeps the last committed end state.

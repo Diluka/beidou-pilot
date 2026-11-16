@@ -53,6 +53,7 @@ def build_v17_contract(
     motion: bool,
     parameters: bool,
     terrain: bool,
+    extra_sources: list[Path] | None = None,
 ) -> Path:
     """Compiles one contract against the real engine physics sources it needs."""
     engine = root / "third_party/maplestory-client"
@@ -66,6 +67,8 @@ def build_v17_contract(
         nlnx / "node.cpp",
         root / "cli/test" / contract,
     ]
+    if extra_sources:
+        sources.extend(extra_sources)
     if motion:
         sources.append(engine / "Gameplay/Physics/V17NormalMotion.cpp")
     if parameters:

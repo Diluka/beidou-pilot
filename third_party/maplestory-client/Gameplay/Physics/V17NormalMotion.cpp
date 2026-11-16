@@ -60,6 +60,16 @@ void V17NormalMotion::Reset(double x, double y, bool onGround, uint16_t foothold
     dropThroughY = 0.0;
 }
 
+void V17NormalMotion::ResetState(const V17MotionStep& value) {
+	state = value;
+	owns = true;
+	pendingJump = pendingJumpDown = false;
+	rushing = false;
+	sample = false;
+	dropThroughId = 0;
+	dropThroughY = 0.0;
+}
+
 void V17NormalMotion::ResumeFromProjection(const PhysicsObject& projection) {
     state = {};
     state.x = projection.crnt_x();
