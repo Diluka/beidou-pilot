@@ -126,7 +126,7 @@ namespace ms
 	void Combat::update_held_move()
 	{
 		static int debug_calls = 0;
-		if (debug_calls < 5) {
+		if (held_move && debug_calls < 20) {
 			++debug_calls;
 			std::fprintf(stderr, "[move-debug] update_held_move held=%d consumed=%d forbid=%d attacking=%d climbing=%d sitting=%d\n",
 						 held_move ? *held_move : 0, held_move_consumed ? 1 : 0,
