@@ -849,7 +849,7 @@ bool Publish(const MapleControl::State& state) {
     out << ",\"tick_profile\":" << tickRuntime.Profile().Dump();
     out << ",\"motion_debug\":";
     if (debugMotionValid)
-        out << "{\"x\":" << debugMotionX << ",\"y\":" << debugMotionY << ",\"vx\":" << debugMotionVX << ",\"vy\":" << debugMotionVY << '}'
+        out << "{\"x\":" << debugMotionX << ",\"y\":" << debugMotionY << ",\"vx\":" << debugMotionVX << ",\"vy\":" << debugMotionVY << '}';
     else
         out << "null";
     out << ",\"input_events\":" << inputEvents << "}\n";
