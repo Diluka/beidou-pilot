@@ -32,6 +32,8 @@ struct V17MotionMultipliers
 	// #256 dynamic-calibrated swim air model: enabled for underwater maps. Ground
 	// stays on the V17 ground step; air uses the GUI-calibrated 30ms sequences.
 	bool swimAir = false;
+	// #256 fly mode (map info `fly`): calibrated flying-region step.
+	bool flyAir = false;
 };
 
 // The held direction read once per motion commit. Jump/down-jump are edge latches
@@ -124,6 +126,8 @@ private:
 						  const V17MotionMultipliers& multipliers, const V17MotionInput& input, double dt);
 	V17MotionStep StepSwimAir(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
 							  const V17MotionMultipliers& multipliers, const V17MotionInput& input, double dt);
+	V17MotionStep StepFlyAir(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
+							 const V17MotionMultipliers& multipliers, const V17MotionInput& input, double dt);
 	V17MotionStep DetachAndJump(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
 								const V17MotionMultipliers& multipliers, const V17MotionInput& input, double dt);
 	V17MotionStep DetachAndJumpDown(const FootholdTree& terrain, const V17PhysicsParameters& parameters,

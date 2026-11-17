@@ -45,6 +45,7 @@ namespace ms
 		hideminimap = info["hideMinimap"].get_bool();
 		mapmark = info["mapMark"].get_string();
 		swim = info["swim"].get_bool();
+		fly = info["fly"].get_bool();
 		town = info["town"].get_bool();
 
 		// Original field attribute multipliers: map info `fs` feeds both FA+0x00
@@ -63,11 +64,17 @@ namespace ms
 	{
 		fieldForce = 1.0;
 		fieldDrag = 1.0;
+		fly = false;
 	}
 
 	bool MapInfo::is_underwater() const
 	{
 		return swim;
+	}
+
+	bool MapInfo::is_flying() const
+	{
+		return fly;
 	}
 
 	double MapInfo::get_field_force() const

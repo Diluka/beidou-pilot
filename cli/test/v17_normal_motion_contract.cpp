@@ -157,6 +157,26 @@ void SwimAir(const ms::FootholdTree& terrain) {
     Near(runner.Step(0, false, 1).vy, 210.0, "swim_down_stays_at_limit");
 }
 
+void FlyAir(const ms::FootholdTree& terrain) {
+    // #256 fly mode dynamic calibration from GUI map 200090500 (fly=1).
+    Runner runner(terrain);
+    runner.multipliers.flyAir = true;
+    runner.motion.Reset(0.0, 900.0, false, 0);
+    runner.motion.ApplyImpulse(125.0, 0.0);
+
+    auto first = runner.Step(1);
+    Near(first.vx, 161.0, "fly_air_first_force");
+    Near(first.vy, 10.05, "fly_air_vertical_drift");
+
+    std::vector<double> speeds;
+    for (int step = 0; step < 4; ++step) speeds.push_back(runner.Step(1).vx);
+    Sequence(speeds, {197.0, 200.0, 200.0, 200.0}, "fly_air_accelerates_to_fly_speed");
+
+    speeds.clear();
+    for (int step = 0; step < 7; ++step) speeds.push_back(runner.Step(0).vx);
+    Sequence(speeds, {170.0, 140.0, 110.0, 80.0, 50.0, 20.0, 0.0}, "fly_air_release_brakes_to_zero");
+}
+
 void Slope(const ms::FootholdTree& terrain) {
     Runner runner(terrain);
     const auto platform = terrain.GetFoothold(1);
@@ -388,6 +408,8 @@ int main(int argc, char** argv) {
     const ms::V17MotionMultipliers baseline;
     if (scenario == "ground")
         Ground(terrain);
+    else if (scenario == "fly-air")
+        FlyAir(terrain);
     else if (scenario == "swim-air")
         SwimAir(terrain);
     else if (scenario == "field-multipliers")
