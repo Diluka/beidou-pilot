@@ -425,7 +425,6 @@ V17MotionStep V17NormalMotion::StepSwimAir(const FootholdTree& terrain, const V1
     const bool firstSwimCommit = swimJumpFirst;
     if (firstSwimCommit) {
         vy = swimFirstDisplayedVy;
-        vx = oldVx;
         swimJumpFirst = false;
     } else {
         if (input.vertical > 0) {
@@ -448,12 +447,13 @@ V17MotionStep V17NormalMotion::StepSwimAir(const FootholdTree& terrain, const V1
             if (vy > SWIM_LIMIT) vy = SWIM_LIMIT;
         }
 
-        if (input.direction != 0) {
-            vx = oldVx + input.direction * SWIM_FORCE_PER_STEP;
-            vx = std::clamp(vx, -SWIM_LIMIT, SWIM_LIMIT);
-        } else {
-            vx = DecayToZero(oldVx, SWIM_OVER_LIMIT_BRAKE / dt, dt);
-        }
+    }
+
+    if (input.direction != 0) {
+        vx = oldVx + input.direction * SWIM_FORCE_PER_STEP;
+        vx = std::clamp(vx, -SWIM_LIMIT, SWIM_LIMIT);
+    } else {
+        vx = DecayToZero(oldVx, SWIM_OVER_LIMIT_BRAKE / dt, dt);
     }
 
     const double hiddenVy = (firstSwimCommit ? swimFirstHiddenVy : oldVy);
