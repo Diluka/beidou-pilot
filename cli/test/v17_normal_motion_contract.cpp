@@ -101,6 +101,28 @@ void Ground(const ms::FootholdTree& terrain) {
     Sequence(speeds, {42.0, 84.0, 126.0, 168.0, 175.0}, "speed_ratio_140_caps_at_175");
 }
 
+void FieldMultipliers(const ms::FootholdTree& terrain) {
+    // Original map info `fs` writes both FA+0x00 (force) and FA+0x0C (drag);
+    // runtime probe on 211040000 (fs=0.2) plus GUI samples: walk force 0.2x,
+    // speed limit unchanged, release brake 0.2*0.5.
+    Runner runner(terrain);
+    runner.multipliers.fieldForce = 0.2;
+    runner.multipliers.fieldDrag = 0.2;
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+
+    std::vector<double> speeds;
+    for (int step = 0; step < 16; ++step) speeds.push_back(runner.Step(1).vx);
+    Sequence(speeds,
+             {8.4, 16.8, 25.2, 33.6, 42.0, 50.4, 58.8, 67.2, 75.6, 84.0, 92.4, 100.8, 109.2, 117.6, 125.0, 125.0},
+             "field_force_0_2_scales_walk_force_only");
+
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.ApplyImpulse(125.0, 0.0);
+    speeds.clear();
+    for (int step = 0; step < 6; ++step) speeds.push_back(runner.Step(0).vx);
+    Sequence(speeds, {122.6, 120.2, 117.8, 115.4, 113.0, 110.6}, "field_drag_0_2_scales_release_brake");
+}
+
 void Slope(const ms::FootholdTree& terrain) {
     Runner runner(terrain);
     const auto platform = terrain.GetFoothold(1);
@@ -332,6 +354,8 @@ int main(int argc, char** argv) {
     const ms::V17MotionMultipliers baseline;
     if (scenario == "ground")
         Ground(terrain);
+    else if (scenario == "field-multipliers")
+        FieldMultipliers(terrain);
     else if (scenario == "slope")
         Slope(terrain);
     else if (scenario == "jump")

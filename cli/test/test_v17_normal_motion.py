@@ -51,6 +51,9 @@ class V17NormalMotionContract(unittest.TestCase):
     def test_slope_speed_is_projected_onto_the_platform_tangent(self) -> None:
         self.run_scenario("slope", "slope")
 
+    def test_field_multipliers_scale_force_and_brake_but_not_speed_limit(self) -> None:
+        self.run_scenario("field-multipliers", "flat")
+
     def test_jump_impulse_boost_clamp_and_jump_ratio(self) -> None:
         self.run_scenario("jump", "flat")
 

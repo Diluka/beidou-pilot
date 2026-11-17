@@ -107,6 +107,7 @@ namespace ms
 
 		Point<int16_t> spawnpoint = portals.get_portal_by_id(portalid);
 		Point<int16_t> startpos = physics.get_y_below(spawnpoint);
+		player.set_field_multipliers(mapinfo.get_field_force(), mapinfo.get_field_drag());
 		player.respawn(startpos, mapinfo.is_underwater());
 		camera.set_position(startpos);
 		camera.set_view(mapinfo.get_walls(), mapinfo.get_borders());
@@ -254,7 +255,8 @@ namespace ms
 			Point<int16_t> spawnpoint = portals.get_portal_by_name(warpinfo.toname);
 			Point<int16_t> startpos = physics.get_y_below(spawnpoint);
 
-			player.respawn(startpos, mapinfo.is_underwater());
+			player.set_field_multipliers(mapinfo.get_field_force(), mapinfo.get_field_drag());
+		player.respawn(startpos, mapinfo.is_underwater());
 		}
 		else if (warpinfo.valid)
 		{
