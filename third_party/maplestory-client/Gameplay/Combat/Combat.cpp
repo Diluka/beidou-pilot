@@ -115,6 +115,7 @@ namespace ms
 
 	void Combat::hold_move(std::optional<int32_t> move_id)
 	{
+		if (move_id) std::fprintf(stderr, "[move-debug] hold request %d\n", *move_id);
 		if (held_move == move_id)
 			return;
 

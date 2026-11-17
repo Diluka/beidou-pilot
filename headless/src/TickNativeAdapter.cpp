@@ -5,6 +5,7 @@
 #include "SceneTerrain.h"
 #include <nlnx/nx.hpp>
 
+#include <cstdio>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
@@ -142,6 +143,8 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
         actionKeys = {ms::KeyAction::PICKUP};
     else if (action.kind == Kind::Attack && action.skillId == 0)
         actionKeys = {ms::KeyAction::ATTACK};
+    if (action.kind == Kind::Attack && action.skillId != 0)
+        std::fprintf(stderr, "[move-debug] intent skill=%u\n", action.skillId);
     stage.get_combat().hold_move(
         action.kind == Kind::Attack && action.skillId != 0 ? std::optional<int32_t>(action.skillId) : std::nullopt);
     player.hold_item(action.kind == Kind::UseItem ? action.itemId : 0);
