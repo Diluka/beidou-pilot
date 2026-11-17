@@ -55,10 +55,12 @@ const auto secureRead = reinterpret_cast<SecureRead>(0x00539338);
 void* debugMotionCandidates[64];
 int debugMotionCandidateCount = 0;
 bool debugMotionValid = false;
-double debugMotionX = 0.0;
-double debugMotionY = 0.0;
-double debugMotionVX = 0.0;
-double debugMotionVY = 0.0;
+int debugCandidateSeen = 0;
+int debugCandidateKept = 0;
+double debugEntryX[4] = {0, 0, 0, 0};
+double debugEntryY[4] = {0, 0, 0, 0};
+double debugEntryVX[4] = {0, 0, 0, 0};
+double debugEntryVY[4] = {0, 0, 0, 0};
 void __fastcall SpecialAirDebugHook(void* self, void*, int ms) {
     if (self && debugMotionCandidateCount < 64) debugMotionCandidates[debugMotionCandidateCount++] = self;
     originalSpecialAir(self, ms);
@@ -848,10 +850,12 @@ bool Publish(const MapleControl::State& state) {
     out << ",\"scripts\":" << tickRuntime.Statuses().Dump();
     out << ",\"tick_profile\":" << tickRuntime.Profile().Dump();
     out << ",\"motion_debug\":";
-    if (debugMotionValid)
-        out << "{\"x\":" << debugMotionX << ",\"y\":" << debugMotionY << ",\"vx\":" << debugMotionVX << ",\"vy\":" << debugMotionVY << '}';
-    else
-        out << "null";
+    out << "{\"seen\":" << debugCandidateSeen << ",\"kept\":" << debugCandidateKept << ",\"entries\":[";
+    for (int i = 0; i < debugCandidateKept; ++i) {
+        if (i) out << ',';
+        out << "{\"x\":" << debugEntryX[i] << ",\"y\":" << debugEntryY[i] << ",\"vx\":" << debugEntryVX[i] << ",\"vy\":" << debugEntryVY[i] << '}';
+    }
+    out << "]}";
     out << ",\"input_events\":" << inputEvents << "}\n";
     const std::string bytes = out.str();
     const std::string temporary = directory + "\\state.tmp";
@@ -1178,29 +1182,21 @@ void Tick() {
 
 void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     originalUpdate(app, now);
-    if (previousState.positionKnown && debugMotionCandidateCount > 0) {
-        double best = 64.0;
-        bool found = false;
-        for (int i = 0; i < debugMotionCandidateCount; ++i) {
-            const char* base = static_cast<const char*>(debugMotionCandidates[i]);
-            const double x = secureRead(base + 0x20, *reinterpret_cast<const int*>(base + 0x30));
-            const double y = secureRead(base + 0x38, *reinterpret_cast<const int*>(base + 0x48));
-            const double vx = secureRead(base + 0x50, *reinterpret_cast<const int*>(base + 0x60));
-            const double vy = secureRead(base + 0x68, *reinterpret_cast<const int*>(base + 0x78));
-            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(vx) || !std::isfinite(vy)) continue;
-            const double dx = x - static_cast<double>(previousState.x);
-            const double dy = y - static_cast<double>(previousState.y);
-            const double d = std::sqrt(dx * dx + dy * dy);
-            if (d < best) {
-                best = d;
-                found = true;
-                debugMotionX = x; debugMotionY = y; debugMotionVX = vx; debugMotionVY = vy;
-            }
-        }
-        debugMotionValid = found;
-    } else {
-        debugMotionValid = false;
+    debugMotionValid = false;
+    debugCandidateSeen = debugMotionCandidateCount;
+    int kept = 0;
+    for (int i = 0; i < debugMotionCandidateCount && kept < 4; ++i) {
+        const char* base = static_cast<const char*>(debugMotionCandidates[i]);
+        const double x = secureRead(base + 0x20, *reinterpret_cast<const int*>(base + 0x30));
+        const double y = secureRead(base + 0x38, *reinterpret_cast<const int*>(base + 0x48));
+        const double vx = secureRead(base + 0x50, *reinterpret_cast<const int*>(base + 0x60));
+        const double vy = secureRead(base + 0x68, *reinterpret_cast<const int*>(base + 0x78));
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(vx) || !std::isfinite(vy)) continue;
+        debugEntryX[kept] = x; debugEntryY[kept] = y; debugEntryVX[kept] = vx; debugEntryVY[kept] = vy;
+        ++kept;
     }
+    debugMotionValid = kept > 0;
+    debugCandidateKept = kept;
     debugMotionCandidateCount = 0;
     Tick();
 }
