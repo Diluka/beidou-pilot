@@ -47,6 +47,22 @@ const auto dispatchInput = reinterpret_cast<InputMessage>(0x009F97B7);
 const auto inputModifiers = reinterpret_cast<InputModifiers>(0x0059B1EB);
 const auto activeSkill = reinterpret_cast<ActiveSkill>(0x00966F7A);
 const auto useItem = reinterpret_cast<UseItem>(0x00A092FB);
+// EXPERIMENTAL (not for merge): local player motion object capture for #278.
+using SpecialAir = void(__thiscall*)(void*, int);
+using SecureRead = double(__cdecl*)(const void*, int);
+auto originalSpecialAir = reinterpret_cast<SpecialAir>(0x009B2C3C);
+const auto secureRead = reinterpret_cast<SecureRead>(0x00539338);
+void* debugMotionCandidates[64];
+int debugMotionCandidateCount = 0;
+bool debugMotionValid = false;
+double debugMotionX = 0.0;
+double debugMotionY = 0.0;
+double debugMotionVX = 0.0;
+double debugMotionVY = 0.0;
+void __fastcall SpecialAirDebugHook(void* self, void*, int ms) {
+    if (self && debugMotionCandidateCount < 64) debugMotionCandidates[debugMotionCandidateCount++] = self;
+    originalSpecialAir(self, ms);
+}
 
 struct NativeContext {
     std::uint32_t field = 0;
@@ -831,6 +847,11 @@ bool Publish(const MapleControl::State& state) {
     out << ",\"script\":" << (latestScriptId.empty() ? "null" : tickRuntime.CurrentStatus(latestScriptId).Dump());
     out << ",\"scripts\":" << tickRuntime.Statuses().Dump();
     out << ",\"tick_profile\":" << tickRuntime.Profile().Dump();
+    out << ",\"motion_debug\":";
+    if (debugMotionValid)
+        out << "{\"x\":" << debugMotionX << ",\"y\":" << debugMotionY << ",\"vx\":" << debugMotionVX << ",\"vy\":" << debugMotionVY << '}'
+    else
+        out << "null";
     out << ",\"input_events\":" << inputEvents << "}\n";
     const std::string bytes = out.str();
     const std::string temporary = directory + "\\state.tmp";
@@ -1157,6 +1178,30 @@ void Tick() {
 
 void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     originalUpdate(app, now);
+    if (previousState.positionKnown && debugMotionCandidateCount > 0) {
+        double best = 64.0;
+        bool found = false;
+        for (int i = 0; i < debugMotionCandidateCount; ++i) {
+            const char* base = static_cast<const char*>(debugMotionCandidates[i]);
+            const double x = secureRead(base + 0x20, *reinterpret_cast<const int*>(base + 0x30));
+            const double y = secureRead(base + 0x38, *reinterpret_cast<const int*>(base + 0x48));
+            const double vx = secureRead(base + 0x50, *reinterpret_cast<const int*>(base + 0x60));
+            const double vy = secureRead(base + 0x68, *reinterpret_cast<const int*>(base + 0x78));
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(vx) || !std::isfinite(vy)) continue;
+            const double dx = x - static_cast<double>(previousState.x);
+            const double dy = y - static_cast<double>(previousState.y);
+            const double d = std::sqrt(dx * dx + dy * dy);
+            if (d < best) {
+                best = d;
+                found = true;
+                debugMotionX = x; debugMotionY = y; debugMotionVX = vx; debugMotionVY = vy;
+            }
+        }
+        debugMotionValid = found;
+    } else {
+        debugMotionValid = false;
+    }
+    debugMotionCandidateCount = 0;
     Tick();
 }
 }
@@ -1185,6 +1230,8 @@ bool AgentBridge::Install() {
         Memory::SetHook(false, reinterpret_cast<void**>(&originalKeyPressed), KeyPressedHook);
         return false;
     }
+    // EXPERIMENTAL (not for merge): capture local player kinematics for #278.
+    Memory::SetHook(true, reinterpret_cast<void**>(&originalSpecialAir), SpecialAirDebugHook);
     return true;
 }
 
