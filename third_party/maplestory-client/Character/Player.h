@@ -100,6 +100,8 @@ namespace ms
 		// FA+0x0C on map load; both default to 1.0.
 		void set_field_multipliers(double force, double drag);
 		void set_flying(bool flying);
+		// #254 Teleport: instant relocation used by the calibrated combat hook.
+		void teleport_to(double x, double y);
 		// Respawn the player at the given position
 		void respawn(Point<int16_t> position, bool underwater);
 		// Sends a Keyaction to the player's state, to apply forces, change the state and other behavior.

@@ -71,6 +71,7 @@ namespace ms
 				std::forward_as_tuple(level),
 				std::forward_as_tuple(damage, matk, fixdamage, mastery, attackcount, mobcount, bulletcount, bulletcost, hpcost, mpcost, chance, critical, ignoredef, hrange, range)
 			);
+			ranges.emplace(level, sub["range"].get_integer(0));
 		}
 
 		element = src["elemAttr"].get_string();
@@ -196,6 +197,12 @@ namespace ms
 		}
 
 		return iter->second;
+	}
+
+	int32_t SkillData::get_range(int32_t level) const
+	{
+		const auto iter = ranges.find(level);
+		return iter == ranges.end() ? 0 : iter->second;
 	}
 
 	const std::string& SkillData::get_name() const

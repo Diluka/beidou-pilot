@@ -95,6 +95,14 @@ namespace ms
 		flying = value;
 	}
 
+	void Player::teleport_to(double x, double y)
+	{
+		phobj.limitx(x);
+		phobj.limity(y);
+		motion.Reset(x, y, true, 0);
+		lastMotionStepMs = 0;
+	}
+
 	void Player::respawn(Point<int16_t> pos, bool uw)
 	{
 		set_position(pos.x(), pos.y());
