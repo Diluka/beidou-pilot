@@ -51,6 +51,8 @@ const auto useItem = reinterpret_cast<UseItem>(0x00A092FB);
 using SpecialAir = void(__thiscall*)(void*, int);
 using SecureRead = double(__cdecl*)(const void*, int);
 auto originalSpecialAir = reinterpret_cast<SpecialAir>(0x009B2C3C);
+using MotionDispatch = void(__thiscall*)(void*, int);
+auto originalMotionDispatch = reinterpret_cast<MotionDispatch>(0x009B19D0);
 const auto secureRead = reinterpret_cast<SecureRead>(0x00539338);
 void* debugMotionCandidates[64];
 int debugMotionCandidateCount = 0;
@@ -61,6 +63,16 @@ double debugEntryX[4] = {0, 0, 0, 0};
 double debugEntryY[4] = {0, 0, 0, 0};
 double debugEntryVX[4] = {0, 0, 0, 0};
 double debugEntryVY[4] = {0, 0, 0, 0};
+void __fastcall MotionDispatchDebugHook(void* self, void*, int ms) {
+    if (self && debugMotionCandidateCount < 64) {
+        bool duplicate = false;
+        for (int i = 0; i < debugMotionCandidateCount; ++i)
+            if (debugMotionCandidates[i] == self) { duplicate = true; break; }
+        if (!duplicate) debugMotionCandidates[debugMotionCandidateCount++] = self;
+    }
+    originalMotionDispatch(self, ms);
+}
+
 void __fastcall SpecialAirDebugHook(void* self, void*, int ms) {
     if (self && debugMotionCandidateCount < 64) {
         bool duplicate = false;
@@ -1240,6 +1252,7 @@ bool AgentBridge::Install() {
         return false;
     }
     // EXPERIMENTAL (not for merge): capture local player kinematics for #278.
+    Memory::SetHook(true, reinterpret_cast<void**>(&originalMotionDispatch), MotionDispatchDebugHook);
     Memory::SetHook(true, reinterpret_cast<void**>(&originalSpecialAir), SpecialAirDebugHook);
     return true;
 }
