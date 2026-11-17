@@ -43,6 +43,12 @@ int main() {
     CheckZero(ms::FlashJumpImpulseForLevel(0, 1), "level_zero_is_invalid");
     CheckZero(ms::FlashJumpImpulseForLevel(20, 0), "no_direction_is_invalid");
 
+    // Teleport target uses the skill level `range` value (2101002 level 15 = 140).
+    Near(ms::TeleportTargetX(100.0, 1, 140), 240.0, "teleport_right_range");
+    Near(ms::TeleportTargetX(100.0, -1, 140), -40.0, "teleport_left_range");
+    Near(ms::TeleportTargetX(100.0, 1, 0), 100.0, "teleport_zero_range_keeps_position");
+    Near(ms::TeleportTargetX(100.0, 0, 140), 100.0, "teleport_no_direction_keeps_position");
+
     std::cout << "ok\n";
     return 0;
 }

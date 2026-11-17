@@ -19,6 +19,7 @@
 
 #include "../../Character/SkillId.h"
 #include "../MovementSkills.h"
+#include "../../Data/SkillData.h"
 #include "../../IO/Messages.h"
 
 #include "../../Net/Packets/AttackAndSkillPackets.h"
@@ -288,6 +289,21 @@ namespace ms
 		case SkillId::Id::TELEPORT_FP:
 		case SkillId::Id::IL_TELEPORT:
 		case SkillId::Id::PRIEST_TELEPORT:
+		{
+			const int32_t level = player.get_skills().get_level(move.get_id());
+			const bool left = player.is_key_down(KeyAction::Id::LEFT);
+			const bool right = player.is_key_down(KeyAction::Id::RIGHT);
+			const int direction = left == right ? 0 : (right ? 1 : -1);
+
+			if (level > 0 && direction != 0)
+			{
+				const int32_t range = SkillData::get(move.get_id()).get_range(level);
+				const Point<int16_t> position = player.get_physics_position();
+				player.teleport_to(TeleportTargetX(static_cast<double>(position.x()), direction, range),
+								   static_cast<double>(position.y()));
+			}
+			break;
+		}
 		default:
 			break;
 		}

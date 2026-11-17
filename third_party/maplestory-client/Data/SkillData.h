@@ -80,6 +80,8 @@ namespace ms
 		// Return the stats of one level
 		// If there are no stats for that level, a default object is returned.
 		const Stats& get_stats(int32_t level) const;
+		// Return the raw `range` value of one level (Teleport displacement distance).
+		int32_t get_range(int32_t level) const;
 
 		// Return the name of the skill
 		const std::string& get_name() const;
@@ -106,6 +108,7 @@ namespace ms
 		int32_t flags_of(int32_t id) const;
 
 		std::unordered_map<int32_t, Stats> stats;
+		std::unordered_map<int32_t, int32_t> ranges;
 		std::string element;
 		Weapon::Type reqweapon;
 		int32_t masterlevel;

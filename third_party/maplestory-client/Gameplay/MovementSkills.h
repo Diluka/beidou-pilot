@@ -14,6 +14,16 @@ struct FlashJumpImpulse
     double vy = 0.0;
 };
 
+// #254 Teleport: original 0x957B74 reads the skill-level `range` value from the
+// skill data as its displacement distance; the GUI probe (2101002 level 15,
+// range=140) moved +140px in the held direction. The 120ms pending state and
+// platform/portal checks are not modeled here.
+inline double TeleportTargetX(double currentX, int direction, int range)
+{
+    if (direction == 0 || range <= 0) return currentX;
+    return currentX + static_cast<double>(direction * range);
+}
+
 inline FlashJumpImpulse FlashJumpImpulseForLevel(int skillLevel, int direction)
 {
     if (skillLevel <= 0 || direction == 0) return {};
