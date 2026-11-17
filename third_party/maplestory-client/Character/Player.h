@@ -99,6 +99,7 @@ namespace ms
 		// Field attribute multipliers (map info `fs`): original writes FA+0x00 and
 		// FA+0x0C on map load; both default to 1.0.
 		void set_field_multipliers(double force, double drag);
+		void set_flying(bool flying);
 		// Respawn the player at the given position
 		void respawn(Point<int16_t> position, bool underwater);
 		// Sends a Keyaction to the player's state, to apply forces, change the state and other behavior.
@@ -243,6 +244,7 @@ namespace ms
 		bool flashJumpUsed = false;
 		double fieldForce = 1.0;
 		double fieldDrag = 1.0;
+		bool flying = false;
 		Point<int16_t> lastCommitStart;
 		uint16_t motionRemainderMs = 0;
 		uint64_t motionCommitId = 0;

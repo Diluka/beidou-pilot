@@ -51,6 +51,9 @@ class V17NormalMotionContract(unittest.TestCase):
     def test_slope_speed_is_projected_onto_the_platform_tangent(self) -> None:
         self.run_scenario("slope", "slope")
 
+    def test_fly_air_uses_dynamic_calibrated_sequences(self) -> None:
+        self.run_scenario("fly-air", "flat")
+
     def test_swim_air_uses_dynamic_calibrated_sequences(self) -> None:
         self.run_scenario("swim-air", "flat")
 

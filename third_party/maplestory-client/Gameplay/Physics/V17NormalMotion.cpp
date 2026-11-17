@@ -354,6 +354,7 @@ V17MotionStep V17NormalMotion::StepAir(const FootholdTree& terrain, const V17Phy
                                        const V17MotionMultipliers& multipliers, const V17MotionInput& input,
                                        double dt) {
     if (multipliers.swimAir) return StepSwimAir(terrain, parameters, multipliers, input, dt);
+    if (multipliers.flyAir) return StepFlyAir(terrain, parameters, multipliers, input, dt);
 
     V17MotionStep next = state;
     const double mass = multipliers.mass;
@@ -490,6 +491,65 @@ V17MotionStep V17NormalMotion::StepSwimAir(const FootholdTree& terrain, const V1
         dropThroughId = 0;
         swimJumpFirst = false;
     }
+
+    return next;
+}
+
+V17MotionStep V17NormalMotion::StepFlyAir(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
+                                           const V17MotionMultipliers& multipliers, const V17MotionInput& input,
+                                           double dt) {
+    // #256 dynamic calibration on GUI map 200090500 (fly=1): leaving a ledge in a
+    // flying region accelerates horizontally +36/step to flySpeed=200, brakes
+    // -30/step toward zero without input, and holds vertical drift at
+    // Sy=FA+0x24*fallSpeed*0.015=10.05. Vertical up/down input was not observed
+    // changing vy on this map; the branch is left as constant drift.
+    V17MotionStep next = state;
+    const double oldVx = state.vx;
+    const double oldVy = state.vy;
+    const double flySpeed = parameters.flySpeed() * multipliers.fieldForce;
+    const double forceStep = parameters.flyForce() / multipliers.mass * dt;
+    const double dragStep = parameters.floatDrag1() / multipliers.mass * dt;
+    double vx = oldVx;
+
+    if (input.direction != 0) {
+        vx += input.direction * forceStep;
+        vx = std::clamp(vx, -flySpeed, flySpeed);
+    } else {
+        vx = DecayToZero(vx, dragStep / dt, dt);
+    }
+
+    const double vy = parameters.fallSpeed() * multipliers.fieldGravity * 0.015;
+
+    next.vx = vx;
+    next.vy = vy;
+
+    const double dx = (oldVx + vx) * 0.5 * dt;
+    const double dy = (oldVy + vy) * 0.5 * dt;
+
+    LocalSweepInput sweep;
+    sweep.x = state.x;
+    sweep.y = state.y;
+    sweep.dx = dx;
+    sweep.dy = dy;
+    sweep.vx = vx;
+    sweep.vy = vy;
+    sweep.footholdId = 0;
+    sweep.onGround = false;
+    sweep.ignoreFootholdId = dropThroughId;
+    const LocalSweepResult result = terrain.SweepLocalMotion(sweep);
+
+    next.x = result.x;
+    next.y = result.y;
+    next.vx = result.vx;
+    next.vy = result.vy;
+    next.onGround = result.onGround;
+    next.footholdId = result.footholdId;
+    next.footholdSlope = result.footholdSlope;
+    next.footholdLayer = result.footholdLayer;
+    next.landed = result.landed;
+    next.hitWall = result.hitWall;
+
+    if (result.landed || result.onGround) dropThroughId = 0;
 
     return next;
 }

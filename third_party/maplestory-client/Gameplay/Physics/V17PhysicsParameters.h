@@ -55,6 +55,9 @@ public:
     double floatCoefficient() const { return values[FloatCoefficient / 8]; }
     double gravityAcc() const { return values[GravityAcc / 8]; }
     double fallSpeed() const { return values[FallSpeed / 8]; }
+    double flyForce() const { return values[FlyForce / 8]; }
+    double flySpeed() const { return values[FlySpeed / 8]; }
+    double floatDrag1() const { return values[FloatDrag1 / 8]; }
     double jumpSpeed() const { return values[JumpSpeed / 8]; }
     double minFriction() const { return values[MinFriction / 8]; }
     double maxFriction() const { return values[MaxFriction / 8]; }

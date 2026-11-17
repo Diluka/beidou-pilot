@@ -90,6 +90,11 @@ namespace ms
 		fieldDrag = drag;
 	}
 
+	void Player::set_flying(bool value)
+	{
+		flying = value;
+	}
+
 	void Player::respawn(Point<int16_t> pos, bool uw)
 	{
 		set_position(pos.x(), pos.y());
@@ -495,6 +500,7 @@ namespace ms
 		multipliers.frictionRatio = 1.0; // C+0x30 constructor default
 		multipliers.jumpRatio = static_cast<double>(stats.get_total(EquipStat::Id::JUMP)) / 100.0;
 		multipliers.swimAir = underwater;
+		multipliers.flyAir = flying;
 		multipliers.fieldForce = fieldForce;
 		multipliers.fieldDrag = fieldDrag;
 
