@@ -24,7 +24,11 @@ struct V17MotionMultipliers
 	double fieldGravity = 1.0;      // FA+0x24 (#237 G1 inference)
 	double footholdSpeed = 1.0;     // FM+0x0C constructor default
 	double footholdFriction = 1.0;  // FM+0x18 constructor default
-	double footholdSpecial = 0.0;   // FM+0x24 constructor default (0 = ordinary branch)
+	double footholdSpecial = 0.0;
+	// G4 (swim/water region) ground multiplier: both the direction force and the
+	// base speed limit are multiplied by swimSpeedDec (static 0x9B2565/0x9B2664;
+	// dynamic swim map 230010000 ground speed 112.5 = 125 * 0.9, accel 37.8/step).
+	double specialGroundFactor = 1.0;   // FM+0x24 constructor default (0 = ordinary branch)
 };
 
 // The held direction read once per motion commit. Jump/down-jump are edge latches

@@ -268,7 +268,8 @@ V17MotionStep V17NormalMotion::StepGround(const FootholdTree& terrain, const V17
     // material; otherwise the temporary 1.0 object is used (special branch not modeled).
     const double forceRatio =
         (multipliers.footholdFriction == 1.0 && multipliers.footholdSpecial == 0.0) ? multipliers.walkForceRatio : 1.0;
-    const double walkForce = parameters.walkForce() * multipliers.footholdSpeed * forceRatio * multipliers.fieldForce;
+    const double walkForce = parameters.walkForce() * multipliers.footholdSpeed * forceRatio * multipliers.fieldForce
+                             * multipliers.specialGroundFactor;
     const double frictionBase = multipliers.fieldDrag * multipliers.frictionRatio * multipliers.footholdFriction;
     double friction = std::clamp(frictionBase, parameters.minFriction(), parameters.maxFriction());
 
@@ -276,7 +277,8 @@ V17MotionStep V17NormalMotion::StepGround(const FootholdTree& terrain, const V17
 
     const double brakeForce = friction != 0.0 ? friction * parameters.walkDrag() : parameters.walkDrag() * 0.2;
     const double brake = mass != 0.0 ? brakeForce / mass : 0.0;
-    const double maxSpeed = parameters.walkSpeed() * multipliers.footholdSpeed * multipliers.speedRatio;
+    const double maxSpeed =
+        parameters.walkSpeed() * multipliers.footholdSpeed * multipliers.speedRatio * multipliers.specialGroundFactor;
 
     if (rushing)
         tangentSpeed = oldTangent;

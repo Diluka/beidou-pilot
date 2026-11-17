@@ -488,6 +488,12 @@ namespace ms
 		multipliers.speedRatio = static_cast<double>(stats.get_total(EquipStat::Id::SPEED)) / 100.0;
 		multipliers.frictionRatio = 1.0; // C+0x30 constructor default
 		multipliers.jumpRatio = static_cast<double>(stats.get_total(EquipStat::Id::JUMP)) / 100.0;
+
+		// Underwater maps use the G4 swim ground multiplier on footholds: both the
+		// direction force and the base limit are scaled by swimSpeedDec (0.9).
+		if (underwater && V17PhysicsParameters::Available())
+			multipliers.specialGroundFactor = V17PhysicsParameters::Get().swimSpeedDec();
+
 		return multipliers;
 	}
 
