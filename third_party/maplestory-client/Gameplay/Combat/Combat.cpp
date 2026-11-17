@@ -18,6 +18,7 @@
 #include "Combat.h"
 
 #include "../../Character/SkillId.h"
+#include "../MovementSkills.h"
 #include "../../IO/Messages.h"
 
 #include "../../Net/Packets/AttackAndSkillPackets.h"
@@ -210,6 +211,7 @@ namespace ms
 		{
 			move.apply_useeffects(player);
 			move.apply_actions(player, Attack::Type::MAGIC);
+			apply_use_movement(move);
 
 			int32_t moveid = move.get_id();
 			int32_t level = player.get_skills().get_level(moveid);
@@ -265,10 +267,27 @@ namespace ms
 	{
 		switch (move.get_id())
 		{
+		case SkillId::Id::FLASH_JUMP:
+		{
+			const int32_t level = player.get_skills().get_level(SkillId::Id::FLASH_JUMP);
+			const bool left = player.is_key_down(KeyAction::Id::LEFT);
+			const bool right = player.is_key_down(KeyAction::Id::RIGHT);
+			const int direction = left == right ? 0 : (right ? 1 : -1);
+
+			// Native GUI admitted the cast only while airborne, with the used flag
+			// clear and a held left/right direction (2026-11-17 isolated-server probe:
+			// level 20, right held -> vx +550, vy -350 queued as an impulse).
+			if (level > 0 && !player.is_flash_jump_used() && !player.get_phobj().onground && direction != 0)
+			{
+				const FlashJumpImpulse impulse = FlashJumpImpulseForLevel(level, direction);
+				player.get_motion_state().QueueImpulse(impulse.vx, impulse.vy);
+				player.mark_flash_jump_used();
+			}
+			break;
+		}
 		case SkillId::Id::TELEPORT_FP:
 		case SkillId::Id::IL_TELEPORT:
 		case SkillId::Id::PRIEST_TELEPORT:
-		case SkillId::Id::FLASH_JUMP:
 		default:
 			break;
 		}

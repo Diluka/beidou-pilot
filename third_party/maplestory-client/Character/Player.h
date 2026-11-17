@@ -17,6 +17,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 #pragma once
 
+#include "../Gameplay/MovementSkills.h"
 #include "MovePlayerPath.h"
 #include "ActiveBuffs.h"
 #include "MonsterBook.h"
@@ -71,6 +72,10 @@ namespace ms
 		uint32_t get_last_motion_step_ms() const;
 		V17NormalMotion& get_motion_state();
 		const V17NormalMotion& get_motion_state() const;
+
+		bool is_flash_jump_used() const { return flashJumpUsed; }
+		void mark_flash_jump_used() { flashJumpUsed = true; }
+		void reset_flash_jump_used() { flashJumpUsed = false; }
 		bool owns_normal_motion() const;
 		V17MotionMultipliers motion_multipliers() const;
 		// Rounded physical foot point and the start point of the last committed step.
@@ -232,6 +237,7 @@ namespace ms
 		bool movementPathInitialized = false;
 
 		V17NormalMotion motion;
+		bool flashJumpUsed = false;
 		Point<int16_t> lastCommitStart;
 		uint16_t motionRemainderMs = 0;
 		uint64_t motionCommitId = 0;

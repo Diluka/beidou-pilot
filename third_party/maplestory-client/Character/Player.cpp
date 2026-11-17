@@ -90,6 +90,7 @@ namespace ms
 		reset_motion(pos, true);
 		movementPath.Reset(pos);
 		movementPathInitialized = true;
+		flashJumpUsed = false;
 		underwater = uw;
 		keysdown.clear();
 		held_item = 0;
@@ -263,6 +264,9 @@ namespace ms
 
 				if (pst)
 					pst->update_state(*this);
+
+				if (step.onGround)
+					flashJumpUsed = false;
 
 				motion.Project(phobj, physics.get_fht());
 				phobj.end_motion_sample();
