@@ -20,6 +20,8 @@
 #include "../../Character/SkillId.h"
 #include "../MovementSkills.h"
 #include "../../Data/SkillData.h"
+
+#include <cstdio>
 #include "../../IO/Messages.h"
 
 #include "../../Net/Packets/AttackAndSkillPackets.h"
@@ -122,13 +124,20 @@ namespace ms
 
 	void Combat::update_held_move()
 	{
-		if (!held_move || held_move_consumed || player.attack_forbid_reason() != SpecialMove::FBR_NONE)
+		if (!held_move || held_move_consumed || player.attack_forbid_reason() != SpecialMove::FBR_NONE) {
+			if (held_move && !held_move_consumed)
+				std::fprintf(stderr, "[move-debug] early skip skill=%d forbid=%d\n", *held_move,
+							 static_cast<int>(player.attack_forbid_reason()));
 			return;
+		}
 
 		// Check native admission without emitting a forbid-message every update.
 		// Failed admission leaves only the current hold eligible, never a queue.
-		if (player.can_use(get_move(*held_move)) != SpecialMove::FBR_NONE)
+		if (player.can_use(get_move(*held_move)) != SpecialMove::FBR_NONE) {
+			std::fprintf(stderr, "[move-debug] can_use rejected skill=%d reason=%d\n", *held_move,
+						 static_cast<int>(player.can_use(get_move(*held_move))));
 			return;
+		}
 
 		if (use_move(*held_move, MoveInput::HeldSkill) == SpecialMove::FBR_NONE && !player.is_attacking())
 			held_move_consumed = true;
