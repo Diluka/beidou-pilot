@@ -494,6 +494,7 @@ namespace ms
 		multipliers.speedRatio = static_cast<double>(stats.get_total(EquipStat::Id::SPEED)) / 100.0;
 		multipliers.frictionRatio = 1.0; // C+0x30 constructor default
 		multipliers.jumpRatio = static_cast<double>(stats.get_total(EquipStat::Id::JUMP)) / 100.0;
+		multipliers.swimAir = underwater;
 		multipliers.fieldForce = fieldForce;
 		multipliers.fieldDrag = fieldDrag;
 
@@ -565,14 +566,14 @@ namespace ms
 			return ladder ? MotionMode::CLIMB : MotionMode::LEGACY;
 
 		if (state == State::SWIM)
-			return MotionMode::LEGACY;
+			return MotionMode::NORMAL;
 
 		return MotionMode::STATIC;
 	}
 
 	void Player::sync_motion_ownership()
 	{
-		if (is_normal_state(state))
+		if (is_normal_state(state) || state == State::SWIM)
 		{
 			if (!motion.OwnsNormalState())
 				resume_motion_from_projection();
@@ -585,7 +586,7 @@ namespace ms
 
 		// Only attached legacy modes (ladder/rope/swim) keep committing 8ms motion
 		// samples; a static state has none until ordinary motion resumes.
-		if (state != State::LADDER && state != State::ROPE && state != State::SWIM)
+		if (state != State::LADDER && state != State::ROPE)
 			lastMotionStepMs = 0;
 	}
 
@@ -600,6 +601,9 @@ namespace ms
 		const bool right = is_key_down(KeyAction::Id::RIGHT);
 		input.direction = left == right ? 0 : right ? 1
 													: -1;
+		const bool up = is_key_down(KeyAction::Id::UP);
+		const bool down = is_key_down(KeyAction::Id::DOWN);
+		input.vertical = up == down ? 0 : up ? -1 : 1;
 		return input;
 	}
 
