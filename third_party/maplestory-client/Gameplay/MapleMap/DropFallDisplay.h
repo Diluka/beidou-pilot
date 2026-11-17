@@ -2,6 +2,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace ms
@@ -24,6 +25,17 @@ constexpr int32_t DropFallDurationPickupTypeThreeMs = 1800;
 
 inline int32_t DropFallDurationForPickupType(int8_t pickuptype) {
     return pickuptype == 3 ? DropFallDurationPickupTypeThreeMs : DropFallDurationMs;
+}
+
+inline int32_t DropFallDurationFor(double startY, double anchorY, int8_t pickuptype) {
+    const double factor = pickuptype == 3 ? 1.8 : 1.0;
+    const double base = DropFallDurationMs * factor;
+    if (startY <= anchorY) return static_cast<int32_t>(std::lround(base));
+    const double argument = (anchorY + 100.0 - startY) * 2.5;
+    if (argument < 0.0) return static_cast<int32_t>(std::lround(base));
+    const double steps = std::trunc(std::sqrt(argument)) + 1.0;
+    const double candidate = steps * 30.0 + 500.0 * factor;
+    return static_cast<int32_t>(std::lround(std::min(base, candidate)));
 }
 constexpr double DropFallVelocity = 400.0;
 constexpr double DropFallVelocityPickupTypeThree = 720.0;

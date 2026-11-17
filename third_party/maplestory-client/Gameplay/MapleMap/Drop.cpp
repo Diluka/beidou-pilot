@@ -75,7 +75,7 @@ namespace ms
 			{
 				const double anchorY = dest.y() - get_icon_half_height();
 				const double velocity = DropFallVelocityForPickupType(pickuptype);
-				const int32_t durationMs = DropFallDurationForPickupType(pickuptype);
+				const int32_t durationMs = DropFallDurationFor(start.y(), anchorY, pickuptype);
 				set_position(DropFallX(start.x(), dest.x(), fallMs, durationMs), DropFallY(start.y(), fallMs, velocity));
 
 				if (fallMs >= durationMs)
