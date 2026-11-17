@@ -172,7 +172,9 @@
 - 【源码事实】`Gameplay/Combat/Combat.cpp:apply_use_movement` 中三个Teleport和Flash Jump的case均为空；`apply_move` 的非攻击分支只应用效果/动作并发 `UseSkillPacket`，没有调用移动处理。当前源码不能支持“已会施法所以移动已实现”的结论。
 - 【源码事实】当前 rush 仅三职业 `1121006/1221007/1321003` 进入 `Combat::apply_result_movement→apply_rush`：要求命中数非零，以最后目标怪物当前x为终点。`Player::rush` 仅落地允许；规范状态调用 `V17NormalMotion::BeginRush` 设 `vx=1000*(targetX−x)/attackDelay`，地面步期间不加行走力或制动，按墙/离地/越过目标结束并清速度（`V17NormalMotion::StepGround`）。这是当前headless模型，**本轮尚未完成对应原版rush公式、碰撞与结束条件的地址级闭环**，不能标为原版等价。
 
-【动态证据（2026-11-18，隔离服 mage 角色 2101002 lvl15）】按住方向施放 Teleport：施放后角色从 x≈201 跳到 x≈343（**位移约 +140px，等于技能数据 `range`=140**），随后恢复地面行走；未按方向施放时无位移。技能数据 `Skill/210.img/skill/2101002/level/15/range=140` 与 GUI 位移一致。headless 已按 `TeleportTargetX`（技能 range）接入 `Combat::apply_use_movement` 并新增合同；但 headless tick 路径的原生准入/120ms 待执行状态与落点平台检查尚未验证，PR 待补。
+【动态证据（2026-11-18，隔离服 mage 角色 2101002 lvl15）】按住方向施放 Teleport：GUI 从 cast 时 x≈201.255 位移到 x=343（约 +141.75px），随后恢复地面行走；未按方向施放时无位移。技能数据 `Skill/210.img/skill/2101002/level/15/range=140`。
+
+【已落地调整（2026-11-18，#283）】Teleport 基础位移：`SkillData::get_range` 解析每级 `range`，`Combat::apply_use_movement` 在等级>0 且按住左右方向时按 `currentX + direction*range` 调 `Player::teleport_to`（设置物理位置/速度并 `motion.Reset(x,y,true,0)` 地面重吸附），新增 `TeleportTargetX` 合同。headless 隔离服验证：技能意图到达 `update_held_move` 且准入通过，cast x≈158.169 → 落点 x=298.3168（位移 +140.15px，含地面投影 0.15）；与 GUI 参考位移差约 1.6px，原因是 GUI 的 120ms pending 期间仍受地面移动影响。**未建模**：120ms 待执行状态、竖向/空中传送、落点平台/碰撞裁决；`#254` 仍保持开放。
 
 | 后续项 | 需要调整或补证的具体内容 |
 | --- | --- |
@@ -185,7 +187,7 @@
 
 | 冲量交接 | 复用原版受击同一个排队/方向限幅/截断/附着转换规则，按技能门控接入；避免直接覆盖速度掩盖已有同向/反向运动 |
 | Flash Jump | 核验已用标志的清除时机、门控函数含义、连续释放/落地重置、按等级的真实冲量；headless目前缺移动分支 |
-| Teleport | 补目标候选、几何裁决、120ms待执行状态的后续提交与包语义，再实现目标重定位；headless目前缺移动分支 |
+| Teleport | 已实现基础水平位移（技能 range，#283）；仍缺 120ms 待执行、竖向/空中传送、落点平台/碰撞裁决与服务端结果 |
 | Rush | 对照上述当前模型取证原版起始/目标/持续/墙边/平台边/无目标/中断，确定“命中最后怪物x”是否有依据 |
 | 消费者与验收 | 从已授权角色技能与AI实际使用中选首批；每个技能分别记录施放受理、物理位移、结束、取消/换图和服务端修正，不能用其中一种成功代替其他项 |
 
