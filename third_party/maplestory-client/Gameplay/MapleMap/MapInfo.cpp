@@ -47,6 +47,11 @@ namespace ms
 		swim = info["swim"].get_bool();
 		town = info["town"].get_bool();
 
+		// Original field attribute multipliers: map info `fs` feeds both FA+0x00
+		// (field force) and FA+0x0C (field drag); absent key keeps constructor 1.0.
+		fieldForce = info["fs"].get_real(1.0);
+		fieldDrag = fieldForce;
+
 		for (auto seat : src["seat"])
 			seats.push_back(seat);
 
@@ -54,11 +59,25 @@ namespace ms
 			ladders.push_back(ladder);
 	}
 
-	MapInfo::MapInfo() {}
+	MapInfo::MapInfo()
+	{
+		fieldForce = 1.0;
+		fieldDrag = 1.0;
+	}
 
 	bool MapInfo::is_underwater() const
 	{
 		return swim;
+	}
+
+	double MapInfo::get_field_force() const
+	{
+		return fieldForce;
+	}
+
+	double MapInfo::get_field_drag() const
+	{
+		return fieldDrag;
 	}
 
 	std::string MapInfo::get_bgm() const

@@ -84,6 +84,12 @@ namespace ms
 	{
 	}
 
+	void Player::set_field_multipliers(double force, double drag)
+	{
+		fieldForce = force;
+		fieldDrag = drag;
+	}
+
 	void Player::respawn(Point<int16_t> pos, bool uw)
 	{
 		set_position(pos.x(), pos.y());
@@ -488,6 +494,8 @@ namespace ms
 		multipliers.speedRatio = static_cast<double>(stats.get_total(EquipStat::Id::SPEED)) / 100.0;
 		multipliers.frictionRatio = 1.0; // C+0x30 constructor default
 		multipliers.jumpRatio = static_cast<double>(stats.get_total(EquipStat::Id::JUMP)) / 100.0;
+		multipliers.fieldForce = fieldForce;
+		multipliers.fieldDrag = fieldDrag;
 
 		// Underwater maps use the G4 swim ground multiplier on footholds: both the
 		// direction force and the base limit are scaled by swimSpeedDec (0.9).

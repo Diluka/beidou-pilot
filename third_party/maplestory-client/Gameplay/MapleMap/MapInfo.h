@@ -67,6 +67,11 @@ namespace ms
 		MapInfo();
 
 		bool is_underwater() const;
+		// Original field attribute multipliers from map info `fs` (0xA45CD6 ->
+		// 0x500D61 writes FA+0x00 and FA+0x0C; runtime probe on 211040000:
+		// fs=0.2 => FA+00=FA+0C=0.2). Default 1.0 when the key is absent.
+		double get_field_force() const;
+		double get_field_drag() const;
 		std::string get_bgm() const;
 		Range<int16_t> get_walls() const;
 		Range<int16_t> get_borders() const;
@@ -87,6 +92,8 @@ namespace ms
 		std::string mapmark;
 		bool swim;
 		bool town;
+		double fieldForce;
+		double fieldDrag;
 		bool hideminimap;
 		Range<int16_t> mapwalls;
 		Range<int16_t> mapborders;
