@@ -556,7 +556,13 @@ y = y0 - v*t + 400*t*t
 
 【已落地调整（2026-11-17，#271）】headless MOVE_PLAYER 片段 0/5/17 的两个速度 word 已按 §10 语义修正：普通 V17 运动写 `LastStep().vx/vy`（px/s），legacy 附着模式用 `PhysicsObject` 8ms 速度换算 px/s；新增 `MovePlayerFragment.h` 做取整/int16 夹取与 `moveplayer_fragment_contract`（0/±125/−555/取整/夹取）。移动检测仍按位置版本 `hasmoved`，只改包内速度字。双客户端真机（CID6 GUI 观察端 + CID7 headless 移动端，同图 `102010000`）：headless 自身位移 124px，GUI `players[]` 显示范围一致（2169–2293），移动样本相位 0 中位差 4.9px（GUI 整数显示/采样量化），无传送/回拉/断开。剩余：上下文 5 字节业务含义、方向记录/包围盒、批量/合并/gate 与 ACK。
 
-### 原版 MOVE_PLAYER 包结构
+【静态补证（2026-11-18，#259 强制 flush 入口）】除 500/1000ms 周期 gate 外，原件还有三处**显式 flush**调用点，均先以 `0x68A828` 查队列再构造包并 `0x68A88D` 提交：
+- `0x9B7B9C`：路径指针 = 对象 `+0x1AC`，包构造 opcode **0xB5**，gate 实参 0；
+- `0x9C4E58`：路径指针来自同一类对象（当前寄存器 ebx），包构造 opcode **0xA7**，gate 实参 0；
+- `0x9C854C`：路径指针 = 对象 `+0x1AC`，包构造 opcode **0xAF**，先写 `[obj+0x248]` 一个 word；gate 实参 0。
+三处都在构造后判断 `0x68A88D` 返回值，非零则跳过实际发送（与周期性发送共用抑制分支）。目前只确认这些入口的构造/提交结构，尚未从调用者或 vtable 槽确认它们分别对应换图、受击还是瞬移/传送；headless 尚未实现强制 flush，因此不得把周期 gate 当作完整 wire 规则。下一步用 vtable 交叉引用或真实场景抓包确认三个 opcode 的触发条件。
+
+### 原版 MOVE_PLAYER 包结构### 原版 MOVE_PLAYER 包结构
 
 【观测·静态】下表偏移从未加密 opcode 开始，整数字段为 little endian。MOVE_PLAYER 调用方在 `0x9CBB37–0x9CBB5E` 写入 1 字节上下文和 4 字节上下文，随后调用共享路径编码器；上下文字段的业务含义仍待核实。
 
