@@ -53,6 +53,35 @@ using SecureRead = double(__cdecl*)(const void*, int);
 auto originalSpecialAir = reinterpret_cast<SpecialAir>(0x009B2C3C);
 using MotionDispatch = void(__thiscall*)(void*, int);
 auto originalMotionDispatch = reinterpret_cast<MotionDispatch>(0x009B19D0);
+using PendingHandler = void(__thiscall*)(void*);
+auto originalJumpRequest = reinterpret_cast<PendingHandler>(0x009B1D3D);
+auto originalJumpPending = reinterpret_cast<PendingHandler>(0x009B21DA);
+auto originalPendingA = reinterpret_cast<PendingHandler>(0x009B2202);
+auto originalPendingB = reinterpret_cast<PendingHandler>(0x009B222A);
+auto originalPendingC = reinterpret_cast<PendingHandler>(0x009B1C51);
+bool debugJumpValid = false;
+int debugJumpSource = 0;
+double debugJumpX = 0.0;
+double debugJumpY = 0.0;
+double debugJumpVX = 0.0;
+double debugJumpVY = 0.0;
+void CaptureJumpState(void* self, int source) {
+    if (!self) return;
+    const char* base = static_cast<const char*>(self);
+    const double x = secureRead(base + 0x20, *reinterpret_cast<const int*>(base + 0x30));
+    const double y = secureRead(base + 0x38, *reinterpret_cast<const int*>(base + 0x48));
+    const double vx = secureRead(base + 0x50, *reinterpret_cast<const int*>(base + 0x60));
+    const double vy = secureRead(base + 0x68, *reinterpret_cast<const int*>(base + 0x78));
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(vx) || !std::isfinite(vy)) return;
+    debugJumpValid = true;
+    debugJumpSource = source;
+    debugJumpX = x; debugJumpY = y; debugJumpVX = vx; debugJumpVY = vy;
+}
+void __fastcall JumpRequestHook(void* self, void*) { originalJumpRequest(self); CaptureJumpState(self, 1); }
+void __fastcall JumpPendingHook(void* self, void*) { originalJumpPending(self); CaptureJumpState(self, 2); }
+void __fastcall PendingAHook(void* self, void*) { originalPendingA(self); CaptureJumpState(self, 3); }
+void __fastcall PendingBHook(void* self, void*) { originalPendingB(self); CaptureJumpState(self, 4); }
+void __fastcall PendingCHook(void* self, void*) { originalPendingC(self); CaptureJumpState(self, 5); }
 const auto secureRead = reinterpret_cast<SecureRead>(0x00539338);
 void* debugMotionCandidates[64];
 double debugCandidateX[64];
@@ -878,6 +907,11 @@ bool Publish(const MapleControl::State& state) {
     out << ",\"script\":" << (latestScriptId.empty() ? "null" : tickRuntime.CurrentStatus(latestScriptId).Dump());
     out << ",\"scripts\":" << tickRuntime.Statuses().Dump();
     out << ",\"tick_profile\":" << tickRuntime.Profile().Dump();
+    out << ",\"jump_debug\":";
+    if (debugJumpValid)
+        out << "{\"source\":" << debugJumpSource << ",\"x\":" << debugJumpX << ",\"y\":" << debugJumpY << ",\"vx\":" << debugJumpVX << ",\"vy\":" << debugJumpVY << '}';
+    else
+        out << "null";
     out << ",\"motion_debug\":";
     out << "{\"seen\":" << debugCandidateSeen << ",\"matched\":";
     if (debugMotionValid)
@@ -1235,6 +1269,7 @@ void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     }
     debugMotionCandidateCount = 0;
     Tick();
+    debugJumpValid = false;
 }
 }
 
@@ -1265,6 +1300,11 @@ bool AgentBridge::Install() {
     // EXPERIMENTAL (not for merge): capture local player kinematics for #278.
     Memory::SetHook(true, reinterpret_cast<void**>(&originalMotionDispatch), MotionDispatchDebugHook);
     Memory::SetHook(true, reinterpret_cast<void**>(&originalSpecialAir), SpecialAirDebugHook);
+    Memory::SetHook(true, reinterpret_cast<void**>(&originalJumpRequest), JumpRequestHook);
+    Memory::SetHook(true, reinterpret_cast<void**>(&originalJumpPending), JumpPendingHook);
+    Memory::SetHook(true, reinterpret_cast<void**>(&originalPendingA), PendingAHook);
+    Memory::SetHook(true, reinterpret_cast<void**>(&originalPendingB), PendingBHook);
+    Memory::SetHook(true, reinterpret_cast<void**>(&originalPendingC), PendingCHook);
     return true;
 }
 
