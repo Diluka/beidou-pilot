@@ -31,6 +31,13 @@ int main() {
     Near(ms::DropFallDurationForPickupType(2), 1000.0, "pickup_type_two_duration_1000");
     Near(ms::DropFallX(0.0, 100.0, 1150, 1800), 75.0, "x_1150_of_1800_duration");
     Near(ms::DropFallX(0.0, 100.0, 1800, 1800), 100.0, "x_at_1800_duration");
+    // Static fallback branch of 0x5064FF for startY > anchorY:
+    // D = min(1000*f, (trunc(sqrt((anchorY + 100 - startY)*2.5)) + 1)*30 + 500*f).
+    Near(ms::DropFallDurationFor(1000.0, 950.0, 0), 860.0, "duration_rise_50_normal");
+    Near(ms::DropFallDurationFor(1000.0, 950.0, 3), 1260.0, "duration_rise_50_pickup_three");
+    Near(ms::DropFallDurationFor(1000.0, 900.0, 0), 530.0, "duration_rise_100_normal");
+    Near(ms::DropFallDurationFor(1100.0, 900.0, 0), 1000.0, "duration_negative_root_falls_back");
+    Near(ms::DropFallDurationFor(1000.0, 1000.0, 0), 1000.0, "duration_equal_uses_base");
 
     Near(ms::DropFallY(200.0, 0, V400), 200.0, "y_at_0");
     Near(ms::DropFallY(200.0, 250, V400), 125.0, "y_at_250");
