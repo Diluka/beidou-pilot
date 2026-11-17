@@ -58,6 +58,7 @@ public:
     double jumpSpeed() const { return values[JumpSpeed / 8]; }
     double minFriction() const { return values[MinFriction / 8]; }
     double maxFriction() const { return values[MaxFriction / 8]; }
+    double swimSpeedDec() const { return values[SwimSpeedDec / 8]; }
 
 private:
     static const char* KeyName(std::size_t index);
