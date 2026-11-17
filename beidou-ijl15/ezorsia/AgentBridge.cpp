@@ -55,6 +55,10 @@ using MotionDispatch = void(__thiscall*)(void*, int);
 auto originalMotionDispatch = reinterpret_cast<MotionDispatch>(0x009B19D0);
 const auto secureRead = reinterpret_cast<SecureRead>(0x00539338);
 void* debugMotionCandidates[64];
+double debugCandidateX[64];
+double debugCandidateY[64];
+double debugCandidateVX[64];
+double debugCandidateVY[64];
 int debugMotionCandidateCount = 0;
 bool debugMotionValid = false;
 int debugCandidateSeen = 0;
@@ -68,7 +72,15 @@ void __fastcall MotionDispatchDebugHook(void* self, void*, int ms) {
         bool duplicate = false;
         for (int i = 0; i < debugMotionCandidateCount; ++i)
             if (debugMotionCandidates[i] == self) { duplicate = true; break; }
-        if (!duplicate) debugMotionCandidates[debugMotionCandidateCount++] = self;
+        if (!duplicate) {
+            const char* base = static_cast<const char*>(self);
+            const int index = debugMotionCandidateCount;
+            debugCandidateX[index] = secureRead(base + 0x20, *reinterpret_cast<const int*>(base + 0x30));
+            debugCandidateY[index] = secureRead(base + 0x38, *reinterpret_cast<const int*>(base + 0x48));
+            debugCandidateVX[index] = secureRead(base + 0x50, *reinterpret_cast<const int*>(base + 0x60));
+            debugCandidateVY[index] = secureRead(base + 0x68, *reinterpret_cast<const int*>(base + 0x78));
+            debugMotionCandidates[debugMotionCandidateCount++] = self;
+        }
     }
     originalMotionDispatch(self, ms);
 }
@@ -1205,11 +1217,10 @@ void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     double best = 64.0;
     if (previousState.positionKnown) {
         for (int i = 0; i < debugMotionCandidateCount; ++i) {
-            const char* base = static_cast<const char*>(debugMotionCandidates[i]);
-            const double x = secureRead(base + 0x20, *reinterpret_cast<const int*>(base + 0x30));
-            const double y = secureRead(base + 0x38, *reinterpret_cast<const int*>(base + 0x48));
-            const double vx = secureRead(base + 0x50, *reinterpret_cast<const int*>(base + 0x60));
-            const double vy = secureRead(base + 0x68, *reinterpret_cast<const int*>(base + 0x78));
+            const double x = debugCandidateX[i];
+            const double y = debugCandidateY[i];
+            const double vx = debugCandidateVX[i];
+            const double vy = debugCandidateVY[i];
             if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(vx) || !std::isfinite(vy)) continue;
             const double dx = x - static_cast<double>(previousState.x);
             const double dy = y - static_cast<double>(previousState.y);
