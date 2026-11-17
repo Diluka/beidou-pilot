@@ -25,6 +25,12 @@ int main() {
     Near(ms::DropFallX(0.0, 100.0, 250), 25.0, "x_at_250");
     Near(ms::DropFallX(0.0, 100.0, 500), 50.0, "x_at_500");
     Near(ms::DropFallX(0.0, 100.0, 1000), 100.0, "x_at_duration");
+    // D from 0x5064FF: 1000ms normally, 1800ms when pickuptype==3 (v=720 branch).
+    Near(ms::DropFallDurationForPickupType(3), 1800.0, "pickup_type_three_duration_1800");
+    Near(ms::DropFallDurationForPickupType(0), 1000.0, "pickup_type_zero_duration_1000");
+    Near(ms::DropFallDurationForPickupType(2), 1000.0, "pickup_type_two_duration_1000");
+    Near(ms::DropFallX(0.0, 100.0, 1150, 1800), 75.0, "x_1150_of_1800_duration");
+    Near(ms::DropFallX(0.0, 100.0, 1800, 1800), 100.0, "x_at_1800_duration");
 
     Near(ms::DropFallY(200.0, 0, V400), 200.0, "y_at_0");
     Near(ms::DropFallY(200.0, 250, V400), 125.0, "y_at_250");
