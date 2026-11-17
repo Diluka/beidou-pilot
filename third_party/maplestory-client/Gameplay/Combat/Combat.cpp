@@ -125,6 +125,14 @@ namespace ms
 
 	void Combat::update_held_move()
 	{
+		static int debug_calls = 0;
+		if (debug_calls < 5) {
+			++debug_calls;
+			std::fprintf(stderr, "[move-debug] update_held_move held=%d consumed=%d forbid=%d attacking=%d climbing=%d sitting=%d\n",
+						 held_move ? *held_move : 0, held_move_consumed ? 1 : 0,
+						 static_cast<int>(player.attack_forbid_reason()), player.is_attacking() ? 1 : 0,
+						 player.is_climbing() ? 1 : 0, player.is_sitting() ? 1 : 0);
+		}
 		if (!held_move || held_move_consumed || player.attack_forbid_reason() != SpecialMove::FBR_NONE) {
 			if (held_move && !held_move_consumed)
 				std::fprintf(stderr, "[move-debug] early skip skill=%d forbid=%d\n", *held_move,
