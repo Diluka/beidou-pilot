@@ -172,6 +172,8 @@
 - 【源码事实】`Gameplay/Combat/Combat.cpp:apply_use_movement` 中三个Teleport和Flash Jump的case均为空；`apply_move` 的非攻击分支只应用效果/动作并发 `UseSkillPacket`，没有调用移动处理。当前源码不能支持“已会施法所以移动已实现”的结论。
 - 【源码事实】当前 rush 仅三职业 `1121006/1221007/1321003` 进入 `Combat::apply_result_movement→apply_rush`：要求命中数非零，以最后目标怪物当前x为终点。`Player::rush` 仅落地允许；规范状态调用 `V17NormalMotion::BeginRush` 设 `vx=1000*(targetX−x)/attackDelay`，地面步期间不加行走力或制动，按墙/离地/越过目标结束并清速度（`V17NormalMotion::StepGround`）。这是当前headless模型，**本轮尚未完成对应原版rush公式、碰撞与结束条件的地址级闭环**，不能标为原版等价。
 
+【动态证据（2026-11-18，隔离服 mage 角色 2101002 lvl15）】按住方向施放 Teleport：施放后角色从 x≈201 跳到 x≈343（**位移约 +140px，等于技能数据 `range`=140**），随后恢复地面行走；未按方向施放时无位移。技能数据 `Skill/210.img/skill/2101002/level/15/range=140` 与 GUI 位移一致。headless 已按 `TeleportTargetX`（技能 range）接入 `Combat::apply_use_movement` 并新增合同；但 headless tick 路径的原生准入/120ms 待执行状态与落点平台检查尚未验证，PR 待补。
+
 | 后续项 | 需要调整或补证的具体内容 |
 | --- | --- |
 【已落地调整（2026-11-17，#276）】Flash Jump `4111006` 已接入 headless：
