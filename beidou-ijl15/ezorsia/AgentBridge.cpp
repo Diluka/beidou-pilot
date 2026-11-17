@@ -65,6 +65,7 @@ double debugJumpX = 0.0;
 double debugJumpY = 0.0;
 double debugJumpVX = 0.0;
 double debugJumpVY = 0.0;
+const auto secureRead = reinterpret_cast<SecureRead>(0x00539338);
 void CaptureJumpState(void* self, int source) {
     if (!self) return;
     const char* base = static_cast<const char*>(self);
@@ -82,7 +83,6 @@ void __fastcall JumpPendingHook(void* self, void*) { originalJumpPending(self); 
 void __fastcall PendingAHook(void* self, void*) { originalPendingA(self); CaptureJumpState(self, 3); }
 void __fastcall PendingBHook(void* self, void*) { originalPendingB(self); CaptureJumpState(self, 4); }
 void __fastcall PendingCHook(void* self, void*) { originalPendingC(self); CaptureJumpState(self, 5); }
-const auto secureRead = reinterpret_cast<SecureRead>(0x00539338);
 void* debugMotionCandidates[64];
 double debugCandidateX[64];
 double debugCandidateY[64];
