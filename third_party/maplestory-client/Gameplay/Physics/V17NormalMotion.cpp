@@ -504,7 +504,6 @@ V17MotionStep V17NormalMotion::DetachAndJump(const FootholdTree& terrain, const 
         swimFirstDisplayedVy = (up ? SWIM_JUMP_DISPLAYED_UP : SWIM_JUMP_DISPLAYED) * multipliers.jumpRatio;
         swimJumpFirst = true;
         detached.vy = swimFirstHiddenVy;
-        detached.vx = 0.0;
         detached.footholdId = 0;
         detached.onGround = false;
         detached.footholdSlope = 0.0;
