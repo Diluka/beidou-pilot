@@ -62,7 +62,12 @@ double debugEntryY[4] = {0, 0, 0, 0};
 double debugEntryVX[4] = {0, 0, 0, 0};
 double debugEntryVY[4] = {0, 0, 0, 0};
 void __fastcall SpecialAirDebugHook(void* self, void*, int ms) {
-    if (self && debugMotionCandidateCount < 64) debugMotionCandidates[debugMotionCandidateCount++] = self;
+    if (self && debugMotionCandidateCount < 64) {
+        bool duplicate = false;
+        for (int i = 0; i < debugMotionCandidateCount; ++i)
+            if (debugMotionCandidates[i] == self) { duplicate = true; break; }
+        if (!duplicate) debugMotionCandidates[debugMotionCandidateCount++] = self;
+    }
     originalSpecialAir(self, ms);
 }
 
@@ -850,12 +855,12 @@ bool Publish(const MapleControl::State& state) {
     out << ",\"scripts\":" << tickRuntime.Statuses().Dump();
     out << ",\"tick_profile\":" << tickRuntime.Profile().Dump();
     out << ",\"motion_debug\":";
-    out << "{\"seen\":" << debugCandidateSeen << ",\"kept\":" << debugCandidateKept << ",\"entries\":[";
-    for (int i = 0; i < debugCandidateKept; ++i) {
-        if (i) out << ',';
-        out << "{\"x\":" << debugEntryX[i] << ",\"y\":" << debugEntryY[i] << ",\"vx\":" << debugEntryVX[i] << ",\"vy\":" << debugEntryVY[i] << '}';
-    }
-    out << "]}";
+    out << "{\"seen\":" << debugCandidateSeen << ",\"matched\":";
+    if (debugMotionValid)
+        out << "{\"x\":" << debugEntryX[0] << ",\"y\":" << debugEntryY[0] << ",\"vx\":" << debugEntryVX[0] << ",\"vy\":" << debugEntryVY[0] << '}';
+    else
+        out << "null";
+    out << '}';
     out << ",\"input_events\":" << inputEvents << "}\n";
     const std::string bytes = out.str();
     const std::string temporary = directory + "\\state.tmp";
@@ -1184,19 +1189,27 @@ void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     originalUpdate(app, now);
     debugMotionValid = false;
     debugCandidateSeen = debugMotionCandidateCount;
-    int kept = 0;
-    for (int i = 0; i < debugMotionCandidateCount && kept < 4; ++i) {
-        const char* base = static_cast<const char*>(debugMotionCandidates[i]);
-        const double x = secureRead(base + 0x20, *reinterpret_cast<const int*>(base + 0x30));
-        const double y = secureRead(base + 0x38, *reinterpret_cast<const int*>(base + 0x48));
-        const double vx = secureRead(base + 0x50, *reinterpret_cast<const int*>(base + 0x60));
-        const double vy = secureRead(base + 0x68, *reinterpret_cast<const int*>(base + 0x78));
-        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(vx) || !std::isfinite(vy)) continue;
-        debugEntryX[kept] = x; debugEntryY[kept] = y; debugEntryVX[kept] = vx; debugEntryVY[kept] = vy;
-        ++kept;
+    debugCandidateKept = 0;
+    double best = 64.0;
+    if (previousState.positionKnown) {
+        for (int i = 0; i < debugMotionCandidateCount; ++i) {
+            const char* base = static_cast<const char*>(debugMotionCandidates[i]);
+            const double x = secureRead(base + 0x20, *reinterpret_cast<const int*>(base + 0x30));
+            const double y = secureRead(base + 0x38, *reinterpret_cast<const int*>(base + 0x48));
+            const double vx = secureRead(base + 0x50, *reinterpret_cast<const int*>(base + 0x60));
+            const double vy = secureRead(base + 0x68, *reinterpret_cast<const int*>(base + 0x78));
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(vx) || !std::isfinite(vy)) continue;
+            const double dx = x - static_cast<double>(previousState.x);
+            const double dy = y - static_cast<double>(previousState.y);
+            const double d = std::sqrt(dx * dx + dy * dy);
+            if (d < best) {
+                best = d;
+                debugMotionValid = true;
+                debugEntryX[0] = x; debugEntryY[0] = y; debugEntryVX[0] = vx; debugEntryVY[0] = vy;
+                debugCandidateKept = 1;
+            }
+        }
     }
-    debugMotionValid = kept > 0;
-    debugCandidateKept = kept;
     debugMotionCandidateCount = 0;
     Tick();
 }
