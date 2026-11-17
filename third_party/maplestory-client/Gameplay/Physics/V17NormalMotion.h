@@ -28,14 +28,18 @@ struct V17MotionMultipliers
 	// G4 (swim/water region) ground multiplier: both the direction force and the
 	// base speed limit are multiplied by swimSpeedDec (static 0x9B2565/0x9B2664;
 	// dynamic swim map 230010000 ground speed 112.5 = 125 * 0.9, accel 37.8/step).
-	double specialGroundFactor = 1.0;   // FM+0x24 constructor default (0 = ordinary branch)
+	double specialGroundFactor = 1.0;
+	// #256 dynamic-calibrated swim air model: enabled for underwater maps. Ground
+	// stays on the V17 ground step; air uses the GUI-calibrated 30ms sequences.
+	bool swimAir = false;
 };
 
 // The held direction read once per motion commit. Jump/down-jump are edge latches
 // owned by V17NormalMotion so a withdrawn input can never be consumed later.
 struct V17MotionInput
 {
-	int direction = 0; // -1 left, 0 none, +1 right
+	int direction = 0;      // -1 left, 0 none, +1 right
+	int vertical = 0;       // -1 up, 0 none, +1 down (swim special air only)
 };
 
 // One whole 30ms local-character step end state.
@@ -118,6 +122,8 @@ private:
 							 const V17MotionMultipliers& multipliers, const V17MotionInput& input, double dt);
 	V17MotionStep StepAir(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
 						  const V17MotionMultipliers& multipliers, const V17MotionInput& input, double dt);
+	V17MotionStep StepSwimAir(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
+							  const V17MotionMultipliers& multipliers, const V17MotionInput& input, double dt);
 	V17MotionStep DetachAndJump(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
 								const V17MotionMultipliers& multipliers, const V17MotionInput& input, double dt);
 	V17MotionStep DetachAndJumpDown(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
@@ -130,6 +136,11 @@ private:
 	bool owns = false;
 	bool pendingJump = false;
 	bool pendingJumpDown = false;
+	// #256: first swim-air commit uses the GUI-calibrated hidden position velocity
+	// while publishing the displayed jump velocity.
+	bool swimJumpFirst = false;
+	double swimFirstHiddenVy = 0.0;
+	double swimFirstDisplayedVy = 0.0;
 	bool rushing = false;
 	bool sample = false;
 	bool pendingImpulse = false;

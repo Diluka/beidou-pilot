@@ -8,6 +8,22 @@ namespace ms {
 namespace {
 constexpr double LEGACY_STEPS_PER_SECOND = 125.0; // 1000.0 / Constants::TIMESTEP
 constexpr double DOWN_JUMP_IMPULSE = -0.35355339;
+// #256 GUI-calibrated swim air (isolated map 230010000, JUMP=100): first commit
+// displays -322.5 vy while the position trapezoid uses a hidden -455.0; without
+// input the vertical speed advances +66 (over-limit brake 30 + A 36) until -140,
+// then +36, clamped to +140. Holding up displays -340, advances +48/+18 with
+// speed limit 42 (0.3*Sy); holding down sets +210 (1.5*Sy). Horizontal limit is
+// 140 with 36/step force; these constants are dynamic evidence, static closure
+// of the legacy PhysicsObject path is still pending.
+constexpr double SWIM_JUMP_DISPLAYED = -322.5;
+constexpr double SWIM_JUMP_DISPLAYED_UP = -340.0;
+constexpr double SWIM_JUMP_HIDDEN = -455.0;
+constexpr double SWIM_JUMP_HIDDEN_UP = -460.0;
+constexpr double SWIM_LIMIT = 140.0;
+constexpr double SWIM_LIMIT_UP = 42.0;
+constexpr double SWIM_LIMIT_DOWN = 210.0;
+constexpr double SWIM_FORCE_PER_STEP = 36.0;
+constexpr double SWIM_OVER_LIMIT_BRAKE = 30.0;
 
 // Original force/velocity helper 0x9B2BCB: v += force/mass*dt, clamped in the
 // force's own direction to +/-limit. It does not drag an out-of-range start back.
@@ -337,6 +353,8 @@ V17MotionStep V17NormalMotion::StepGround(const FootholdTree& terrain, const V17
 V17MotionStep V17NormalMotion::StepAir(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
                                        const V17MotionMultipliers& multipliers, const V17MotionInput& input,
                                        double dt) {
+    if (multipliers.swimAir) return StepSwimAir(terrain, parameters, multipliers, input, dt);
+
     V17MotionStep next = state;
     const double mass = multipliers.mass;
     const double oldVx = state.vx;
@@ -395,9 +413,108 @@ V17MotionStep V17NormalMotion::StepAir(const FootholdTree& terrain, const V17Phy
     return next;
 }
 
+V17MotionStep V17NormalMotion::StepSwimAir(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
+                                            const V17MotionMultipliers& multipliers, const V17MotionInput& input,
+                                            double dt) {
+    V17MotionStep next = state;
+    const double oldVx = state.vx;
+    const double oldVy = state.vy;
+    double vx;
+    double vy;
+
+    const bool firstSwimCommit = swimJumpFirst;
+    if (firstSwimCommit) {
+        vy = swimFirstDisplayedVy;
+        swimJumpFirst = false;
+    } else {
+        if (input.vertical > 0) {
+            vy = SWIM_LIMIT_DOWN;
+        } else if (input.vertical < 0) {
+            double base = oldVy;
+            if (base < -SWIM_LIMIT) {
+                base += SWIM_OVER_LIMIT_BRAKE;
+                if (base > -SWIM_LIMIT) base = -SWIM_LIMIT;
+            }
+            vy = base + 18.0;
+            if (vy > SWIM_LIMIT_UP) vy = SWIM_LIMIT_UP;
+        } else {
+            double base = oldVy;
+            if (base < -SWIM_LIMIT) {
+                base += SWIM_OVER_LIMIT_BRAKE;
+                if (base > -SWIM_LIMIT) base = -SWIM_LIMIT;
+            }
+            vy = base + SWIM_FORCE_PER_STEP;
+            if (vy > SWIM_LIMIT) vy = SWIM_LIMIT;
+        }
+
+    }
+
+    if (input.direction != 0) {
+        vx = oldVx + input.direction * SWIM_FORCE_PER_STEP;
+        vx = std::clamp(vx, -SWIM_LIMIT, SWIM_LIMIT);
+    } else {
+        vx = DecayToZero(oldVx, SWIM_OVER_LIMIT_BRAKE / dt, dt);
+    }
+
+    const double hiddenVy = (firstSwimCommit ? swimFirstHiddenVy : oldVy);
+    const double dy = (hiddenVy + vy) * 0.5 * dt;
+    const double dx = (oldVx + vx) * 0.5 * dt;
+
+    next.vx = vx;
+    next.vy = vy;
+
+    LocalSweepInput sweep;
+    sweep.x = state.x;
+    sweep.y = state.y;
+    sweep.dx = dx;
+    sweep.dy = dy;
+    sweep.vx = vx;
+    sweep.vy = vy;
+    sweep.footholdId = 0;
+    sweep.onGround = false;
+    sweep.ignoreFootholdId = dropThroughId;
+    const LocalSweepResult result = terrain.SweepLocalMotion(sweep);
+
+    next.x = result.x;
+    next.y = result.y;
+    next.vx = result.vx;
+    next.vy = result.vy;
+    next.onGround = result.onGround;
+    next.footholdId = result.footholdId;
+    next.footholdSlope = result.footholdSlope;
+    next.footholdLayer = result.footholdLayer;
+    next.landed = result.landed;
+    next.hitWall = result.hitWall;
+
+    if (result.landed || result.onGround) {
+        dropThroughId = 0;
+        swimJumpFirst = false;
+    }
+
+    return next;
+}
+
 V17MotionStep V17NormalMotion::DetachAndJump(const FootholdTree& terrain, const V17PhysicsParameters& parameters,
                                              const V17MotionMultipliers& multipliers, const V17MotionInput& input,
                                              double dt) {
+    if (multipliers.swimAir) {
+        V17MotionStep detached = state;
+        const bool up = input.vertical < 0;
+        swimFirstHiddenVy = (up ? SWIM_JUMP_HIDDEN_UP : SWIM_JUMP_HIDDEN) * multipliers.jumpRatio;
+        swimFirstDisplayedVy = (up ? SWIM_JUMP_DISPLAYED_UP : SWIM_JUMP_DISPLAYED) * multipliers.jumpRatio;
+        swimJumpFirst = true;
+        detached.vy = swimFirstHiddenVy;
+        detached.footholdId = 0;
+        detached.onGround = false;
+        detached.footholdSlope = 0.0;
+        detached.footholdLayer = 0;
+        state = detached;
+        dropThroughId = 0;
+        V17MotionStep next = StepAir(terrain, parameters, multipliers, input, dt);
+        next.jumped = true;
+        return next;
+    }
+
     const FootholdInfo foothold = terrain.GetFoothold(state.footholdId);
     const Tangent tangent = TangentFor(state.footholdSlope);
     // #237 D.5: only the local *position* is clamped to [0, foothold length] before

@@ -55,9 +55,10 @@ struct Runner {
 
     explicit Runner(const ms::FootholdTree& terrain) : terrain(terrain) {}
 
-    ms::V17MotionStep Step(int direction, bool jumpDownAllowed = false) {
+    ms::V17MotionStep Step(int direction, bool jumpDownAllowed = false, int vertical = 0) {
         ms::V17MotionInput input;
         input.direction = direction;
+        input.vertical = vertical;
         return motion.Step(terrain, ms::V17PhysicsParameters::Get(), multipliers, input, jumpDownAllowed, StepSeconds);
     }
 };
@@ -121,6 +122,39 @@ void FieldMultipliers(const ms::FootholdTree& terrain) {
     speeds.clear();
     for (int step = 0; step < 6; ++step) speeds.push_back(runner.Step(0).vx);
     Sequence(speeds, {122.6, 120.2, 117.8, 115.4, 113.0, 110.6}, "field_drag_0_2_scales_release_brake");
+}
+
+void SwimAir(const ms::FootholdTree& terrain) {
+    // #256 dynamic-calibrated swim air from GUI samples (230010000, JUMP=100).
+    Runner runner(terrain);
+    runner.multipliers.swimAir = true;
+
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.motion.RequestJump();
+    auto first = runner.Step(0);
+    Near(first.vy, -322.5, "swim_jump_displayed_vy");
+    Near(first.y, 988.3375, "swim_jump_first_position");
+
+    std::vector<double> speeds;
+    for (int step = 0; step < 12; ++step) speeds.push_back(runner.Step(0).vy);
+    Sequence(speeds, {-256.5, -190.5, -124.5, -88.5, -52.5, -16.5, 19.5, 55.5, 91.5, 127.5, 140.0, 140.0},
+             "swim_air_no_input_vertical_sequence");
+
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.multipliers.swimAir = true;
+    runner.motion.RequestJump();
+    Near(runner.Step(0, false, -1).vy, -340.0, "swim_jump_up_displayed_vy");
+    speeds.clear();
+    for (int step = 0; step < 12; ++step) speeds.push_back(runner.Step(0, false, -1).vy);
+    Sequence(speeds, {-292.0, -244.0, -196.0, -148.0, -122.0, -104.0, -86.0, -68.0, -50.0, -32.0, -14.0, 4.0},
+             "swim_air_up_vertical_sequence");
+
+    runner.motion.Reset(0.0, 1000.0, true, 1);
+    runner.multipliers.swimAir = true;
+    runner.motion.RequestJump();
+    Near(runner.Step(0).vy, -322.5, "swim_down_first_vy");
+    Near(runner.Step(0, false, 1).vy, 210.0, "swim_down_vertical_limit");
+    Near(runner.Step(0, false, 1).vy, 210.0, "swim_down_stays_at_limit");
 }
 
 void Slope(const ms::FootholdTree& terrain) {
@@ -354,6 +388,8 @@ int main(int argc, char** argv) {
     const ms::V17MotionMultipliers baseline;
     if (scenario == "ground")
         Ground(terrain);
+    else if (scenario == "swim-air")
+        SwimAir(terrain);
     else if (scenario == "field-multipliers")
         FieldMultipliers(terrain);
     else if (scenario == "slope")
