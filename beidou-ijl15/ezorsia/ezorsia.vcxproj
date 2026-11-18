@@ -192,6 +192,7 @@
     <ClInclude Include="LoginActionProtocol.h" />
     <ClInclude Include="NativeObservation.h" />
     <ClInclude Include="NativeMotion.h" />
+    <ClInclude Include="NativeDeath.h" />
     <ClInclude Include="NativeSceneTerrain.h" />
     <ClInclude Include="..\..\headless\src\ImgResources.h" />
     <ClInclude Include="..\..\headless\src\WorldMapImage.h" />

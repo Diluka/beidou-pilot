@@ -978,6 +978,21 @@ end
     Step(native, runtime);
     Check(native.queries == finishedQueries, "terminal sessions cannot retain per-frame observation work");
     Check(native.queries["inventory"] == 2 && native.queries["character"] == 2, "fresh frame invalidates domain cache");
+    Start(runtime, "dead-facts", Source(R"lua(function main(c)
+  local dead=c.game.world.dead
+  if c.tick.index==1 then assert(dead==true)
+  elseif c.tick.index==2 then assert(dead==false)
+  elseif c.tick.index==3 then assert(dead==nil); return 'done' end
+end)lua"));
+    native.state.dead = Fact::True;
+    Step(native, runtime);
+    StatusIs(runtime, "dead-facts", "running");
+    native.state.dead = Fact::False;
+    Step(native, runtime);
+    StatusIs(runtime, "dead-facts", "running");
+    native.state.dead = Fact::Unknown;
+    Step(native, runtime);
+    StatusIs(runtime, "dead-facts", "completed", "script_returned");
     const std::vector<std::string> writes{"game.character.hp=0",
                                           "game.scene.monsters[1].x=0",
                                           "game.scene.monsters[1]={}",
