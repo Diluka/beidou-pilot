@@ -1270,8 +1270,20 @@ void Tick() {
     const bool characterExited = native.loginStage || native.user == 0;
     tickInput.Observe(native.user, updatedCharacter, characterUpdates, characterExited);
     tickInput.ObserveAction(CaptureNativeAction(native.user), characterExited || changed);
-    if ((changed || !ready || previousState.character.values[6] == 0)
-        && (tickInput.movement.Active() || tickInput.HasIntent() || tickInput.item.Pending()))
+    const bool deadOrStale = changed || !ready || previousState.character.values[6] == 0;
+    const bool pendingRevive = !changed && ready && previousState.characterKnown && previousState.character.known[6]
+                               && previousState.character.values[6] == 0
+                               && tickInput.Intent().kind == MapleControl::ActionKind::Revive;
+    if (deadOrStale && pendingRevive) {
+        // Preserve the one-shot revive until dispatch, but release any stale movement keys.
+        if (tickInput.movement.Active()) {
+            std::string error;
+            if (!tickAdapter.SetHeldKeys({}, error)) {
+                tickAdapter.Release();
+                tickInput.result.reason = error;
+            }
+        }
+    } else if (deadOrStale && (tickInput.movement.Active() || tickInput.HasIntent() || tickInput.item.Pending()))
         tickAdapter.Release();
 
     ReadCommand();
