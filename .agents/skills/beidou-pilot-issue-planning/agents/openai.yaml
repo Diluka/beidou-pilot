@@ -1,0 +1,4 @@
+interface:
+  display_name: "北斗 Issue 规划"
+  short_description: "整理排期汇总与依赖图，按证据复核整批任务，供维护者手动选单"
+  default_prompt: "使用 $beidou-pilot-issue-planning，帮我梳理本批 Task 的依赖图和当前可选项。"

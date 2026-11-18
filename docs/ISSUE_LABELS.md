@@ -1,72 +1,29 @@
-# Issue 分类标签
+# Issue 分类与筛选
 
-本仓库的 Issue 使用两个维度的标签：`需求池` 与领域标签。领域标签用于按能力面筛选和安排优先顺序，不表示排期、授权或开发进度。
-
-## 为什么不用进度标签
-
-`待开发` / `开发中` / `待验收` 一类状态标签需要每次推进时手动同步。实际执行中没人会可靠地回头更新，一段时间后标签会比没有更误导。Issue 的实际进度以 sub-issue 状态、PR 与正文中记录的事实为准，不靠标签表达。
+用 GitHub 原生类型区分 Issue：`Feature` 记录希望新增或恢复的能力，`Bug` 记录已观察到的行为偏差，`Task` 记录可以单独领取和验收的交付。类型不表示开发已获授权。需求写法见[需求共创技能](../.agents/skills/beidou-pilot-requirements/SKILL.md)；排期汇总单和依赖图见[规划技能](../.agents/skills/beidou-pilot-issue-planning/SKILL.md)。
 
 ## 领域标签
 
-每个 `需求池` Issue 建单时指定**一个**领域标签，按 Issue 正文的主体判断。领域在建单时固定，之后不随进度变更；若需求范围发生实质变化，重新判断一次。
+Feature 和 Bug 各选一个领域标签，按使用者最终得到的结果选，而不是按实现语言选。范围实质变化时可以重新判断，关闭时保留分类。子 Task 默认不重复加父单的领域标签；需独立按领域筛选的交付可单独标注。
 
-### 主轴：客户端能力
+| 领域 | 按什么区分 |
+|---|---|
+| `动作能力` | 调用一个动作并产生实际效果，例如请求正常复活。 |
+| `状态观察` | 读取可信事实，例如脚本能否识别角色已死亡。 |
+| `对象交互` | 面向 NPC、箱子或门户等对象发起交互并核对结果。只读取对象列表归「状态观察」。 |
+| `游戏AI` | 用客户端组合玩法或策略，例如完成社交、养成或账号起步流程。 |
+| `验收场景` | 交付真实游戏场景的证据和结论，不承诺新的客户端行为。 |
 
-这四类标签回答的是「AI 干活时会在哪里卡住」，优先安排这些内容的排期。
+讨论优先级时，先看客户端能力和验收场景，再看扩展玩法；实际顺序由维护者在汇总单中决定。新增领域标签前，先在上表写出它与相邻领域的判据。
 
-| 标签 | 含义 | 典型判据 | 当前归属 |
-|---|---|---|---|
-| `动作能力` | Lua 语义动作怎么真正执行：原生化、键位依赖、准入与真实效果 | 交付物是让某个调用走对执行路径；**动作本身能否执行** | [#36](https://github.com/Diluka/beidou-pilot/issues/36) |
-| `状态观察` | 脚本能读到什么事实：动作状态、阻塞原因、移动能力、掉落与背包收益 | 交付物是让脚本读到**可信事实**，而非发起动作 | [#45](https://github.com/Diluka/beidou-pilot/issues/45)、[#46](https://github.com/Diluka/beidou-pilot/issues/46) |
-| `对象交互` | 对场景对象发起交互并核对结果：NPC、箱子、商店、门户 | 交付物是「发现对象 → 指向目标 → 交互 → 核对」的统一流程 | [#41](https://github.com/Diluka/beidou-pilot/issues/41) |
-| `验收场景` | 主体是取得真实游戏结果，不开发新能力 | 交付物是真实客户端的运行结果、证据与计划推进 | [#8](https://github.com/Diluka/beidou-pilot/issues/8)、[#13](https://github.com/Diluka/beidou-pilot/issues/13)、[#16](https://github.com/Diluka/beidou-pilot/issues/16)、[#22](https://github.com/Diluka/beidou-pilot/issues/22)、[#27](https://github.com/Diluka/beidou-pilot/issues/27)、[#32](https://github.com/Diluka/beidou-pilot/issues/32) |
+## 汇总单标签
 
-### 扩展：`游戏AI`
-
-AI 操作者通过客户端完成社交、消费 Lua 策略等扩展玩法，以及低频的账号起步流程。
-
-当前归属：[#72](https://github.com/Diluka/beidou-pilot/issues/72)、[#73](https://github.com/Diluka/beidou-pilot/issues/73)、[#92](https://github.com/Diluka/beidou-pilot/issues/92)、[#94](https://github.com/Diluka/beidou-pilot/issues/94)、[#149](https://github.com/Diluka/beidou-pilot/issues/149)、[#150](https://github.com/Diluka/beidou-pilot/issues/150)。
-
-## 边界判断
-
-### `动作能力` 与 `状态观察`
-
-按交付物主体判断，而非按代码位置：
-
-- 主体是**让调用走对路径**（如 `game.jump` 不再依赖快捷键绑定）→ `动作能力`。
-- 主体是**让脚本读到可信事实**（如读取当前是否在空中、拾取后是否真的入包）→ `状态观察`。
-
-两者在实施时经常互相牵连。例如拾取闭环既涉及执行路径，也涉及入包确认；此时按 Issue 正文承诺的用户结果归类，另一面作为依赖记录在正文中，不另建平行标签。
-
-### `对象交互` 与 `状态观察`
-
-`对象交互` 覆盖「发现对象 → 指向目标 → 交互 → 核对」的完整流程；若只交付「看到对象列表」而不含交互与结果核对，则属于 `状态观察`。
-
-### `验收场景`
-
-判断依据是**有没有新的客户端行为承诺**。取得真实游戏结果、收敛证据与计划推进的父需求归入此类；其下需要新写代码的子任务按子任务自身性质归入其他领域标签，但 sub-issue 默认不加领域标签（见下节）。
-
-## sub-issue 的标签
-
-开发任务是父需求的拆解，默认**不添加**领域标签，继承父需求的分类即可。这样筛选 `label:动作能力` 时得到的是需求清单，不会被大量子任务淹没。
-
-若某个开发任务独立到需要单独按领域筛选（例如跨多个父需求的技术交付），再补加。
+`汇总单` 标记维护者看依赖图、手动选下一张执行单的入口。维护者确认拆分方案并要求落单后，原 Feature 或 Bug 保留类型和领域标签，按确认范围补齐子 Task、依赖图和当前可选项，再加此标签。跨需求的批次汇总也用同一个标签。直接执行的原单不加；仅有子项也不足以成为选单入口。这个标签不表示已开工。
 
 ## 常用筛选
 
-```text
-# 全部待处理需求
-is:issue is:open label:需求池
+- [开放汇总单](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20label%3A%E6%B1%87%E6%80%BB%E5%8D%95)：`is:issue is:open label:汇总单`。
 
-# 需要安排排期的主轴能力
-is:issue is:open label:动作能力,状态观察,对象交互,验收场景
-
-# 扩展方向
-is:issue is:open label:游戏AI
-```
-
-## 维护
-
-- 领域标签在建单时确定，不在开发过程中切换。
-- Issue 关闭时保留原标签，便于回溯历史分类。
-- 新增领域标签需要先更新本文档并说明判断标准，避免标签膨胀。
+- [开放功能需求](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20type%3AFeature)：`is:issue is:open type:Feature`。
+- [开放缺陷](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20type%3ABug)：`is:issue is:open type:Bug`。
+- 查看某领域时追加 `label:动作能力` 等条件。维护者可直接指定未拆分的需求，从批次选单时看汇总单；筛选结果不自动派工。
