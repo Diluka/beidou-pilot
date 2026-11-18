@@ -29,7 +29,7 @@
 | 一次资源准备供查询与规划直接消费 | Catalog 直接查询只读原版 IMG，报告实际来源、指纹和未知版本 | [#55](https://github.com/Diluka/beidou-pilot/issues/55) |
 | 减少原生试用准备与版本核对成本 | 现有构建已交付，指定版本复用/装配/核对仍需组织 | [#56](https://github.com/Diluka/beidou-pilot/issues/56) |
 
-同图其他玩家的 `scene.players` 结构化观察两端均已提供（[#57](https://github.com/Diluka/beidou-pilot/issues/57)）：无头端来自原生角色对象，GUI 端来自原版客户端用户池，两端按同一字段口径；HP、装备、队伍关系与 GUI 不可见状态语义不在本观察范围。
+同图其他玩家的 `scene.players` 结构化观察两端均已提供（[#57](https://github.com/Diluka/beidou-pilot/issues/57)）：无头端来自原生角色对象，GUI 端来自原版客户端用户池，两端按同一字段口径；HP、装备、队伍关系与 GUI 不可见状态语义不在本观察范围。无头端远端角色离场和重入的双客户端试验见[验证场景](REMOTE_PLAYER_VALIDATION.md)。
 
 ## 已有结果与后续验证
 
