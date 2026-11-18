@@ -1,4 +1,4 @@
 interface:
   display_name: "北斗需求共创"
-  short_description: "从 AI 实际使用者视角完善北斗客户端想法，核对现状并维护需求池"
-  default_prompt: "使用 $beidou-pilot-requirements，从你实际使用北斗客户端的角度和我一起完善这个想法，判断如何验证及是否入池。"
+  short_description: "从实际使用场景区分新能力、已观察的缺陷和待核实现象"
+  default_prompt: "使用 $beidou-pilot-requirements，和我一起核对需求或缺陷，明确使用价值和可观察的验收结果。"
