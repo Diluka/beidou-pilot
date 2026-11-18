@@ -610,8 +610,9 @@ bool ReviveClickPosition(unsigned int& x, unsigned int& y, std::string& error) {
     }
     const auto readInteger = [](const MapleControl::Value& value, std::int64_t& result) {
         if (value.Type() != MapleControl::Value::Kind::Number || !std::isfinite(value.Number())
-            || std::trunc(value.Number()) != value.Number() || value.Number() < std::numeric_limits<std::int32_t>::min()
-            || value.Number() > std::numeric_limits<std::int32_t>::max())
+            || std::trunc(value.Number()) != value.Number()
+            || value.Number() < (std::numeric_limits<std::int32_t>::min)()
+            || value.Number() > (std::numeric_limits<std::int32_t>::max)())
             return false;
         result = static_cast<std::int64_t>(value.Number());
         return true;
