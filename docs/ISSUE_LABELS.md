@@ -16,8 +16,14 @@ Feature 和 Bug 各选一个领域标签，按使用者最终得到的结果选�
 
 讨论优先级时，先看客户端能力和验收场景，再看扩展玩法；实际顺序由维护者在汇总单中决定。新增领域标签前，先在上表写出它与相邻领域的判据。
 
+## 汇总单标签
+
+`汇总单` 标记维护者看依赖图、手动选下一张执行单的入口。单个需求拆分后，原 Feature 或 Bug 保留类型和领域标签，补齐子 Task、依赖图和当前可选项，再加此标签。跨需求的批次汇总也用同一个标签。直接执行的原单不加；仅有子项也不足以成为选单入口。这个标签不表示已开工。
+
 ## 常用筛选
+
+- [开放汇总单](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20label%3A%E6%B1%87%E6%80%BB%E5%8D%95)：`is:issue is:open label:汇总单`。
 
 - [开放功能需求](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20type%3AFeature)：`is:issue is:open type:Feature`。
 - [开放缺陷](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20type%3ABug)：`is:issue is:open type:Bug`。
-- 查看某领域时追加 `label:动作能力` 等条件。**选下一项工作请看排期汇总单**；类型和领域筛选都不是派工队列。
+- 查看某领域时追加 `label:动作能力` 等条件。维护者可直接指定未拆分的需求，从批次选单时看汇总单；筛选结果不自动派工。

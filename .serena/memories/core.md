@@ -1,7 +1,7 @@
 # 项目导航与边界
 
 - 按领域的业务导航见 `docs/business-map/README.md`；各领域 YAML 共同组成 Semantic Atlas 图，查询和维护后仍需回到当前源码及正式文档核实。
-- `AGENTS.md` 是维护约定入口：Issue 按意图路由到项目需求或规划技能，单张 Task 按执行边界交付；自主验收、合并与真实客户端试用见该文档；正式架构/支持边界见docs/ARCHITECTURE.md，命令见docs/CLI.md，写Lua脚本的接口参考见docs/LUA_API.md，桥执行契约见docs/CONTROL.md，依赖见docs/DEPENDENCIES.md，CI检查与复现见docs/CI.md。
+- `AGENTS.md` 是维护约定入口：Issue 按意图路由到项目需求或规划技能，单张工单按执行边界交付；自主验收、合并与真实客户端试用见该文档；正式架构/支持边界见docs/ARCHITECTURE.md，命令见docs/CLI.md，写Lua脚本的接口参考见docs/LUA_API.md，桥执行契约见docs/CONTROL.md，依赖见docs/DEPENDENCIES.md，CI检查与复现见docs/CI.md。
 - 运行实例由Docker容器拥有；Lua动作返回/取消保持实例，close独立结束容器。实例关闭与动作锁分别管理，活动Lua期间仍可正常关闭。
 - Python角色控制入口统一经过Lua；原生适配器保留底层输入/技能原语，退役的是上层 Python API。GUI 桌面流程按正式支持边界保留。
 - `shared/lua-runtime/TickRuntime.*` 是唯一 Lua 引擎（逐次决策）。脚本统一按 tick 执行、无需声明引擎。tick 多会话共享客户端唯一 player 状态机，只在必要原生 I/O 联合物理输入。入口与契约以 docs/LUA_API.md、docs/LUA_TICK_API.md、docs/CONTROL.md 为准，不在记忆复制 API。

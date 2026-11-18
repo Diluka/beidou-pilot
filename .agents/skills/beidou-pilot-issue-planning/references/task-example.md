@@ -1,6 +1,6 @@
 # [Headless CLI] 死亡后可请求一次普通复活
 
-来源：[双端客户端复活需求 #296](https://github.com/Diluka/beidou-pilot/issues/296)。以下仅示范其中一个入口的任务写法。
+来源：[双端客户端复活需求 #296](https://github.com/Diluka/beidou-pilot/issues/296)。以下用其中一个入口示范调用契约与验收写法；多个入口可以在原 Feature 中一并验收，此例不要求另建 Task。
 
 ## 目标
 
