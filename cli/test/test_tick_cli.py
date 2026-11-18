@@ -203,7 +203,7 @@ class TickCliContract(unittest.TestCase):
         script = tick_state("b" * 32)
         script["player"].update(
             input_action="revive",
-            action="revive",
+            action=None,
             phase="running",
             busy=True,
             held=[],
