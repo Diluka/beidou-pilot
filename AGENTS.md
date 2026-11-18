@@ -8,7 +8,7 @@
 - **环境授权：** 常驻区 `live` 仅按已有授权和 `PLAN.md` 自然游玩与养成，不为开发准备角色条件，不写正式数据库或复制常驻数据。半常驻区 `dev` 使用独立服务、网络、存储和账号，可在授权的开发环境内自主建号、建角，按服务端 CLI 实际能力准备职业、等级、技能、物品或地图等复现条件；缺失能力如实记录，不转向常驻服。用开发角色的 `STATE.md` 记录条件、来源和核对时间，不在其中写养成计划或开发排期。
 - 宿主仅通过 `workbenches/workbench` 操作：`list [live|dev]` 查角色，`live/NAME` 或 `dev/NAME` 选择所属客户端，`server dev up|stop|status|cli` 单独管理开发服。角色 `close` 不停服，日常停服保留数据；禁止自动重置、清库、删卷或以回收客户端为由清理服务器。
 - `workbenches/` 保存公共入口、部署说明和无私密示例；`private/` 不纳入 Git。账号、配置、状态、脚本和原始验收证据留所属环境；字段与准备步骤见[工作台指南](workbenches/README.md)。
-- 新会话实际使用客户端、接续实例或处理登录与账号准备时，优先使用仓库技能 [beidou-pilot-client](.agents/skills/beidou-pilot-client/SKILL.md)，先找回已有工作台与角色，按当前能力区分已有角色登录和首次建角。
+- 查询开发服、注册开发账号或用服务端 CLI 准备角色条件时，使用 [beidou-cli](.agents/skills/beidou-cli/SKILL.md)。登录、建角、接续客户端实例和核对游戏效果使用 [beidou-pilot-client](.agents/skills/beidou-pilot-client/SKILL.md)，先找回已有工作台与角色。
 
 - 直接管理的第三方依赖统一放根 `third_party/`，来源版本与许可随源码保留。上游内部嵌套依赖保持其原结构；集成适配器放 `beidou-ijl15/`，不复制第二份共享Runtime。未修改的基础库可固定commit引为submodule，配置以实际的gitlink为准；本地改造的上游保留补丁与来源。
 
