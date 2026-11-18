@@ -141,6 +141,7 @@ class UnifiedControlContract(unittest.TestCase):
         self.assertEqual("revived", report["data"]["status"])
         self.assertEqual(1, run.call_count)
         self.assertIn("context.game.player.revive()", run.call_args.kwargs["code"])
+        self.assertIn('return "done"', run.call_args.kwargs["code"])
         self.assertEqual(6, run.call_args.kwargs["seconds"])
 
     def test_headless_revive_timeout_reports_once_without_replay(self) -> None:

@@ -27,8 +27,8 @@ def revive(backend: Backend) -> JsonObject:
         request = bridge.run_script(
             code="""local function main(context)
     local ok, reason = context.game.player.revive()
-    if not ok then return reason or "revive_request_rejected" end
-    return "revive_request_submitted"
+    if not ok then error(reason or "revive_request_rejected") end
+    return "done"
 end
 return {main=main, context=__beidou_context}
 """,
