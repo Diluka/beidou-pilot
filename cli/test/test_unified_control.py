@@ -134,6 +134,15 @@ class UnifiedControlContract(unittest.TestCase):
         with (
             patch.object(Backend, "read", side_effect=[before, after]),
             patch.object(BridgeClient, "snapshot", return_value={"scripts": []}),
+            patch(
+                "beidou_pilot.strategy_scene.scene_context",
+                return_value={
+                    "character_id": 42,
+                    "map_id": 100000000,
+                    "instance_id": "headless-1",
+                    "scene_generation": 1,
+                },
+            ),
             patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run,
         ):
             code, report = self.cli("headless", "revive")
@@ -142,6 +151,7 @@ class UnifiedControlContract(unittest.TestCase):
         self.assertEqual(1, run.call_count)
         self.assertIn("context.game.player.revive()", run.call_args.kwargs["code"])
         self.assertIn('return "done"', run.call_args.kwargs["code"])
+        self.assertIn("return {main=main,context=__beidou_context}", run.call_args.kwargs["code"])
         self.assertEqual(6, run.call_args.kwargs["seconds"])
 
     def test_headless_revive_timeout_reports_once_without_replay(self) -> None:
@@ -154,6 +164,15 @@ class UnifiedControlContract(unittest.TestCase):
         with (
             patch.object(Backend, "read", side_effect=[dead, dead]),
             patch.object(BridgeClient, "snapshot", return_value={"scripts": []}),
+            patch(
+                "beidou_pilot.strategy_scene.scene_context",
+                return_value={
+                    "character_id": 42,
+                    "map_id": 100000000,
+                    "instance_id": "headless-1",
+                    "scene_generation": 1,
+                },
+            ),
             patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run,
             patch("beidou_pilot.recovery.time.monotonic", side_effect=[0, 0, 7]),
             patch("beidou_pilot.recovery.time.sleep"),

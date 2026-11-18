@@ -18,20 +18,28 @@ def revive(backend: Backend) -> JsonObject:
     if cast(int, character["hp"]) > 0:
         return {"status": "already_alive", "changed": False, "state": before}
     if backend.name == "headless":
+        from .strategies import compile_strategy
+        from .strategy_scene import scene_context
+
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
-        running = next(
-            (script for script in bridge.snapshot().get("scripts", []) if script["status"] == "running"), None
-        )
+        snapshot = bridge.snapshot()
+        running = next((script for script in snapshot.get("scripts", []) if script["status"] == "running"), None)
         if running is not None:
             raise ClientError("input_busy", "已有Lua脚本正在控制角色，未发送复活请求。", {"script_id": running["id"]})
+        scene = scene_context(snapshot)
+        if scene["character_id"] != character["id"]:
+            raise ClientError("character_changed", "提交期间角色已变化，停止操作。")
         request = bridge.run_script(
-            code="""local function main(context)
+            code=compile_strategy(
+                """local function main(context)
     local ok, reason = context.game.player.revive()
     if not ok then error(reason or "revive_request_rejected") end
     return "done"
 end
-return {main=main, context=__beidou_context}
 """,
+                {},
+                scene,
+            ),
             seconds=6,
             timeout=9,
         )
