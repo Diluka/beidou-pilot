@@ -6,8 +6,11 @@
 
 在 headless 客户端中，操作者发现当前角色意外死亡后，可以显式请求一次普通复活，并知道同一角色是否已经恢复。本单只覆盖 headless CLI；GUI 和 Lua 的入口另行验收。
 
+调用方只执行一次命令，从 JSON 读取结果；下面的 `jq` 只投影验收关心的字段：
+
 ```sh
-beidou-pilot --json revive
+beidou-pilot --json revive | jq '{ok, status: .data.status, changed: .data.changed}'
+# 确认从死亡恢复时，预期：{"ok":true,"status":"revived","changed":true}
 ```
 
 ## 验收标准
