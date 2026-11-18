@@ -7,6 +7,14 @@ description: 查询北斗隔离开发服的在线状态、版本和世界列表�
 
 在仓库根目录运行 `workbenches/workbench server dev cli`。工作台会核验开发服身份，并在对应游戏容器内调用官方 `beidou-cli`。本技能沿用服务器工作区的 `beidou-cli` 操作约定，入口和可用命令以本项目的[开发服指南](../../../docker/dev-server/README.md#支持的管理调用)为准。授权仅限 `dev` 分区；未启动或配置不符时，不切换到 `live`，也不借用宿主的管理凭据。
 
+## API 文档从哪里查
+
+`apis` 显示的是**官方管理 CLI JAR 自带的静态接口表**。在 `beidou-cli` v1.0.5 中，[ApiListCommand 的 `APIS` 表](https://github.com/BeiDouMS/beidou-cli/blob/eaffe8849a5d0f57f986ba95c92b108e3d7b625d/src/main/java/org/gms/command/ApiListCommand.java#L42-L53)逐项记录 HTTP 方法、路径、简述和敏感标记；[`apis` 命令](https://github.com/BeiDouMS/beidou-cli/blob/eaffe8849a5d0f57f986ba95c92b108e3d7b625d/src/main/java/org/gms/command/ApiListCommand.java#L172-L194)只筛选、打印这张表，不向游戏服务端请求文档。官方另有 [CLI 使用指南](https://github.com/BeiDouMS/beidou-cli/blob/eaffe8849a5d0f57f986ba95c92b108e3d7b625d/beidou-cli.md)，用于查命令语法。
+
+- **查接口索引**：运行 `workbenches/workbench server dev cli apis` 查看全表，或用 `apis server`、`apis give` 等按主题筛选。清单表头的 `Server v1.10` 是写在 CLI 里的参考版本。
+- **查实际服务**：HTTP 接口由游戏服务端 `BeiDou.jar` 实现。用 `call GET /server/v1/version` 查询运行版本（本开发服实测为 `1.12`）；清单中的条目不能证明当前版本支持该接口或参数。
+- **查工作台允许执行的操作**：以 `workbenches/workbench server dev cli --help` 和[本项目包装器](../../../docker/dev-server/cli.sh)为准，只在允许范围内核对服务端响应。
+
 ## 查询开发服
 
 ```bash
@@ -17,7 +25,7 @@ workbenches/workbench server dev cli call GET /server/v1/version
 workbenches/workbench server dev cli call GET /server/v1/world/list
 ```
 
-`cli version` 显示管理工具版本，`/server/v1/version` 返回运行中的游戏服务版本。`apis` 展示上游静态接口，不是本工作台允许执行的命令清单；以 `cli --help` 为准。查询要检查业务 `code=20000` **以及所需的 `data`**：确认在线还要看到 `data=true`。本入口不接受任意 API 路径或原始 `batch`。
+`cli version` 单独显示管理工具版本。查询要检查业务 `code=20000` **以及所需的 `data`**：确认在线还要看到 `data=true`。本入口不接受任意 API 路径或原始 `batch`。
 
 ## 准备开发角色
 
