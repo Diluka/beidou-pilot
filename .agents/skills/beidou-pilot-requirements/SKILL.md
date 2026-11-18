@@ -20,4 +20,4 @@ description: "在北斗项目中讨论新想法、提出功能需求、判断或
 
 涉及玩法时写明后端、分区、角色条件和客户端可核对的效果；开发服准备、离线测试和真实游戏效果分别记录。脚本输入或并发策略的歧义可参考[讨论案例](references/discussion-cases.md)。
 
-建单不自动开工。一次可独立交付的 Feature 或 Bug 就是执行单；维护者可直接指定原单，不必先拆 Task。需要讨论多项独立交付时，再按[规划技能](../beidou-pilot-issue-planning/SKILL.md)拆分并汇总。
+需求收集到原 Feature 或 Bug 为止，不自动开工或拆 Task。维护者可以直接指定原单执行；只有维护者提出要讨论拆分时，才按[规划技能](../beidou-pilot-issue-planning/SKILL.md)给出方案。
