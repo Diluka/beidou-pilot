@@ -355,7 +355,7 @@ position += (v_old+v)/2*dt
 
 ### 当前验证基线
 
-- main 全量离线测试 **539 tests OK**；CI 五项（Python/Headless/Windows bridge/format/harness contract）在对应提交均绿。
+- main 全量离线测试 **539 tests OK**；对应提交的 Python、Headless、Windows bridge 和 format 检查均通过。
 - 双端证据目录：`tmp/251-climb/`、`tmp/252-hurt/`、`tmp/253-mob-evidence/`、`tmp/258-otherchar/`、`tmp/258-drops/`、`tmp/259-moveplayer/`、`tmp/259-moveplayer-layout/`、`tmp/259-moveplayer-batch/`、`tmp/263-two-client/`、`tmp/264-*` 等（所属环境保留）。
 
 ### 仍被阻塞（不按猜测实现）

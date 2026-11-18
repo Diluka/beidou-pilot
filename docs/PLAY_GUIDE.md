@@ -1,4 +1,4 @@
-# 游戏 AI 操作指引
+# AI 操作者的客户端使用指引
 
 本篇供新会话从已有授权继续工作台。宿主唯一入口为 `private/workbenches/workbench DIR COMMAND`，客户端命令由它转发给所属容器。以下 `/external/workbench` 须替换为本次已确认的工作目录；参数以 `--help` 为准，完整命令、Lua 与支持范围见 [CLI](CLI.md)、[Lua API](LUA_API.md) 和[架构说明](ARCHITECTURE.md)。
 
@@ -80,7 +80,7 @@ docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop s
 
 `script run` 的同步等待或 `script start` 的受理等待收到 Ctrl+C、SIGINT 或 SIGTERM 时，宿主薄入口向该次容器内 CLI 转发信号，只结束等待，已受理脚本继续运行。等待超时或观察失败只结束 CLI 等待，任务是否停止以当前脚本状态为准。中断或失败后先用 `script status` 观察当前任务及 `script.id`，核对受理和执行事实后再决定后续；Lua 执行期限及原生停止规则仍由 Runtime 处理。
 
-需要停止脚本时按当前 `script.id` 显式 `script cancel --session SCRIPT_ID`，核对终态和放键后再交接；客户端关闭另用 `close`。harness 的 `pause/stop` 只管理 LLM 会话，客户端和脚本继续运行；重新接入先观察已有脚本与 `script.id`。详情见 [控制协议](CONTROL.md#控制权期限与取消)和 [harness 协作](HARNESS.md#开发-ai-的协作通道)。
+需要停止脚本时按当前 `script.id` 显式 `script cancel --session SCRIPT_ID`，核对终态和放键后再交接；客户端关闭另用 `close`。详情见[控制协议](CONTROL.md#控制权期限与取消)。
 
 ```bash
 private/workbenches/workbench /external/workbench script status

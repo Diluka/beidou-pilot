@@ -15,7 +15,6 @@ usage() {
   status           查询本工作台，省略命令时默认执行
   close            正常关闭并核对所属容器退出
   resources-check  用无头镜像离线检查原版 Data/IMG，不登录
-  ai               在所属客户端容器中运行 harness
   notes            读取本工作台 README、PLAN、HANDOFF 和脚本说明
   其他命令         交给所属容器内的 beidou-pilot
 
@@ -23,8 +22,8 @@ usage() {
   --help           显示本说明
 
 目录内维护 account.json、可选 workbench.json、计划、脚本与运行数据。
-workbench.json 可配置 backend、ref、timeout、bridge_artifact、harness、model_proxy、cache_dir。
-默认 headless、main、90秒；harness=true 使用客户端衍生的 Codex 镜像。
+workbench.json 可配置 backend、ref、timeout、bridge_artifact、server、cache_dir。
+默认 headless、main、90秒。GUI 使用本启动器的 Compose 清单装配所选版本的镜像。
 cache_dir 为宿主绝对路径，默认 <workbench>/cache；容器内固定为 /cache。
 常驻服务器由本脚本固定；server 对象仅用于显式开发隔离目标。
 资源路径统一读取主检出 private/workbenches/resources.json，不接收命令行配置覆盖。
@@ -181,7 +180,7 @@ archive_exit() {
         stop_reason:(if $reason!="" then $reason elif $state.ExitCode==0 then "process_exited" else "process_failed" end)}' >"$state/exit.json"
 }
 
-exec_program() {
+exec_cli() {
     local token child result=0 interrupted=false cli_user
     token=$(tr -d '-' </proc/sys/kernel/random/uuid)
     cli_user=$(jq -r .Config.User <<<"$inspect")
@@ -192,7 +191,7 @@ exec_program() {
             printf '%s\n' '调用中断尚未确认；保留所属实例，原生任务状态请另行查询。' >&2
     }
     trap forward_cancel INT TERM
-    setsid docker exec -i --user "$cli_user" --env "BEIDOU_EXEC_TOKEN=$token" --env OPENAI_API_KEY "$id" "$@" <&0 &
+    setsid docker exec -i --user "$cli_user" --env "BEIDOU_EXEC_TOKEN=$token" "$id" beidou-pilot --json "$@" <&0 &
     child=$!
     wait "$child" || result=$?
     if "$interrupted"; then
@@ -201,10 +200,6 @@ exec_program() {
     fi
     trap - INT TERM
     return "$result"
-}
-
-exec_cli() {
-    exec_program beidou-pilot --json "$@"
 }
 
 exec_open() {
@@ -301,13 +296,6 @@ case "$command" in
         printf '%s\n' "$result"
         exit "$result_code"
         ;;
-    ai)
-        "$running" || fail client_not_running '该工作台实例没有运行中的客户端。'
-        docker image inspect "$(jq -r .Image <<<"$inspect")" | jq -e '.[0].Config.Labels["beidou.harness"] == "codex"' >/dev/null ||
-            fail harness_image_required '新建实例时须在 workbench.json 设置 harness=true。'
-        exec_program beidou-game-ai "$@"
-        exit $?
-        ;;
     *)
         "$running" || fail client_not_running '该工作台实例没有运行中的客户端。'
         exec_cli "$command" "$@"
@@ -315,34 +303,28 @@ case "$command" in
         ;;
 esac
 
-if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
-    wait_runtime
-    exec_open
-    exit $?
-fi
-
-if [ -f "$workbench/server.json" ] || [ -f "$workbench/resources.json" ]; then
-    fail workbench_migration_required '目录含旧 server.json/resources.json；隔离服务器请配置到 workbench.json.server，资源路径请收拢到公共 resources.json。'
-fi
 settings='{}'
 if [ -f "$workbench/workbench.json" ]; then
     settings=$(jq -e 'select(type == "object") | select(
-        ((keys - ["backend", "ref", "timeout", "bridge_artifact", "server", "harness", "model_proxy", "cache_dir"]) | length) == 0
+        ((keys - ["backend", "ref", "timeout", "bridge_artifact", "server", "cache_dir"]) | length) == 0
         and (if has("backend") then .backend == "headless" or .backend == "beidou" else true end)
         and (if has("ref") then (.ref | type == "string" and length > 0) else true end)
         and (if has("timeout") then (.timeout | type == "number" and . >= 5 and . <= 180) else true end)
         and (if has("bridge_artifact") then (.bridge_artifact | type == "string" and length > 0) else true end)
-        and (if has("harness") then (.harness | type == "boolean") else true end)
-        and (if has("model_proxy") then (.model_proxy | type == "string"
-            and test("^http://([0-9]{1,3}\\.){3}[0-9]{1,3}:[0-9]+$")
-            and (ltrimstr("http://") | split(":") | (.[0] | split(".") | all(.[]; tonumber <= 255))
-                and (.[1] | tonumber | . >= 1 and . <= 65535))) else true end)
         and (if has("cache_dir") then (.cache_dir | type == "string" and length > 0 and startswith("/")) else true end)
         and (if has("server") then (.server | type == "object"
             and (keys == ["expected_image", "project", "service"] or keys == ["expected_image", "network", "project", "service"])
             and all(.[]; type == "string" and length > 0) and .project != "beidou-ms") else true end)
         )' "$workbench/workbench.json") ||
-        fail workbench_config_invalid 'workbench.json 配置无效；cache_dir 须为非空宿主绝对路径字符串，server 仅允许显式开发隔离目标。'
+        fail workbench_config_invalid 'workbench.json 仅支持 backend、ref、timeout、bridge_artifact、server、cache_dir；请移除未知字段并检查取值，cache_dir 须为宿主绝对路径，server 仅允许显式开发隔离目标。'
+fi
+if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
+    wait_runtime
+    exec_open
+    exit $?
+fi
+if [ -f "$workbench/server.json" ] || [ -f "$workbench/resources.json" ]; then
+    fail workbench_migration_required '目录含旧 server.json/resources.json；隔离服务器请配置到 workbench.json.server，资源路径请收拢到公共 resources.json。'
 fi
 backend=$(jq -r '.backend // "headless"' <<<"$settings")
 source_ref=$(jq -r '.ref // "main"' <<<"$settings")
@@ -354,19 +336,10 @@ if [ "$command" = login ] && "$running"; then
     exit $?
 fi
 bridge=$(jq -r '.bridge_artifact // empty' <<<"$settings")
-harness=$(jq -r '.harness // false' <<<"$settings")
-model_proxy=$(jq -r '.model_proxy // empty' <<<"$settings")
-model_proxy_ip=
-model_proxy_port=
-if [ -n "$model_proxy" ]; then
-    model_proxy_ip=${model_proxy#http://}
-    model_proxy_port=${model_proxy_ip##*:}
-    model_proxy_ip=${model_proxy_ip%:*}
-fi
 if [ -n "$bridge" ]; then
     case "$bridge" in /*) ;; *) bridge="$workbench/$bridge" ;; esac
 fi
-if [ "$command" = resources-check ]; then backend=headless; harness=false; fi
+if [ "$command" = resources-check ]; then backend=headless; fi
 account="$workbench/account.json"
 resources="$main_root/private/workbenches/resources.json"
 workspace_server=true
@@ -534,28 +507,6 @@ build_image() {
     complete_preparation_stage created "$(jq -nc --arg tag "$image_tag" --arg image "$image" '{tag:$tag,image:$image}')"
 }
 build_image
-if "$harness"; then
-    begin_preparation_stage harness_image
-    client_image=$image_tag
-    image_tag="local/beidou-pilot-$backend-ai:$revision"
-    harness_outcome=reused
-    if docker image inspect "$image_tag" >/dev/null 2>&1; then
-        docker image inspect "$image_tag" | jq -e --arg rev "$revision" --arg backend "$backend" '
-            .[0].Config.Labels | .["org.opencontainers.image.revision"] == $rev
-            and .["beidou.backend"] == $backend and .["beidou.harness"] == "codex"' >/dev/null ||
-            fail image_identity_changed 'harness 镜像的版本或后端不符。'
-    else
-        harness_outcome=created
-        client_user=65532:65532
-        if [ "$backend" = beidou ]; then client_user=root; fi
-        docker build --file "$context/docker/harness/Dockerfile" --build-arg "CLIENT_IMAGE=$client_image" \
-            --build-arg "CLIENT_USER=$client_user" --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY \
-            --tag "$image_tag" "$context" >&2
-    fi
-    image=$(docker image inspect "$image_tag" --format '{{.Id}}')
-    complete_preparation_stage "$harness_outcome" "$(jq -nc --arg tag "$image_tag" --arg image "$image" '{tag:$tag,image:$image}')"
-fi
-image=$(docker image inspect "$image_tag" --format '{{.Id}}')
 if [ "$command" = build ]; then
     if [ -n "$id" ]; then
         current_instance=$(jq -c --arg image "$image" '.matches_prepared_image=(.image==$image)' <<<"$current_instance")
@@ -656,7 +607,7 @@ if [ "$backend" = headless ]; then
         --env "CLIENT_IMAGE_ID=$image" --env "RUN_ID=$run_id" --env "MAPLE_INSTANCE=$instance" \
         --env "CLIENT_ROOT=$container_root" --env "MAPLE_RESOURCES_CONFIG=$container_root/config/resources.json" \
         --env "TARGET_IP=$target_ip" --env "TARGET_CONTAINER_ID=$server_id" \
-        --env "BEIDOU_WORKBENCH_ID=$workbench_id" --env "BEIDOU_CACHE_DIR=/cache" \
+        --env "BEIDOU_CACHE_DIR=/cache" \
         --mount "type=bind,src=$workbench,dst=/work" --mount "type=bind,src=$cache_dir,dst=/cache" \
         --mount "type=bind,src=$data,dst=/data,readonly"
     if [ "$command" = login ]; then
@@ -664,10 +615,6 @@ if [ "$backend" = headless ]; then
         if [ -n "$female" ]; then set -- "$@" --env "MAPLE_FEMALE=$female"; fi
     else
         set -- "$@" --label "beidou.character.id=$character_id"
-    fi
-    if "$harness"; then
-        set -- "$@" --env "HTTP_PROXY=$model_proxy" --env "HTTPS_PROXY=$model_proxy" \
-            --env "NO_PROXY=localhost,127.0.0.1,$target_ip"
     fi
     "$@" "$image" >/dev/null
 else
@@ -678,14 +625,11 @@ else
     export MAPLE_LOGIN_MODE=character
     if [ "$command" = login ]; then export MAPLE_LOGIN_MODE=account; fi
     export RENDER_GID="$(stat -c %g /dev/dri/renderD128)"
-    export BEIDOU_WORKBENCH_ID="$workbench_id"
     export BEIDOU_CACHE_DIR_HOST="$cache_dir"
-    export MODEL_PROXY="$model_proxy" MODEL_PROXY_IP="$model_proxy_ip" MODEL_PROXY_PORT="$model_proxy_port"
-    set -- docker compose --project-name "$name" -f "$context/docker/compose.yaml"
+    set -- docker compose --project-name "$name" -f "$repository/docker/compose.yaml"
     "$@" up -d --no-build --pull never client >&2
 fi
 id=$(docker inspect "$name" --format '{{.Id}}')
-if "$harness" && [ -n "$model_proxy" ]; then docker network connect bridge "$id"; fi
 jq -nc --arg id "$id" --arg image "$image" --arg revision "$revision" --arg backend "$backend" --arg run "$run_id" \
     --arg network "$owned_network" --arg server "$server_id" --slurpfile target "$target" --argjson identity "$identity" \
     '$identity + {container_id:$id,image:$image,source_revision:$revision,backend:$backend,run_id:$run,

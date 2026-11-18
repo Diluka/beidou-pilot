@@ -47,19 +47,6 @@ Separately licensed components
 - JSON for Modern C++: MIT license, third_party/json/LICENSE.MIT
 - Microsoft Detours: MIT license,
   third_party/detours/LICENSE.md
-- websockets 15.0.1, installed separately for the optional existing-session
-  event consumer:
-  https://github.com/python-websockets/websockets
-  BSD-3-Clause. Standard pip installation retains the upstream license and
-  distribution metadata. The package isn't compiled into the game client.
-- OpenAI Codex 0.167.0, distributed separately in the game AI container:
-  https://github.com/openai/codex
-  Source commit: 086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a
-  Apache-2.0. Standard npm installation of @openai/codex 0.167.0 retains
-  the unmodified platform package and its companion programs.
-  Its root LICENSE and NOTICE (including Ratatui attribution) are supplemented
-  under /usr/share/licenses/codex/. Package/release metadata and bundled
-  dependency notices remain in the installed npm packages.
 - GLFW: zlib/libpng license,
   third_party/maplestory-client/includes/glfw-3.3.2.bin.WIN64/LICENSE.md
 - LZ4 headers: BSD-2-Clause license in

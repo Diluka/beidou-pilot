@@ -1,6 +1,6 @@
 # 业务地图
 
-这套地图面向操作者、Lua 策略作者、游戏 AI 接入者和客户端维护者，按当前实现承担的业务责任组织。每个领域的 YAML 定义一个独立领域根，八份文件共同组成一张 Semantic Atlas 图；跨领域共享概念只在拥有方定义一次。
+这套地图面向客户端操作者（包括 AI）、Lua 策略作者和客户端维护者，按当前实现承担的业务责任组织。每个领域的 YAML 定义一个独立领域根，各领域共同组成一张 Semantic Atlas 图；跨领域共享概念只在拥有方定义一次。
 
 地图提供业务导航和调查线索。行为判断仍需回到锚点所指的当前源码、测试及正式文档；这里不记录账号、角色运行数据或实际游戏验收结论。
 
@@ -15,11 +15,10 @@
 | 动作意图与效果确认 | 脚本作者通过 tick Lua 提交方向与动作意图并核对结果 | 共享 player、单动作槽、运动观察、所属输入释放与效果边界；不提供寻路或内置打法 | [field-play.yaml](field-play.yaml) |
 | 世界交互与交易 | 操作者处理当前 NPC 正文和普通商店买卖 | 对话选择、当前窗口上下文、报价与交易结果核对；打开、推进、需决策时停下、买卖及关闭 | [world-interaction.yaml](world-interaction.yaml) |
 | 角色维护 | 操作者在原版 GUI 中换装、复活并配置快捷键 | 每项变更的前提与结果确认；GUI 专属支持范围，无 AP/SP 自动分配或药品命令 | [character-care.yaml](character-care.yaml) |
-| 游戏 AI 决策与协作 | 操作者维持独立游戏 AI 会话，并随时调整或暂停模型决策 | 模型会话、角色指令、当前目标与私密经历记录；建立/续接、观察决策、询问、暂停/恢复及停止 | [game-ai.yaml](game-ai.yaml) |
 
-GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生命周期，动作领域决定意图与效果边界；世界交互处理当前正文与交易，角色维护决定特定角色变更的确认方式。独立 harness 消费客户端能力，保留自身模型会话与协作状态。
+GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生命周期，动作领域决定意图与效果边界；世界交互处理当前正文与交易，角色维护决定特定角色变更的确认方式。
 
-游戏服务器拥有真实游戏状态和不可逆结果，服务端与数据库业务由游戏服务器承担。Docker、Codex app-server、外部原客户端及第三方引擎是协作者；图中只描述本仓库可证实的集成责任。
+游戏服务器拥有真实游戏状态和不可逆结果，服务端与数据库业务由游戏服务器承担。Docker、外部原客户端及第三方引擎是协作者；图中只描述本仓库可证实的集成责任。
 
 ## 从使用场景检查覆盖
 
@@ -40,7 +39,6 @@ GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生
 | 买卖、数量框和关店 | 世界交互；[shop.py](../../cli/beidou_pilot/shop.py) | 普通交易和关闭流程；库存与金币双确认，未确认时先观察 |
 | GUI 背包换装、复活与快捷键绑定 | 角色维护；[items.py](../../cli/beidou_pilot/items.py)、[hotkeys.py](../../cli/beidou_pilot/hotkeys.py)、[cli.py](../../cli/beidou_pilot/cli.py) | GUI 操作与结果确认；无头明确拒绝，Lua 不提供窗口动作 |
 | tick 动作槽中的技能与用药意图 | 动作领域；[LUA_TICK_API.md](../LUA_TICK_API.md)、[TickRuntime.cpp](../../shared/lua-runtime/TickRuntime.cpp) | 只提交持续输入意图；消耗、恢复与命中由现场观察确认 |
-| 独立模型会话、目标调整、询问回答、暂停和停止 | 游戏 AI；[controller.py](../../harness/beidou_game_ai/controller.py)、[client.py](../../harness/beidou_game_ai/client.py) | 三个主要流程；固定客户端绑定，客户端开关由统一入口管理，长期记忆以私密经历记录为准 |
 | 有限命令批次 | 既有领域入口；[cli.py](../../cli/beidou_pilot/cli.py) | 批次是同实例的有限编排，遇错即停；按键与技能命令已退役，动作写 tick Lua |
 | 截图及有界录制 | 观察支持；[desktop.py](../../cli/beidou_pilot/engines/desktop.py)、[record.py](../../cli/beidou_pilot/engines/record.py) | GUI 画面证据，无头端按结构化观察交付 |
 | 镜像构建、CI 和依赖维护 | 工程交付支持；[workbench](../../private/workbenches/workbench)、[CI.md](../CI.md)、[DEPENDENCIES.md](../DEPENDENCIES.md) | 工程交付支持，游戏结果由各业务领域负责；客户端交付统一经版本化镜像入口 |
@@ -74,4 +72,4 @@ semantic-atlas render --repo "$PWD" \
 - 操作优先绑定 `file` 与已核实的函数/方法名；数据和长期规则使用文件或文档锚点。路径和符号是导航线索，修改前以当前实现为准。
 - 改动后校验完整图并检查对应 Viewer 领域和流程，同时复核本页的场景覆盖。结构合法性与业务结论准确性分别审查。
 - 支持矩阵和未知语义以 [ARCHITECTURE.md](../ARCHITECTURE.md)、[CLI.md](../CLI.md)、[LUA_API.md](../LUA_API.md)、[CONTROL.md](../CONTROL.md) 及当前 `capabilities` 为准；tick 示例遵循 [shared/scripts/AGENTS.md](../../shared/scripts/AGENTS.md)。
-- 地图只记录已核实事实；真实游戏、资源转换与模型试用的结论由对应验收记录提供。纯文档维护按仓库简易流程交付，游戏效果以真实试用为准。
+- 地图只记录已核实事实；真实游戏与资源转换的结论由对应验收记录提供。纯文档维护按仓库简易流程交付，游戏效果以真实试用为准。

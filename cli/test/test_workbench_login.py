@@ -91,6 +91,15 @@ class WorkbenchLoginContract(unittest.TestCase):
                           "--server", "/work/runtime/default/run/server.json", "--timeout", "90"],
                          executions[0][executions[0].index("beidou-pilot"):])
 
+    def test_running_open_rejects_unknown_settings_before_exec(self):
+        self.running_client()
+        (self.workbench / "runtime/default/host.json").write_text(json.dumps({"container_id": "client", "image": "image"}))
+        (self.workbench / "workbench.json").write_text(json.dumps({"unsupported_option": True}))
+        result = self.invoke("open")
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("workbench_config_invalid", json.loads(result.stdout)["error"]["code"])
+        self.assertNotIn("exec", [call[0] for call in json.loads(self.state_path.read_text())["calls"]])
+
     def test_completed_create_binds_immediately_without_replay(self):
         self.running_client()
         (self.workbench / "runtime/default/host.json").write_text(

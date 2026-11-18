@@ -21,8 +21,6 @@
 | `timeout` | `90`；5至180的数值，仅限制入图等待 |
 | `bridge_artifact` | 可选的匹配 GUI 桥工件目录；相对路径按工作目录解析，省略时经 `gh` 获取相应提交成功 CI 的工件 |
 | `server` | 仅特殊情况确需隔离服时使用的显式对象；日常使用、调试与实际游戏验收默认省略，使用固定常驻服务器 |
-| `harness` | 默认 `false`；`true` 时从所选客户端 base 派生包含 Codex、harness 和专用技能的镜像 |
-| `model_proxy` | 可选的 `http://IPv4:端口` 模型 HTTP 代理，独立于客户端和脚本；模型 API 地址仍在 provider 配置中 |
 | `cache_dir` | 可选；宿主绝对路径，默认 `<workbench>/cache`，读写挂载到容器内固定 `/cache`（客户端进程 `BEIDOU_CACHE_DIR=/cache`），保存版本化原生世界地图缓存 |
 
 调试和实际游戏验收默认复用常驻服务器与已授权的已有账号角色，只有场景必须时才新建账号或角色。确需隔离服时记录原因，其 `server` 要求 `project/service/expected_image`，`network` 可选。项目须为非 `beidou-ms` 项目，隔离服务器须不发布宿主端口、使用 bridge 网络；指定网络时为同项目 internal 网络并且服务器已连接。省略网络时，启动器为新实例建立所属 internal 连接并在关闭时回收。例如：
@@ -53,7 +51,6 @@
 | `context` | 源码上下文新建或复用，固定提交、源码树及子模块提交 |
 | `bridge`（GUI） | CI 下载、已有工件或镜像内清单的来源；直接附带原有 manifest 中的目标指纹、桥指纹、依赖和工具链 |
 | `client_image` | 客户端镜像新建或复用，实际标签和镜像 ID |
-| `harness_image`（启用时） | 派生镜像新建或复用，实际标签和镜像 ID |
 
 每个阶段包含 `outcome` 和 `duration_ms`。耗时是本次阶段的实际用时，镜像构建内部的层缓存仍由 Docker 构建日志说明。准备失败保留既有错误码，并在 `error.stage` 定位失败阶段；外部命令诊断写到 stderr，stdout 返回一个 JSON 结果及已完成阶段。
 
@@ -61,7 +58,7 @@
 
 整个工作目录以一个读写挂载进入容器 `/work`。宿主保存 `runtime/default/host.json`，本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID`；桥、锁、日志和自动生成的账号/服务器快照按此隔离。资源 `/client` 和 `/data` 保持各自现有只读格式和来源。用户脚本直接使用 `/work/scripts`。`cache_dir`（默认 `<workbench>/cache`）在创建新实例时创建并解析，不可用时启动失败（`cache_dir_unavailable`）；该目录读写挂到容器 `/cache`，GUI 与 headless 相同，客户端进程以 `BEIDOU_CACHE_DIR=/cache` 写入版本化世界地图缓存。
 
-普通结果为 JSON 信封，含 `ok/command/data`；客户端结果还含 `backend/instance`。失败含 `error.code/message/details`，已识别失败退出码2、中断130。`--list` 和 `notes` 输出文本，`watch/events watch` 输出 JSONL，`resources-check` 输出原生资源检查 JSON；`ai` 的 stdin/stdout 为 harness 专用 JSONL 协作通道。
+普通结果为 JSON 信封，含 `ok/command/data`；客户端结果还含 `backend/instance`。失败含 `error.code/message/details`，已识别失败退出码2、中断130。`--list` 和 `notes` 输出文本，`watch/events watch` 输出 JSONL，`resources-check` 输出原生资源检查 JSON。
 
 ## 启动、观察与关闭
 
@@ -111,7 +108,6 @@ private/workbenches/workbench /external/workbench character result REQUEST_ID --
 | `capabilities` | 读取原生能力和静态观察支持范围 |
 | `world-map route START GOAL` | 只读查询原生世界门户图的有向跨图路线；不启动、不控制客户端 |
 | `open/close` | 新建或接续所属实例；正常停止、确认退出并回收 |
-| `ai [harness参数]` | 通过 `docker exec` 运行所属容器内的 `beidou-game-ai`；要求已有 harness 镜像实例 |
 | `snapshot [-i] [--all]` | 当前角色、场景、领域摘要与引用 |
 | `inspect KIND [ID]` | 按需领域读数或静态资料 |
 | `watch --seconds N --interval N` | 持续只读状态，JSONL输出 |
@@ -150,18 +146,6 @@ private/workbenches/workbench /external/workbench world-map route 100000000 1000
 | `legs` | 有序路线段；每段含 `from`、`portal`、`to` 与门户坐标 `portal_at`（二维整数数组，每个元素为 `[x, y]` 门户点） |
 
 `status=ok` 时 `legs` 为按顺序的腿序列，起点与终点相同时为空数组；起点或终点地图号不在模型内时返回 `map_unknown`（`error` 区分 `source_map_unknown` 与 `target_map_unknown`），有向门户不可达返回 `no_route`，超过 24 段返回 `route_too_long`；`no_route`、`map_unknown` 与 `route_too_long` 的 `legs` 为空，且都按正常 JSON 返回（退出码 0）。该查询复用只读观察请求通道（domain `world-route`，请求额外携带 start 与 goal 两个地图号），但不是普通观察领域：不出现在 `capabilities.observation_domains`，也不能用 `inspect` 或领域观察读取。腿序列如何交给 tick 脚本见 [Tick Lua API](LUA_TICK_API.md#当前静态场景与跨图)；付费交通不在路线模型内。
-
-## 游戏 AI
-
-新建设置 `harness=true` 后，`build/open` 先准备对应 headless 或 GUI base，再构建或复用同提交的 harness 衍生镜像；客户端保持原 PID1。只有配置了非空 `model_proxy` 的 harness 客户端额外连接默认 `bridge`，GUI 才增加该代理 IP/端口白名单，游戏服务器的 internal 网络不变。
-
-```bash
-private/workbenches/workbench /external/workbench ai \
-  --state /work/ai/state --role /work/ai/role.md \
-  --auth-file /work/ai/auth.json --task '先观察当前角色和场景' --paused
-```
-
-`--state/--role/--provider-config/--auth-file` 均为容器内路径，常驻状态放在 `/work` 下；`--cli` 仅指定容器内客户端路径。已有普通镜像返回 `harness_image_required`，harness 需要按新配置重建的实例提供。普通 agent 通过 shell 直接使用 CLI，只读模式只保留观察工具。LLM 独立启停时脚本与客户端保持运行，重新接入先观察现有任务；具体协作、状态续接与参数见 [HARNESS](HARNESS.md)。
 
 ## 离线检查资源
 

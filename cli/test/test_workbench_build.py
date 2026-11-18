@@ -37,10 +37,8 @@ elif args[0] == "build":
         print("compiler fixture failed", file=sys.stderr)
         sys.exit(17)
     tag = args[args.index("--tag") + 1]
-    backend = "beidou" if "-beidou:" in tag or "-beidou-ai:" in tag else "headless"
+    backend = "beidou" if "-beidou:" in tag else "headless"
     labels = {"org.opencontainers.image.revision": tag.split(":")[-1], "beidou.backend": backend}
-    if "-ai:" in tag:
-        labels["beidou.harness"] = "codex"
     manifest_path = Path(args[-1]) / "build-input/manifest.json"
     state["images"][tag] = {"Id": "sha256:" + str(len(state["images"]) + 1),
                             "Config": {"Labels": labels},
@@ -121,17 +119,19 @@ class WorkbenchBuildContract(unittest.TestCase):
         self.git("add", "README.md")
         self.git("commit", "-m", "update documentation")
         prepared_revision = self.git("rev-parse", "HEAD")
-        settings = {"ref": prepared_revision, "harness": True}
+        settings = {"ref": prepared_revision}
         first, created = self.build(settings)
         self.assertEqual(0, first.returncode, first.stderr)
         first_data = created["data"]
         self.assertEqual(prepared_revision, first_data["source_revision"])
         self.assertEqual(self.git("rev-parse", "HEAD^{tree}"), first_data["preparation"]["context"]["source"]["tree"])
-        self.assertEqual(["created"] * 3, [stage["outcome"] for stage in first_data["preparation"].values()])
+        self.assertEqual({"context": "created", "client_image": "created"},
+                         {key: stage["outcome"] for key, stage in first_data["preparation"].items()})
         repeated, reused = self.build(settings)
         self.assertEqual(0, repeated.returncode, repeated.stderr)
         self.assertEqual(first_data["image"], reused["data"]["image"])
-        self.assertEqual(["reused"] * 3, [stage["outcome"] for stage in reused["data"]["preparation"].values()])
+        self.assertEqual({"context": "reused", "client_image": "reused"},
+                         {key: stage["outcome"] for key, stage in reused["data"]["preparation"].items()})
         for stage in reused["data"]["preparation"].values():
             self.assertGreaterEqual(stage["duration_ms"], 0)
         self.assertEqual({"container_id": "client", "image": "sha256:running", "run_id": "existing-run",
@@ -145,6 +145,16 @@ class WorkbenchBuildContract(unittest.TestCase):
         changed, report = self.build({"ref": self.git("rev-parse", "HEAD")})
         self.assertEqual(0, changed.returncode, changed.stderr)
         self.assertFalse(report["data"]["current_instance"]["native_inputs_match"])
+
+    def test_rejects_obsolete_settings_before_preparing_images(self) -> None:
+        for settings in ({"harness": True}, {"harness": False}, {"model_proxy": "http://192.0.2.1:1080"}):
+            with self.subTest(settings=settings):
+                failed, report = self.build(settings)
+                self.assertNotEqual(0, failed.returncode)
+                self.assertEqual("workbench_config_invalid", report["error"]["code"])
+                self.assertEqual({}, report["data"]["preparation"])
+        calls = json.loads(self.state_path.read_text())["calls"]
+        self.assertTrue(all(call[0] == "ps" for call in calls))
 
     def test_gui_reports_the_selected_manifest_and_rejects_changed_native_inputs(self) -> None:
         bridge = self.directory / "bridge"

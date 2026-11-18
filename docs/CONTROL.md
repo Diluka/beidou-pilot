@@ -38,8 +38,6 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 
 调用方需要取消脚本时，明确执行 `script cancel --session SCRIPT_ID`，在当前原生身份内核对脚本 ID，并等待终态与实际放键。CLI 等待超时与 Lua 执行期限分别判断：原生期限到达、角色身份变化、离开游戏及脚本错误也会结束会话。只读状态、领域查询和事件监听可并行；普通 GUI 操作在活动 Lua 期间返回 `input_busy`，不自动接管。
 
-LLM 是可选旁路控制端，其暂停或退出时 shell、Lua 与客户端保持运行。没有 LLM 时客户端与已受理脚本继续运行；重新接入先观察当前脚本、控制归属和 `script.id`，再按现状续接。模型进程锁只保护模型会话，角色与脚本控制权由原生 Runtime 维护，CLI 提交明确操作并核验身份。需要停止脚本时显式 `script cancel --session` 并确认放键；需要关闭客户端时另行 `close`。协作入口见 [HARNESS](HARNESS.md#开发-ai-的协作通道)。
-
 宿主工作台 `open/close` 使用独立生命周期锁，宿主 `close` 可通过 Docker 结束活动 Lua 及整个所属实例；同实例正在启停时返回 `lifecycle_busy`。容器内 `close` 会提示使用宿主生命周期入口。Lua 期限控制整个脚本会话，容器没有进程自退期限；脚本结束、超时或取消时容器继续运行，真实断线和错误会退出并保留原因。
 
 动作结果按层次解释：意图受理、输入派发、输入释放、原生动作收束、游戏效果分别确认。`input_action` 与当前已开始的 `action` 独立，`character.action_idle` 读取本端原生动作锁；GUI 的单次动作索引不代表已经命中，也不能把任意单次动作标成攻击。跳跃输入释放不等于落地，输入清空也不强制打断动画。用药/拾取的输入结束不保证消费、拾取或 buff 成功，未知效果保留 unknown。释放后攻击动画、空中运动和受击惯性仍可能继续；采样失效或身份变化时控制只作用于所属实例，释放未确认时返回 `bridge_release_unconfirmed`。

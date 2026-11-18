@@ -1,6 +1,6 @@
 # beidou-pilot
 
-面向脚本和 AI 的游戏客户端工具：脚本承担主要驱动工作，AI 可选接入辅助决策。无头端用于自动化，北斗 GUI 用于按需操作和验证；两端的 Docker 镜像安装同一份 CLI 与 Lua。同仓 `harness/` 可随所选客户端打包，在同一容器内通过 CLI 旁路接入；客户端和脚本在无 LLM 时持续运行，模型会话、角色设定与经历由 harness 持有。
+面向脚本和 AI 操作者的游戏客户端工具。通过 CLI 观察角色和场景，使用 tick Lua 持续执行游戏动作。无头端用于自动化，北斗 GUI 用于原版界面操作和验证；两端的 Docker 镜像安装同一份 CLI 与 Lua。
 
 ## 组件布局
 
@@ -8,7 +8,6 @@
 private/workbenches/workbench   唯一宿主入口，直接管理 Docker/Git
 cli/                            两个镜像共用的容器内 beidou-pilot、观察和测试
 docker/                         headless 与 GUI 镜像、唯一 GUI Compose 和容器入口
-harness/                        容器内模型会话、角色上下文与专用协作入口
 headless/                       无头原生宿主和适配器
 beidou-ijl15/                   原版客户端 DLL 工程和适配器
 shared/
@@ -72,15 +71,12 @@ private/workbenches/workbench /external/workbench close
 
 日常命令经宿主入口转到所属容器内的 `beidou-pilot`。核对容器归属后也可只读排查：`docker exec CONTAINER beidou-pilot --json status`。脚本 CLI 中断只结束等待，已发布的原生任务继续；等待超时或观察失败时，任务是否停止以当前脚本状态为准。先读当前脚本状态，明确取消用 `script cancel --session`，核对终态和放键；`close` 另行关闭并回收所属容器。Lua 返回或取消后实例继续运行，真实断线或错误会保留退出原因。完整参数见 [CLI](docs/CLI.md)。
 
-需要游戏 AI 时，在 `workbench.json` 设置 `harness=true`，然后使用同一入口的 `open`、`ai`；模型 HTTP 代理 `model_proxy="http://IPv4:端口"` 按需配置。构建先准备对应客户端 base，再派生包含 Node/Codex、Python harness 和专用 CLI 技能的镜像；继承用于打包复用，客户端继续作为 PID1，LLM 独立启停。角色、认证及常驻状态均通过容器内路径提供，普通模式直接使用 CLI，只读模式关闭 shell。退出 LLM 后脚本继续运行，重新接入时先观察已有任务；取消脚本和关闭客户端分别执行明确命令。配置、协作和跨运行续接见 [harness 用法](docs/HARNESS.md)。
-
 ## 文档与开发
 
 - [北斗游戏攻略技能](.agents/skills/beidou-game-guide/SKILL.md)：收录彩虹岛与骑士团新手任务、青苹果乐园支线、冒险家三转任务、冒险家二转三转及骑士团一至三转终态加点；各篇注明来源与实测范围。
 - [业务地图](docs/business-map/README.md)：按领域查看用户结果、责任边界、主要流程与源码入口。
-- [游戏 AI 操作指引](docs/PLAY_GUIDE.md)：确认授权目标与角色占用，完成上手观察、动作核对和停止交接。
+- [AI 操作者的客户端使用指引](docs/PLAY_GUIDE.md)：确认授权目标与角色占用，完成上手观察、动作核对和停止交接。
 - [客户端操作技能](.agents/skills/beidou-pilot-client/SKILL.md)：供新会话接续工作台、登录已有角色，并区分账号注册与首次建角；可显式调用 `$beidou-pilot-client`。
-- [游戏 AI harness](docs/HARNESS.md)：隔离 Codex、角色上下文、游戏工具与开发 AI 协作。
 - [命令使用](docs/CLI.md)：实例、观察、动作、GUI 入口和错误结果。
 - [Lua API 导航](docs/LUA_API.md)：指向 [tick API](docs/LUA_TICK_API.md)，说明入口、档位、只读领域、动作槽、参数、返回值与执行语义。
 - [Lua 示例目录说明](shared/scripts/README.md)：随镜像固定的 tick 示例及其运行方式。

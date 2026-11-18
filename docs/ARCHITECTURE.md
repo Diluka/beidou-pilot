@@ -9,8 +9,7 @@
 | `shared/scripts/` | 随镜像固定的 tick 示例与有界运动校准探针；不含内置策略或函数库 |
 | `shared/lua-runtime/` | 两端共用的 tick Lua 运行环境：调度、预算、只读领域、共享 player 状态机及输入生命周期 |
 | `headless/src/` | 无渲染登录、网络与游戏更新宿主、共享桥适配 |
-| `docker/` | 无头与 GUI 镜像构建定义、唯一 Compose、资源装配和容器启动脚本；`docker/harness/` 从客户端镜像派生 AI 运行环境 |
-| `harness/` | 容器内模型会话控制器、角色设定与经历、开发 AI 专用协作；通过同容器 CLI 消费客户端 |
+| `docker/` | 无头与 GUI 镜像构建定义、唯一 Compose、资源装配和容器启动脚本 |
 | `beidou-ijl15/` | 北斗客户端 `ijl15.dll` 工程，新增桥直接实现共同契约，保留必要原生逻辑 |
 | `third_party/` | 固定上游依赖与包含本地适配的派生引擎/资源转换器 |
 | `cli/test/` | 客户端离线合同测试 |
@@ -19,27 +18,17 @@ Python 负责参数、静态资料规划、脚本装载/取消和最终结果。
 
 客户端只有 tick 引擎：脚本无需声明引擎，前导注释按需写 `@tick.gear/budget_ms/overrun/abort_commit`。每个会话有独立上下文，所有会话共享客户端唯一的 player 状态机；GUI 在应用更新返回后推进，无头在逻辑步进后推进，不假设两端帧长一致。CLI 只负责受理和按会话 ID 观察/取消，不逐帧控制。运行契约与能力边界见 [Lua API](LUA_TICK_API.md#tick-环境)和[控制协议](CONTROL.md)。
 
-客户端运行体只拥有执行和观察能力，主要由 Lua 脚本驱动。同仓 `harness/` 是可选的旁路决策消费者，与客户端运行时并行、独立启停，持有模型会话、角色设定、目标与游戏经历，通过既有 CLI 获取观察并调度脚本。客户端与 Lua 在没有 LLM 时仍可持续运行；`cli/beidou_pilot/`、原生适配器及共享 Lua Runtime 保持独立。服务端和数据库不纳入本仓库。
-
-启用 harness 的镜像继承所选无头或 GUI 客户端镜像，增加固定版本的 Node/Codex、Python harness 和专用客户端技能，保留原客户端入口与 PID 1。唯一宿主入口 `private/workbenches/workbench DIR ai [harness参数]` 通过 `docker exec` 启动所属客户端容器内的 `beidou-game-ai`；harness 在本容器启动 Codex app-server，模型通过 shell 直接执行 `beidou-pilot`。`read_only` 模式关闭 shell，仅提供 `game_observe` 和 `game_script_status` 两个观察工具。
-
-模型固定工作目录为 `/game`，专用技能放在 `/game/.agents/skills/beidou-pilot-client`，所需公共文档按相对链接布局打包；运行环境只包含客户端技能与其公共文档。
-
-harness 可在已有活动脚本时接入。`pause/stop` 仅中断并确认当前 LLM turn 终态，后台 shell、Lua 与客户端保持运行；模型退出后，客户端 PID1、登录会话、容器及已启动的脚本和游戏任务继续运行。`resume` 复用仍存活的 app-server 和 thread，先核对当前实例、`script.id` 及任务状态，避免重复启动或抢占已有执行。重新接入同样先观察；脚本取消与客户端关闭分别由明确命令发起。具体配置与协作入口见 [HARNESS](HARNESS.md)。
-
-`--state`、角色文件和模型配置等路径参数均为容器路径，需长期保留的状态放在 `/work`。模型线程与角色记忆仍由 harness 管理；稳定工作目录、角色与目标绑定一致时，可以在新客户端 run 中续接，原生 `instance_id/run_id` 按本次运行重新核验。旧 `lua-v1`、`hunt-v1` 工具会话按历史保留，续接使用新状态。
+客户端提供观察和执行能力，操作者通过统一 CLI 获取事实、调度 Lua 并核对结果。服务端和数据库不纳入本仓库。
 
 ## 容器、版本与控制生命周期
 
-客户端基础交付为两个镜像：无头端包含原生无渲染客户端，GUI 端包含 Wine/VirtualGL 和桥 DLL；两者安装同一份 Python CLI、辅助引擎、共享 Runtime 和内置 Lua。启用 harness 时分别从对应客户端基础镜像构建衍生镜像，沿用客户端进程及资源装配；镜像继承只用于打包复用，模型与客户端各自独立管理生命周期。运行中直接使用镜像内代码，进程与资源管理由宿主入口负责。
+客户端交付为两个镜像：无头端包含原生无渲染客户端，GUI 端包含 Wine/VirtualGL 和桥 DLL；两者安装同一份 Python CLI、辅助引擎、共享 Runtime 和内置 Lua。运行中直接使用镜像内代码，进程与资源管理由宿主入口负责。
 
-唯一宿主入口以工作目录选择容器。每个目录保存一个账号角色，使用固定的 `default` 实例；后端、开发提交和必要新建设置从目录的 `workbench.json` 读取。`harness` 默认 `false`，设为 `true` 时选用对应衍生镜像；`model_proxy` 为可选的 `http://IPv4:port`，按需配置。新实例一次解析默认main或配置ref的已提交SHA，导出该树和固定子模块构建或复用镜像。本次输入固定为导出时的代码树。运行登记保留实际源码、镜像、后端、目标、角色和run_id；已有实例的观察、脚本和取消均经docker exec使用原镜像与新建设置无关。
+唯一宿主入口以工作目录选择容器。每个目录保存一个账号角色，使用固定的 `default` 实例；后端、开发提交和必要新建设置从目录的 `workbench.json` 读取。新实例一次解析默认main或配置ref的已提交SHA，导出该树和固定子模块构建或复用镜像。本次输入固定为导出时的代码树。运行登记保留实际源码、镜像、后端、目标、角色和run_id；已有实例的观察、脚本和取消均经docker exec使用原镜像与新建设置无关。
 
-只有启用 harness 且 `model_proxy` 非空时，客户端才额外连接 Docker 默认 `bridge` 网络以访问模型代理，GUI 防火墙也仅在此时为指定代理 IPv4 和端口增加放行规则。游戏服务器仍处于原有 internal 网络，游戏连接继续使用已核验目标；模型出口不改变游戏服务器网络和只读资源挂载。
+游戏服务器位于 internal 网络，客户端连接已核验的目标。
 
 每个工作目录拥有自己的 `default` 容器、运行目录、桥和控制锁。同一目标同一角色仍禁止并发接管。原生 `instance_id/run_id` 继续保证请求、取消与结果属于本次运行，真实断线或错误会退出并保留事实，不自动重连或重放。
-
-普通与只读 harness 的状态目录进程锁仅保护模型会话状态，同一状态目录被占用时返回 `harness_state_busy`。模型进程锁保护模型会话状态，角色、Lua 脚本与游戏任务的控制权以当前原生状态为准。
 
 容器入口从本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID` 读取 `account.json`、`server.json`，生成内部资源映射与 `state/container.json`，随后保持 PID 交给对应原生进程。容器内 CLI 通过登记、进程和原生桥直接观察、执行桌面原语与登录。`open` 完成或确认本容器入图，进程已由宿主启动器创建。
 
@@ -73,7 +62,7 @@ private/workbenches/workbench /external/workbench resources-check
 
 GUI 保留 `/client` 只读挂载用于启动原版客户端；原版 `Data/` 另以 `/data` 只读挂载，Python Catalog 与无头客户端从同一配置读取。客户端运行副本的 `Data/` 仍映射到原件，不写入资源目录。
 
-用户 Lua 是工作台中的明确输入，直接位于 `/work/scripts`，随工作台挂载生效。内置 `shared/scripts/` 只含 tick 示例与运动校准探针并随镜像固定；用户 Lua 文件可在运行中提交生效。脚本只承载玩法判断，模型、养成与生命周期由各自组件管理。
+用户 Lua 是工作台中的明确输入，直接位于 `/work/scripts`，随工作台挂载生效。内置 `shared/scripts/` 只含 tick 示例与运动校准探针并随镜像固定；用户 Lua 文件可在运行中提交生效。
 
 名称、物品恢复属性、NPC 范围和地图地形由同一个 `Catalog` 投影，现有 `inspect` 与静态查询共用；tick 脚本通过 `context.scene` 读取本图地形。Catalog 通过无头镜像和 GUI 镜像共同打包的原生 IMG 解析库查询属性、Canvas 尺寸、origin、帧时序和几何，不读取像素或音频。结果列出实际消费的 IMG 路径及 SHA256；`resource_version=null` 表示没有可证明的游戏版本，客户端版本另行核对。Map 类别按资源目录中的 `Map002/`、`Map/` 顺序选择；缺少文件或链接目标时保留未知。
 

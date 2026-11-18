@@ -127,7 +127,7 @@ nodes:
   - id: client-session.cli
     kind: interface
     name: 统一客户端CLI
-    summary: beidou-pilot以固定后端和实例承接操作者、脚本及独立harness对客户端能力的调用。
+    summary: beidou-pilot 以固定后端和实例承接操作者和脚本对客户端能力的调用。
     aliases: [beidou-pilot, 命令入口]
     anchors:
       - kind: symbol
