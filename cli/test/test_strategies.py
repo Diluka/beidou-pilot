@@ -1,6 +1,6 @@
 """tick Lua 脚本的 CLI 声明、上下文和原生执行入口合同。"""
 
-from contextlib import redirect_stdout
+from contextlib import chdir, redirect_stdout
 import io
 import json
 import os
@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from beidou_pilot.backend import Backend
 from beidou_pilot.bridge import BridgeClient
-from beidou_pilot.cli import main
+from beidou_pilot.cli import main, parser
 from beidou_pilot.errors import ClientError
 from beidou_pilot.strategies import (
     compile_strategy,
@@ -56,6 +56,62 @@ class LuaStrategyContract(unittest.TestCase):
         with redirect_stdout(output):
             result = main(["--json", "--root", str(self.files.root), *arguments])
         return result, output.getvalue()
+
+    def test_script_argument_uses_the_container_scripts_mount(self) -> None:
+        args = parser().parse_args(["script", "describe", "nested/policy"])
+        self.assertEqual(Path("/work/scripts/nested/policy"), args.file)
+
+    def test_describe_run_and_start_use_workbench_files_and_package_options(self) -> None:
+        scripts = self.files.root / "scripts"
+        package = scripts / "nested" / "policy"
+        package.mkdir(parents=True)
+        source = "-- @option[type=int] steps 步数\nfunction main(context)\nend\n"
+        (scripts / self.path.name).write_text(source, encoding="utf-8")
+        (package / "main.lua").write_text(source, encoding="utf-8")
+        with chdir(self.files.root), patch("beidou_pilot.cli.WORKBENCH_SCRIPTS", scripts):
+            for backend, action, target, entry, package_root in (
+                ("headless", "run", self.path.name, scripts / self.path.name, None),
+                ("beidou", "start", "nested/policy", package / "main.lua", str(package)),
+            ):
+                self.files.register(backend)
+                self.files.publish()
+                with (
+                    self.subTest(backend=backend, target=target),
+                    patch.dict(os.environ, self.files.environment),
+                    patch.object(BridgeClient, "run_script", return_value={}) as run,
+                ):
+                    code, output = self.cli("script", "describe", target)
+                    self.assertEqual(0, code, output)
+                    data = json.loads(output)["data"]
+                    self.assertEqual(str(scripts / target), data["file"])
+                    self.assertEqual(["--steps"], [option["flag"] for option in data["options"]])
+                    run.assert_not_called()
+
+                    code, output = self.cli("script", action, target, "--steps", "7")
+                    self.assertEqual(0, code, output)
+                    self.assertEqual(str(entry), json.loads(output)["data"]["script_file"])
+                    self.assertIn('["steps"]=7', run.call_args.kwargs["code"])
+                    self.assertEqual(package_root, run.call_args.kwargs["package_root"])
+
+    def test_missing_script_never_falls_back_to_cwd_or_a_default_entry(self) -> None:
+        scripts = self.files.root / "scripts"
+        scripts.mkdir()
+        (scripts / "main.lua").write_text(POLICY, encoding="utf-8")
+        with (
+            chdir(self.files.root),
+            patch("beidou_pilot.cli.WORKBENCH_SCRIPTS", scripts),
+            patch("beidou_pilot.cli.Backend") as backend,
+        ):
+            for action in ("describe", "run", "start"):
+                with self.subTest(action=action):
+                    code, output = self.cli("script", action, self.path.name)
+                    error = json.loads(output)["error"]
+                    self.assertEqual((2, "invalid_script_file"), (code, error["code"]))
+                    self.assertEqual(str(scripts / self.path.name), error["details"]["path"])
+                    for unnamed in ((), ("",)):
+                        code, output = self.cli("script", action, *unnamed)
+                        self.assertEqual((2, "usage"), (code, json.loads(output)["error"]["code"]))
+            backend.assert_not_called()
 
     def test_run_and_start_parse_distinct_dynamic_options_into_main_context(self) -> None:
         cases = (

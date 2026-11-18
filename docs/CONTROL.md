@@ -7,14 +7,14 @@
 文件必须包含顶层 `main(context)` 函数，并按 tick 引擎执行，无需声明引擎；`@tick.gear/budget_ms/overrun/abort_commit` 可单独出现在前导注释中。`script describe FILE|DIR` 输出有效 `@tick` 配置和动态参数用法。CLI 注入 `context.options`、初始 `context.scene` 身份锚点与调用方已有的 `route` 等上下文；原生 tick 引擎随后维护当前只读 `scene`，换图与场景代次变化不需要 Python 回填。没有顶层 `main(context)` 的文件会在发布前被拒绝；目录脚本包的 `main.lua` 与单文件策略使用同一套声明和参数规则。
 
 ```bash
-private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
-private/workbenches/workbench /external/workbench script run /work/scripts/control-package --seconds 20
-private/workbenches/workbench /external/workbench script start /work/scripts/control.lua --continuous
-private/workbenches/workbench /external/workbench script status
-private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
+workbenches/workbench dev/NAME script run control.lua --seconds 20
+workbenches/workbench dev/NAME script run control-package --seconds 20
+workbenches/workbench dev/NAME script start control.lua --continuous
+workbenches/workbench dev/NAME script status
+workbenches/workbench dev/NAME script cancel --session SCRIPT_ID
 ```
 
-文件路径按容器内部解析；完整工作台读写挂到 `/work`，用户脚本直接读取 `/work/scripts`，内置 Lua 随镜像版本固定。
+工作台角色目录挂到容器 `/work`。`script describe/run/start` 的文件或目录参数若为相对路径，从该角色的 `/work/scripts` 读取；也可显式传容器绝对路径（例如镜像内置示例）。
 
 ## tick 运行与动作槽
 
@@ -37,8 +37,6 @@ private/workbenches/workbench /external/workbench script cancel --session SCRIPT
 `script run` 的同步等待或 `script start` 的受理等待收到 Ctrl+C、SIGINT 或 SIGTERM 时，只结束 CLI 等待，已受理的原生脚本继续运行。等待超时、陈旧观察等 `ClientError` 只结束 CLI 等待，已发布的脚本继续运行。等待中断或失败后，先用 `script status` 观察当前会话及 `script.id`，核对受理和执行事实；结果未确认时先观察再决定后续。
 
 调用方需要取消脚本时，明确执行 `script cancel --session SCRIPT_ID`，在当前原生身份内核对脚本 ID，并等待终态与实际放键。CLI 等待超时与 Lua 执行期限分别判断：原生期限到达、角色身份变化、离开游戏及脚本错误也会结束会话。只读状态、领域查询和事件监听可并行；普通 GUI 操作在活动 Lua 期间返回 `input_busy`，不自动接管。
-
-LLM 是可选旁路控制端，其暂停或退出时 shell、Lua 与客户端保持运行。没有 LLM 时客户端与已受理脚本继续运行；重新接入先观察当前脚本、控制归属和 `script.id`，再按现状续接。模型进程锁只保护模型会话，角色与脚本控制权由原生 Runtime 维护，CLI 提交明确操作并核验身份。需要停止脚本时显式 `script cancel --session` 并确认放键；需要关闭客户端时另行 `close`。协作入口见 [HARNESS](HARNESS.md#开发-ai-的协作通道)。
 
 宿主工作台 `open/close` 使用独立生命周期锁，宿主 `close` 可通过 Docker 结束活动 Lua 及整个所属实例；同实例正在启停时返回 `lifecycle_busy`。容器内 `close` 会提示使用宿主生命周期入口。Lua 期限控制整个脚本会话，容器没有进程自退期限；脚本结束、超时或取消时容器继续运行，真实断线和错误会退出并保留原因。
 

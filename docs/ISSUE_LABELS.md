@@ -23,9 +23,9 @@
 
 ### 扩展：`游戏AI`
 
-harness、协作、社交、策略消费等扩展方向，以及低频的账号起步流程。这类内容粗粒度维护即可，不急着细分。
+AI 操作者通过客户端完成社交、消费 Lua 策略等扩展玩法，以及低频的账号起步流程。
 
-当前归属：[#37](https://github.com/Diluka/beidou-pilot/issues/37)、[#60](https://github.com/Diluka/beidou-pilot/issues/60)、[#65](https://github.com/Diluka/beidou-pilot/issues/65)、[#72](https://github.com/Diluka/beidou-pilot/issues/72)、[#73](https://github.com/Diluka/beidou-pilot/issues/73)、[#92](https://github.com/Diluka/beidou-pilot/issues/92)、[#94](https://github.com/Diluka/beidou-pilot/issues/94)、[#149](https://github.com/Diluka/beidou-pilot/issues/149)、[#150](https://github.com/Diluka/beidou-pilot/issues/150)。
+当前归属：[#72](https://github.com/Diluka/beidou-pilot/issues/72)、[#73](https://github.com/Diluka/beidou-pilot/issues/73)、[#92](https://github.com/Diluka/beidou-pilot/issues/92)、[#94](https://github.com/Diluka/beidou-pilot/issues/94)、[#149](https://github.com/Diluka/beidou-pilot/issues/149)、[#150](https://github.com/Diluka/beidou-pilot/issues/150)。
 
 ## 边界判断
 

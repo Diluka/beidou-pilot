@@ -16,7 +16,7 @@
 `tick-held-skill.lua` 演示 `player.skill(id)` 只调用一次，后续回调不重放。客户端按本端原生动作完成和准入处理当前仍有效的意图；`player.skill(nil)` 撤下整个动作槽，不清方向或强行中断已发生动画。撤下后直接返回 `"done"`，由 Runtime 确认停止所属持续输入（持键路径包含真实释放）后发布会话完成；脚本不轮询内部握手。按 ID 技能没有实体技能键，撤下移除持续意图及未执行派发，不发送技能 key-up。显式 `hold_seconds` 是调用者选择的保持期限，不是动画时间。无动作锁技能每次保持只派发一次；GUI 蓄力类别不支持。用药与技能不同，持续用药会重复尝试消耗，目标达到必须撤下；详见 [持续输入合同](../../docs/LUA_TICK_API.md#角色状态机与动作槽)。
 
 ```bash
-private/workbenches/workbench "$DIR" script run \
+workbenches/workbench dev/NAME script run \
   /opt/beidou-pilot/shared/scripts/examples/tick-held-skill.lua \
   --skill-id 你的已学会技能ID --hold-seconds 1 --seconds 3
 ```
@@ -26,17 +26,17 @@ private/workbenches/workbench "$DIR" script run \
 先读 [tick-jump-attack.lua](examples/tick-jump-attack.lua)，再从已登录的工作台显式运行。装备可普攻的武器，选择有足够空间的安全同高平地，确认没有其他脚本控制角色；本例不处理斜坡、台阶、绳梯、落层、怪物或传送门。已有容器须使用包含此示例及对应 tick 行为的镜像；内置文件不会随宿主源码编辑自动更新。
 
 ```bash
-DIR=/你的工作台目录
+ROLE=dev/NAME   # 换为本次授权的开发角色
 SCRIPT=/opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua
 
-private/workbenches/workbench "$DIR" script describe "$SCRIPT"
-private/workbenches/workbench "$DIR" script run "$SCRIPT" --direction right --seconds 5
-private/workbenches/workbench "$DIR" snapshot
+workbenches/workbench "$ROLE" script describe "$SCRIPT"
+workbenches/workbench "$ROLE" script run "$SCRIPT" --direction right --seconds 5
+workbenches/workbench "$ROLE" snapshot
 
 # 异步受理后返回；保留返回的 script_id，再按该 ID 查询或明确取消。
-private/workbenches/workbench "$DIR" script start "$SCRIPT" --direction left --seconds 5
-private/workbenches/workbench "$DIR" script status --session SCRIPT_ID
-private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
+workbenches/workbench "$ROLE" script start "$SCRIPT" --direction left --seconds 5
+workbenches/workbench "$ROLE" script status --session SCRIPT_ID
+workbenches/workbench "$ROLE" script cancel --session SCRIPT_ID
 ```
 
 `--direction` 来自头部 `@option`，默认 `right`，也可为 `left`。`--seconds` 是整个原生会话的期限，不是跳跃时长；例如起跳失败时由这个期限停止等待并释放输入。本例省略 `@tick.gear` 时使用第 3 档（30Hz）；复制到用户脚本后，可在前导注释中显式设置，例如 `-- @tick.gear 4` 选择原生更新；1、2、3 档分别为 10Hz、20Hz 和 30Hz。低档只降低判断频率，不改变角色物理和每宿主更新的取消/放键；落地后在下一次到期判断清方向。
@@ -63,7 +63,7 @@ private/workbenches/workbench "$DIR" script cancel --session SCRIPT_ID
 
 ```bash
 SCRIPT=/opt/beidou-pilot/shared/scripts/calibration/tick-motion-calibration.lua
-private/workbenches/workbench "$DIR" script run "$SCRIPT" --scenario walk --direction right --seconds 10
+workbenches/workbench dev/NAME script run "$SCRIPT" --scenario walk --direction right --seconds 10
 ```
 
 场景可选 `walk/brake/reverse/jump_stationary/jump_directional/air_release/air_reverse`，方向为 `left/right`；`runup_ms/hold_ms/air_release_ms/timeout_ms` 控制各阶段时长。每个宿主帧通过 `game.log` 输出一行前缀 `BEIDOU_MOTION_CAL v1 ` 的 JSON，写入该实例桥目录的 `script-events.jsonl`；把两端文件复制到同一开发环境后运行离线比较器：
@@ -84,10 +84,10 @@ beidou-pilot script run /opt/beidou-pilot/shared/scripts/examples/tick-jump-atta
   --direction right --seconds 5
 ```
 
-自定义脚本放工作台的 `scripts/`，在容器内对应 `/work/scripts/`，通过统一宿主入口提交：
+自定义脚本放在所选角色的 `scripts/`。`script describe/run/start` 从容器 `/work/scripts` 解析相对路径，也接受显式容器绝对路径：
 
 ```bash
-private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
+workbenches/workbench dev/NAME script run control.lua --seconds 20
 ```
 
 内置示例随镜像版本固定，已有容器保持启动时的版本。执行中断或等待失败只结束等待；先用 `script status` 查看已有会话，需要取消时明确执行 `script cancel --session SCRIPT_ID`，并核对终态及放键。

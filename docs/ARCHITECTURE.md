@@ -4,13 +4,12 @@
 
 | 位置 | 职责 |
 | --- | --- |
-| `private/workbenches/workbench` | 宿主 Bash 薄入口；从提交构建、核验目标、管理 Docker 生命周期与 exec 路由 |
+| `workbenches/` | 宿主入口、开发服装配与无私密配置示例；定位角色、按提交构建客户端、核验分区目标并管理容器 |
 | `cli/beidou-pilot`、`cli/beidou_pilot/` | 两个镜像共用的容器内 CLI、原生观察投影、参数和结果边界 |
 | `shared/scripts/` | 随镜像固定的 tick 示例与有界运动校准探针；不含内置策略或函数库 |
 | `shared/lua-runtime/` | 两端共用的 tick Lua 运行环境：调度、预算、只读领域、共享 player 状态机及输入生命周期 |
 | `headless/src/` | 无渲染登录、网络与游戏更新宿主、共享桥适配 |
-| `docker/` | 无头与 GUI 镜像构建定义、唯一 Compose、资源装配和容器启动脚本；`docker/harness/` 从客户端镜像派生 AI 运行环境 |
-| `harness/` | 容器内模型会话控制器、角色设定与经历、开发 AI 专用协作；通过同容器 CLI 消费客户端 |
+| `docker/` | 无头与 GUI 客户端镜像构建、GUI 资源装配和容器启动；`dev-server/` 单独部署开发服 |
 | `beidou-ijl15/` | 北斗客户端 `ijl15.dll` 工程，新增桥直接实现共同契约，保留必要原生逻辑 |
 | `third_party/` | 固定上游依赖与包含本地适配的派生引擎/资源转换器 |
 | `cli/test/` | 客户端离线合同测试 |
@@ -19,27 +18,17 @@ Python 负责参数、静态资料规划、脚本装载/取消和最终结果。
 
 客户端只有 tick 引擎：脚本无需声明引擎，前导注释按需写 `@tick.gear/budget_ms/overrun/abort_commit`。每个会话有独立上下文，所有会话共享客户端唯一的 player 状态机；GUI 在应用更新返回后推进，无头在逻辑步进后推进，不假设两端帧长一致。CLI 只负责受理和按会话 ID 观察/取消，不逐帧控制。运行契约与能力边界见 [Lua API](LUA_TICK_API.md#tick-环境)和[控制协议](CONTROL.md)。
 
-客户端运行体只拥有执行和观察能力，主要由 Lua 脚本驱动。同仓 `harness/` 是可选的旁路决策消费者，与客户端运行时并行、独立启停，持有模型会话、角色设定、目标与游戏经历，通过既有 CLI 获取观察并调度脚本。客户端与 Lua 在没有 LLM 时仍可持续运行；`cli/beidou_pilot/`、原生适配器及共享 Lua Runtime 保持独立。服务端和数据库不纳入本仓库。
-
-启用 harness 的镜像继承所选无头或 GUI 客户端镜像，增加固定版本的 Node/Codex、Python harness 和专用客户端技能，保留原客户端入口与 PID 1。唯一宿主入口 `private/workbenches/workbench DIR ai [harness参数]` 通过 `docker exec` 启动所属客户端容器内的 `beidou-game-ai`；harness 在本容器启动 Codex app-server，模型通过 shell 直接执行 `beidou-pilot`。`read_only` 模式关闭 shell，仅提供 `game_observe` 和 `game_script_status` 两个观察工具。
-
-模型固定工作目录为 `/game`，专用技能放在 `/game/.agents/skills/beidou-pilot-client`，所需公共文档按相对链接布局打包；运行环境只包含客户端技能与其公共文档。
-
-harness 可在已有活动脚本时接入。`pause/stop` 仅中断并确认当前 LLM turn 终态，后台 shell、Lua 与客户端保持运行；模型退出后，客户端 PID1、登录会话、容器及已启动的脚本和游戏任务继续运行。`resume` 复用仍存活的 app-server 和 thread，先核对当前实例、`script.id` 及任务状态，避免重复启动或抢占已有执行。重新接入同样先观察；脚本取消与客户端关闭分别由明确命令发起。具体配置与协作入口见 [HARNESS](HARNESS.md)。
-
-`--state`、角色文件和模型配置等路径参数均为容器路径，需长期保留的状态放在 `/work`。模型线程与角色记忆仍由 harness 管理；稳定工作目录、角色与目标绑定一致时，可以在新客户端 run 中续接，原生 `instance_id/run_id` 按本次运行重新核验。旧 `lua-v1`、`hunt-v1` 工具会话按历史保留，续接使用新状态。
+客户端提供观察和执行能力，操作者通过统一 CLI 获取事实、调度 Lua 并核对结果。游戏服负责游戏状态；仓库仅管理开发服的部署与访问入口，不包含服务端实现、存档或数据库。
 
 ## 容器、版本与控制生命周期
 
-客户端基础交付为两个镜像：无头端包含原生无渲染客户端，GUI 端包含 Wine/VirtualGL 和桥 DLL；两者安装同一份 Python CLI、辅助引擎、共享 Runtime 和内置 Lua。启用 harness 时分别从对应客户端基础镜像构建衍生镜像，沿用客户端进程及资源装配；镜像继承只用于打包复用，模型与客户端各自独立管理生命周期。运行中直接使用镜像内代码，进程与资源管理由宿主入口负责。
+客户端交付为两个镜像：无头端包含原生无渲染客户端，GUI 端包含 Wine/VirtualGL 和桥 DLL；两者安装同一份 Python CLI、辅助引擎、共享 Runtime 和内置 Lua。运行中直接使用镜像内代码，进程与资源管理由宿主入口负责。
 
-唯一宿主入口以工作目录选择容器。每个目录保存一个账号角色，使用固定的 `default` 实例；后端、开发提交和必要新建设置从目录的 `workbench.json` 读取。`harness` 默认 `false`，设为 `true` 时选用对应衍生镜像；`model_proxy` 为可选的 `http://IPv4:port`，按需配置。新实例一次解析默认main或配置ref的已提交SHA，导出该树和固定子模块构建或复用镜像。本次输入固定为导出时的代码树。运行登记保留实际源码、镜像、后端、目标、角色和run_id；已有实例的观察、脚本和取消均经docker exec使用原镜像与新建设置无关。
+宿主入口按 `live/NAME` 或 `dev/NAME` 选择角色，绑定该分区的服务器。每个角色有自己的 `default` 实例；客户端后端、构建提交等从角色目录的 `workbench.json` 读取。新实例解析 `ref`（默认 `main`）并用对应 Git 树和固定子模块构建或复用镜像；GUI Compose 使用当前宿主启动器的版本。运行登记记录实际源码、镜像、后端、目标、角色和 `run_id`；已有实例继续使用启动时的镜像。
 
-只有启用 harness 且 `model_proxy` 非空时，客户端才额外连接 Docker 默认 `bridge` 网络以访问模型代理，GUI 防火墙也仅在此时为指定代理 IPv4 和端口增加放行规则。游戏服务器仍处于原有 internal 网络，游戏连接继续使用已核验目标；模型出口不改变游戏服务器网络和只读资源挂载。
+常驻服与半常驻开发服的网络和数据独立，客户端只连接本分区已核验的目标。`server dev up|stop|status|cli` 管理开发服；角色 `close` 不会停服，开发服日常停服保留数据。
 
 每个工作目录拥有自己的 `default` 容器、运行目录、桥和控制锁。同一目标同一角色仍禁止并发接管。原生 `instance_id/run_id` 继续保证请求、取消与结果属于本次运行，真实断线或错误会退出并保留事实，不自动重连或重放。
-
-普通与只读 harness 的状态目录进程锁仅保护模型会话状态，同一状态目录被占用时返回 `harness_state_busy`。模型进程锁保护模型会话状态，角色、Lua 脚本与游戏任务的控制权以当前原生状态为准。
 
 容器入口从本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID` 读取 `account.json`、`server.json`，生成内部资源映射与 `state/container.json`，随后保持 PID 交给对应原生进程。容器内 CLI 通过登记、进程和原生桥直接观察、执行桌面原语与登录。`open` 完成或确认本容器入图，进程已由宿主启动器创建。
 
@@ -47,7 +36,7 @@ harness 可在已有活动脚本时接入。`pause/stop` 仅中断并确认当�
 
 中断宿主命令时，启动器按本次执行 token 向对应容器内 CLI 转发信号。`script run` 的结果等待和 `script start` 的受理等待被中断时，仅结束本次等待；等待超时或观察失败时，已发布的原生任务继续运行。脚本会话继续由客户端 Runtime 持有，其执行期限与原生停止规则独立于 CLI 等待。结果未知时先用 `script status` 核对当前任务及 `script.id`，再决定是否重新启动；需要取消时显式 `script cancel --session SCRIPT_ID`，并核对同一原生身份下的终态与放键。客户端关闭另用 `close`。
 
-[无头 Dockerfile](../docker/headless/Dockerfile) 是无头镜像唯一构建入口，builder 编译，运行层使用标准发行版运行依赖。[GUI Dockerfile](../docker/gui/Dockerfile) 以根上下文构建完整 GUI 客户端，唯一的 [Compose](../docker/compose.yaml) 装配设备、只读资源与整个工作台；用户脚本和配置直接使用工作台中的路径。所有定义放在 `docker/`，根 `.dockerignore` 只保留两端构建必需的源码与明确桥工件输入。
+[无头 Dockerfile](../docker/headless/Dockerfile) 在 builder 编译，在运行层使用发行版依赖。[GUI Dockerfile](../docker/gui/Dockerfile) 以根上下文构建 GUI 客户端，[GUI Compose](../docker/compose.yaml) 装配设备、只读资源与角色工作目录。开发服部署与客户端镜像分离，见[工作台指南](../workbenches/README.md)。
 
 GUI DLL 仍由 Windows/MSVC、SDK 和匹配 Detours 库构建。完整 GUI 镜像默认通过 `gh` 获取所选提交成功 CI 的 DLL 与清单，开发时可在 `workbench.json.bridge_artifact` 指定匹配工件。启动器核对原生构建输入，匹配后接受；显式工件路径直接使用，无需 `gh`。
 
@@ -55,25 +44,24 @@ GUI DLL 仍由 Windows/MSVC、SDK 和匹配 Detours 库构建。完整 GUI 镜�
 
 游戏资源不随源码或镜像分发。无头客户端、Quest、GUI 静态查询与 Python Catalog 共用原版 `Data/**/*.img`。无头端通过 `nl::node` 内存视图消费属性和几何元数据，不保留像素或音频内容。
 
-宿主从主检出目录的 `private/workbenches/resources.json` 读取外部路径；开发 worktree 共用该配置，相对路径按配置文件目录解析。配置只保留必要的原版数据目录与 GUI 客户端目录：
+宿主从主检出目录的 `private/workbenches/config/resources.json` 读取外部路径；开发 worktree 共用该配置，相对路径按配置文件目录解析。配置只保留必要的原版数据目录与 GUI 客户端目录：
 
 ```bash
-cat private/workbenches/resources.json
-private/workbenches/workbench /external/workbench resources-check
+workbenches/workbench dev/NAME resources-check
 ```
 
-`resources-check` 将配置的原版 `Data/` 以只读方式挂入无网络短时容器，解析现有资源，不需要服务器或账号。资源原件保持只读；仅 `private/workbenches/workbench` 纳入 Git，共享资源配置与其他 `private/` 内容保持忽略。
+`resources-check` 将配置的原版 `Data/` 以只读方式挂入无网络短时容器，不需要服务器或账号。原件保持只读，`private/` 中的真实配置与数据不纳入 Git。
 
 | 字段 | 用途 |
 | --- | --- |
 | `game_data` | 原版 `Data/` 目录，两端只读挂到 `/data`，供运行时节点视图与静态查询共用 |
 | `gui_client` | 匹配 V17 的外部原客户端目录，只读挂到 GUI 容器 `/client` |
 
-工作目录整体读写挂载到 `/work`，根目录维护 `account.json` 和可选新建设置。常驻服务器定义固定在入口；开发隔离目标来自 `workbench.json.server`。本次账号和完整服务器快照保存在 `/work/runtime/default/RUN_ID/`，`CLIENT_ROOT` 指向该目录。容器入口在其 `config/resources.json` 生成资源映射，`MAPLE_RESOURCES_CONFIG` 指向该文件；内部 `gui_dll` 固定为镜像内 `/opt/beidou-pilot/native/ijl15.dll`，清单登记在该运行根的 `state/agent-bridge-build.json`。配置、角色计划和运行数据均不进入镜像。字段与入口见 [CLI](CLI.md)。
+角色目录整体读写挂载到 `/work`。账号来自该目录的 `account.json`，目标来自主检出 `private/workbenches/config/` 中所属分区的 `live.server.json` 或 `dev.server.json`，不从角色配置选服。本次快照保存在 `/work/runtime/default/RUN_ID/`，`CLIENT_ROOT` 指向该目录。容器入口在其 `config/resources.json` 生成资源映射，`MAPLE_RESOURCES_CONFIG` 指向该文件；`gui_dll` 固定为 `/opt/beidou-pilot/native/ijl15.dll`，清单登记在该运行根的 `state/agent-bridge-build.json`。配置、角色记录和运行数据均不进入镜像。字段与入口见 [CLI](CLI.md)。
 
 GUI 保留 `/client` 只读挂载用于启动原版客户端；原版 `Data/` 另以 `/data` 只读挂载，Python Catalog 与无头客户端从同一配置读取。客户端运行副本的 `Data/` 仍映射到原件，不写入资源目录。
 
-用户 Lua 是工作台中的明确输入，直接位于 `/work/scripts`，随工作台挂载生效。内置 `shared/scripts/` 只含 tick 示例与运动校准探针并随镜像固定；用户 Lua 文件可在运行中提交生效。脚本只承载玩法判断，模型、养成与生命周期由各自组件管理。
+用户 Lua 随所选角色目录挂载；脚本命令从 `/work/scripts` 解析相对路径，也接受显式容器绝对路径。内置 `shared/scripts/` 只含随镜像固定的 tick 示例与运动校准探针。
 
 名称、物品恢复属性、NPC 范围和地图地形由同一个 `Catalog` 投影，现有 `inspect` 与静态查询共用；tick 脚本通过 `context.scene` 读取本图地形。Catalog 通过无头镜像和 GUI 镜像共同打包的原生 IMG 解析库查询属性、Canvas 尺寸、origin、帧时序和几何，不读取像素或音频。结果列出实际消费的 IMG 路径及 SHA256；`resource_version=null` 表示没有可证明的游戏版本，客户端版本另行核对。Map 类别按资源目录中的 `Map002/`、`Map/` 顺序选择；缺少文件或链接目标时保留未知。
 
@@ -116,6 +104,6 @@ tick Lua 以只读领域获取上表已有原生观察，覆盖角色、场景�
 
 ## 验证与镜像交付
 
-离线合同、镜像构建和实际游戏结果分别判断。IPC 对端测试覆盖请求/取消契约；命中、掉落、存档与长期稳定性以真实游戏验证为准。实际玩法默认使用常驻服务器，优先复用已授权的已有账号角色和就绪实例，减少主机内存占用；仅在场景必须时新建账号或角色，隔离服仅用于常驻服无法安全完成验证等特殊情况，并记录原因。退出后核对所属资源及必要存档。
+离线合同、镜像构建和实际游戏结果分别判断。IPC 对端测试覆盖请求与取消；命中、掉落、存档和长期稳定性以真实客户端结果为准。开发服可准备并记录与验收匹配的场景，按所需后端核对；常驻服按角色自然进度使用。退出后核对所属资源及必要存档。
 
-客户端构建统一使用 `private/workbenches/workbench DIR build`；启动器从 Git 提交及其子模块准备固定输入，再调用对应 Dockerfile。客户端以版本化镜像交付，工作台保存其配置、计划与运行数据。依赖来源和更新规则见 [DEPENDENCIES](DEPENDENCIES.md)。
+客户端构建使用 `workbenches/workbench dev/NAME build` 或对应的 `live/NAME`；镜像按所选 Git 提交交付。依赖来源和更新规则见 [DEPENDENCIES](DEPENDENCIES.md)。

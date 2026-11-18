@@ -355,7 +355,7 @@ position += (v_old+v)/2*dt
 
 ### 当前验证基线
 
-- main 全量离线测试 **539 tests OK**；CI 五项（Python/Headless/Windows bridge/format/harness contract）在对应提交均绿。
+- main 全量离线测试 **539 tests OK**；对应提交的 Python、Headless、Windows bridge 和 format 检查均通过。
 - 双端证据目录：`tmp/251-climb/`、`tmp/252-hurt/`、`tmp/253-mob-evidence/`、`tmp/258-otherchar/`、`tmp/258-drops/`、`tmp/259-moveplayer/`、`tmp/259-moveplayer-layout/`、`tmp/259-moveplayer-batch/`、`tmp/263-two-client/`、`tmp/264-*` 等（所属环境保留）。
 
 ### 仍被阻塞（不按猜测实现）
@@ -371,7 +371,7 @@ position += (v_old+v)/2*dt
 
 ### 复位/恢复入口
 
-- 工作台统一入口 `private/workbenches/workbench DIR COMMAND`；常驻服与账号池规则见 `AGENTS.md`。
+- 复现使用 `workbenches/workbench dev/NAME COMMAND`；分区、开发样本与正式验收规则见 [AGENTS.md](../AGENTS.md#验收方式)。历史观测的角色及环境沿用各节证据。
 - 离线验证：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli`；格式 `python3 tools/format.py --check`（需 `STYLUA`）。
 - 双端验证脚本/记录：`tmp/` 下各证据目录；GUI 桥工件在 `tmp/client-images/bridges/<sha>`。
 

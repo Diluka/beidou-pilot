@@ -42,7 +42,7 @@ nodes:
   - id: client-session.status
     kind: operation
     name: 查询实例状态
-    summary: 返回所选实例的运行、入图和退出事实；命名多实例目前只支持无头端，GUI使用default。
+    summary: 按分区角色读取其 default 实例的运行、入图和退出事实。
     aliases: [status, instances, 就绪状态]
     anchors:
       - kind: symbol
@@ -77,12 +77,12 @@ nodes:
   - id: client-session.target
     kind: data
     name: 已核验目标与角色配置
-    summary: 外部target标识目标容器、镜像及隔离网络，私密profile声明已有角色与登录参数；本域只消费和核验。
+    summary: 宿主读取所选分区的服务器配置，核对容器、镜像及网络；私密角色目录提供账号和登录参数。配置不符时拒绝，不改连另一服。
     aliases: [target, profile, 已有角色]
     anchors:
       - kind: file
-        value: private/workbenches/workbench
-        description: 宿主统一入口核验目标容器唯一性、镜像、internal 网络与授权服务器路径。
+        value: workbenches/workbench
+        description: 宿主统一入口根据分区核验目标容器、镜像、网络与角色目录。
       - kind: symbol
         file: cli/beidou_pilot/profile.py
         value: load_profile
@@ -111,11 +111,11 @@ nodes:
         description: 在启动锁内检查其他运行实例的目标、世界和角色，拒绝重复接管。
       - kind: document
         value: AGENTS.md
-        description: 规定默认复用常驻服与授权已有账号角色、隔离服例外及GUI单一操作者边界。
+        description: 规定常驻区养成、开发区样本准备、两区数据隔离和 GUI 单一操作者边界。
   - id: client-session.persistent
     kind: invariant
     name: 动作结束与实例关闭独立
-    summary: Lua返回、期限结束和取消后容器继续运行；显式close结束所属实例，真实断线与错误保留退出原因。
+    summary: Lua返回、期限结束和取消后容器继续运行；显式 close 只结束所属客户端，不停止服务器；真实断线与错误保留退出原因。
     aliases: [容器常驻, 独立关闭]
     anchors:
       - kind: document
@@ -127,7 +127,7 @@ nodes:
   - id: client-session.cli
     kind: interface
     name: 统一客户端CLI
-    summary: beidou-pilot以固定后端和实例承接操作者、脚本及独立harness对客户端能力的调用。
+    summary: beidou-pilot 以固定后端和实例承接操作者和脚本对客户端能力的调用。
     aliases: [beidou-pilot, 命令入口]
     anchors:
       - kind: symbol
@@ -171,7 +171,7 @@ flows:
     scenario: client-session.open
     startsAt: select
     steps:
-      - {id: select, kind: action, name: 选择并核验所属实例, summary: 按后端和实例名读取登记并核验容器身份。, concept: client-session.open}
+      - {id: select, kind: action, name: 选择并核验所属实例, summary: 按 live/NAME 或 dev/NAME 选择角色、读取登记并核验所属容器。, concept: client-session.open}
       - {id: existing, kind: decision, name: 是否已有运行会话, summary: 判断所选实例是否已有所属容器运行。}
       - {id: matching, kind: decision, name: 请求是否允许复用现有会话, summary: 核对可证明的显式目标；无头另核对profile中的角色、世界和频道，不匹配时保留现场。}
       - {id: reuse-backend, kind: decision, name: 复用哪个后端的会话, summary: 无头直接返回现有运行状态；GUI继续当前登录流程，入图后核对角色和频道。}

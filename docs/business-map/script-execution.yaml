@@ -19,7 +19,7 @@ nodes:
   - id: script-execution.run
     kind: scenario
     name: 在现有实例运行 Lua
-    summary: 从文件创建受信 tick 会话；script run 同步等待终态，script start 仅等待原生受理后返回；等待方中断不自动取消，Runtime 始终拥有会话生命周期，客户端实例继续存在。
+    summary: 从所属角色的文件或目录包创建受信 tick 会话；script run 同步等待终态，script start 仅等待原生受理后返回；等待方中断不自动取消，Runtime 始终拥有会话生命周期，客户端实例继续存在。
     aliases: [script run, script start, 连续脚本, 脚本装载]
     anchors:
       - kind: symbol
@@ -176,12 +176,13 @@ nodes:
   - id: script-execution.strategy-entry
     kind: interface
     name: main(context) 策略入口与参数合同
-    summary: 策略文件以唯一 main(context) 声明入口，并通过 @option 声明类型、默认值与约束；入口收到 context.options 与 context.scene。CLI 按声明校验动态参数并在发布前拒绝非法元数据或参数。未声明 default 的 boolean 省略时为 true，显式 default=false 时省略为 false；--no-flag 是无值负向开关，直接传入 false，不按 choices 拒绝。运行期限与 tick 回调预算分离；运行入口只有文件，文件须声明 main(context)。
+    summary: 策略文件以唯一 main(context) 声明入口，并通过 @option 声明类型、默认值与约束；入口收到 context.options 与 context.scene。CLI 按声明校验动态参数并在发布前拒绝非法元数据或参数。未声明 default 的 boolean 省略时为 true，显式 default=false 时省略为 false；--no-flag 是无值负向开关，直接传入 false，不按 choices 拒绝。运行期限与 tick 回调预算分离；路径可为单文件或含 main.lua 的目录包，相对路径从所选角色的 /work/scripts 解析，显式绝对路径按容器路径使用。
     aliases: [main(context), "@option", 策略参数, script describe]
     anchors:
-      - kind: file
-        value: cli/beidou_pilot/cli.py
-        description: 解析 script describe/run/start 的动态参数与入口形式。
+      - kind: symbol
+        file: cli/beidou_pilot/cli.py
+        value: script_path
+        description: 为 describe/run/start 将相对入口解析到本角色的脚本目录，绝对路径保持原义。
       - kind: document
         value: docs/LUA_TICK_API.md
         description: 面向策略作者说明入口、参数、默认值和场景上下文。
@@ -244,7 +245,7 @@ flows:
     scenario: script-execution.run
     startsAt: submit
     steps:
-      - {id: submit, kind: action, name: 向当前实例提交受信 Lua, summary: 核对当前实例和脚本能力，准备受信源码并请求创建会话。, concept: script-execution.run}
+      - {id: submit, kind: action, name: 向当前实例提交受信 Lua, summary: 核对当前实例和脚本能力，按本角色的相对路径或显式容器绝对路径读取受信源码并请求创建会话。, concept: script-execution.run}
       - {id: admitted, kind: decision, name: Runtime 能否接受会话, summary: 当前身份、tick 脚本能力与源码决定是否受理；多 tick 会话可并存。}
       - {id: refused, kind: outcome, name: 拒绝并保留原因, summary: 身份不符、能力缺失或源码错误不构成脚本成功。}
       - {id: execute, kind: action, name: Runtime 按档位调度入口, summary: Runtime 拥有会话；入口按 @tick.gear 到期读领域并写动作草稿，返回后统一提交差异。, concept: script-execution.tick-scheduling}

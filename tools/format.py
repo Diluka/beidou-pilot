@@ -11,7 +11,6 @@ import subprocess
 SOURCES = {
     "ruff": (
         "tools/format.py",
-        "harness/**/*.py",
         "cli/beidou_pilot/cli.py",
         "cli/beidou_pilot/strategies.py",
         "cli/beidou_pilot/strategy_scene.py",

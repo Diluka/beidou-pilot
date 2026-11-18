@@ -4,7 +4,7 @@
 
 ## 已有角色登录
 
-重新接入时先执行 `status`、`script status` 和 `snapshot`。正确角色已经入图或已有任务时，沿用现有状态与脚本身份，不重复登录或启动任务；LLM 暂停、退出和再次接入不取消原生脚本或关闭客户端。
+重新接入时先执行 `status`、`script status` 和 `snapshot`。正确角色已经入图或已有任务时，沿用现有状态与脚本身份，不重复登录或启动任务。
 
 确实需要完成登录时，`open` 完成或确认当前客户端的登录，不切换到另一角色或服务器。
 
@@ -25,13 +25,13 @@ beidou-pilot --json inspect stage
 
 ## 缺少账号或角色
 
-`open` 要求真实已有 CID。首次登录由宿主工作台启动所选后端，账号文件可以暂不包含 CID。声明同意与账号性别须经用户明确授权：
+`open` 要求真实已有 CID。验证首次登录或建角流程时，在 `dev/NAME` 使用独立账号，账号文件可暂不含 CID；若只需一个已有角色作前置条件，也可通过开发服 CLI 按其支持范围准备，并从客户端确认。以下是客户端流程；声明同意和账号性别按已明确的授权选择：
 
 ```bash
-private/workbenches/workbench /external/workbench login --accept-terms --gender female
-private/workbenches/workbench /external/workbench login
-private/workbenches/workbench /external/workbench character create --name NAME --gender female --job JOB --face FACE --hair HAIR --hair-color COLOR --skin SKIN --top TOP --bottom BOTTOM --shoes SHOES --weapon WEAPON
-private/workbenches/workbench /external/workbench character result REQUEST_ID --instance-id INSTANCE_ID --run-id RUN_ID
+workbenches/workbench dev/NAME login --accept-terms --gender female
+workbenches/workbench dev/NAME login
+workbenches/workbench dev/NAME character create --name NAME --gender female --job JOB --face FACE --hair HAIR --hair-color COLOR --skin SKIN --top TOP --bottom BOTTOM --shoes SHOES --weapon WEAPON
+workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANCE_ID --run-id RUN_ID
 ```
 
 各项角色数值按用户实际选择填写；`--hair` 是基础发型，`--hair-color` 是独立必填项，不能省略或并入 `--hair`。宿主 `login` 的选项仅用于新启动，运行中只观察、不重放选项；容器内 `beidou-pilot --json login --timeout N` 不带授权选项时只观察。GUI 容器内可显式传 `--gender male|female` 发起登录动作，需要同意声明时另加 `--accept-terms`；GUI 动作必须指定性别，由原生桥在游戏线程调用原版客户端内部入口完成；无头容器内不接受这些选项。建角是独立的单次请求，不自动入图。

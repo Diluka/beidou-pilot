@@ -1,19 +1,11 @@
 """宿主首次登录参数与运行实例转发的离线合同。"""
 import json
-import subprocess
 import unittest
 
-from .test_workbench_build import WorkbenchBuildContract
+from .test_workbench_build import WorkbenchFixture
 
 
-class WorkbenchLoginContract(unittest.TestCase):
-    setUp = WorkbenchBuildContract.setUp
-    git = WorkbenchBuildContract.git
-
-    def invoke(self, *args):
-        return subprocess.run(["bash", str(self.entry), str(self.workbench), *args],
-                              env=self.environment, capture_output=True, text=True, timeout=15)
-
+class WorkbenchLoginContract(WorkbenchFixture):
     def running_client(self):
         root = self.workbench / "runtime/default/run"
         (root / "state").mkdir(parents=True)
@@ -90,6 +82,15 @@ class WorkbenchLoginContract(unittest.TestCase):
         self.assertEqual(["beidou-pilot", "--json", "open", "--account", "/work/runtime/default/run/account.json",
                           "--server", "/work/runtime/default/run/server.json", "--timeout", "90"],
                          executions[0][executions[0].index("beidou-pilot"):])
+
+    def test_running_open_rejects_unknown_settings_before_exec(self):
+        self.running_client()
+        (self.workbench / "runtime/default/host.json").write_text(json.dumps({"container_id": "client", "image": "image"}))
+        (self.workbench / "workbench.json").write_text(json.dumps({"unsupported_option": True}))
+        result = self.invoke("open")
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("workbench_config_invalid", json.loads(result.stdout)["error"]["code"])
+        self.assertNotIn("exec", [call[0] for call in json.loads(self.state_path.read_text())["calls"]])
 
     def test_completed_create_binds_immediately_without_replay(self):
         self.running_client()

@@ -6,17 +6,17 @@
 
 ## 启动与基本约定
 
-将下节带顶层 `main(context)` 的 UTF-8 文件保存到工作台的 `scripts/control-tick.lua`；需要调整调度或预算时在前导注释按需写 `@tick.*`，从宿主运行：
+将下节示例保存到所选角色目录的 `scripts/control-tick.lua`（假设角色标识为 `dev/NAME`）。需要调整调度或预算时在前导注释声明 `@tick.*`，从宿主运行：
 
 ```bash
-private/workbenches/workbench /external/workbench script describe /work/scripts/control-tick.lua
-private/workbenches/workbench /external/workbench script run /work/scripts/control-tick.lua --ticks 10 --seconds 20
+workbenches/workbench dev/NAME script describe control-tick.lua
+workbenches/workbench dev/NAME script run control-tick.lua --ticks 10 --seconds 20
 ```
 
-- 脚本只接受 UTF-8 文件或含 `main.lua` 的目录脚本包，入口必须声明顶层 `main(context)` 函数；路径按容器内部解析，工作台读写挂到 `/work`，内置 Lua 随镜像版本固定。源码上限为 1 MiB，不接受预编译字节码。目录脚本包见[目录脚本包与模块装载](#目录脚本包与模块装载)。
+- 脚本接受 UTF-8 单文件或含 `main.lua` 的目录包，入口声明顶层 `main(context)`。相对路径从该角色的 `/work/scripts` 解析，显式绝对路径按容器内部位置解释。内置 Lua 随客户端镜像固定。源码上限为 1 MiB，不接受预编译字节码。目录包见[目录脚本包与模块装载](#目录脚本包与模块装载)。
 - `script run` 同步等结果，`script start` 等原生受理。自定义执行默认30秒，`--seconds` 范围为 `0.001..4294967.295` 秒；显式 `--continuous` 表示无总期限。总期限与单次调用的 `budget_ms` 分开。
 - CLI 中断、等待超时或观察失败只结束等待，已发布脚本继续运行。先用 `script status` 核对当前会话；取消用 `script cancel --session SCRIPT_ID` 并核对终态与放键，客户端关闭另用 `close`。
-- 脚本入口只有文件，每次调用读取当前文件内容；源码中的 `@option` 由 CLI 解析为策略参数，入口收到 `context.options`。
+- 每次装载读取当前入口文件内容；`@option` 由 CLI 解析为策略参数，入口收到 `context.options`。
 - 每个会话新建独立Lua状态，不跨会话恢复内存；所有tick会话共享客户端级player。未知字段为 `nil`，与已知 `false`、`0`、空表不同。时间及间隔使用秒，原生更新、释放确认和调度按实际发生时间判断。
 
 ## tick 环境
@@ -46,7 +46,7 @@ end
 tick 入口也可以是一个目录脚本包：`script run/start/describe DIR`，目录内固定以 `main.lua` 为入口，其他 `.lua` 文件按包内相对路径作为模块，由入口用 Lua 原生 `require` 装载。装载器只把包目录交给本会话做模块搜索，不复制或改写模块文件；包内脚本与镜像内置脚本、其他工作台脚本各自独立。
 
 ```bash
-private/workbenches/workbench /external/workbench script run /work/scripts/travel-policy --seconds 20
+workbenches/workbench dev/NAME script run travel-policy --seconds 20
 ```
 
 ```lua
@@ -192,10 +192,10 @@ GUI 在真实原生角色更新之后缓存整份记录，重复宿主帧和 CLI
 
 ```bash
 # 两端各选一个安全平地场景，按同一 scenario 和 direction 分别运行一次。
-private/workbenches/workbench /external/gui-workbench script run \
+workbenches/workbench dev/GUI_NAME script run \
   /opt/beidou-pilot/shared/scripts/calibration/tick-motion-calibration.lua \
   --scenario walk --direction right --seconds 10
-private/workbenches/workbench /external/workbench script run \
+workbenches/workbench dev/NAME script run \
   /opt/beidou-pilot/shared/scripts/calibration/tick-motion-calibration.lua \
   --scenario walk --direction right --seconds 10
 # 记录写入所属实例桥目录的 script-events.jsonl（容器内 `$CLIENT_ROOT/runtime/bridge/script-events.jsonl`），复制两端该文件后离线比较。
