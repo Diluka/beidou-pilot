@@ -484,6 +484,40 @@ end
     for (unsigned frame = 0; frame < 5; ++frame) replaced.Advance(replacementRuntime);
 }
 
+void ReviveIntent() {
+    Boundary native;
+    auto& input = native.tick;
+    MapleControl::Action attack;
+    attack.kind = MapleControl::ActionKind::Attack;
+    input.SetIntent(attack, User);
+    input.action.Request(Keys({Attack}), 0, User, 0);
+    native.Flush(input.action);
+    Check(input.action.Held()[Attack], "preexisting action key was not held for the revive transition");
+
+    MapleControl::Action request;
+    request.kind = MapleControl::ActionKind::Revive;
+    Check(input.SetIntent(request, User) && input.DispatchPending() && !input.ActionIntentSettled()
+              && input.action.TransitionsPending(),
+          "revive intent must remain pending until its one native request and prior keyup are handled");
+    native.Flush(input.action);
+    native.Update(false);
+    Check(input.action.Released() && !input.action.TransitionsPending(),
+          "revive waits for physical keyup but not a dead character update");
+    const auto dispatched = input.TakeDispatch(100);
+    Check(dispatched.kind == MapleControl::ActionKind::Revive && input.Result().dispatched
+              && input.Result().effect == "unknown" && input.ActionIntentSettled(),
+          "revive dispatch settles on native submission without waiting for a character animation");
+    input.RepeatDue(10000, {true, 1, 1});
+    Check(!input.DispatchPending() && !input.SetIntent(request, User) && !input.DispatchPending(),
+          "repeated revive intent does not rearm the one-shot request");
+    input.ReleaseAction();
+    Check(input.ActionIntentSettled(),
+          "clearing an already-dispatched revive request does not wait on character updates");
+    native.FlushTick();
+    native.Update(false);
+    Check(input.Released(), "one-shot release requires only native empty-key cleanup, not a character update");
+}
+
 void RejectedAttackRecovery() {
     for (const bool useSkill : {false, true}) {
         DeferredNativeAdapter native;
@@ -626,6 +660,8 @@ int main(int argc, char** argv) {
         ActionOwnerCancellation();
     else if (test == "held-updates")
         HeldIntentUpdates();
+    else if (test == "revive")
+        ReviveIntent();
     else if (test == "attack-recovery")
         RejectedAttackRecovery();
     else if (test == "potion-churn")

@@ -57,6 +57,8 @@ const char* ActionName(const Action& action) {
         return "use_item";
     case ActionKind::Pickup:
         return "pickup";
+    case ActionKind::Revive:
+        return "revive";
     default:
         return "stop";
     }
@@ -291,6 +293,7 @@ struct TickRuntime::Impl {
         Clock::duration period{};
         bool limited = false, invoked = false, overran = false, previousOverrun = false, directionFence = false;
         bool actionFence = false;
+        bool reviveRequested = false;
         std::uint64_t index = 0, overruns = 0;
         double time = 0, delta = 0, lastUs = 0, maxUs = 0;
         std::uint64_t generation = 0;
@@ -491,6 +494,14 @@ struct TickRuntime::Impl {
         auto& session = Invocation(lua);
         const bool idRequired = skill || kind == ActionKind::UseItem;
         if (lua_gettop(lua) != (idRequired ? 1 : 0)) return luaL_error(lua, "invalid player action arguments");
+        if (kind == ActionKind::Revive) {
+            if (session.reviveRequested) return Reply(lua, true, "already_requested");
+            const auto& state = session.runtime.adapter.Observe();
+            if (!state.ready || !state.characterKnown || !state.character.known[6])
+                return Reply(lua, false, "character_unavailable");
+            if (state.character.values[6] != 0) return Reply(lua, false, "already_alive");
+            if (state.reviveRequestable == Fact::False) return Reply(lua, false, "revive_not_requestable");
+        }
         if (skill && lua_isnil(lua, 1)) {
             auto& target = session.runtime.draft;
             target.actionSet = true;
@@ -528,6 +539,8 @@ struct TickRuntime::Impl {
 
     static int Pickup(lua_State* lua) { return Submit(lua, ActionKind::Pickup); }
 
+    static int Revive(lua_State* lua) { return Submit(lua, ActionKind::Revive); }
+
     static int Stop(lua_State* lua) {
         auto& session = Invocation(lua);
         if (lua_gettop(lua) != 0) return luaL_error(lua, "stop accepts no arguments");
@@ -547,7 +560,7 @@ struct TickRuntime::Impl {
                                   : (inputActive ? &input : nullptr);
         Value keys = Value::Array();
         for (const auto& key : held) keys.Add(key);
-        if (inputActive) keys.Add(ActionName(input));
+        if (inputActive && input.kind != ActionKind::Revive) keys.Add(ActionName(input));
         const auto idle = current != nullptr ? observed.actionIdle : adapter.Observe().actionIdle;
         const bool nativeBusy = active != nullptr || idle == Fact::False;
         const Value busy = nativeBusy ? Value(true) : idle == Fact::True ? Value(false) : Value{};
@@ -753,9 +766,9 @@ struct TickRuntime::Impl {
         // Standard libraries are provided as-is; the runtime owns scheduling, budgets
         // and native I/O only, with no capability trimming for its own scripts.
         luaL_openlibs(lua);
-        static const luaL_Reg player[]{{"move", Move},   {"jump", Jump},           {"attack", Attack},
-                                       {"skill", Skill}, {"use_item", UseItem},    {"pickup", Pickup},
-                                       {"stop", Stop},   {"status", PlayerStatus}, {nullptr, nullptr}};
+        static const luaL_Reg player[]{
+            {"move", Move},     {"jump", Jump},     {"attack", Attack}, {"skill", Skill},         {"use_item", UseItem},
+            {"pickup", Pickup}, {"revive", Revive}, {"stop", Stop},     {"status", PlayerStatus}, {nullptr, nullptr}};
         lua_newtable(lua); // backing of game proxy
         luaL_newlib(lua, player);
         Protect(lua);
@@ -974,6 +987,7 @@ struct TickRuntime::Impl {
         auto* previousOwner = actionOwner;
         std::string error;
         if (adapter.SetActionIntent(requested, error)) {
+            if (requested.kind == ActionKind::Revive && owner != nullptr) owner->reviveRequested = true;
             input = requested;
             inputActive = requested.kind != ActionKind::Stop;
             actionOwner = inputActive ? owner : nullptr;

@@ -51,7 +51,6 @@ GUI_ONLY_COMMANDS = (
     ("bind", "item", "2000000", "shift"),
     ("shop", "read"),
     ("notifications", "read"),
-    ("revive",),
 )
 
 
@@ -118,6 +117,107 @@ class UnifiedControlContract(unittest.TestCase):
                 self.assertEqual("usage", report["error"]["code"])
                 legacy.assert_not_called()
                 run.assert_not_called()
+
+    def test_headless_revive_submits_one_tick_request_and_confirms_same_character(self) -> None:
+        before = {
+            "character": {"id": 42, "hp": 0},
+            "native_values_valid": True,
+            "position": None,
+            "map_id": 100000000,
+        }
+        after = {
+            "character": {"id": 42, "hp": 50},
+            "native_values_valid": True,
+            "position": {"x": 2581, "y": 567},
+            "map_id": 100000000,
+        }
+        with (
+            patch.object(Backend, "read", side_effect=[before, after]),
+            patch.object(BridgeClient, "snapshot", return_value={"scripts": []}),
+            patch(
+                "beidou_pilot.strategy_scene.scene_context",
+                return_value={
+                    "character_id": 42,
+                    "map_id": 100000000,
+                    "instance_id": "headless-1",
+                    "scene_generation": 1,
+                },
+            ),
+            patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run,
+        ):
+            code, report = self.cli("headless", "revive")
+        self.assertEqual(0, code, report)
+        self.assertEqual("revived", report["data"]["status"])
+        self.assertEqual(1, run.call_count)
+        self.assertIn("context.game.player.revive()", run.call_args.kwargs["code"])
+        self.assertIn('return "done"', run.call_args.kwargs["code"])
+        self.assertIn("return {main=main,context=__beidou_context}", run.call_args.kwargs["code"])
+        self.assertEqual(6, run.call_args.kwargs["seconds"])
+
+    def test_headless_revive_timeout_reports_once_without_replay(self) -> None:
+        dead = {
+            "character": {"id": 42, "hp": 0},
+            "native_values_valid": True,
+            "position": None,
+            "map_id": 100000000,
+        }
+        with (
+            patch.object(Backend, "read", side_effect=[dead, dead]),
+            patch.object(BridgeClient, "snapshot", return_value={"scripts": []}),
+            patch(
+                "beidou_pilot.strategy_scene.scene_context",
+                return_value={
+                    "character_id": 42,
+                    "map_id": 100000000,
+                    "instance_id": "headless-1",
+                    "scene_generation": 1,
+                },
+            ),
+            patch.object(BridgeClient, "run_script", return_value={"status": "completed"}) as run,
+            patch("beidou_pilot.recovery.time.monotonic", side_effect=[0, 0, 7]),
+            patch("beidou_pilot.recovery.time.sleep"),
+        ):
+            code, report = self.cli("headless", "revive")
+        self.assertEqual(2, code, report)
+        self.assertEqual("revive_not_confirmed", report["error"]["code"])
+        self.assertEqual(1, run.call_count)
+
+    def test_gui_revive_rejects_a_running_tick_script_before_observation(self) -> None:
+        with (
+            patch.object(BridgeClient, "snapshot", return_value={"scripts": [{"id": "owner", "status": "running"}]}),
+            patch.object(Backend, "read") as read,
+        ):
+            code, report = self.cli("beidou", "revive")
+        self.assertEqual(2, code, report)
+        self.assertEqual("input_busy", report["error"]["code"])
+        read.assert_not_called()
+
+    def test_revive_does_not_dispatch_when_alive_or_another_script_controls_headless(self) -> None:
+        alive = {
+            "character": {"id": 42, "hp": 10},
+            "native_values_valid": True,
+            "position": {"x": 1, "y": 2},
+            "map_id": 100000000,
+        }
+        with (
+            patch.object(Backend, "read", return_value=alive),
+            patch.object(BridgeClient, "run_script") as run,
+        ):
+            code, report = self.cli("headless", "revive")
+        self.assertEqual(0, code, report)
+        self.assertEqual("already_alive", report["data"]["status"])
+        run.assert_not_called()
+
+        dead = {"character": {"id": 42, "hp": 0}, "native_values_valid": True, "position": None, "map_id": 100000000}
+        with (
+            patch.object(Backend, "read", return_value=dead),
+            patch.object(BridgeClient, "snapshot", return_value={"scripts": [{"id": "busy", "status": "running"}]}),
+            patch.object(BridgeClient, "run_script") as run,
+        ):
+            code, report = self.cli("headless", "revive")
+        self.assertEqual(2, code, report)
+        self.assertEqual("input_busy", report["error"]["code"])
+        run.assert_not_called()
 
     def test_gui_only_commands_are_unsupported_on_headless(self) -> None:
         for command in GUI_ONLY_COMMANDS:

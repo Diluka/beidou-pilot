@@ -110,7 +110,8 @@ public:
 
     bool Supports(MapleControl::ActionKind kind) const override {
         return kind == MapleControl::ActionKind::Jump || kind == MapleControl::ActionKind::Attack
-               || kind == MapleControl::ActionKind::Pickup || kind == MapleControl::ActionKind::UseItem;
+               || kind == MapleControl::ActionKind::Pickup || kind == MapleControl::ActionKind::UseItem
+               || kind == MapleControl::ActionKind::Revive;
     }
 
     bool SupportsSkill() const override { return true; }
@@ -555,6 +556,95 @@ bool ResolveOwnedKeys(const std::vector<unsigned int>& keys, BeiDouBridge::Nativ
     return true;
 }
 
+bool ReviveClickPosition(unsigned int& x, unsigned int& y, std::string& error) {
+    const auto ui = NativeObservation::Collect("ui");
+    if (ui.status != "ok") {
+        error = "revive_ui_unavailable";
+        return false;
+    }
+    const auto& windows = Member(ui.data, "windows");
+    if (windows.Type() != MapleControl::Value::Kind::Array) {
+        error = "revive_ui_unavailable";
+        return false;
+    }
+    const MapleControl::Value* reviveWindow = nullptr;
+    for (const auto& window : windows.Elements()) {
+        const auto& tables = Member(window, "vtables");
+        if (tables.Type() != MapleControl::Value::Kind::Array || tables.Elements().empty()
+            || tables.Elements().front().Type() != MapleControl::Value::Kind::String
+            || tables.Elements().front().Text() != "0xb3b1a8")
+            continue;
+        if (reviveWindow != nullptr) {
+            error = "revive_dialog_ambiguous";
+            return false;
+        }
+        reviveWindow = &window;
+    }
+    if (reviveWindow == nullptr) {
+        error = "revive_dialog_unavailable";
+        return false;
+    }
+    const auto& buttons = Member(*reviveWindow, "buttons");
+    if (buttons.Type() != MapleControl::Value::Kind::Array || buttons.Elements().size() != 1) {
+        error = "revive_layout_changed";
+        return false;
+    }
+    const auto& button = buttons.Elements().front();
+    const auto& controlId = Member(button, "control_id");
+    const auto& enabled = Member(button, "enabled");
+    if (controlId.Type() != MapleControl::Value::Kind::Number || controlId.Number() != 1
+        || enabled.Type() != MapleControl::Value::Kind::Boolean || !enabled.Boolean()) {
+        error = "revive_layout_changed";
+        return false;
+    }
+    const auto& rect = Member(*reviveWindow, "game_rect");
+    const auto& dialog = Member(ui.data, "dialog");
+    const auto& buttonValidation = Member(dialog, "button_layout_validation");
+    const auto& camera = Member(dialog, "camera_viewport");
+    if (rect.Type() != MapleControl::Value::Kind::Object || dialog.Type() != MapleControl::Value::Kind::Object
+        || buttonValidation.Type() != MapleControl::Value::Kind::String
+        || buttonValidation.Text() != "camera-projection-verified-click-pending"
+        || camera.Type() != MapleControl::Value::Kind::Object) {
+        error = "revive_layout_changed";
+        return false;
+    }
+    const auto readInteger = [](const MapleControl::Value& value, std::int64_t& result) {
+        if (value.Type() != MapleControl::Value::Kind::Number || !std::isfinite(value.Number())
+            || std::trunc(value.Number()) != value.Number()
+            || value.Number() < (std::numeric_limits<std::int32_t>::min)()
+            || value.Number() > (std::numeric_limits<std::int32_t>::max)())
+            return false;
+        result = static_cast<std::int64_t>(value.Number());
+        return true;
+    };
+    std::int64_t left = 0, top = 0, buttonX = 0, buttonY = 0, width = 0, height = 0;
+    std::int64_t windowWidth = 0, windowHeight = 0, viewLeft = 0, viewTop = 0, viewRight = 0, viewBottom = 0;
+    if (!readInteger(Member(rect, "left"), left) || !readInteger(Member(rect, "top"), top)
+        || !readInteger(Member(button, "layout_x"), buttonX) || !readInteger(Member(button, "layout_y"), buttonY)
+        || !readInteger(Member(button, "width"), width) || !readInteger(Member(button, "height"), height)
+        || !readInteger(Member(*reviveWindow, "width"), windowWidth)
+        || !readInteger(Member(*reviveWindow, "height"), windowHeight) || !readInteger(Member(camera, "left"), viewLeft)
+        || !readInteger(Member(camera, "top"), viewTop) || !readInteger(Member(camera, "right"), viewRight)
+        || !readInteger(Member(camera, "bottom"), viewBottom) || width <= 0 || height <= 0 || windowWidth <= 0
+        || windowHeight <= 0) {
+        error = "revive_layout_changed";
+        return false;
+    }
+    const auto localX = buttonX + width / 2;
+    const auto localY = buttonY + height / 2;
+    const auto screenX = left + localX;
+    const auto screenY = top + localY;
+    if (localX < 0 || localX >= windowWidth || localY < 0 || localY >= windowHeight || viewRight <= viewLeft
+        || viewBottom <= viewTop || screenX < 0 || screenY < 0 || screenX >= viewRight - viewLeft
+        || screenY >= viewBottom - viewTop || screenX > 0x7fff || screenY > 0x7fff) {
+        error = "revive_layout_changed";
+        return false;
+    }
+    x = static_cast<unsigned int>(screenX);
+    y = static_cast<unsigned int>(screenY);
+    return true;
+}
+
 bool ApplyOwnedKeys(BeiDouBridge::NativeKeyInput& target, const std::vector<unsigned int>& keys, std::string& error) {
     BeiDouBridge::NativeKeyInput::Mask desired{};
     if (!ResolveOwnedKeys(keys, desired, error)) return false;
@@ -640,6 +730,29 @@ bool BeiDouTickAdapter::SetActionIntent(const MapleControl::Action& request, std
     if (!Supports(request.kind)) {
         error = "unsupported: tick_action";
         return false;
+    }
+    if (request.kind == MapleControl::ActionKind::Revive) {
+        if (!previousState.ready || !previousState.characterKnown || !previousState.character.known[6]) {
+            error = "character_unavailable";
+            return false;
+        }
+        if (previousState.character.values[6] != 0) {
+            error = "already_alive";
+            return false;
+        }
+        if (previousState.reviveRequestable == MapleControl::Fact::False) {
+            error = "revive_not_requestable";
+            return false;
+        }
+        unsigned int x = 0, y = 0;
+        if (!ReviveClickPosition(x, y, error)) return false;
+        std::uint32_t windowManager = 0, input = 0;
+        if (!ReadAt(0x00BEC20C, windowManager) || windowManager == 0 || !ReadAt(0x00BEC33C, input) || input == 0) {
+            error = "input_route_unavailable";
+            return false;
+        }
+        tickInput.SetIntent(request, currentNative.user);
+        return true;
     }
     if (!previousState.ready || previousState.character.values[6] == 0) {
         error = "state_unavailable_or_dead";
@@ -877,8 +990,9 @@ void ReadCommand() {
         valid = valid && scriptId.size() == 32
                 && scriptId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos && !(stream >> extra);
         if (operation == "script")
-            valid = valid && generation == sceneGeneration && value <= 0xffffffffULL && previousState.ready
-                    && previousState.character.values[6] > 0;
+            // Dead-state tick scripts may submit player.revive(); action admission
+            // rejects other native actions when the current HP is zero.
+            valid = valid && generation == sceneGeneration && value <= 0xffffffffULL && previousState.ready;
         else
             valid = valid && value == 0;
     } else
@@ -989,6 +1103,41 @@ bool DeliverTickInput() {
     tickInput.MovementFlushed(updatedCharacter, characterUpdates, exited);
     const auto now = GetTickCount64();
     const auto& intent = tickInput.Intent();
+    if (tickInput.DispatchPending() && intent.kind == MapleControl::ActionKind::Revive
+        && !tickInput.action.TransitionsPending()) {
+        unsigned int x = 0, y = 0;
+        std::string error;
+        if (!previousState.ready || !previousState.characterKnown || !previousState.character.known[6])
+            error = "character_unavailable";
+        else if (previousState.character.values[6] != 0)
+            error = "already_alive";
+        else if (previousState.reviveRequestable == MapleControl::Fact::False)
+            error = "revive_not_requestable";
+        else if (!ReviveClickPosition(x, y, error)) {
+            // Preserve the exact native-observation reason.
+        } else {
+            std::uint32_t windowManager = 0, input = 0;
+            if (!ReadAt(0x00BEC20C, windowManager) || windowManager == 0 || !ReadAt(0x00BEC33C, input) || input == 0)
+                error = "input_route_unavailable";
+        }
+        if (!error.empty()) {
+            tickInput.ReleaseAction();
+            tickInput.result.reason = error;
+            return false;
+        }
+        const auto request = tickInput.TakeDispatch(now);
+        const auto revision = tickInput.IntentRevision();
+        const auto coordinates = ((y & 0xffffu) << 16) | (x & 0xffffu);
+        ++inputEvents;
+        dispatchInput(0x200, 0, coordinates);
+        if (sequence != frame || revision != tickInput.IntentRevision()) return false;
+        ++inputEvents;
+        dispatchInput(0x201, 1, coordinates);
+        ++inputEvents;
+        dispatchInput(0x202, 0, coordinates);
+        if (sequence != frame || revision != tickInput.IntentRevision()) return false;
+        if (request.kind == MapleControl::ActionKind::Revive) tickInput.result.reason = "revive_request_dispatched";
+    }
     const bool ordinaryKey = intent.kind == MapleControl::ActionKind::Jump
                              || intent.kind == MapleControl::ActionKind::Pickup
                              || (intent.kind == MapleControl::ActionKind::Attack && intent.skillId == 0);
@@ -1121,8 +1270,20 @@ void Tick() {
     const bool characterExited = native.loginStage || native.user == 0;
     tickInput.Observe(native.user, updatedCharacter, characterUpdates, characterExited);
     tickInput.ObserveAction(CaptureNativeAction(native.user), characterExited || changed);
-    if ((changed || !ready || previousState.character.values[6] == 0)
-        && (tickInput.movement.Active() || tickInput.HasIntent() || tickInput.item.Pending()))
+    const bool deadOrStale = changed || !ready || previousState.character.values[6] == 0;
+    const bool pendingRevive = !changed && ready && previousState.characterKnown && previousState.character.known[6]
+                               && previousState.character.values[6] == 0
+                               && tickInput.Intent().kind == MapleControl::ActionKind::Revive;
+    if (deadOrStale && pendingRevive) {
+        // Preserve the one-shot revive until dispatch, but release any stale movement keys.
+        if (tickInput.movement.Active()) {
+            std::string error;
+            if (!tickAdapter.SetHeldKeys({}, error)) {
+                tickAdapter.Release();
+                tickInput.result.reason = error;
+            }
+        }
+    } else if (deadOrStale && (tickInput.movement.Active() || tickInput.HasIntent() || tickInput.item.Pending()))
         tickAdapter.Release();
 
     ReadCommand();
