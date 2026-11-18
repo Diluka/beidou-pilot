@@ -990,8 +990,9 @@ void ReadCommand() {
         valid = valid && scriptId.size() == 32
                 && scriptId.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos && !(stream >> extra);
         if (operation == "script")
-            valid = valid && generation == sceneGeneration && value <= 0xffffffffULL && previousState.ready
-                    && previousState.character.values[6] > 0;
+            // Dead-state tick scripts may submit player.revive(); action admission
+            // rejects other native actions when the current HP is zero.
+            valid = valid && generation == sceneGeneration && value <= 0xffffffffULL && previousState.ready;
         else
             valid = valid && value == 0;
     } else
