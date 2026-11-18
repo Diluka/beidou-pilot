@@ -28,25 +28,22 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/tes
 
 解析库是本地构建产物，新的 worktree 不会继承其他检出的产物；缺少它时，依赖地图、物品等静态资料的测试会返回 `img_parser_unavailable`，不能仅凭这些错误判定客户端逻辑回归。
 
-安装并启动 Docker 后，通过统一入口构建当前提交的无头镜像并检查容器内 CLI：
+在已准备的 `dev/NAME` 角色目录里将 `workbench.json.ref` 设为待测提交，后端选 `headless`。从仓库根运行以下命令，检查该提交的镜像和容器内 CLI（用实际角色名替换 `NAME`）：
 
 ```bash
-mkdir -p tmp/ci-reproduction/workbench
-jq -n --arg ref "$(git rev-parse HEAD)" '{ref:$ref}' \
-  > tmp/ci-reproduction/workbench/workbench.json
-private/workbenches/workbench "$PWD/tmp/ci-reproduction/workbench" build \
-  > tmp/ci-reproduction/build.json
+mkdir -p tmp/ci-reproduction
+workbenches/workbench dev/NAME build > tmp/ci-reproduction/build.json
 image=$(jq -er .data.image tmp/ci-reproduction/build.json)
 docker run --rm --entrypoint beidou-pilot "$image" --help
 ```
 
-无头构建只使用源码与固定依赖，全程离线。CI job 内部直接调用同一份 `docker/headless/Dockerfile`，用户构建统一经 `private/workbenches/workbench DIR build`。容器入口默认读取运行配置；打包检查显式选择 `beidou-pilot` 帮助入口。
+镜像构建不连接游戏服。CI job 内部直接使用 `docker/headless/Dockerfile`；工作台通过 `build` 使用选定的 Git 提交。打包检查显式选择 `beidou-pilot` 帮助入口。
 
 再次执行同一条 `build` 并保存另一份结果，可比较 `data.preparation` 中各阶段的 `outcome/duration_ms` 与实际镜像 ID。GUI 报告复用已有桥 manifest。`data.current_instance` 用于核对所属实例与准备镜像的关系；准备不改变运行中的客户端。失败时结合 `error.stage`、已完成阶段及 stderr 定位问题，本次产物以实际构建结果为准。
 
 网络需能下载子模块、基础镜像及 Debian 构建包。确认网络权限并按项目网络规则选择代理后，可在启动构建前导出 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`；统一入口按 Docker标准build args 透传这些变量。代理地址须能从构建网络访问，文档不固定本机地址。
 
-GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，开发版本放在 `ref`，然后执行 `private/workbenches/workbench /external/gui-workbench build`。默认由 `gh` 获取所选提交成功的Windows桥CI工件；开发时可在 `bridge_artifact` 配置原生输入匹配的现成工件目录，直接使用本地工件。镜像安装该工件，原始游戏客户端和只读 `Data/` 与工作台仍只在运行时挂载。GUI 装配仅使用 `docker/compose.yaml`；账号、自动生成的服务器快照和用户Lua随整个工作目录进入 `/work`。GUI 与无头的打包检查都确认容器内 CLI 可执行。
+GUI 角色在 `workbench.json` 选择 `backend="beidou"` 和客户端 `ref`，然后执行 `workbenches/workbench dev/GUI_NAME build`。默认由 `gh` 获取所选提交成功的 Windows 桥 CI 工件；`bridge_artifact` 可指定原生输入匹配的本地工件。运行时使用当前启动器配套的 GUI Compose，挂载原客户端、只读 `Data/` 和所选角色目录。GUI 与无头打包检查均须确认容器内 CLI 可执行。
 
 ## 查看结果与合并
 
@@ -66,8 +63,8 @@ CI 的镜像检查覆盖无头镜像；完整 GUI 镜像需按改动在本地构
 
 ## 版本与实例隔离验收
 
-实际游戏验收默认使用常驻服务器，优先复用已授权的已有账号、角色和就绪实例，减少主机内存占用；仅在场景必须时新建账号或角色，隔离服仅用于常驻服无法安全完成验证等特殊情况，并记录原因。离线测试与镜像构建继续离线执行。
+客户端验收使用与需求匹配的真实角色和场景。可在 `dev` 独立准备条件，再用所选提交的 GUI 或 headless 客户端执行并观察结果，作为正式证据。记录分区、版本、场景和实际结果；服务端设置或离线合同不替代游戏内验证。不得为准备样本操作常驻数据。
 
-涉及交付或生命周期且需要两个实例时，优先在常驻服务器中使用两个已授权的不同已有角色验证，同一角色由单一实例接管：实例 A 使用提交 X 启动，主代码更新至 Y 后再启动实例 B；核对双方的 `source_revision/image/run_id`。A 的观察、最小动作、取消放键和正常关闭仍使用 X，B 使用 Y 且不受 A 关闭影响。统一入口的构建、启动、`docker exec` 路由与容器内实际结果分别记录；GUI 和无头受影响的路径分别验证。
+涉及两个实例时，在开发服选两个独立角色：A 以提交 X 启动，B 以提交 Y 启动，核对各自的 `source_revision/image/run_id`。A 的观察、最小动作、取消放键和关闭仍使用 X；B 使用 Y，A 关闭不影响 B 或开发服。统一入口路由与容器内真实结果分别记录；两端受影响的路径分别验证。
 
 正式证据以 PR 提交及实际运行组件为准。由主提交导出的镜像对应已提交源码，GUI 工件需包含本次原生输入。已有实例保持启动时的版本，升级以正常关闭后新建实例完成。

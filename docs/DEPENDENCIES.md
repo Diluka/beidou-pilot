@@ -26,7 +26,7 @@ git submodule update --init --recursive
 - Detours固定与本项目头接口匹配的官方快照。Windows桥构建将对应源码复制到忽略的 `beidou-ijl15/out/detours/`，生成其中的 `lib.X86/`，不改写子模块；版本依据统一来源清单。
 - 引擎内自带的NoLifeNx、GLFW和LZ4头保留上游树结构，随派生引擎维护。无头构建阶段安装 `liblz4-dev`，Bookworm 运行层通过 apt 安装 `libstdc++6` 与 `liblz4-1`，由发行版处理 glibc/libgcc 和加载器；系统库二进制不进入源码。生产 GBK 转换直接使用 glibc 的 iconv/gconv。
 
-客户端镜像统一由[工作台入口](../private/workbenches/workbench) 的 `build` 或新实例 `open` 准备，按选定提交调用两份 Dockerfile。无头原生编译由 [Dockerfile](../docker/headless/Dockerfile) 内部调用 [Makefile](../headless/Makefile)；GUI 完整镜像使用 [GUI Dockerfile](../docker/gui/Dockerfile)，桥工件由 Windows/MSVC 工作流构建，统一入口默认经 `gh` 下载所选提交成功的 CI 工件；开发时可在工作目录配置中指定原生输入匹配的工件目录。Makefile 与 MSVC 保留为镜像交付链内部的编译工具，客户端构建与启动使用统一入口。基础环境和 VirtualGL 版本由 Docker 定义固定，运行资源与镜像职责见 [ARCHITECTURE](ARCHITECTURE.md)。
+客户端镜像统一由[工作台入口](../workbenches/workbench) 的 `build` 或新实例 `open` 准备，按选定提交调用两份 Dockerfile。无头原生编译由 [Dockerfile](../docker/headless/Dockerfile) 内部调用 [Makefile](../headless/Makefile)；GUI 完整镜像使用 [GUI Dockerfile](../docker/gui/Dockerfile)，桥工件由 Windows/MSVC 工作流构建，统一入口默认经 `gh` 下载所选提交成功的 CI 工件；开发时可在工作目录配置中指定原生输入匹配的工件目录。Makefile 与 MSVC 保留为镜像交付链内部的编译工具，客户端构建与启动使用统一入口。基础环境和 VirtualGL 版本由 Docker 定义固定，运行资源与镜像职责见 [ARCHITECTURE](ARCHITECTURE.md)。
 
 GUI 使用带日期标签的 Wine 镜像，并安装上游发布的 VirtualGL deb。客户端镜像保留组件版本、标签及适用许可，使用包管理器的默认校验。
 
@@ -47,7 +47,7 @@ done
 
 ```bash
 HTTP_PROXY=http://PROXY_HOST:PORT HTTPS_PROXY=http://PROXY_HOST:PORT \
-    NO_PROXY=localhost,127.0.0.1 private/workbenches/workbench DIR build
+    NO_PROXY=localhost,127.0.0.1 workbenches/workbench dev/NAME build
 ```
 
 入口已将 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 传给 Docker 构建。构建容器内的 `127.0.0.1` 指向容器自身，代理地址需使用构建容器可达的地址。保留固定版本和官方来源；恢复下载后继续核对完整镜像构建、客户端启动和已有角色接续，各项分别记录结果。

@@ -1,0 +1,6 @@
+{
+  "project": "beidou-pilot-dev",
+  "service": "beidou-server-all",
+  "expected_image": "ghcr.io/beidoums/beidou-server-all:v1.12@sha256:fbf6f63c85995b42816a00aac9fe047016b59a5ad4b975666095d67897a68952",
+  "network": "beidou-pilot-dev_game"
+}

@@ -5,7 +5,9 @@ umask 077
 
 usage() {
     cat <<'EOF'
-用法：private/workbenches/workbench DIR [COMMAND] [客户端命令参数]
+用法：workbenches/workbench {live|dev}/角色 [COMMAND] [客户端命令参数]
+      workbenches/workbench list [live|dev]
+      workbenches/workbench server dev up|status|stop|cli [参数]
 
   build            从 main 或 workbench.json.ref 构建/复用镜像
   plan             只读核对服务器，不构建或启动
@@ -15,18 +17,17 @@ usage() {
   status           查询本工作台，省略命令时默认执行
   close            正常关闭并核对所属容器退出
   resources-check  用无头镜像离线检查原版 Data/IMG，不登录
-  notes            读取本工作台 README、PLAN、HANDOFF 和脚本说明
+  notes            读取本工作台 README、PLAN/STATE、HANDOFF 和脚本说明
   其他命令         交给所属容器内的 beidou-pilot
 
-  --list           列出本机已有工作台目录
   --help           显示本说明
 
 目录内维护 account.json、可选 workbench.json、计划、脚本与运行数据。
-workbench.json 可配置 backend、ref、timeout、bridge_artifact、server、cache_dir。
+workbench.json 可配置 backend、ref、timeout、bridge_artifact、cache_dir。
 默认 headless、main、90秒。GUI 使用本启动器的 Compose 清单装配所选版本的镜像。
-cache_dir 为宿主绝对路径，默认 <workbench>/cache；容器内固定为 /cache。
-常驻服务器由本脚本固定；server 对象仅用于显式开发隔离目标。
-资源路径统一读取主检出 private/workbenches/resources.json，不接收命令行配置覆盖。
+cache_dir 为角色目录内的宿主绝对路径，默认 <workbench>/cache；容器内固定为 /cache。
+两区只读取主检出 private/workbenches/config 下对应的服务器配置与共享资源路径。
+开发服 stop 不清库；角色工作台 close 不停止服务器。脚本相对当前角色的 scripts/。
 EOF
 }
 
@@ -59,20 +60,123 @@ if [ "$#" -eq 0 ] || [ "$1" = --help ] || [ "$1" = -h ]; then usage; exit 0; fi
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 repository=$(git -C "$here" rev-parse --show-toplevel)
 main_root=$(git -C "$repository" worktree list --porcelain | sed -n 's/^worktree //p' | head -n1)
-if [ "$1" = --list ]; then
-    [ "$#" -eq 1 ] || fail usage '--list 不接收其他参数。'
-    for directory in "$main_root/private/workbenches"/*; do
-        if [ -d "$directory" ] && { [ -f "$directory/account.json" ] || [ -f "$directory/PLAN.md" ]; }; then
-            printf '%s\n' "$directory"
+private_root="$main_root/private/workbenches"
+config_root="$private_root/config"
+
+# New connections and administrative operations resolve the environment, never the role.
+read_server() {
+    local file="$config_root/$environment.server.json"
+    [ -f "$file" ] || fail server_config_required "缺少 $environment 分区的服务器配置。"
+    server_config=$(jq -ce 'select(type == "object" and
+        ((keys - ["project","service","expected_image","network"]) | length == 0) and
+        (.project | strings | test("^[a-z0-9][a-z0-9_-]*$")) and
+        (.service | strings | test("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")) and
+        (.expected_image | strings | test("^([^@[:space:]]+@)?sha256:[0-9a-f]{64}$"))) |
+        select((has("network") | not) or (.network | strings | length > 0))' "$file") ||
+        fail server_config_invalid "$environment.server.json 需要 project、service 和 expected_image，可指定 network。"
+    project=$(jq -r .project <<<"$server_config")
+    service=$(jq -r .service <<<"$server_config")
+    if [ "$environment" = dev ]; then
+        jq -e '.service == "beidou-server-all" and .network == (.project + "_game")' <<<"$server_config" >/dev/null ||
+            fail server_config_invalid '开发服须使用清单中的 beidou-server-all 服务和该项目的 _game 网络。'
+        if [ -e "$config_root/live.server.json" ]; then
+            jq -e --arg project "$project" '.project | strings | length > 0 and . != $project' "$config_root/live.server.json" >/dev/null ||
+                fail target_invalid '开发项目必须与已配置的常驻项目不同。'
         fi
+    fi
+}
+
+resolved=
+owned_network=
+resolve_target() {
+    servers=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service")
+    [ "$(wc -w <<<"$servers")" -eq 1 ] || fail target_not_unique '目标必须唯一匹配一个游戏服务容器。'
+    server_info=$(docker inspect "$servers" | jq -e '.[0] | select(.State.Running and .HostConfig.NetworkMode != "host")') ||
+        fail target_stopped '目标未运行或网络不符合要求。'
+    if [ "$environment" = dev ]; then
+        jq -e '.Config.Labels["beidou.workbench.environment"] == "dev"' <<<"$server_info" >/dev/null ||
+            fail target_invalid '目标容器不属于开发工作台。'
+        jq -e '((.HostConfig.PortBindings // {})|length) == 0' <<<"$server_info" >/dev/null ||
+            fail target_invalid '隔离目标不能发布宿主端口。'
+    elif jq -e '.Config.Labels["beidou.workbench.environment"] == "dev"' <<<"$server_info" >/dev/null; then
+        fail target_invalid '常驻区不能使用开发服容器。'
+    fi
+    server_id=$(jq -r .Id <<<"$server_info")
+    server_image=$(jq -r .Image <<<"$server_info")
+    expected_image=$(jq -r .expected_image <<<"$server_config")
+    if [ "$expected_image" != "$server_image" ]; then
+        expected_id=$(docker image inspect "$expected_image" --format '{{.Id}}') || fail server_image_unavailable '缺少配置的服务器镜像。'
+        [ "$expected_id" = "$server_image" ] || fail server_image_changed '服务器镜像与已确认配置不符。'
+    fi
+    network=$(jq -r '.network // empty' <<<"$server_config")
+    if [ -n "$network" ]; then
+        docker network inspect "$network" | jq -e --arg project "$project" --arg zone "$environment" '.[0] |
+            .Internal and .Labels["com.docker.compose.project"] == $project and
+            ($zone != "dev" or .Labels["com.docker.compose.network"] == "game")' >/dev/null ||
+            fail target_invalid '目标网络必须是同项目的 internal 网络。'
+        target_ip=$(jq -er --arg network "$network" '.NetworkSettings.Networks[$network].IPAddress | select(length > 0)' <<<"$server_info") ||
+            fail target_invalid '目标尚未加入指定网络。'
+    else
+        network=
+        target_ip=
+    fi
+    resolved=$(jq -nc --arg project "$project" --arg service "$service" --arg id "$server_id" --arg image "$server_image" \
+        --arg network "$network" --arg ip "$target_ip" '{project:$project,service:$service,container_id:$id,image:$image,network:$network,ip:$ip}')
+}
+
+case "$1" in
+list)
+    [ "$#" -le 2 ] || fail usage 'list [live|dev]'
+    case "${2-}" in '') zones=(live dev);; live|dev) zones=("$2");; *) fail usage '分区须为 live 或 dev。';; esac
+    for zone in "${zones[@]}"; do
+        for directory in "$private_root/$zone"/*; do
+            if [ -d "$directory" ] && [ ! -L "$directory" ] && [ -f "$directory/account.json" ]; then printf '%s/%s\n' "$zone" "${directory##*/}"; fi
+        done
     done
-    exit 0
-fi
-case "$1" in -*) fail usage '先指定工作目录，再指定命令；配置从工作目录读取。' ;; esac
-workbench=$1
+    exit 0;;
+server)
+    [ "$#" -ge 3 ] && [ "$2" = dev ] || fail usage '服务器管理只接受 server dev up|status|stop|cli。'
+    environment=dev; operation=$3; shift 3
+    case "$operation" in up|stop|status) [ "$#" = 0 ] || fail usage '服务器生命周期命令不接受附加参数。';; cli) :;; *) fail usage '未知开发服操作。';; esac
+    read_server
+    # A mistaken project name must not adopt or stop an unrelated Compose deployment.
+    members=$(docker ps -aq --filter "label=com.docker.compose.project=$project") || fail docker_unavailable '无法核验开发服项目。'
+    if [ -n "$members" ]; then
+        docker inspect $members | jq -e 'all(.[]; .Config.Labels["beidou.workbench.environment"] == "dev")' >/dev/null ||
+            fail target_invalid '该项目已有不属于开发工作台的容器。'
+    fi
+    if [ "$operation" = cli ]; then
+        resolve_target
+        exec docker exec -i "$server_id" /bin/sh /run/beidou-dev/cli.sh "$@"
+    fi
+    env_file="$config_root/dev-server.env"
+    [ -f "$env_file" ] && [ "$(stat -Lc %a "$env_file")" = 600 ] || fail private_file_permissions 'dev-server.env 须存在且权限为 0600。'
+    export BEIDOU_SERVER_IMAGE; BEIDOU_SERVER_IMAGE=$(jq -r .expected_image <<<"$server_config")
+    compose=(docker compose --env-file "$env_file" -p "$project" -f "$repository/docker/dev-server/compose.yaml")
+    case "$operation" in
+        up)
+            volume="${project}_workbench-db"
+            existing=$(docker volume ls --format '{{.Name}}' --filter "name=^${volume}$") || fail docker_unavailable '无法核验开发数据库卷。'
+            if [ -n "$existing" ]; then
+                docker volume inspect "$volume" | jq -e --arg p "$project" '.[0].Labels |
+                    .["com.docker.compose.project"] == $p and .["com.docker.compose.volume"] == "workbench-db" and .["beidou.workbench.environment"] == "dev"' >/dev/null ||
+                    fail target_invalid '同名卷不属于此开发工作台，未启动或修改。'
+            fi
+            exec "${compose[@]}" up -d --wait;;
+        status) exec "${compose[@]}" ps -a;;
+        stop) exec "${compose[@]}" stop;;
+    esac;;
+esac
+
+# Only a single role inside the chosen partition can be mounted as /work.
+[[ "$1" =~ ^(live|dev)/([[:alnum:]][[:alnum:]_.-]*)$ ]] || fail invalid_workbench '使用 live/角色 或 dev/角色。'
+environment=${BASH_REMATCH[1]}
+workbench="$private_root/$1"
 shift
-[ -d "$workbench" ] || fail invalid_workbench '须指定已有工作台目录。'
-workbench=$(realpath "$workbench")
+[ -d "$workbench" ] && [ "$(realpath "$workbench")" = "$workbench" ] || fail invalid_workbench '工作台须为所属分区内的实际目录。'
+for role_path in account.json runtime/default scripts; do
+    [ "$(realpath -m "$workbench/$role_path")" = "$workbench/$role_path" ] || fail invalid_workbench '账号、运行目录和脚本目录不能通过链接切换工作台。'
+done
 command=${1:-status}
 if [ "$#" -gt 0 ]; then shift; fi
 if [ "$command" = build ]; then
@@ -110,8 +214,10 @@ case "$command" in
 esac
 if [ "$command" = notes ]; then
     printf '工作台：%s\n' "$workbench"
-    for document in README.md PLAN.md HANDOFF.md scripts/README.md; do
+    if [ "$environment" = live ]; then role_notes=PLAN.md; else role_notes=STATE.md; fi
+    for document in README.md "$role_notes" HANDOFF.md scripts/README.md; do
         if [ -f "$workbench/$document" ]; then
+            [ "$(realpath "$workbench/$document")" = "$workbench/$document" ] || fail invalid_workbench '说明文件不可链接到其他资料。'
             printf '\n--- %s ---\n' "$document"
             cat -- "$workbench/$document"
         fi
@@ -182,6 +288,11 @@ archive_exit() {
 
 exec_cli() {
     local token child result=0 interrupted=false cli_user
+    local exec_directory=()
+    if [ "${1-}" = script ]; then
+        mkdir -p "$workbench/scripts"
+        exec_directory=(--workdir /work/scripts)
+    fi
     token=$(tr -d '-' </proc/sys/kernel/random/uuid)
     cli_user=$(jq -r .Config.User <<<"$inspect")
     if [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = beidou ]; then cli_user=1000:1000; fi
@@ -191,7 +302,7 @@ exec_cli() {
             printf '%s\n' '调用中断尚未确认；保留所属实例，原生任务状态请另行查询。' >&2
     }
     trap forward_cancel INT TERM
-    setsid docker exec -i --user "$cli_user" --env "BEIDOU_EXEC_TOKEN=$token" "$id" beidou-pilot --json "$@" <&0 &
+    setsid docker exec -i "${exec_directory[@]}" --user "$cli_user" --env "BEIDOU_EXEC_TOKEN=$token" "$id" beidou-pilot --json "$@" <&0 &
     child=$!
     wait "$child" || result=$?
     if "$interrupted"; then
@@ -306,17 +417,14 @@ esac
 settings='{}'
 if [ -f "$workbench/workbench.json" ]; then
     settings=$(jq -e 'select(type == "object") | select(
-        ((keys - ["backend", "ref", "timeout", "bridge_artifact", "server", "cache_dir"]) | length) == 0
+        ((keys - ["backend", "ref", "timeout", "bridge_artifact", "cache_dir"]) | length) == 0
         and (if has("backend") then .backend == "headless" or .backend == "beidou" else true end)
         and (if has("ref") then (.ref | type == "string" and length > 0) else true end)
         and (if has("timeout") then (.timeout | type == "number" and . >= 5 and . <= 180) else true end)
         and (if has("bridge_artifact") then (.bridge_artifact | type == "string" and length > 0) else true end)
         and (if has("cache_dir") then (.cache_dir | type == "string" and length > 0 and startswith("/")) else true end)
-        and (if has("server") then (.server | type == "object"
-            and (keys == ["expected_image", "project", "service"] or keys == ["expected_image", "network", "project", "service"])
-            and all(.[]; type == "string" and length > 0) and .project != "beidou-ms") else true end)
         )' "$workbench/workbench.json") ||
-        fail workbench_config_invalid 'workbench.json 仅支持 backend、ref、timeout、bridge_artifact、server、cache_dir；请移除未知字段并检查取值，cache_dir 须为宿主绝对路径，server 仅允许显式开发隔离目标。'
+        fail workbench_config_invalid 'workbench.json 仅支持 backend、ref、timeout、bridge_artifact、cache_dir；请移除未知字段并检查取值，cache_dir 须为宿主绝对路径。选服由分区决定。'
 fi
 if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
     wait_runtime
@@ -324,7 +432,7 @@ if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
     exit $?
 fi
 if [ -f "$workbench/server.json" ] || [ -f "$workbench/resources.json" ]; then
-    fail workbench_migration_required '目录含旧 server.json/resources.json；隔离服务器请配置到 workbench.json.server，资源路径请收拢到公共 resources.json。'
+    fail workbench_migration_required '目录含旧 server.json/resources.json；服务器和资源只从 private/workbenches/config 读取。'
 fi
 backend=$(jq -r '.backend // "headless"' <<<"$settings")
 source_ref=$(jq -r '.ref // "main"' <<<"$settings")
@@ -341,8 +449,7 @@ if [ -n "$bridge" ]; then
 fi
 if [ "$command" = resources-check ]; then backend=headless; fi
 account="$workbench/account.json"
-resources="$main_root/private/workbenches/resources.json"
-workspace_server=true
+resources="$config_root/resources.json"
 
 resource_path() {
     local path
@@ -351,53 +458,8 @@ resource_path() {
     realpath "$path"
 }
 
-read_server() {
-    if jq -e 'has("server")' <<<"$settings" >/dev/null; then
-        workspace_server=false
-        server_config=$(jq -c '.server' <<<"$settings")
-    else
-        workspace_server=true
-        local expected_image
-        expected_image=$(docker image inspect ghcr.io/beidoums/beidou-server-all:v1.12 --format '{{.Id}}') ||
-            fail server_image_unavailable '固定常驻服务器镜像 ghcr.io/beidoums/beidou-server-all:v1.12 不可用。'
-        server_config=$(jq -nc --arg image "$expected_image" \
-            '{project:"beidou-ms",service:"beidou-server-all",expected_image:$image}')
-    fi
-}
-
-resolved=
-owned_network=
-resolve_target() {
-    read_server
-    project=$(jq -r .project <<<"$server_config")
-    service=$(jq -r .service <<<"$server_config")
-    servers=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service")
-    [ "$(wc -w <<<"$servers")" -eq 1 ] || fail target_not_unique '目标必须唯一匹配一个游戏服务容器。'
-    server_info=$(docker inspect "$servers" | jq -e '.[0] | select(.State.Running and .HostConfig.NetworkMode != "host")') ||
-        fail target_stopped '目标未运行或网络不符合要求。'
-    if ! "$workspace_server"; then
-        jq -e '((.HostConfig.PortBindings // {})|length) == 0' <<<"$server_info" >/dev/null ||
-            fail target_invalid '隔离目标不能发布宿主端口。'
-    fi
-    server_id=$(jq -r .Id <<<"$server_info")
-    server_image=$(jq -r .Image <<<"$server_info")
-    [ "$(jq -r .expected_image <<<"$server_config")" = "$server_image" ] || fail server_image_changed '服务器镜像与已确认配置不符。'
-    network=$(jq -r '.network // empty' <<<"$server_config")
-    if [ -n "$network" ]; then
-        docker network inspect "$network" | jq -e --arg project "$project" '.[0] |
-            .Internal and .Labels["com.docker.compose.project"] == $project' >/dev/null ||
-            fail target_invalid '目标网络必须是同项目的 internal 网络。'
-        target_ip=$(jq -er --arg network "$network" '.NetworkSettings.Networks[$network].IPAddress | select(length > 0)' <<<"$server_info") ||
-            fail target_invalid '目标尚未加入指定网络。'
-    else
-        network=
-        target_ip=
-    fi
-    resolved=$(jq -nc --arg project "$project" --arg service "$service" --arg id "$server_id" --arg image "$server_image" \
-        --arg network "$network" --arg ip "$target_ip" '{project:$project,service:$service,container_id:$id,image:$image,network:$network,ip:$ip}')
-}
-
 if [ "$command" != build ] && [ "$command" != resources-check ]; then
+    read_server
     resolve_target
     if [ "$command" = plan ]; then
         jq -nc --argjson data "$resolved" '{ok:true,command:"plan",data:$data}'
@@ -414,6 +476,7 @@ native_paths=(docker/headless/Dockerfile headless/Makefile headless/src shared/l
 if [ "$backend" = beidou ]; then
     native_paths=(beidou-ijl15/ezorsia beidou-ijl15/ezorsia.sln beidou-ijl15/tools/build-agent-bridge.ps1
         shared/lua-runtime headless/src/ImgResources.cpp headless/src/ImgResources.h headless/src/ImgKeys.cpp
+        headless/src/WorldMapImage.cpp headless/src/WorldMapImage.h
         third_party/lua third_party/detours .github/workflows/agent-bridge.yml)
 fi
 build_image() {
@@ -486,23 +549,26 @@ build_image() {
             fi
         fi
         bridge=$(realpath "$bridge")
-        source_tree=$(jq -er .source.tree_sha "$bridge/manifest.json")
+        mkdir -p "$context/build-input"
+        cp "$bridge/ijl15.dll" "$bridge/manifest.json" "$context/build-input/"
+        bridge_sha=$(sha256sum <"$context/build-input/ijl15.dll" | cut -d' ' -f1)
+        jq -e --arg sha "$bridge_sha" '.artifact.sha256 == $sha' "$context/build-input/manifest.json" >/dev/null ||
+            fail bridge_artifact_mismatch '桥 DLL 的 SHA-256 与工件清单不符，未构建 GUI 镜像。'
+        source_tree=$(jq -er .source.tree_sha "$context/build-input/manifest.json")
         git -C "$repository" cat-file -e "$source_tree^{tree}" 2>/dev/null ||
             fail bridge_source_unavailable '本地缺少桥工件的来源树，不能确认原生构建输入。'
         git -C "$repository" diff --quiet "$source_tree" "$revision" -- "${native_paths[@]}" ||
             fail bridge_build_required '该提交的 GUI 原生输入已变化，须准备匹配的 Windows 桥工件。'
-        mkdir -p "$context/build-input"
-        cp "$bridge/ijl15.dll" "$bridge/manifest.json" "$context/build-input/"
         if [ "$command" = build ]; then
             complete_preparation_stage "$bridge_outcome" "$(jq -nc --arg source "$bridge_source" --argjson run "$bridge_run" \
-                --slurpfile manifest "$bridge/manifest.json" '{source:$source,manifest:$manifest[0]} +
+                --slurpfile manifest "$context/build-input/manifest.json" '{source:$source,manifest:$manifest[0]} +
                 (if $run == null then {} else {ci_run_id:$run} end)')"
         fi
     fi
-    flock -u 9
     begin_preparation_stage client_image
     docker build --file "$context/$dockerfile" --build-arg "SOURCE_REVISION=$revision" \
         --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY --tag "$image_tag" "$context" >&2
+    flock -u 9
     image=$(docker image inspect "$image_tag" --format '{{.Id}}')
     complete_preparation_stage created "$(jq -nc --arg tag "$image_tag" --arg image "$image" '{tag:$tag,image:$image}')"
 }
@@ -527,7 +593,7 @@ if [ "$command" = resources-check ]; then
 fi
 
 [ -f "$account" ] && [ "$(stat -Lc %a "$account")" = 600 ] || fail private_file_permissions 'account.json 须存在且权限为 0600。'
-[ -f "$resources" ] || fail resources_required '须提供共享 private/workbenches/resources.json 资源配置。'
+[ -f "$resources" ] || fail resources_required '须提供共享 private/workbenches/config/resources.json 资源配置。'
 account=$(realpath "$account")
 resources=$(realpath "$resources")
 data=$(resource_path game_data)
@@ -556,6 +622,8 @@ fi
 cleanup_network
 cache_dir=$(jq -r '.cache_dir // empty' <<<"$settings")
 [ -n "$cache_dir" ] || cache_dir="$workbench/cache"
+cache_dir=$(realpath -m "$cache_dir")
+[[ "$cache_dir" == "$workbench/"* ]] || fail cache_dir_unavailable '缓存须位于所属角色目录内。'
 mkdir -p "$cache_dir" || fail cache_dir_unavailable "缓存目录不可用：$cache_dir"
 cache_dir=$(realpath "$cache_dir") || fail cache_dir_unavailable "缓存目录不可用：$cache_dir"
 run_id=$(date -u +%Y%m%dT%H%M%S.%NZ)

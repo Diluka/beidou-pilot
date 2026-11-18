@@ -1,21 +1,21 @@
 # AI 操作者的客户端使用指引
 
-本篇供新会话从已有授权继续工作台。宿主唯一入口为 `private/workbenches/workbench DIR COMMAND`，客户端命令由它转发给所属容器。以下 `/external/workbench` 须替换为本次已确认的工作目录；参数以 `--help` 为准，完整命令、Lua 与支持范围见 [CLI](CLI.md)、[Lua API](LUA_API.md) 和[架构说明](ARCHITECTURE.md)。
+先按任务选择分区：常驻角色自然游玩用 `live/NAME`，开发调试、复现和匹配样本验收用 `dev/NAME`。从仓库根运行 `workbenches/workbench list` 查找角色；下文 `NAME`、`GUI_NAME` 是分区内角色目录名。宿主将客户端命令转发到该角色的容器。完整参数见 [CLI](CLI.md)，环境准备见[工作台指南](../workbenches/README.md)。
 
 可使用仓库技能 [beidou-pilot-client](../.agents/skills/beidou-pilot-client/SKILL.md) 按当前状态选择最短路径；缺少账号、没有角色或停在首次界面时，查其[账号准备与首次登录](../.agents/skills/beidou-pilot-client/references/first-login.md)，已有角色则按记录继续。
 
 ## 先确认目标、角色和操作者
 
-从用户指令及已有记录确认服务器用途、已授权的账号与角色、允许的玩法和本次操作者。工作台中的养成方案和交接记录负责跨会话连续性，源码版本作为补充参考。可从本机 `LOCAL.md` 等索引找到配置；授权以用户指令和已有记录为准，文件存在、服务运行和账号可登录作为辅助事实。凭据只从授权私密文件读取，不进入参数值、日志或 Issue。
+从任务和角色记录确认分区、授权范围及操作者。常驻角色沿 `PLAN.md` 和已确认进度接续；开发角色读 `STATE.md`，核对职业、等级、技能、装备、位置及记录来源。文件存在或账号可登录不等于获准操作。凭据留在私密配置，不写入参数、日志或 Issue。
 
-工作目录提供 `account.json`，可选 `workbench.json` 保存后端和开发设置；资源配置统一在主检出目录的 `private/workbenches/resources.json`。常驻服务器由入口固定；调试和实际游戏验收默认使用常驻服，优先找回并复用已有工作台、账号角色和就绪实例，减少主机内存占用。只有场景必须时才新建账号或角色；仅在常驻服无法安全完成验证等特殊情况下使用隔离服，记录原因并在该目录的 `workbench.json.server` 显式声明。先执行只读检查：
+开发样本需要准备时先确认 `workbenches/workbench server dev status`；需要启服才执行 `server dev up`。在此独立环境可用 `server dev cli` 提供的命令建号、建角或准备条件，再由真实客户端确认。不要从常驻服复制账号、存档或修改常驻数据。操作所选角色前先做只读检查：
 
 ```bash
-private/workbenches/workbench /external/workbench plan
-private/workbenches/workbench /external/workbench status
+workbenches/workbench dev/NAME plan
+workbenches/workbench dev/NAME status
 ```
 
-`plan` 只读取配置与目标，不构建、不启动客户端或服务。确认返回的项目、服务、容器与镜像属于本次授权目标。固定的常驻目标作为授权范围的依据；开发隔离配置须为非 `beidou-ms` 项目、不发布宿主端口，指定网络时须为同项目internal网络。未指定网络则由 `open` 准备所属连接。核验失败先查配置和真实原因，确需切换服务器时明确说明目标。
+`plan` 只核对目标，不构建或启动客户端和服务器。确认项目、服务、容器和镜像属于所选分区；配置缺失、身份不符或服务未就绪时在本区处理，不换到另一服。
 
 结合本地认领、其他工作台与外部操作者、服务器在线账号/角色列表判断占用。`status` 只说明当前工作台实例，账号空闲状态以在线列表和认领记录为准。同一目标同一角色只交给一名控制者，GUI 只保留一名明确操作者；发现占用先完成交接。
 
@@ -24,15 +24,15 @@ private/workbenches/workbench /external/workbench status
 准备方式见 [README](../README.md#准备)和[外部资源配置](ARCHITECTURE.md#外部资源与配置)。新实例默认使用 `main` 当时的已提交版本构建或复用镜像；开发验证在 `workbench.json.ref` 明确指定提交。已有容器后续命令继续使用启动时的 CLI 与内置 Lua，与当前主检出无关。
 
 ```bash
-private/workbenches/workbench /external/workbench open
-private/workbenches/workbench /external/workbench doctor
-private/workbenches/workbench /external/workbench status
-private/workbenches/workbench /external/workbench bridge status
-private/workbenches/workbench /external/workbench capabilities
-private/workbenches/workbench /external/workbench snapshot
+workbenches/workbench dev/NAME open
+workbenches/workbench dev/NAME doctor
+workbenches/workbench dev/NAME status
+workbenches/workbench dev/NAME bridge status
+workbenches/workbench dev/NAME capabilities
+workbenches/workbench dev/NAME snapshot
 ```
 
-两端使用同一份 `account.json`（权限 `0600`）：`username/password/character_id`，以及默认各为0的 `world/channel`。`character_id` 指已有角色；频道索引从0开始，返回实际频道从1开始。每个目录使用自己的 `default` 容器，启动器把本次账号和已解析服务器配置保存到 `runtime/default/RUN_ID`。整个工作目录读写挂到容器 `/work`，`CLIENT_ROOT` 指向本轮目录；用户只维护根账号与新建设置，运行快照自动生成。入图等待由 `workbench.json.timeout` 配置。
+两个后端都从所选角色目录读取 `account.json`（权限 `0600`）：`username/password/character_id`，以及默认各为 0 的 `world/channel`。`character_id` 指已有角色；频道索引从 0 开始，返回实际频道从 1 开始。每个角色有自己的 `default` 客户端容器，角色目录读写挂到 `/work`。启动器将本次账号和分区服务器配置保存到 `runtime/default/RUN_ID`，`CLIENT_ROOT` 指向本次运行根。入图等待由 `workbench.json.timeout` 配置。
 
 入图需同时确认新鲜状态中的 `ready`、角色 ID/名称、频道、地图和位置，原生 `instance_id/run_id` 须属于本次运行。`status` 还提供 `source_revision/image/run_id`，用它说明正在验证哪个版本。容器运行、认证成功和角色选择成功是前置条件，入图以新鲜状态的完整核对为准。启动失败先读 `status` 和工作台 `runtime/default/` 中的运行日志，保留未确认事实，再决定是否重开。
 
@@ -43,15 +43,15 @@ private/workbenches/workbench /external/workbench snapshot
 在已确认安全区域选择一项有界 tick 动作并比较前后事实。仓库示例 [tick-jump-attack.lua](../shared/scripts/examples/tick-jump-attack.lua) 是可复用的有界移动跳砍脚本；仅需短移时写一个设置 `player.move`、在 `context.tick.time` 到达期限后清方向并返回 `done` 的 tick 文件。下面按示例运行，须先核实该方向有足够空间且没有其他脚本控制角色：
 
 ```bash
-private/workbenches/workbench /external/workbench script describe /opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua
-private/workbenches/workbench /external/workbench script run /opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua --direction right --seconds 5
-private/workbenches/workbench /external/workbench snapshot
-private/workbenches/workbench /external/workbench script status
+workbenches/workbench dev/NAME script describe /opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua
+workbenches/workbench dev/NAME script run /opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua --direction right --seconds 5
+workbenches/workbench dev/NAME snapshot
+workbenches/workbench dev/NAME script status
 ```
 
-按真实位置判断移动，按经验/等级判断成长，按库存和 HP/MP 判断恢复，按槽位变化判断换装。请求受理、输入派发、脚本完成与放键是分别可观察的事实，命中、拾取或任务完成另行核对。消费、交易、奖励、加点等结果不明时先观察，不可逆操作按一次执行处理；成长决策延续已核实的养成计划。
+按真实位置判断移动，按经验/等级判断成长，按库存和 HP/MP 判断恢复，按槽位变化判断换装。受理、输入派发、脚本完成与放键分别核对；命中、拾取或任务完成另行验证。结果不明时不重放消费、交易、奖励或加点。常驻角色按养成计划行动；开发样本按目标条件准备和核对。
 
-角色动作与持续策略都写 tick Lua。宿主入口转发 `script run FILE --seconds N`；工作台内的 `scripts/` 直接位于 `/work/scripts`，例如 `script run /work/scripts/control-tick.lua --seconds 20`。持续模式须明确 `--continuous`，文件须含顶层 `main(context)`，脚本入口只有文件。内置 Lua 与 tick 示例随镜像固定，用户提交的 Lua 是本次明确输入，可在已有实例中更新。维护示例前阅读 [shared/scripts/AGENTS.md](../shared/scripts/AGENTS.md)，写脚本查 [Tick Lua API](LUA_TICK_API.md)。
+角色持续动作写在 tick Lua 文件或目录脚本包里，入口声明 `main(context)`。`script describe/run/start` 从本角色的 `/work/scripts` 解析相对路径，例如 `script run control-tick.lua --seconds 20`；内置示例使用明确的容器绝对路径。长时运行须显式 `--continuous`。维护示例前读 [shared/scripts/AGENTS.md](../shared/scripts/AGENTS.md)，写脚本查 [Tick Lua API](LUA_TICK_API.md)。
 
 同层移动、单根绳梯和门户都有场景前提。缺能力或静态资料时按实际错误与[缺口索引](CLIENT_LIMITATIONS.md)处理，未知事实保留原样。
 
@@ -60,8 +60,8 @@ private/workbenches/workbench /external/workbench script status
 需要 GUI 特有操作时，先完成账号和控制权交接，再按 [GUI 准备](CLI.md#原版-gui)从对应工作台启动：
 
 ```bash
-private/workbenches/workbench /external/gui-workbench open
-private/workbenches/workbench /external/gui-workbench snapshot
+workbenches/workbench dev/GUI_NAME open
+workbenches/workbench dev/GUI_NAME snapshot
 ```
 
 GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，与无头端一样使用自己的 `default` 实例；账号只支持 `world=0`，按角色ID和频道正常登录。两端共享 CLI，但各自保留能力范围。GUI 的 `--character/--character-index/--channel` 和固定账号/名称文件已退役。
@@ -74,7 +74,7 @@ docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop s
 
 原语直接操作该容器的显示环境，仅用于没有原生入口的界面操作。首次登录与建角走独立命令，由原生桥调用原版客户端内部动作；手工键鼠只在原生入口无法操作时作为兜底，并须先确认账号、身份与选择意图。未知选择按当前记录处理。
 
-当前统一 `open` 要求真实已有角色 CID，无角色账号的启动模式作为独立能力跟踪。已有且归属正确的 GUI 会话可以接续正常首次流程；全新账号需先建立可接续会话，再按该流程继续。
+有已有 CID 时用 `open` 入图。要验证首次登录或建角流程，使用开发分区的独立账号和[首次登录入口](CLI.md#首次登录与建角)，并分别核对注册、建角、绑定和实际入图。
 
 ## 停止、下线与交接
 
@@ -83,13 +83,13 @@ docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop s
 需要停止脚本时按当前 `script.id` 显式 `script cancel --session SCRIPT_ID`，核对终态和放键后再交接；客户端关闭另用 `close`。详情见[控制协议](CONTROL.md#控制权期限与取消)。
 
 ```bash
-private/workbenches/workbench /external/workbench script status
-private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
-private/workbenches/workbench /external/workbench bridge status
-private/workbenches/workbench /external/workbench close
-private/workbenches/workbench /external/workbench status
+workbenches/workbench dev/NAME script status
+workbenches/workbench dev/NAME script cancel --session SCRIPT_ID
+workbenches/workbench dev/NAME bridge status
+workbenches/workbench dev/NAME close
+workbenches/workbench dev/NAME status
 ```
 
 取消后核对同一原生身份下的终态与 `control_released`；全局 `held_keys` 仍可能包含其他会话的合法持键，有惯性或动画时继续观察。需要停止全部会话并释放按键时用 `stop` 或 `bridge stop`；正常交接只取消自己的 `script.id`。短脚本结束保留客户端；宿主 `close` 才经 Docker 正常关闭、核实退出并回收。容器内 `close` 会提示使用宿主生命周期入口。危险区域结束有界执行后，先进入已验证安全位置或关闭所属实例，再长时间分析。
 
-交接保留账号角色的计划、实际进度、下一步、所用源码/镜像/桥版本与必要证据引用。公开记录只给无私密结论。离线检查、构建、入图、移动、战斗和恢复分别报告，各端结果按本端真实结果记录。
+交接时，常驻角色记录养成计划及实际进度，开发角色更新 `STATE.md` 的当前条件、来源与核对时间。公开记录只给无私密结论。记录源码、镜像、桥和场景，分别汇报离线检查、构建、入图及实际动作。日常 `close` 只回收客户端，开发服无需随客户端关闭或重置。

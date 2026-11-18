@@ -5,7 +5,7 @@ description: "通过 beidou-pilot CLI 登录已有北斗角色、观察游戏状
 
 # 北斗客户端 CLI
 
-`beidou-pilot` 是 headless 与 GUI 共用的客户端入口。本技能针对已准备好的当前实例；命令直接执行，输出使用 `--json`。先确认任务授权的账号角色与操作者，同一目标同一角色只有一名控制者，GUI 保持一名明确操作者。
+`beidou-pilot` 是 headless 与 GUI 共用的容器内入口。宿主用 `workbenches/workbench list [live|dev]` 找到已授权角色：常驻养成用 `live/NAME`，开发调试与复现用 `dev/NAME`。在所属实例内直接运行以下命令。同一目标同一角色只有一名控制者，GUI 保持一名明确操作者。
 
 ## 观察当前实例
 
@@ -60,7 +60,7 @@ beidou-pilot --json bridge status
 
 ## 执行和取消 Lua
 
-角色动作与持续脚本都写 tick Lua 文件。长期脚本优先使用原生 `script start`，由客户端独立执行；保留返回的 `script.id`，按该会话查询和显式取消。`LUA_PATH` 是当前运行环境可读取、含顶层 `main(context)` 的 UTF-8 Lua 文件路径。
+角色动作与持续脚本写在所属角色的 `scripts/`。`LUA_PATH` 可以是 UTF-8 单文件或含 `main.lua` 的目录包；`script describe/run/start` 的相对路径从 `/work/scripts` 解析，容器绝对路径也可显式使用。长期任务用 `script start`，保留返回的 `script.id` 以便查询或取消。
 
 ```bash
 beidou-pilot --json script start LUA_PATH --seconds 20
@@ -72,7 +72,7 @@ beidou-pilot --json bridge status
 - 有界执行使用 `--seconds N`；操作者明确选择长期持续脚本时使用 `script start LUA_PATH --continuous`。原生受理后 CLI 返回，脚本继续执行。
 - 取消只针对匹配的当前 `script.id`。核对同一 `instance_id/run_id` 的终态与会话级 `control_released`；全局 `held_keys` 可能仍包含其他会话的合法持键。旧会话 ID 只对应历史脚本。活动 Lua 期间普通 GUI 输入遇到 `input_busy` 时先确认控制者。
 - `script run` 同步等待结果。`run/start` 等待期间收到 Ctrl+C/SIGINT/SIGTERM 只结束 CLI 等待；已发布任务继续由原生执行，两端语义相同。等待超时或陈旧观察错误时，任务是否受理与停止以当前状态为准。先用 `script status` 核对当前任务与身份，不重放 `start`；主动取消使用 `script cancel --session`，再核对终态和放键。
-- `script run/start` 只接受文件。文件是使用 tick API 的 UTF-8 Lua，按 tick 引擎执行、无需声明引擎；需要调整调度或预算时在前导注释用 `@tick.*`。例如：
+- 脚本入口须声明 `main(context)`；需要调整调度或预算时在前导注释用 `@tick.*`。例如将下例保存为该角色的 `scripts/observe-tick.lua`：
 
 ```lua
 local function main(context)
@@ -82,7 +82,7 @@ end
 ```
 
 ```bash
-beidou-pilot --json script run /work/scripts/observe-tick.lua --seconds 5
+beidou-pilot --json script run observe-tick.lua --seconds 5
 ```
 
 脚本受理、完成、放键和真实游戏效果分别核对，依据实际位置、HP/MP、库存或任务等事实判断。结果不明先观察，尤其不重放消费、奖励、加点和交易。脚本结束或取消会保留客户端。客户端关闭是另一项明确操作：`close` 返回 `host_lifecycle_required`，交由实例生命周期管理方关闭并核对退出。危险区域的有界任务结束后，先核对角色安全状态；需要移动至安全位置或关闭时，分别明确执行。

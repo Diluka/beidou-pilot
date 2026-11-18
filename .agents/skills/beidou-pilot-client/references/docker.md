@@ -4,13 +4,13 @@
 
 ## 镜像和资源边界
 
-headless 与 GUI 两个客户端镜像安装同一份 CLI、辅助引擎和内置 Lua，分别提供无头原生环境与 Wine/GUI 环境。新实例默认使用 `main` 的已提交版本，已有实例保持启动时的代码；从 `status` 核对实际源码与镜像版本。客户端运行时不挂载宿主开发源码。
+headless 与 GUI 两个客户端镜像安装同一份 CLI、辅助引擎和内置 Lua，分别提供无头原生环境与 Wine/GUI 环境。客户端镜像按角色 `ref`（默认 `main`）构建，GUI Compose 来自当前宿主启动器，已有实例保持启动时的代码；从 `status` 核对实际源码与镜像版本。客户端运行时不挂载宿主开发源码。
 
 原版客户端目录只读挂载到 `/client`，原版 `Data/**/*.img` 只读挂载到 `/data`。无头资源入口和 Python 静态查询共用原生 IMG 解析器，不需要预先生成 NX、XML 或 PKG4 中间文件；GUI 客户端仍从 `/client` 读取其运行资源。账号、用户 Lua、桥通信目录和运行数据由生命周期入口装配，不进入镜像。用户 Lua 是运行输入，修改它无需重建客户端镜像。
 
 ## 从宿主查询或调用
 
-先核对容器归属，再将 `CONTAINER` 替换为所属容器：
+宿主优先用 `workbenches/workbench dev/NAME status` 或 `workbenches/workbench live/NAME status`。分区配置、开发服生命周期和角色目录见[工作台指南](../../../../workbenches/README.md)。需要只读排障时，先核对容器归属，再将 `CONTAINER` 替换为所属容器：
 
 ```bash
 docker exec CONTAINER beidou-pilot --help
@@ -19,7 +19,7 @@ docker exec CONTAINER beidou-pilot --json script status
 docker exec CONTAINER beidou-pilot --json snapshot
 ```
 
-账号和 Lua 文件参数按容器内路径解释。CLI 的 `--root/--backend/--instance` 核对本容器身份，连接保持原状。容器创建、服务器镜像与网络核验、正常关闭均由仓库生命周期入口负责，具体用法见 [CLI](../../../../docs/CLI.md)。容器内 `close` 返回 `host_lifecycle_required`，下线状态以宿主入口的退出核对为准。
+账号文件使用容器路径；脚本相对路径从当前角色的 `/work/scripts` 解析，绝对路径指容器内文件或目录包。CLI 的 `--root/--backend/--instance` 核对本容器身份，连接保持原状。容器创建、服务器镜像与网络核验、正常关闭均由仓库生命周期入口负责，具体用法见 [CLI](../../../../docs/CLI.md)。容器内 `close` 返回 `host_lifecycle_required`，下线状态以宿主入口的退出核对为准。
 
 ## 信号与取消
 

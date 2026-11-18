@@ -1,5 +1,6 @@
 """宿主准备报告合同；Docker 替身仅核对装配请求，不代表真实镜像或游戏效果。"""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -52,22 +53,22 @@ else:
 """
 
 
-class WorkbenchBuildContract(unittest.TestCase):
+class WorkbenchFixture(unittest.TestCase):
     def setUp(self) -> None:
         source = Path(__file__).resolve().parents[2]
         main_root = subprocess.check_output(
             ["git", "-C", str(source), "worktree", "list", "--porcelain"], text=True
         ).splitlines()[0].removeprefix("worktree ")
-        temporary_root = Path(main_root) / "tmp/56-build-report"
+        temporary_root = Path(main_root) / "tmp/286-workbench-environments/tests"
         temporary_root.mkdir(parents=True, exist_ok=True)
         temporary = tempfile.TemporaryDirectory(dir=temporary_root)
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
         self.repository = self.directory / "repo"
         self.repository.mkdir()
-        self.entry = self.repository / "private/workbenches/workbench"
+        self.entry = self.repository / "workbenches/workbench"
         self.entry.parent.mkdir(parents=True)
-        shutil.copyfile(source / "private/workbenches/workbench", self.entry)
+        shutil.copyfile(source / "workbenches/workbench", self.entry)
         self.native = self.repository / "shared/lua-runtime/TickRuntime.cpp"
         self.native.parent.mkdir(parents=True)
         self.native.write_text("native version one\n")
@@ -77,11 +78,15 @@ class WorkbenchBuildContract(unittest.TestCase):
         self.git("init", "--initial-branch=main")
         self.git("config", "user.name", "Build contract")
         self.git("config", "user.email", "build-contract@example.invalid")
-        self.git("add", "private/workbenches/workbench", "shared/lua-runtime/TickRuntime.cpp", "docker/headless/Dockerfile")
+        self.git("add", "workbenches/workbench", "shared/lua-runtime/TickRuntime.cpp", "docker/headless/Dockerfile")
         self.git("commit", "-m", "fixture source")
         self.revision = self.git("rev-parse", "HEAD")
-        self.workbench = self.directory / "workbench"
-        self.workbench.mkdir()
+        self.private_root = self.repository / "private/workbenches"
+        self.config = self.private_root / "config"
+        self.config.mkdir(parents=True)
+        self.role = "dev/fixture"
+        self.workbench = self.private_root / self.role
+        self.workbench.mkdir(parents=True)
         self.state_path = self.directory / "docker.json"
         self.state_path.write_text(json.dumps({"images": {}, "container": None, "calls": [], "fail_build": False}))
         binaries = self.directory / "bin"
@@ -95,12 +100,18 @@ class WorkbenchBuildContract(unittest.TestCase):
     def git(self, *arguments: str) -> str:
         return subprocess.check_output(["git", "-C", str(self.repository), *arguments], text=True).strip()
 
+    def command(self, *args):
+        return subprocess.run(["bash", str(self.entry), *args], env=self.environment,
+                              capture_output=True, text=True, timeout=15)
+
+    def invoke(self, *args):
+        return self.command(self.role, *args)
+
+
+class WorkbenchBuildContract(WorkbenchFixture):
     def build(self, settings: dict[str, str | bool]):
         (self.workbench / "workbench.json").write_text(json.dumps(settings))
-        result = subprocess.run(
-            ["bash", str(self.entry), str(self.workbench), "build"],
-            env=self.environment, capture_output=True, text=True, timeout=15,
-        )
+        result = self.invoke("build")
         self.assertTrue(result.stdout.strip(), result.stderr)
         return result, json.loads(result.stdout)
 
@@ -159,12 +170,19 @@ class WorkbenchBuildContract(unittest.TestCase):
     def test_gui_reports_the_selected_manifest_and_rejects_changed_native_inputs(self) -> None:
         bridge = self.directory / "bridge"
         bridge.mkdir()
+        dll = b"bridge fixture"
         manifest = {"source": {"commit_sha": self.revision, "tree_sha": self.git("rev-parse", "HEAD^{tree}")},
                     "target": {"executable_sha256": "client-fingerprint"},
-                    "artifact": {"sha256": "bridge-fingerprint"}, "dependencies": {"lua": {"version": "5.4.9"}}}
+                    "artifact": {"sha256": hashlib.sha256(dll).hexdigest()}, "dependencies": {"lua": {"version": "5.4.9"}}}
         (bridge / "manifest.json").write_text(json.dumps(manifest))
-        (bridge / "ijl15.dll").write_bytes(b"bridge fixture")
+        (bridge / "ijl15.dll").write_bytes(dll + b" modified")
         settings = {"ref": self.revision, "backend": "beidou", "bridge_artifact": str(bridge)}
+        failed, report = self.build(settings)
+        self.assertNotEqual(0, failed.returncode)
+        self.assertEqual(("bridge_artifact_mismatch", "bridge"), (report["error"]["code"], report["error"]["stage"]))
+        self.assertFalse(any(c[0] == "build" for c in json.loads(self.state_path.read_text())["calls"]))
+
+        (bridge / "ijl15.dll").write_bytes(dll)
         result, report = self.build(settings)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(manifest, report["data"]["preparation"]["bridge"]["manifest"])
@@ -173,15 +191,20 @@ class WorkbenchBuildContract(unittest.TestCase):
         self.assertEqual(0, repeated.returncode, repeated.stderr)
         self.assertEqual(manifest, report["data"]["preparation"]["bridge"]["manifest"])
         self.assertEqual("image", report["data"]["preparation"]["bridge"]["source"])
-        self.native.write_text("native version two\n")
-        self.git("add", "shared/lua-runtime/TickRuntime.cpp")
-        self.git("commit", "-m", "change native input")
-        settings["ref"] = self.git("rev-parse", "HEAD")
-        failed, report = self.build(settings)
-        self.assertNotEqual(0, failed.returncode)
-        self.assertEqual(("bridge_build_required", "bridge"), (report["error"]["code"], report["error"]["stage"]))
-        self.assertIn("context", report["data"]["preparation"])
-        self.assertNotIn("client_image", report["data"]["preparation"])
+        for path in ("shared/lua-runtime/TickRuntime.cpp", "headless/src/WorldMapImage.cpp", "headless/src/WorldMapImage.h"):
+            with self.subTest(native_input=path):
+                self.git("switch", "-q", "--detach", self.revision)
+                source = self.repository / path
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("new GUI native input\n")
+                self.git("add", path)
+                self.git("commit", "-m", "change native input")
+                settings["ref"] = self.git("rev-parse", "HEAD")
+                failed, report = self.build(settings)
+                self.assertNotEqual(0, failed.returncode)
+                self.assertEqual(("bridge_build_required", "bridge"), (report["error"]["code"], report["error"]["stage"]))
+                self.assertIn("context", report["data"]["preparation"])
+                self.assertNotIn("client_image", report["data"]["preparation"])
 
     def test_build_command_failure_keeps_diagnostics_and_reports_the_phase(self) -> None:
         state = json.loads(self.state_path.read_text())

@@ -12,7 +12,7 @@
 需要共享 IMG 解析库，CI 生成的库不会留在检出目录里，本地运行时显式给出：
 
     BEIDOU_IMG_LIBRARY=<检出>/headless/build/libbeidou-img.so \
-        MAPLE_RESOURCES_CONFIG=<检出>/private/workbenches/resources.json \
+        MAPLE_RESOURCES_CONFIG=<主检出>/private/workbenches/config/resources.json \
         PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/beidou-game-guide/tools/world_map.py
 
 跨图路线只由客户端原生 `beidou-pilot world-map route START GOAL` 提供；本技能不包含路线计算。

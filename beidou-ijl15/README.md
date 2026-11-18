@@ -4,15 +4,15 @@
 
 ## 本项目构建与使用
 
-客户端统一从仓库根的 Docker 入口构建并启动：
+从仓库根选择已准备的 `dev/GUI_NAME`，其 `workbench.json` 设置 `backend="beidou"`：
 
 ```bash
-./beidou-pilot --workbench /external/gui-workbench --backend beidou --json build
-./beidou-pilot --workbench /external/gui-workbench --backend beidou --json open
-./beidou-pilot --workbench /external/gui-workbench --json close
+workbenches/workbench dev/GUI_NAME build
+workbenches/workbench dev/GUI_NAME open
+workbenches/workbench dev/GUI_NAME close
 ```
 
-GUI 默认通过 GitHub CLI `gh` 获取所选提交成功的 `agent-bridge` CI 工件，核对原生输入后将 DLL 与清单装入 GUI 镜像。开发时可用 `--bridge-artifact DIR` 显式复用匹配的现成工件，此时无需 `gh`。工作台资源配置提供原客户端及其原版 `Data/` 路径，不读取 NX 或导出 XML。Python 静态查询在自身进程内使用独立 IMG 解码库直接读取同一份只读资源，不经桥 DLL，也不要求启动游戏；桥仅承担运行时观察与控制。具体字段和授权要求见 [CLI](../docs/CLI.md#原版-gui)。
+GUI 默认通过 GitHub CLI `gh` 获取所选提交成功的 `agent-bridge` CI 工件，核对原生输入后将 DLL 与清单装入 GUI 镜像。开发时可用 角色配置中的 `bridge_artifact` 显式复用匹配的现成工件，此时无需 `gh`。工作台资源配置提供原客户端及其原版 `Data/` 路径，不读取 NX 或导出 XML。Python 静态查询在自身进程内使用独立 IMG 解码库直接读取同一份只读资源，不经桥 DLL，也不要求启动游戏；桥仅承担运行时观察与控制。具体字段和授权要求见 [CLI](../docs/CLI.md#原版-gui)。
 
 原始客户端目录只读挂载；容器在自己的运行副本中装配镜像内的桥，并保留原图片库 `2ijl15.dll`。原资源文件保持原样，账号、Wine prefix、桥目录和日志外置到所属工作台。
 
@@ -22,7 +22,7 @@ GUI 默认通过 GitHub CLI `gh` 获取所选提交成功的 `agent-bridge` CI �
 
 上游将主分支的两次 Release 称为 v1 和 v2。其原说明记录：v2 在部分机器进入登录界面时会崩溃，v1 没有这个问题，因此此分支继承 v1 并单独开发，主要服务于北斗客户端。
 
-上游原说明列出的服务器项目为 [SleepNap/BeiDou](https://github.com/SleepNap/BeiDou)。本仓库不提供服务端，实际操作目标仍按工作台授权和 target 核验。
+上游原说明列出的服务器项目为 [SleepNap/BeiDou](https://github.com/SleepNap/BeiDou)。本仓库不包含服务端源码；使用时按工作台分区与实际目标核验。
 
 ## 上游更新记录
 

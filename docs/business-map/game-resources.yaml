@@ -52,7 +52,7 @@ nodes:
         value: cli/beidou_pilot/catalog.py
         description: 定义本地静态资料的读取、查询及来源投影。
       - kind: file
-        value: cli/config/resources.example.json
+        value: workbenches/examples/resources.example.json
         description: 无私密内容的资源配置格式示例。
   - id: game-resources.img-parser
     kind: operation
@@ -87,7 +87,7 @@ nodes:
         value: ResourcePaths
         description: 声明 game_data、gui_client 与 gui_dll 路径。
       - kind: file
-        value: cli/config/resources.example.json
+        value: workbenches/examples/resources.example.json
         description: 提供无私密内容的资源配置格式示例。
   - id: game-resources.check
     kind: operation
@@ -96,7 +96,7 @@ nodes:
     aliases: [resources-check, 离线检查]
     anchors:
       - kind: file
-        value: private/workbenches/workbench
+        value: workbenches/workbench
         description: 宿主统一入口固定 headless 镜像并装配只读资源检查。
       - kind: document
         value: docs/CLI.md

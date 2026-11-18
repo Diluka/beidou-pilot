@@ -1,14 +1,14 @@
 # 命令使用
 
-唯一宿主入口是 [private/workbenches/workbench](../private/workbenches/workbench)，它直接调用 Git、Docker 和 jq。使用 `private/workbenches/workbench DIR COMMAND` 指定一个账号角色的工作目录；两个镜像中的客户端命令仍叫 `beidou-pilot`，由宿主入口通过 `docker exec` 执行。
+宿主使用 [workbench](../workbenches/workbench)；从仓库根调用 `workbenches/workbench live/NAME COMMAND` 或 `workbenches/workbench dev/NAME COMMAND`。`NAME` 是分区内已准备的角色目录名，不传任意宿主路径。两个客户端镜像内都使用 `beidou-pilot`。
 
 ## 工作目录配置
 
-工作目录必须已存在。普通工作目录只维护 `account.json` 和需要的新建设置 `workbench.json`，养成计划、交接、用户 Lua 和运行数据也放在该目录。资源路径共用主检出目录中的 `private/workbenches/resources.json`，字段示例见 [resources.example.json](../cli/config/resources.example.json)。从开发 worktree 调用时也读取这份公共配置。
+角色目录在主检出的 `private/workbenches/{live,dev}/NAME/`。`account.json`、可选 `workbench.json`、`scripts/` 和运行数据归该角色。常驻角色在 `PLAN.md` 接续养成；开发角色在 `STATE.md` 记录可复现条件及最近核验。
 
-常驻服务器的项目、服务与公开镜像引用固定在统一入口中。启动器核对真实服务器容器及其镜像；普通目录的服务器信息由入口固定，宿主服务器路径、账号路径和资源路径使用统一入口的配置。固定目标作为目标依据，本次玩法授权及账号占用另行核对。
+共享资源在主检出的 `private/workbenches/config/resources.json`，常驻与开发目标分别在同目录的 `live.server.json` 和 `dev.server.json`。分区决定目标，角色配置不能覆盖；目标缺失或不匹配时不改连另一服。部署步骤、开发服环境文件及公开示例见[工作台指南](../workbenches/README.md)。
 
-`workbench.json` 可省略，默认使用 headless、main 和90秒入图等待。GUI 目录的最小 [配置示例](../cli/config/workbench.example.json) 为：
+`workbench.json` 可省略，默认使用 headless、main 和90秒入图等待。GUI 目录的最小 [配置示例](../workbenches/examples/workbench.example.json) 为：
 
 ```json
 {"backend":"beidou"}
@@ -20,29 +20,15 @@
 | `ref` | `main`；开发验收可明确指定已提交版本 |
 | `timeout` | `90`；5至180的数值，仅限制入图等待 |
 | `bridge_artifact` | 可选的匹配 GUI 桥工件目录；相对路径按工作目录解析，省略时经 `gh` 获取相应提交成功 CI 的工件 |
-| `server` | 仅特殊情况确需隔离服时使用的显式对象；日常使用、调试与实际游戏验收默认省略，使用固定常驻服务器 |
-| `cache_dir` | 可选；宿主绝对路径，默认 `<workbench>/cache`，读写挂载到容器内固定 `/cache`（客户端进程 `BEIDOU_CACHE_DIR=/cache`），保存版本化原生世界地图缓存 |
+| `cache_dir` | 可选；须位于所属角色目录内的宿主绝对路径，默认 `<workbench>/cache`，读写挂载到容器内固定 `/cache`（客户端进程 `BEIDOU_CACHE_DIR=/cache`），保存版本化原生世界地图缓存 |
 
-调试和实际游戏验收默认复用常驻服务器与已授权的已有账号角色，只有场景必须时才新建账号或角色。确需隔离服时记录原因，其 `server` 要求 `project/service/expected_image`，`network` 可选。项目须为非 `beidou-ms` 项目，隔离服务器须不发布宿主端口、使用 bridge 网络；指定网络时为同项目 internal 网络并且服务器已连接。省略网络时，启动器为新实例建立所属 internal 连接并在关闭时回收。例如：
-
-```json
-{
-  "backend": "headless",
-  "ref": "COMMIT",
-  "server": {
-    "project": "ISOLATED_COMPOSE_PROJECT",
-    "service": "app",
-    "expected_image": "sha256:VERIFIED_APPLICATION_IMAGE",
-    "network": "ISOLATED_INTERNAL_NETWORK"
-  }
-}
-```
+开发调试或复现选 `dev/NAME`。用 `server dev status` 核对开发服，需要时显式 `server dev up`。通过 `server dev cli` 使用该服实际提供的命令准备账号、角色和场景条件，再从目标客户端核对。`server dev stop` 保留数据，不重置开发服；常驻服不提供此管理入口，不能用于准备开发样本。
 
 启动设置仅在新建时读取。一个目录对应一个账号角色和容器，宿主实例名固定为 `default`；原生 `instance_id/run_id` 核验继续保留。已有容器的 `status/script/close` 依赖目录下的运行登记和实际容器，新建配置修改后新实例再按新版本构建。
 
 ## 版本、挂载与输出
 
-新实例一次解析 `main` 或 `workbench.json.ref` 的已提交 SHA，以该树及固定子模块构建或复用所选后端镜像。本次输入固定为导出时的代码树。已有实例继续运行启动时的 CLI、内置 Lua 和原生组件，实际版本查 `status` 的 `source_revision/image/run_id`。
+客户端镜像按 `workbench.json.ref`（默认 `main`）的已提交 SHA 及固定子模块构建或复用；GUI 运行时装配使用当前宿主启动器配套的 Compose。已有实例继续运行启动时的 CLI、内置 Lua 和原生组件，实际版本查 `status` 的 `source_revision/image/run_id`。
 
 `build` 保留 `data.image/source_revision/backend`，并在 `data.preparation` 中报告实际执行的准备阶段：
 
@@ -58,21 +44,21 @@
 
 整个工作目录以一个读写挂载进入容器 `/work`。宿主保存 `runtime/default/host.json`，本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID`；桥、锁、日志和自动生成的账号/服务器快照按此隔离。资源 `/client` 和 `/data` 保持各自现有只读格式和来源。用户脚本直接使用 `/work/scripts`。`cache_dir`（默认 `<workbench>/cache`）在创建新实例时创建并解析，不可用时启动失败（`cache_dir_unavailable`）；该目录读写挂到容器 `/cache`，GUI 与 headless 相同，客户端进程以 `BEIDOU_CACHE_DIR=/cache` 写入版本化世界地图缓存。
 
-普通结果为 JSON 信封，含 `ok/command/data`；客户端结果还含 `backend/instance`。失败含 `error.code/message/details`，已识别失败退出码2、中断130。`--list` 和 `notes` 输出文本，`watch/events watch` 输出 JSONL，`resources-check` 输出原生资源检查 JSON。
+普通结果为 JSON 信封，含 `ok/command/data`；客户端结果还含 `backend/instance`。失败含 `error.code/message/details`，已识别失败退出码2、中断130。`list` 和 `notes` 输出文本，`watch/events watch` 输出 JSONL，`resources-check` 输出原生资源检查 JSON；`server dev` 的输出来自 Compose 或服务端 CLI。
 
 ## 启动、观察与关闭
 
 ```bash
-private/workbenches/workbench --list
-private/workbenches/workbench /external/workbench notes
-private/workbenches/workbench /external/workbench status
-private/workbenches/workbench /external/workbench plan
-private/workbenches/workbench /external/workbench open
-private/workbenches/workbench /external/workbench snapshot
-private/workbenches/workbench /external/workbench close
+workbenches/workbench list dev
+workbenches/workbench dev/NAME notes
+workbenches/workbench dev/NAME status
+workbenches/workbench dev/NAME plan
+workbenches/workbench dev/NAME open
+workbenches/workbench dev/NAME snapshot
+workbenches/workbench dev/NAME close
 ```
 
-只给工作目录时默认执行只读的 `status`。`notes` 只读已有 README、PLAN、HANDOFF 和脚本说明；`plan` 只核对目标。`build` 可提前准备镜像，`open` 自行构建或复用镜像，并确认本容器已入图。已有正确实例直接观察、接续即可。
+`list [live|dev]` 列出角色。`notes` 读取所选角色的交接资料：常驻角色看养成计划，开发角色看状态记录。`plan` 只核对目标；`build` 准备镜像，`open` 构建或复用后确认入图。`close` 只回收所属客户端，不停止游戏服务器。
 
 两端使用权限为 `0600` 的 `account.json`：必填 `username`、`password`，已有角色的 `open` 还要求真实 `character_id`（正 int32）；`world/channel` 可选、为0基索引，默认各为0。GUI 仅支持世界0、第1至20频道，并按CID选角。密码只从账号文件读取。
 
@@ -83,10 +69,10 @@ private/workbenches/workbench /external/workbench close
 宿主 `login` 启动所选后端的账号会话并等待角色列表；声明同意和账号性别选择需用户明确授权，只在新启动时提供：
 
 ```bash
-private/workbenches/workbench /external/workbench login --accept-terms --gender female
-private/workbenches/workbench /external/workbench login
-private/workbenches/workbench /external/workbench character create --name NAME --gender female --job JOB --face FACE --hair HAIR --hair-color COLOR --skin SKIN --top TOP --bottom BOTTOM --shoes SHOES --weapon WEAPON
-private/workbenches/workbench /external/workbench character result REQUEST_ID --instance-id INSTANCE_ID --run-id RUN_ID
+workbenches/workbench dev/NAME login --accept-terms --gender female
+workbenches/workbench dev/NAME login
+workbenches/workbench dev/NAME character create --name NAME --gender female --job JOB --face FACE --hair HAIR --hair-color COLOR --skin SKIN --top TOP --bottom BOTTOM --shoes SHOES --weapon WEAPON
+workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANCE_ID --run-id RUN_ID
 ```
 
 角色外观等数值须按实际选择填写；`--hair` 是基础发型，`--hair-color` 是独立必填项，不能省略或并入 `--hair`。建角是独立的一次请求，不自动入图。运行中再次 `login` 只观察，不能重新应用启动选项；容器内 `beidou-pilot login [--timeout N]` 不带授权选项时只观察，不接受宿主启动选项。GUI 容器内可显式传 `--gender male|female` 发起首次登录动作，需要同意声明时另加 `--accept-terms`；GUI 动作必须指定性别，无头容器内不接受这些选项。GUI 的账号提交、声明接受、性别、世界、频道与建角步骤由原生桥在游戏线程调用原版客户端内部入口完成，Python 只核对实例身份与页面、保持一次性去重并投影结果，不使用桌面键鼠坐标。已有角色账号若服务端仍要求设置性别，安全收紧后不再依据 CID 隐式选择性别；CID 不代表授权选择。经用户确认后关闭所属实例并核对退出，以 `login --gender male|female` 新启动完成选择并核对角色列表，再关闭该实例、核对退出，最后按真实已有 CID `open`。此迁移路径尚未真实游戏实测。若同时需要接受声明，须另有明确授权并添加 `--accept-terms`。
@@ -115,7 +101,7 @@ private/workbenches/workbench /external/workbench character result REQUEST_ID --
 | `bridge status/stop` | 只读桥状态，或停止全部脚本会话并释放输入 |
 | `stop` | 释放本实例遗留按键，等价于全停会话 |
 
-动作、脚本等客户端参数直接跟在命令后，属于客户端参数。比如 `script run FILE --seconds 20` 的文件路径按容器内部解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查。中断脚本 CLI 只结束等待，脚本取消另行显式 `script cancel --session`。
+动作、脚本等参数由容器内客户端解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查。中断脚本 CLI 只结束等待，脚本取消另行显式 `script cancel --session`。
 
 `snapshot` 与 `inspect character` 的 `character.physics` 是本端同一次原生更新的未插值物理末态（`update_id/step_ms/x/y/velocity/on_ground`），未知字段为 `null`；它与 `character.x/y` 显示位置、`character.velocity` 区间均速语义分开，CLI 只校验并透传，不做运动计算或补齐。字段语义与校准采样见 [Tick Lua API](LUA_TICK_API.md#运动观察与静止参考)。
 
@@ -124,7 +110,7 @@ private/workbenches/workbench /external/workbench character result REQUEST_ID --
 ## 世界门户图与路线查询
 
 ```bash
-private/workbenches/workbench /external/workbench world-map route 100000000 100000100
+workbenches/workbench dev/NAME world-map route 100000000 100000100
 ```
 
 `world-map route START GOAL` 用两个正整数地图号查询原版静态门户模型中的跨图路线。命令只读：不启动客户端、不发送游戏输入，需要该目录已有运行中的客户端提供只读观察通道。缺少子命令、地图号缺失或非正整数、多余参数按 `usage` 拒绝，不会启动客户端。
@@ -150,7 +136,7 @@ private/workbenches/workbench /external/workbench world-map route 100000000 1000
 ## 离线检查资源
 
 ```bash
-private/workbenches/workbench /external/workbench resources-check
+workbenches/workbench dev/NAME resources-check
 ```
 
 该命令固定选择headless镜像，读取公共资源配置并只读解析原版 Data/IMG，全程离线；GUI工作目录也可使用，后端设置保持原样。
@@ -160,9 +146,9 @@ Python `Catalog` 同样直接读取资源配置的 `game_data`，在自身进程
 ## 客户端事件
 
 ```bash
-private/workbenches/workbench /external/gui-workbench events read
-private/workbenches/workbench /external/gui-workbench events watch
-private/workbenches/workbench /external/gui-workbench events watch \
+workbenches/workbench dev/GUI_NAME events read
+workbenches/workbench dev/GUI_NAME events watch
+workbenches/workbench dev/GUI_NAME events watch \
   --cursor '{"instance_id":"本次原生实例","run_id":"本次运行","seq":12}' --seconds 30
 ```
 
@@ -177,9 +163,9 @@ private/workbenches/workbench /external/gui-workbench events watch \
 ## 原生通知气泡
 
 ```bash
-private/workbenches/workbench /external/gui-workbench notifications
-private/workbenches/workbench /external/gui-workbench notifications respond @notificationCURRENT --button 2000
-private/workbenches/workbench /external/gui-workbench notifications respond @notificationCURRENT --button 2001
+workbenches/workbench dev/GUI_NAME notifications
+workbenches/workbench dev/GUI_NAME notifications respond @notificationCURRENT --button 2000
+workbenches/workbench dev/GUI_NAME notifications respond @notificationCURRENT --button 2001
 ```
 
 `notifications` 统一列出同一原生气泡类的所有种类，包含好友、组队、交易、任务、快递等；未识别种类保留整数 `native_kind`，`kind=null`，同样完整返回。来源槽的原始文字为 `source_text`；已证实的玩家、队伍、交互或任务标识分别保留，未知为 `null`。交易 `interaction_id` 与发送者 ID 是两个字段。完整气泡正文尚未提取，`text=null`、`not_covered` 包含 `rendered_body_text`，需要时用当前截图辅助，正文以实际读取结果为准。
@@ -194,27 +180,27 @@ private/workbenches/workbench /external/gui-workbench notifications respond @not
 
 ## 动作与 Lua
 
-客户端只有 tick Lua 引擎。角色动作写在 UTF-8 Lua 文件中，由 `script describe/run/start` 提交；脚本入口只有文件，没有 CLI 动作命令。
+角色动作写在 UTF-8 tick Lua 文件或含 `main.lua` 的目录脚本包中。示例在 `dev/NAME` 的 `scripts/tick_observe.lua` 保存用户脚本：
 
 ```bash
-private/workbenches/workbench /external/workbench script describe /work/scripts/tick_observe.lua
-private/workbenches/workbench /external/workbench script run /work/scripts/tick_observe.lua --ticks 10 --seconds 20
-private/workbenches/workbench /external/workbench script start /work/scripts/tick_observe.lua --seconds 20
-private/workbenches/workbench /external/workbench script status
-private/workbenches/workbench /external/workbench script status --session SCRIPT_ID
-private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
+workbenches/workbench dev/NAME script describe tick_observe.lua
+workbenches/workbench dev/NAME script run tick_observe.lua --ticks 10 --seconds 20
+workbenches/workbench dev/NAME script start tick_observe.lua --seconds 20
+workbenches/workbench dev/NAME script status
+workbenches/workbench dev/NAME script status --session SCRIPT_ID
+workbenches/workbench dev/NAME script cancel --session SCRIPT_ID
 ```
 
 | 命令 | 支持与结果边界 |
 | --- | --- |
 | `script describe FILE\|DIR` | 只读本地 tick 策略文件或目录脚本包，输出 `main(context)`、有效 `@tick` 配置、声明参数和动态用法；输出不含 `mode` 字段，不执行入口。 |
-| `script run/start FILE [策略参数]` | 客户端内同步等待会话终态；等待中断只结束 CLI 等待，已受理会话继续运行。 |
+| `script run/start FILE [策略参数]` | `run` 等待会话终态；`start` 等原生受理后返回。中断等待不会取消已受理会话。 |
 | `script run/start DIR [策略参数]` | tick 目录脚本包：`DIR/main.lua` 为入口，其余 `.lua` 由入口按包内相对路径 `require`；会话状态可查实际装载模块，模块缺失/编译/运行错误带来源模块与行号。 |
 | `script status [--session SCRIPT_ID]` | 只读全部会话 `scripts` 与最新 `script`，可按 ID 选择；tick 会话含调度、动作与所属输入释放事实。 |
 | `script cancel --session SCRIPT_ID` | 精确取消指定会话并等待所属输入释放，其他会话保持。 |
 | `stop`、`bridge stop` | 停止全部会话并释放输入；`stop` 保留为释放遗留按键的轻量入口。 |
 
-`script run/start` 只接受 UTF-8 Lua 文件，文件必须声明顶层 `main(context)` 函数，否则在发布前拒绝。运行期限用 `--seconds`（默认 30，范围 `0.001..4294967.295` 秒）或显式 `--continuous`；期限与单次回调的 `@tick.budget_ms` 独立。文件路径按容器内部解析；工作台整体挂到 `/work`，用户 Lua 直接放在 `/work/scripts`，每次调用读取当前文件内容。脚本日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
+`script describe/run/start` 的相对路径从所选角色的 `/work/scripts` 解析，例如 `tick_observe.lua`；绝对路径指向容器内指定位置，例如 `/opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua`。单文件和目录包规则相同。运行期限用 `--seconds`（默认 30，范围 `0.001..4294967.295` 秒）或显式 `--continuous`；期限与单次回调的 `@tick.budget_ms` 独立。脚本日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
 
 tick 引擎按每会话频率档位到期调用 `main(context)`，通过 `context.state` 保留跨调用状态，通过 `context.game` 的只读领域观察，通过 `context.game.player` 提交方向与动作意图；调用频率、预算、领域字段和动作槽语义以 [Tick Lua API](LUA_TICK_API.md#tick-环境) 为准。tick 入口可以是单文件，也可以是目录脚本包：目录内固定 `main.lua` 为入口，其余 `.lua` 由入口用原生 `require` 按包内相对路径装载，模块文件保持原位置、不复制进会话目录；GUI 与 headless 由原生各自把包根映射到本端文件系统，会话状态可查实际装载模块，模块缺失、编译或运行错误带来源模块与行号。完整示例：
 
@@ -233,7 +219,7 @@ end
 ```
 
 ```bash
-private/workbenches/workbench /external/workbench script run /work/scripts/tick_observe.lua --ticks 120 --continuous
+workbenches/workbench dev/NAME script run tick_observe.lua --ticks 120 --continuous
 ```
 
 脚本统一按 tick 引擎执行，无需声明引擎；`@tick.gear/budget_ms/overrun/abort_commit` 可单独出现在前导注释中；未知或重复的 `@tick.*`、非法值在发布前拒绝。`@tick.gear` 接受 `1/2/3/4`，分别为 10Hz、20Hz、30Hz 和本端原生更新不节流，默认第 3 档；不接受前导零、符号或任意 tick 倍率。首次稳定回调立即执行，之后按绝对相位跳过过期周期，不突发补跑。固定频率是目标而非严格最大延迟。默认单次预算 **100ms / abort / abort_commit=true**；`abort` 默认提交已写草稿后以 `tick_overrun` 终止该会话并放键，`abort_commit=false` 则丢弃草稿；`skip` 仅中断本次调用。预算 hook 无法抢占阻塞的原生 C 调用，适用受信脚本而非恶意源码沙箱。
@@ -266,25 +252,25 @@ end
 无头端保留只读观察，不提供桌面输入入口：`snapshot` 与 `inspect` 返回当前 `interaction.page`、控件 `role/text/enabled/ref` 和场景 NPC 引用；`click`、`ui`、`equip`、`revive`、`hotkeys`、`bind`、`talk`、`dialog`、`shop`、`notifications` 等 GUI 命令在无头端统一返回 `unsupported_capability`。需要激活页面控件或 NPC 时使用原版 GUI 会话；无头端的任务接交等交互能力当前不提供，缺口见[能力边界](CLIENT_LIMITATIONS.md)。
 
 ```bash
-private/workbenches/workbench /external/workbench snapshot
-private/workbenches/workbench /external/workbench inspect quests
+workbenches/workbench dev/NAME snapshot
+workbenches/workbench dev/NAME inspect quests
 ```
 
 页面只有 `source/title/text/controls`，控件只有 `role/text/enabled/ref`。正文或控件未知时为 `null`，`enabled=null` 保持未知。服务端普通脚本页和客户端本地任务页的激活由 GUI 端提供；本地页只显示当前状态能证明的任务条目。任务观察已合并完整角色包与本端正常增量，`live_updates=true`，`live_update_kinds` 为 `not_started/started/completed`。原生观察保留原始进度串，关联语义未核实时 `linked_progress=null`。
 
 ## 原版 GUI
 
-GUI 镜像包含与无头端相同的CLI与Lua，以及Wine/VirtualGL和匹配的桥DLL。其资源路径仍从公共 `private/workbenches/resources.json` 读取；原版客户端只读挂到 `/client`，`game_data` 指向的 `Data/` 只读挂到 `/data`，供 Catalog 使用共享原生解析器。工作目录的 `workbench.json` 设置 `backend="beidou"` 后，使用相同入口：
+GUI 镜像包含与无头端相同的CLI与Lua，以及Wine/VirtualGL和匹配的桥DLL。其资源路径仍从公共 `private/workbenches/config/resources.json` 读取；原版客户端只读挂到 `/client`，`game_data` 指向的 `Data/` 只读挂到 `/data`，供 Catalog 使用共享原生解析器。工作目录的 `workbench.json` 设置 `backend="beidou"` 后，使用相同入口：
 
 ```bash
-private/workbenches/workbench /external/gui-workbench build
-private/workbenches/workbench /external/gui-workbench open
-private/workbenches/workbench /external/gui-workbench doctor
-private/workbenches/workbench /external/gui-workbench snapshot
-private/workbenches/workbench /external/gui-workbench close
+workbenches/workbench dev/GUI_NAME build
+workbenches/workbench dev/GUI_NAME open
+workbenches/workbench dev/GUI_NAME doctor
+workbenches/workbench dev/GUI_NAME snapshot
+workbenches/workbench dev/GUI_NAME close
 ```
 
-[Compose](../docker/compose.yaml) 装配所选版本的 GUI 实例。原客户端只读挂到 `/client`，镜像内的桥位于 `/opt/beidou-pilot/native/ijl15.dll`。容器在 `$CLIENT_ROOT/client` 生成可写运行副本，`Data/` 读取原只读目录，`2ijl15.dll` 图片库仍保留；外部原始文件保持只读。CLI、桌面输入和录制直接使用本容器的桥和显示环境。
+当前启动器配套的 [GUI Compose](../docker/compose.yaml) 装配角色 `ref` 所选镜像。原客户端只读挂到 `/client`，镜像内的桥位于 `/opt/beidou-pilot/native/ijl15.dll`。容器在 `$CLIENT_ROOT/client` 生成可写运行副本，`Data/` 读取原只读目录，`2ijl15.dll` 图片库仍保留；外部原始文件保持只读。CLI、桌面输入和录制直接使用本容器的桥和显示环境。
 
 GUI 容器在自身网络命名空间启用回环游戏端口 NAT，连接已核验目标，服务端公告地址保持原样。Wine prefix、运行日志和桥数据位于本次 `$CLIENT_ROOT/runtime/` 下，由工作台持久化，需允许 `1000:1000` 读写。硬件路径使用 `/dev/dri/renderD128`、`DISPLAY=:97` 的 `1920x1080x24` Xvfb 和窗口管理器、VirtualGL EGL；Wine 虚拟桌面提供原客户端所需显示模式。GUI启动诊断日志写入本次运行目录。
 

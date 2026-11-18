@@ -23,7 +23,9 @@ jobs:
       - name: Build shared IMG parser for Catalog tests
         run: make -C headless build/libbeidou-img.so
       - name: Run offline tests
-        run: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
+          python3 docker/dev-server/test_cli.py
 
   headless-image:
     name: Headless image build

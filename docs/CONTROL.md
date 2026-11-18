@@ -7,14 +7,14 @@
 文件必须包含顶层 `main(context)` 函数，并按 tick 引擎执行，无需声明引擎；`@tick.gear/budget_ms/overrun/abort_commit` 可单独出现在前导注释中。`script describe FILE|DIR` 输出有效 `@tick` 配置和动态参数用法。CLI 注入 `context.options`、初始 `context.scene` 身份锚点与调用方已有的 `route` 等上下文；原生 tick 引擎随后维护当前只读 `scene`，换图与场景代次变化不需要 Python 回填。没有顶层 `main(context)` 的文件会在发布前被拒绝；目录脚本包的 `main.lua` 与单文件策略使用同一套声明和参数规则。
 
 ```bash
-private/workbenches/workbench /external/workbench script run /work/scripts/control.lua --seconds 20
-private/workbenches/workbench /external/workbench script run /work/scripts/control-package --seconds 20
-private/workbenches/workbench /external/workbench script start /work/scripts/control.lua --continuous
-private/workbenches/workbench /external/workbench script status
-private/workbenches/workbench /external/workbench script cancel --session SCRIPT_ID
+workbenches/workbench dev/NAME script run control.lua --seconds 20
+workbenches/workbench dev/NAME script run control-package --seconds 20
+workbenches/workbench dev/NAME script start control.lua --continuous
+workbenches/workbench dev/NAME script status
+workbenches/workbench dev/NAME script cancel --session SCRIPT_ID
 ```
 
-文件路径按容器内部解析；完整工作台读写挂到 `/work`，用户脚本直接读取 `/work/scripts`，内置 Lua 随镜像版本固定。
+工作台角色目录挂到容器 `/work`。`script describe/run/start` 的文件或目录参数若为相对路径，从该角色的 `/work/scripts` 读取；也可显式传容器绝对路径（例如镜像内置示例）。
 
 ## tick 运行与动作槽
 

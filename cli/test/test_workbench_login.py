@@ -1,19 +1,11 @@
 """宿主首次登录参数与运行实例转发的离线合同。"""
 import json
-import subprocess
 import unittest
 
-from .test_workbench_build import WorkbenchBuildContract
+from .test_workbench_build import WorkbenchFixture
 
 
-class WorkbenchLoginContract(unittest.TestCase):
-    setUp = WorkbenchBuildContract.setUp
-    git = WorkbenchBuildContract.git
-
-    def invoke(self, *args):
-        return subprocess.run(["bash", str(self.entry), str(self.workbench), *args],
-                              env=self.environment, capture_output=True, text=True, timeout=15)
-
+class WorkbenchLoginContract(WorkbenchFixture):
     def running_client(self):
         root = self.workbench / "runtime/default/run"
         (root / "state").mkdir(parents=True)

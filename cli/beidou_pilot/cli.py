@@ -27,6 +27,9 @@ from .strategies import (
 from . import __version__
 
 
+WORKBENCH_SCRIPTS = Path("/work/scripts")
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise ClientError("usage", message)
@@ -40,6 +43,12 @@ def map_number(text: str) -> int:
     if value <= 0:
         raise argparse.ArgumentTypeError("地图号须为正整数。")
     return value
+
+
+def script_path(text: str) -> Path:
+    if not text:
+        raise argparse.ArgumentTypeError("须指定 tick Lua 文件或目录脚本包。")
+    return WORKBENCH_SCRIPTS / text
 
 
 def parser() -> Parser:
@@ -93,7 +102,12 @@ def parser() -> Parser:
     q = command("script", "运行tick Lua脚本，或只读当前脚本状态", allow_abbrev=False)
     q.add_argument("action", choices=["run", "start", "status", "cancel", "describe"])
     q.add_argument("--session", help="cancel必须指定script.id；status可按script.id查询指定会话")
-    q.add_argument("file", type=Path, nargs="?", help="含main(context)入口的tick Lua文件，或含main.lua的目录脚本包")
+    q.add_argument(
+        "file",
+        type=script_path,
+        nargs="?",
+        help="含 main(context) 的 tick Lua 文件或含 main.lua 的包目录；相对路径从 /work/scripts 解析，也接受容器绝对路径",
+    )
     duration = q.add_mutually_exclusive_group()
     duration.add_argument("--seconds", type=float, default=30, help="客户端内脚本时限，默认30秒")
     duration.add_argument(
