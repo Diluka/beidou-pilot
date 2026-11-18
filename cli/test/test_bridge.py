@@ -374,6 +374,20 @@ class BridgeContract(unittest.TestCase):
                     self.client.snapshot()
                 self.assertEqual("invalid_bridge_state", failure.exception.code)
 
+    def test_revive_input_action_is_valid_in_running_script_state(self) -> None:
+        script = tick_script("e" * 32)
+        script["player"].update(
+            action="revive", input_action="revive", reason="revive_request_dispatched", dispatched=True
+        )
+        self.files.state["script"] = script
+        self.files.state["scripts"] = [script]
+        self.files.publish()
+
+        state = self.client.snapshot()
+
+        self.assertEqual("revive", state["script"]["player"]["input_action"])
+        self.assertEqual("revive", state["scripts"][0]["player"]["action"])
+
     def test_unknown_backend_fields_are_tolerated(self) -> None:
         self.files.state["future_field"] = {"nested": [1, 2]}
         self.files.state["script"] = {**tick_script("d" * 32), "future_script_field": True}

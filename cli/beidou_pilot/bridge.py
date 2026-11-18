@@ -85,7 +85,7 @@ class BridgeTick(TypedDict):
     overruns: int
 
 
-BridgePlayerAction = Literal["jump", "attack", "skill", "use_item", "pickup"]
+BridgePlayerAction = Literal["jump", "attack", "skill", "use_item", "pickup", "revive"]
 
 
 class BridgePlayer(TypedDict):
@@ -220,7 +220,7 @@ def _validate_script(script: object) -> None:
         raise ClientError("invalid_bridge_state", "原生桥的tick调度字段无效。")
     if (not isinstance(player, dict) or player.get("phase") not in ("idle", "running", "unknown")
             or "moving" not in player or player["moving"] not in (None, "left", "right", "up", "down")
-            or any(field not in player or player[field] not in (None, "jump", "attack", "skill", "use_item", "pickup")
+            or any(field not in player or player[field] not in (None, "jump", "attack", "skill", "use_item", "pickup", "revive")
                    for field in ("action", "input_action"))
             or any(not isinstance(player.get(field), str) for field in ("reason", "effect"))
             or "busy" not in player or (player["busy"] is not None and type(player["busy"]) is not bool)
