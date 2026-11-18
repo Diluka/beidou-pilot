@@ -214,19 +214,20 @@ python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.
 | `player.move(nil)` | 只清移动意图 |
 | `player.jump()`、`player.attack()`、`player.pickup()` | 将跳跃、普攻、拾取放入持续动作输入槽，直到替换或撤下 |
 | `player.skill(skill_id)`、`player.use_item(item_id)` | 正int32 ID，保持该技能或普通恢复品意图；实际准入由本端原生决定 |
-| `player.skill(nil)` | 撤下整个动作输入槽，包含此前的跳跃、普攻、技能、用药或拾取；方向保持，不取消或改写已开始的原生动作 |
-| `player.stop()` | 清方向和动作意图；持键路径发起真实释放，槽空不等于停止已确认 |
+| `player.revive()` | 无参数；仅在当前角色 HP 已知为 0 时提交一次普通复活请求。同一 tick Lua 会话内重复调用返回 `true,"already_requested"` 且不重发；请求派发不代表角色已恢复 |
+| `player.skill(nil)` | 撤下整个持续动作输入槽，包含此前的跳跃、普攻、技能、用药或拾取；方向保持，不取消或改写已开始的原生动作 |
+| `player.stop()` | 清方向和持续动作意图；持键路径发起真实释放。已派发的一次性 `revive` 请求不可由停止撤回，槽空不等于停止已确认 |
 | `player.status()` | 只读共享快照，见下表；角色动画忙闲另看 `game.character.action_idle` |
 
-设置函数返回 `ok, reason`：`true`表示本tick意图草稿受理，不表示技能已经开始或药效已发生；能力不支持返回 `false,"unsupported"`。`skill` 必须恰好传一个参数：显式 `nil` 撤下槽，普通技能仍传正int32 ID；缺参、多参、非法类型或越界ID报Lua错误，不默认为撤下或成功。撤下不依赖技能能力，先前动作也不必是技能。类型、方向和其他动作参数错误同样报Lua错误。原生忙时仍可替换/撤下输入，不再以 `false,"busy"` 保存待执行动作。有效草稿在回调后统一提交，同tick仅末值投放；回调内 `status().input_*` 可看到已写草稿，`action`仍来自已开始的原生动作。原生拒绝通过后续 `reason` 和原生结果观察，不冒充已执行。
+设置函数返回 `ok, reason`：`true`表示本tick意图草稿受理，不表示技能已经开始或药效已发生；能力不支持返回 `false,"unsupported"`。`skill` 必须恰好传一个参数：显式 `nil` 撤下槽，普通技能仍传正int32 ID；缺参、多参、非法类型或越界ID报Lua错误，不默认为撤下或成功。撤下不依赖技能能力，先前动作也不必是技能。类型、方向和其他动作参数错误同样报Lua错误。原生忙时仍可替换/撤下输入，不再以 `false,"busy"` 保存待执行动作。有效草稿在回调后统一提交，同tick仅末值投放；回调内 `status().input_*` 可看到已写草稿，`action`仍来自已开始的原生动作。原生拒绝通过后续 `reason` 和原生结果观察，不冒充已执行。`player.revive()` 是一次性请求而非持有输入：已知 HP 为正时返回 `false,"already_alive"`，角色或 HP 未知时返回 `false,"character_unavailable"`；请求已受理后同一会话的重复调用不会重发，`dispatched=true` 仅代表本端已派发，`effect="unknown"` 仍需由同角色 HP 与位置确认恢复。
 
 | 状态字段 | 含义 |
 | --- | --- |
 | `moving` | 已提交的方向意图或nil |
-| `input_action`、`input_skill_id/input_item_id` | 当前持续输入；ID只随相应输入提供。槽空为nil |
+| `input_action`、`input_skill_id/input_item_id` | 当前输入意图；ID只随相应输入提供。`input_action="revive"` 表示一次性请求，不表示按键保持 |
 | `action`、`skill_id/item_id` | 能归属的已开始原生动作，不被新输入B覆盖；无已知动作时为nil，不用意图猜测 |
 | `busy`、`phase` | 原生动作已知忙为true/running，已知闲为false/idle，否则nil/unknown；输入非空不等于busy |
-| `held` | 已提交方向与动作的语义持有集合，不是GUI物理键或命中结果 |
+| `held` | 持续保持的方向与动作语义集合，不是GUI物理键或命中结果；一次性 `revive` 请求不计入 |
 | `reason/effect/dispatched` | 已有的最近原生输入处理反馈；不承诺逐帧解释全部准入条件。无头等待原生准入时可保持intent_accepted、dispatched=false；`effect="unknown"` 不表示成功或失败 |
 
 `player` 不提供 `input_settled/control_released` 等内部握手字段。`skill(nil)` 或 `input_action=nil` 只表示槽已撤下，不证明所属持续输入已停止；脚本结束直接返回 `"done"`，由Runtime确认停止所属持续输入（持键路径包含真实释放）后发布终态，外部消费者读取会话顶层 `control_released`。按ID技能保持的是持续意图，有可读取动作锁时原生在动作结束且准入允许时继续派发；撤下移除意图和未执行派发，不制造技能实体键或技能key-up。`pending_action`已删除。A执行中放入B，当前输入为B、当前已知动作仍为A；撤下B或替换C后，只消费仍有效的输入，不在A结束后补发历史B。相同意图重复提交不重置按下边沿或原生重复节奏。方向独立保持，不为拾取/用药人工暂停；原生自行裁决哪些动作能同时发生。
@@ -241,7 +242,7 @@ python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.
 
 清槽、停止、取消和放键不受药品间隔限制。清空输入不停止空中运动、受击惯性或已经发生的动画；跳跃飞行/落地看物理事实。用药、拾取、技能派发以及 `action_idle=true` 均不是命中、消耗、恢复或buff生效凭据。
 
-完成、取消、期限、角色变化、离开游戏或错误只结束对应会话；清除该会话仍拥有的方向与动作输入，确认最新原生释放后发布终态，不清后来者的有效输入。换图清旧意图，稳定后的新main须根据当前[只读静态场景](#当前静态场景与跨图)重新决定；地形刷新不将旧动作输入带入新图，也不以输入变更改写已知原生动作。窗口、对话、商店、AP/SP 和装备交互由 CLI 逐步操作，Lua 不提供这类窗口动作接口。
+完成、取消、期限、角色变化、离开游戏或错误只结束对应会话；清除该会话仍拥有的方向与动作输入，确认最新原生释放后发布终态，不清后来者的有效输入。换图清旧意图，稳定后的新main须根据当前[只读静态场景](#当前静态场景与跨图)重新决定；地形刷新不将旧动作输入带入新图，也不以输入变更改写已知原生动作。普通控件、对话、商店、AP/SP 和装备交互仍由 CLI 逐步操作；`player.revive()` 是唯一的一次性复活请求接口，不暴露通用窗口控件操作。
 
 ## 策略参数与静态场景
 

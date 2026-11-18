@@ -131,6 +131,9 @@ end
     def test_busy_native_a_accepts_b_and_withdrawn_b_is_never_replayed_before_c(self) -> None:
         self.run_contract("actions")
 
+    def test_revive_is_dead_only_one_shot_and_does_not_claim_game_effect(self) -> None:
+        self.run_contract("revive")
+
     def test_busy_and_action_idle_preserve_native_true_false_and_unknown_independent_of_intent(self) -> None:
         self.run_contract("idle-facts")
 

@@ -236,7 +236,14 @@ public:
         }
         // A native consumer may admit the current held input when A finishes.
         // Clearing/replacing B removes it here; there is no history to replay.
-        if (armed && allowStart && !actionActive) {
+        if (armed && desired.kind == ActionKind::Revive) {
+            armed = false;
+            delivered.push_back(desired);
+            result.dispatched = true;
+            result.sessionId = desired.sessionId;
+            result.reason = "revive_request_dispatched";
+            result.effect = "unknown";
+        } else if (armed && allowStart && !actionActive) {
             active = desired;
             armed = false;
             actionActive = startsAnimation;
@@ -1231,12 +1238,82 @@ end)lua"));
     for (const auto& bad :
          {"p.move('LEFT')", "p.move(1)", "p.skill()", "p.skill(nil, 1)", "p.skill(1, nil)", "p.skill(0)", "p.skill(-1)",
           "p.skill(2147483648)", "p.skill(1.5)", "p.skill('1')", "p.skill(false)", "p.skill({})", "p.use_item(nil)",
-          "p.use_item(2147483648)", "p.jump(1)", "p.stop(1)"}) {
+          "p.use_item(2147483648)", "p.jump(1)", "p.revive(1)", "p.stop(1)"}) {
         const auto id = "invalid-" + std::to_string(other.Statuses().Elements().size());
         Start(other, id, Source("function main(c) local p=c.game.player; " + std::string(bad) + " end"));
         Step(unsupported, other);
         StatusIs(other, id, "cancelled", "script_error");
     }
+}
+
+void ReviveAction() {
+    NativeBoundary native;
+    native.state.character.values[6] = 0;
+    native.state.dead = Fact::True;
+    TickRuntime runtime(native);
+    Start(runtime, "revive", Source(R"lua(
+function main(c)
+  local p=c.game.player
+  if c.tick.index==1 then
+    local ok,r=p.revive(); assert(ok and r==nil)
+    local s=p.status(); assert(s.input_action=='revive' and s.effect=='unknown' and not s.dispatched)
+    for _,name in ipairs(s.held) do assert(name~='revive') end
+  elseif c.tick.index==2 then
+    local ok,r=p.revive(); assert(ok and r=='already_requested')
+    assert(p.status().input_action=='revive' and p.status().dispatched and p.status().effect=='unknown')
+  elseif c.tick.index==3 then
+    assert(p.revive())
+    return 'done'
+  end
+end
+)lua"));
+    Step(native, runtime);
+    Check(native.requests.size() == 1 && native.requests.front().kind == ActionKind::Revive,
+          "a dead character must admit one native revive intent");
+    Step(native, runtime);
+    Check(native.delivered.size() == 1 && native.delivered.front().kind == ActionKind::Revive && !native.actionActive,
+          "revive dispatch is a one-shot request, not a held animation");
+    Step(native, runtime);
+    Drain(native, runtime, "revive", "completed");
+    Check(native.requests.size() == 1 && native.delivered.size() == 1,
+          "repeated calls and stop must not replay revive within one tick session");
+
+    NativeBoundary alive;
+    TickRuntime aliveRuntime(alive);
+    Start(aliveRuntime, "revive-alive", Source(R"lua(function main(c)
+  local ok,reason=c.game.player.revive()
+  assert(not ok and reason=='already_alive')
+  assert(c.game.player.status().input_action==nil)
+  return 'done'
+end)lua"));
+    Step(alive, aliveRuntime);
+    StatusIs(aliveRuntime, "revive-alive", "completed");
+    Check(alive.requests.empty(), "already-alive revive must have no native request");
+
+    NativeBoundary unknown;
+    unknown.state.character.known[6] = false;
+    TickRuntime unknownRuntime(unknown);
+    Start(unknownRuntime, "revive-unknown", Source(R"lua(function main(c)
+  local ok,reason=c.game.player.revive()
+  assert(not ok and reason=='character_unavailable')
+  return 'done'
+end)lua"));
+    Step(unknown, unknownRuntime);
+    StatusIs(unknownRuntime, "revive-unknown", "completed");
+    Check(unknown.requests.empty(), "unknown HP must not dispatch revive");
+
+    NativeBoundary unavailable;
+    unavailable.state.character.values[6] = 0;
+    unavailable.state.reviveRequestable = Fact::False;
+    TickRuntime unavailableRuntime(unavailable);
+    Start(unavailableRuntime, "revive-unavailable", Source(R"lua(function main(c)
+  local ok,reason=c.game.player.revive()
+  assert(not ok and reason=='revive_not_requestable')
+  return 'done'
+end)lua"));
+    Step(unavailable, unavailableRuntime);
+    StatusIs(unavailableRuntime, "revive-unavailable", "completed");
+    Check(unavailable.requests.empty(), "known-unrequestable revive must not dispatch");
 }
 
 void IdleFacts() {
@@ -2017,6 +2094,8 @@ int main(int argc, char** argv) {
         Draft();
     else if (scenario == "actions")
         Actions();
+    else if (scenario == "revive")
+        ReviveAction();
     else if (scenario == "held-intents")
         HeldIntents();
     else if (scenario == "idle-facts")

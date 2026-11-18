@@ -2,6 +2,7 @@
 #include "TickNativeAdapter.h"
 #include "SharedLuaAdapter.h"
 #include "Gameplay/Stage.h"
+#include "Net/Packets/GameplayPackets.h"
 #include "SceneTerrain.h"
 #include <nlnx/nx.hpp>
 
@@ -48,7 +49,8 @@ MapleControl::Observation TickNativeAdapter::ObserveDomain(const std::string& do
 
 bool TickNativeAdapter::Supports(MapleControl::ActionKind kind) const {
     using Kind = MapleControl::ActionKind;
-    return kind == Kind::Jump || kind == Kind::Attack || kind == Kind::Pickup || kind == Kind::UseItem;
+    return kind == Kind::Jump || kind == Kind::Attack || kind == Kind::Pickup || kind == Kind::UseItem
+           || kind == Kind::Revive;
 }
 
 bool TickNativeAdapter::SupportsSkill() const {
@@ -97,14 +99,29 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
         ReleaseAction();
         return true;
     }
+    const auto& state = Observe();
     if (action.kind != Kind::Jump && action.kind != Kind::Attack && action.kind != Kind::Pickup
-        && action.kind != Kind::UseItem) {
+        && action.kind != Kind::UseItem && action.kind != Kind::Revive) {
         error = "unsupported: tick_action";
         return false;
     }
-    if (!Observe().ready || Observe().dead == MapleControl::Fact::True) {
+    if (!state.ready || (state.dead == MapleControl::Fact::True && action.kind != Kind::Revive)) {
         error = "state_unavailable_or_dead";
         return false;
+    }
+    if (action.kind == Kind::Revive) {
+        if (!state.characterKnown || !state.character.known[6]) {
+            error = "character_unavailable";
+            return false;
+        }
+        if (state.character.values[6] != 0) {
+            error = "already_alive";
+            return false;
+        }
+        if (state.reviveRequestable == MapleControl::Fact::False) {
+            error = "revive_not_requestable";
+            return false;
+        }
     }
     if (intent.kind == action.kind && intent.skillId == action.skillId && intent.itemId == action.itemId) {
         // Ownership may change, but an unchanged semantic hold emits no edges
@@ -146,6 +163,12 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
         action.kind == Kind::Attack && action.skillId != 0 ? std::optional<int32_t>(action.skillId) : std::nullopt);
     player.hold_item(action.kind == Kind::UseItem ? action.itemId : 0);
     host.SyncKeys();
+    if (action.kind == Kind::Revive) {
+        // Mirrors V17's normal death-confirm route: died=true, no map/portal target, no wheel.
+        result.dispatched = true;
+        result.reason = "revive_request_dispatched";
+        ms::ChangeMapPacket(true, 0, "", false).dispatch();
+    }
     return true;
 }
 
@@ -216,7 +239,7 @@ void TickNativeAdapter::Advance(std::uint64_t nativeTick, bool sceneChanged) {
         result.controlReleased = ActionIntentSettled();
         return;
     }
-    if (Observe().dead == MapleControl::Fact::True) Release();
+    if (Observe().dead == MapleControl::Fact::True && intent.kind != Kind::Revive) Release();
     if (ActionIntentSettled()) {
         if (intentChanged && (intent.kind == Kind::Jump || intent.kind == Kind::Pickup)) {
             // Confirm native input consumption, not a launch, landing or loot.

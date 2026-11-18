@@ -247,9 +247,13 @@ end
 
 动作设置返回受理，不代表技能已开始、命中或药效已发生；调用方以实际游戏事实核对结果。需要移动、战斗、用药等动作时写 tick Lua，不要把动作拆回 Python 逐帧控制。
 
+## 正常复活
+
+`revive` 在 GUI 与无头端都提交一次普通复活请求。HP 已知为正时返回 `already_alive` 且不发送请求；角色或 HP 读数不可用时拒绝操作。GUI 端只在唯一已识别复活窗口及其启用的确认按钮可验证时，沿原版鼠标消息分发点击一次；无头端调用共享 tick Lua 的 `player.revive()`，由本端发送普通 `CHANGEMAP` 请求。请求派发不表示恢复成功：命令只在同一角色 ID 的 HP 为正、地图与位置有效时返回 `revived`；GUI 还要确认复活窗口消失。超时或身份变化时停止，不重发。
+
 ## 无头控件交互
 
-无头端保留只读观察，不提供桌面输入入口：`snapshot` 与 `inspect` 返回当前 `interaction.page`、控件 `role/text/enabled/ref` 和场景 NPC 引用；`click`、`ui`、`equip`、`revive`、`hotkeys`、`bind`、`talk`、`dialog`、`shop`、`notifications` 等 GUI 命令在无头端统一返回 `unsupported_capability`。需要激活页面控件或 NPC 时使用原版 GUI 会话；无头端的任务接交等交互能力当前不提供，缺口见[能力边界](CLIENT_LIMITATIONS.md)。
+无头端保留只读观察，不提供桌面输入入口：`snapshot` 与 `inspect` 返回当前 `interaction.page`、控件 `role/text/enabled/ref` 和场景 NPC 引用；`click`、`ui`、`equip`、`hotkeys`、`bind`、`talk`、`dialog`、`shop`、`notifications` 等 GUI 命令在无头端统一返回 `unsupported_capability`。需要激活页面控件或 NPC 时使用原版 GUI 会话；无头端的任务接交等交互能力当前不提供，缺口见[能力边界](CLIENT_LIMITATIONS.md)。
 
 ```bash
 workbenches/workbench dev/NAME snapshot
@@ -286,7 +290,6 @@ GUI 容器在自身网络命名空间启用回环游戏端口 NAT，连接已核
 | `equip ITEM` | 普通唯一槽位走原版背包点击换装；无头端返回 `unsupported_capability` |
 | `hotkeys`、`bind` | 读取当前键位、拖放绑定物品或技能 |
 | `shop read/buy/sell/close` | 普通商店读取与指定买卖；数量框和关店按实际 UI 收尾 |
-| `revive` | 死亡时只操作已识别确认框一次并核对同角色恢复；无头端返回 `unsupported_capability` |
 | `screenshot [NAME]`、`record NAME` | 当前窗口截图或有界逐帧记录，不发游戏输入 |
 
 引用来自本次快照，换图、对话翻页、重登或目标变化后重新读取。任务/奖励、消费和交易按一次派发处理；以当前完整正文和实际变化判断。GUI 输入只允许一名明确操作者。

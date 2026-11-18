@@ -66,6 +66,9 @@ class TickGuiInputContract(unittest.TestCase):
     def test_same_held_skill_is_idempotent_and_withdrawn_replacement_never_replays(self) -> None:
         subprocess.run([str(self.executable), "held-updates"], check=True, timeout=10)
 
+    def test_revive_is_a_one_shot_native_dispatch_without_update_fence(self) -> None:
+        subprocess.run([str(self.executable), "revive"], check=True, timeout=10)
+
     def test_rejected_native_attack_recovers_without_lua_rewrite_and_clear_prevents_retry(self) -> None:
         subprocess.run([str(self.executable), "attack-recovery"], check=True, timeout=10)
 
