@@ -1,6 +1,6 @@
 # 客户端能力边界与缺口索引
 
-本页说明哪些现有边界会增加 AI 使用 CLI 和 Lua 的成本，并索引已入池的独立用户结果。命令、字段、错误和能力声明仍以 [CLI](CLI.md)、[Lua API](LUA_API.md)、[tick API](LUA_TICK_API.md) 和[架构](ARCHITECTURE.md)为准；Issue 记录最新范围和状态。入池后的功能开发按用户结果逐项启动。
+本页说明哪些现有边界会增加 AI 使用 CLI 和 Lua 的成本，并索引已记录的独立需求。命令、字段、错误和能力声明仍以 [CLI](CLI.md)、[Lua API](LUA_API.md)、[tick API](LUA_TICK_API.md) 和[架构](ARCHITECTURE.md)为准；Issue 记录最新范围和状态。开发由维护者按排期逐项发起。
 
 ## 当前使用边界
 

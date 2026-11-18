@@ -71,10 +71,10 @@ workbenches/workbench dev/NAME close
 - [架构与支持范围](docs/ARCHITECTURE.md)：代码职责、外部资源、两端能力和限制。
 - [V17 普通运动规则](docs/V17_MOTION_RULES.md)：原版 GUI 普通地面/跳跃/空中运动的参数、倍率缺省、分支公式、真机基线与未闭环项；供 headless 普通运动对齐与 C++ 运动预测复用。
 - [V17 其余运动规则与差异](docs/V17_EXTENDED_MOTION_RULES.md)：攀爬、受击、移动技能、场地特例、实体及运动包的原版规则、headless差异和后续调整记录。
-- [客户端能力边界与缺口索引](docs/CLIENT_LIMITATIONS.md)：实际使用成本、已入池用户结果和已有能力的适用范围。
+- [客户端能力边界与缺口索引](docs/CLIENT_LIMITATIONS.md)：实际使用成本、已记录的需求和已有能力的适用范围。
 - [依赖管理](docs/DEPENDENCIES.md)：子模块、派生源码与许可来源。
 - [CI 与合并验收](docs/CI.md)：PR 自动检查、本地复现入口及与真实游戏试用的分工。
-- [需求池](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20label%3A%E9%9C%80%E6%B1%82%E6%B1%A0)：按独立用户故事收集需求，入池标准与讨论规则见 [开发约定](AGENTS.md#需求收集与需求池)。
+- [开放功能需求](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20type%3AFeature)：按独立用户结果收集；缺陷和领域筛选见 [Issue 分类](docs/ISSUE_LABELS.md)。
 - [开发约定](AGENTS.md)：需求收集、任务拆分、CI 与真实客户端验收、PR 合并、维护规则及 Serena 项目记忆。
 
 从仓库根运行离线测试：
