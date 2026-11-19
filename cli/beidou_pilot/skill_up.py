@@ -3,7 +3,6 @@
 import hashlib
 import time
 
-from .img_resources import ImgDirectory
 from typing import cast
 
 from .backend import Backend, ClientError, JsonObject
@@ -35,41 +34,7 @@ def preflight_skill_up(backend: Backend, skill_id: int, points: int, *, batch: b
     if points > sp:
         raise ClientError("insufficient_skill_points", "剩余技能点不足。", {"requested": points, "available": sp})
     if points > 1 or batch:
-        client = cast(JsonObject | None, observation.get("client"))
-        if client is None or any(value is None for value in (observation.get("instance_id"), client.get("run_id"), character.get("id"))):
-            raise ClientError("character_unavailable", "角色或实例身份不可用。")
-        job = character.get("job")
-        verified = {
-            100: ({1000000, 1000001, 1000002, 1001003, 1001004, 1001005}, "a0403e171460d8e6fd4838a4cd054546bdef0e83b2ed880ac53214368d46a330"),
-            210: ({2100000, 2101001, 2101002, 2101003, 2101004, 2101005}, "cc4db190d9fef0523fdfe440ae23a3d2fd61359cef6e327e246a86c6c955111e"),
-        }
-        if type(job) is not int or job not in verified or skill_id not in verified[job][0]:
-            raise ClientError("skill_limit_unavailable", "该职业或技能的批量上限尚未核实。")
-        learned = cast(CharacterSnapshot, backend.read("character"))
-        if not learned["skills_complete"] or learned["character_id"] != character.get("id"):
-            raise ClientError("skills_unavailable", "技能记录不完整或角色身份不一致。")
-        skill = learned["skills"].get(str(skill_id))
-        level = skill["level"] if skill is not None else 0
-        path = backend.root / "client" / "Data" / "Skill" / f"{job}.img"
-        try:
-            with (backend.root / "client" / "BeiDou.exe").open("rb") as stream:
-                executable_digest = hashlib.file_digest(stream, "sha256").hexdigest()
-            with path.open("rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
-        except OSError as error:
-            raise ClientError("skill_limit_unavailable", "技能资源无法读取。") from error
-        if (executable_digest != "1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df"
-                or digest != verified[job][1]):
-            raise ClientError("skill_limit_unavailable", "技能资源版本未经核实。")
-        tree, sources = ImgDirectory(path.parent).read_tree((path.name, "skill", str(skill_id), "level"))
-        names = [child.get("name") for child in tree] if tree is not None else []
-        if ({source.resolve() for source in sources} != {path.resolve()} or not names
-                or len(set(names)) != len(names) or set(names) != {str(i) for i in range(1, len(names) + 1)}):
-            raise ClientError("skill_limit_unavailable", "技能等级资源缺失或不连续。")
-        if level < 0 or level + points > len(names):
-            raise ClientError("skill_limit_exceeded", "请求超过技能等级上限，未执行加点。",
-                              {"skill_id": skill_id, "level": level, "limit": len(names), "requested": points})
-        return (observation.get("instance_id"), client.get("run_id"), character.get("id"), sp, level)
+        raise ClientError("skill_limit_unavailable", "原版动态技能等级加成不可观察，暂不支持 GUI 多点加点。")
     return None
 
 

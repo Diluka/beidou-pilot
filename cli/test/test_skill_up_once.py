@@ -1,7 +1,4 @@
-import io
 import unittest
-import xml.etree.ElementTree as ET
-from pathlib import Path
 from unittest.mock import patch
 
 from beidou_pilot.errors import ClientError
@@ -55,60 +52,13 @@ class SkillUpOnceTest(unittest.TestCase):
             preflight_skill_up(Backend(), 2201002, 2)
         self.assertEqual(caught.exception.code, "skill_limit_unavailable")
 
-    @patch("beidou_pilot.skill_up.ImgDirectory")
-    @patch("beidou_pilot.skill_up.hashlib.file_digest")
-    @patch("pathlib.Path.open")
-    def test_batch_checks_full_resource_limit(self, opened, digest, directory):
-        backend = Backend()
-        backend.root = Path("/client")
-        opened.side_effect = lambda *args, **kwargs: io.BytesIO(b"sample")
-        digest.return_value.hexdigest.side_effect = ["1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df", "cc4db190d9fef0523fdfe440ae23a3d2fd61359cef6e327e246a86c6c955111e"] * 3
-        level = ET.Element("imgdir")
-        for i in range(1, 21):
-            ET.SubElement(level, "imgdir", name=str(i))
-        directory.return_value.read_tree.return_value = (level, (Path("/client/client/Data/Skill/210.img"),))
-        self.assertEqual(preflight_skill_up(backend, 2101002, 2), ("i", "r", 3, 3, 15))
-        backend = Backend()
-        backend.root = Path("/client")
-        backend.characters[0] = character(19)
-        with self.assertRaises(ClientError) as caught:
-            preflight_skill_up(backend, 2101002, 2)
-        self.assertEqual(caught.exception.code, "skill_limit_exceeded")
-        backend = Backend()
-        backend.root = Path("/client")
-        directory.return_value.read_tree.return_value = (level, (Path("/other/210.img"),))
-        with self.assertRaises(ClientError) as caught:
-            preflight_skill_up(backend, 2101002, 2)
-        self.assertEqual(caught.exception.code, "skill_limit_unavailable")
-
-    @patch("beidou_pilot.skill_up.ImgDirectory")
-    @patch("beidou_pilot.skill_up.hashlib.file_digest")
-    @patch("pathlib.Path.open")
-    def test_job100_batch_verified_limits_and_source(self, opened, digest, directory):
-        opened.side_effect = lambda *args, **kwargs: io.BytesIO(b"sample")
-        exe = "1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df"
-        img = "a0403e171460d8e6fd4838a4cd054546bdef0e83b2ed880ac53214368d46a330"
-        for skill_id, limit in ((1000000, 16), (1000001, 10), (1000002, 8),
-                                (1001003, 20), (1001004, 20), (1001005, 20)):
-            with self.subTest(skill_id=skill_id):
-                tree = ET.Element("imgdir")
-                for i in range(1, limit + 1):
-                    ET.SubElement(tree, "imgdir", name=str(i))
-                directory.return_value.read_tree.return_value = (tree, (Path("/client/client/Data/Skill/100.img"),))
-                digest.return_value.hexdigest.side_effect = [exe, img] * 2
-                backend = Backend()
-                backend.root = Path("/client")
-                backend.observations[0]["character"]["job"] = 100
-                backend.characters[0]["skills"] = {str(skill_id): {"level": limit - 2, "master_level": None}}
-                self.assertEqual(preflight_skill_up(backend, skill_id, 2)[-1], limit - 2)
-                directory.return_value.read_tree.assert_called_with(("100.img", "skill", str(skill_id), "level"))
-                backend = Backend()
-                backend.root = Path("/client")
-                backend.observations[0]["character"]["job"] = 100
-                backend.characters[0]["skills"] = {str(skill_id): {"level": limit - 1, "master_level": None}}
-                with self.assertRaises(ClientError) as caught:
-                    preflight_skill_up(backend, skill_id, 2)
-                self.assertEqual(caught.exception.code, "skill_limit_exceeded")
+    def test_previously_supported_batches_are_refused(self):
+        for skill_id, job in ((1001003, 100), (2101002, 210)):
+            backend = Backend()
+            backend.observations[0]["character"]["job"] = job
+            with self.subTest(skill_id=skill_id), self.assertRaises(ClientError) as caught:
+                preflight_skill_up(backend, skill_id, 2)
+            self.assertEqual(caught.exception.code, "skill_limit_unavailable")
 
     def test_total_preflight_accepts_one_with_sp(self):
         self.assertIsNone(preflight_skill_up(Backend(), 2101002, 1))
