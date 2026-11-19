@@ -20,6 +20,8 @@
 #include <cstring>
 #include <iomanip>
 #include <intrin.h>
+#include <bcrypt.h>
+#include "detours.h"
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -159,62 +161,135 @@ auto originalDiagnosticStatButton = reinterpret_cast<DiagnosticStatButton>(0x008
 auto originalDiagnosticModal = reinterpret_cast<DiagnosticModal>(0x004EDBA1);
 thread_local unsigned int diagnosticStatDepth = 0;
 volatile LONG diagnosticStatus =
-    0; // 0 disabled, 1 active, 2 signature mismatch, 3 hook failure, 4 log failure, 5 unverified
-// The modal calling convention and runtime reentrancy require independent validation.
-constexpr bool diagnosticAbiVerified = false;
+    0; // 0 disabled, 1 experimental active, 2 signature mismatch, 3 unknown, 4 log failure, 5 hash unavailable/mismatch
+// Experimental diagnostics: neither this gate nor a successful install verifies the game ABI.
+volatile LONG diagnosticInit = 0;
+// Explicit experimental build: callers are not known to be confined to the update thread.
+constexpr bool experimentalDiagnosticBuild = true;
+DWORD diagnosticUpdateThread = 0;
 
-void DiagnosticRecord(const char* event, void* object, std::uintptr_t caller, int value) {
-    std::uint32_t table = 0, type = 0, manager = 0, focused = 0;
-    const auto address = reinterpret_cast<std::uintptr_t>(object);
-    const bool tableKnown = ReadAt(address, table);
-    const bool typeKnown = ReadAt(address + 0x94, type);
-    const bool focusKnown = ReadAt(0x00BEC20C, manager) && manager != 0 && ReadAt(manager + 0x80, focused);
-    std::ostringstream out;
-    out << event << " run=" << runId << " instance=" << instanceId << " tick=" << GetTickCount64()
-        << " thread=" << GetCurrentThreadId() << " depth=" << diagnosticStatDepth << " object=0x" << std::hex << address
-        << " caller=0x" << caller << " vtable=";
-    if (tableKnown)
-        out << "0x" << table;
-    else
-        out << "unknown";
-    out << " type=";
-    if (typeKnown)
-        out << "0x" << type;
-    else
-        out << "unknown";
-    out << " focus=";
-    if (focusKnown)
-        out << "0x" << focused;
-    else
-        out << "unknown";
-    out << std::dec << " value=" << value << "\n";
-    const auto text = out.str();
-    const HANDLE file = CreateFileA((directory + "\\..\\runs\\" + runId + "\\auto-ap-diagnostic.log").c_str(),
-                                    FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                                    OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) {
-        InterlockedExchange(&diagnosticStatus, 4);
-        OutputDebugStringA("auto-ap diagnostic: cannot open log\n");
-        return;
+bool DiagnosticExecutableMatches() {
+    const std::array<unsigned char, 32> expected{{0x11, 0x98, 0xfa, 0x57, 0xca, 0x5a, 0x7c, 0x48, 0x9b, 0xae, 0x43,
+                                                  0xec, 0x13, 0xc6, 0x96, 0x81, 0xd9, 0xca, 0xbe, 0x0f, 0x96, 0x76,
+                                                  0x2f, 0x3d, 0xc0, 0x35, 0x7f, 0xac, 0xf2, 0xe7, 0xd4, 0xdf}};
+    const HMODULE library = LoadLibraryExW(L"bcrypt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!library) return false;
+    const auto open = reinterpret_cast<decltype(&BCryptOpenAlgorithmProvider)>(
+        GetProcAddress(library, "BCryptOpenAlgorithmProvider"));
+    const auto property = reinterpret_cast<decltype(&BCryptGetProperty)>(GetProcAddress(library, "BCryptGetProperty"));
+    const auto create = reinterpret_cast<decltype(&BCryptCreateHash)>(GetProcAddress(library, "BCryptCreateHash"));
+    const auto update = reinterpret_cast<decltype(&BCryptHashData)>(GetProcAddress(library, "BCryptHashData"));
+    const auto finish = reinterpret_cast<decltype(&BCryptFinishHash)>(GetProcAddress(library, "BCryptFinishHash"));
+    const auto destroy = reinterpret_cast<decltype(&BCryptDestroyHash)>(GetProcAddress(library, "BCryptDestroyHash"));
+    const auto close = reinterpret_cast<decltype(&BCryptCloseAlgorithmProvider)>(
+        GetProcAddress(library, "BCryptCloseAlgorithmProvider"));
+    std::array<wchar_t, 32768> path{};
+    const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    HANDLE file = INVALID_HANDLE_VALUE;
+    if (length != 0 && length < path.size())
+        file = CreateFileW(path.data(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    DWORD objectLength = 0, returned = 0;
+    std::array<unsigned char, 32> digest{};
+    bool ok = open && property && create && update && finish && destroy && close && file != INVALID_HANDLE_VALUE;
+    if (ok) ok = open(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0;
+    if (ok)
+        ok = property(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&objectLength), sizeof(objectLength),
+                      &returned, 0)
+                 >= 0
+             && returned == sizeof(objectLength);
+    auto* object = ok ? static_cast<unsigned char*>(HeapAlloc(GetProcessHeap(), 0, objectLength)) : nullptr;
+    if (ok) ok = object != nullptr;
+    if (ok) ok = create(algorithm, &hash, object, objectLength, nullptr, 0, 0) >= 0;
+    std::array<unsigned char, 65536> buffer{};
+    while (ok) {
+        DWORD count = 0;
+        if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &count, nullptr)) {
+            ok = false;
+            break;
+        }
+        if (count == 0) break;
+        ok = update(hash, buffer.data(), count, 0) >= 0;
     }
-    DWORD written = 0;
-    if (!WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) || written != text.size()) {
+    if (ok) ok = finish(hash, digest.data(), static_cast<ULONG>(digest.size()), 0) >= 0;
+    if (hash) destroy(hash);
+    if (object) HeapFree(GetProcessHeap(), 0, object);
+    if (algorithm) close(algorithm, 0);
+    if (file != INVALID_HANDLE_VALUE && !CloseHandle(file)) ok = false;
+    if (!FreeLibrary(library)) ok = false;
+    return ok && digest == expected;
+}
+
+void DiagnosticRecord(const char* event, void* object, std::uintptr_t caller, int value) noexcept {
+    try {
+        std::uint32_t table = 0, type = 0, manager = 0, focused = 0;
+        const auto address = reinterpret_cast<std::uintptr_t>(object);
+        const bool tableKnown = ReadAt(address, table);
+        const bool typeKnown = ReadAt(address + 0x94, type);
+        const bool focusKnown = ReadAt(0x00BEC20C, manager) && manager != 0 && ReadAt(manager + 0x80, focused);
+        DWORD foregroundProcess = 0;
+        const HWND foreground = GetForegroundWindow();
+        const DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, &foregroundProcess) : 0;
+        std::ostringstream out;
+        out << event << " run=" << runId << " instance=" << instanceId << " tick=" << GetTickCount64()
+            << " thread=" << GetCurrentThreadId() << " update_thread=" << diagnosticUpdateThread
+            << " foreground_thread=" << (foregroundProcess == GetCurrentProcessId() ? foregroundThread : 0)
+            << " depth=" << diagnosticStatDepth << " object=0x" << std::hex << address << " caller=0x" << caller
+            << " vtable=";
+        if (tableKnown)
+            out << "0x" << table;
+        else
+            out << "unknown";
+        out << " type=";
+        if (typeKnown)
+            out << "0x" << type;
+        else
+            out << "unknown";
+        out << " focus=";
+        if (focusKnown)
+            out << "0x" << focused;
+        else
+            out << "unknown";
+        out << std::dec << " value=" << value << "\n";
+        const auto text = out.str();
+        const HANDLE file = CreateFileA((directory + "\\..\\runs\\" + runId + "\\auto-ap-diagnostic.log").c_str(),
+                                        FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                        nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            InterlockedExchange(&diagnosticStatus, 4);
+            OutputDebugStringA("auto-ap diagnostic: cannot open log\n");
+            return;
+        }
+        DWORD written = 0;
+        if (!WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr)
+            || written != text.size()) {
+            InterlockedExchange(&diagnosticStatus, 4);
+            OutputDebugStringA("auto-ap diagnostic: log write failed or incomplete\n");
+        }
+        if (!CloseHandle(file)) {
+            InterlockedExchange(&diagnosticStatus, 4);
+            OutputDebugStringA("auto-ap diagnostic: log close failed\n");
+        }
+    } catch (...) {
         InterlockedExchange(&diagnosticStatus, 4);
-        OutputDebugStringA("auto-ap diagnostic: log write failed or incomplete\n");
-    }
-    if (!CloseHandle(file)) {
-        InterlockedExchange(&diagnosticStatus, 4);
-        OutputDebugStringA("auto-ap diagnostic: log close failed\n");
+        OutputDebugStringA("auto-ap diagnostic: log exception\n");
     }
 }
 
 void __fastcall DiagnosticStatButtonHook(void* object, void*, int control) {
     const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-    ++diagnosticStatDepth;
+
+    struct DepthGuard {
+        DepthGuard() { ++diagnosticStatDepth; }
+
+        ~DepthGuard() { --diagnosticStatDepth; }
+    } guard;
+
     DiagnosticRecord("stat-enter", object, caller, control);
     originalDiagnosticStatButton(object, control);
     DiagnosticRecord("stat-return", object, caller, control);
-    --diagnosticStatDepth;
 }
 
 int __fastcall DiagnosticModalHook(void* object, void*) {
@@ -1349,9 +1424,68 @@ void Tick() {
     DeliverTickInput();
 }
 
+void InitializeExperimentalDiagnostic() {
+    if (!previousState.ready || !previousState.characterKnown || InterlockedCompareExchange(&diagnosticInit, 1, 0) != 0)
+        return;
+    try {
+        // This marker is operator consent, not proof that the server is dev.
+        const DWORD marker = GetFileAttributesA("Z:\\work\\auto-ap-diagnostic.enable");
+        if (marker == INVALID_FILE_ATTRIBUTES || (marker & FILE_ATTRIBUTE_DIRECTORY)) return;
+        if (!experimentalDiagnosticBuild) return;
+        diagnosticUpdateThread = GetCurrentThreadId();
+        if (!DiagnosticExecutableMatches()) {
+            InterlockedExchange(&diagnosticStatus, 5);
+            DiagnosticRecord("diagnostic-executable-mismatch-or-unavailable", nullptr, 0, 0);
+            return;
+        }
+        const std::array<unsigned char, 8> statExpected{{0x8b, 0x54, 0x24, 0x04, 0x8d, 0x82, 0x30, 0xf8}};
+        const std::array<unsigned char, 8> modalExpected{{0xb8, 0x64, 0x71, 0xa8, 0x00, 0xe8, 0xed, 0x2f}};
+        std::array<unsigned char, 8> statBytes{}, modalBytes{};
+        if (!ReadAt(0x008C522F, statBytes) || statBytes != statExpected || !ReadAt(0x004EDBA1, modalBytes)
+            || modalBytes != modalExpected) {
+            InterlockedExchange(&diagnosticStatus, 2);
+            DiagnosticRecord("diagnostic-signature-mismatch", nullptr, 0, 0);
+            return;
+        }
+        LONG error = DetourTransactionBegin();
+        bool abortAttempted = false;
+        LONG abortResult = NO_ERROR;
+        if (error != NO_ERROR) {
+            // Abort rejects another thread's transaction. An unknown external
+            // same-thread transaction remains a limitation of this experiment.
+            abortAttempted = true;
+            abortResult = DetourTransactionAbort();
+        } else {
+            error = DetourUpdateThread(GetCurrentThread());
+            if (error == NO_ERROR)
+                error = DetourAttach(reinterpret_cast<void**>(&originalDiagnosticStatButton), DiagnosticStatButtonHook);
+            if (error == NO_ERROR)
+                error = DetourAttach(reinterpret_cast<void**>(&originalDiagnosticModal), DiagnosticModalHook);
+            if (error == NO_ERROR)
+                error = DetourTransactionCommit();
+            else {
+                abortAttempted = true;
+                abortResult = DetourTransactionAbort();
+            }
+        }
+        if (error != NO_ERROR) {
+            InterlockedExchange(&diagnosticStatus, 3);
+            DiagnosticRecord("diagnostic-install-outcome-unknown", nullptr, 0, static_cast<int>(error));
+            if (abortAttempted) DiagnosticRecord("diagnostic-abort-result", nullptr, 0, static_cast<int>(abortResult));
+        } else {
+            InterlockedExchange(&diagnosticStatus, 1);
+            DiagnosticRecord("experimental-diagnostic-installed", nullptr, 0, 0);
+        }
+    } catch (...) {
+        InterlockedExchange(&diagnosticStatus, 3);
+        OutputDebugStringA("auto-ap diagnostic: initialization outcome unknown\n");
+    }
+}
+
 void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     originalUpdate(app, now);
     Tick();
+    InitializeExperimentalDiagnostic();
 }
 }
 
@@ -1378,38 +1512,6 @@ bool AgentBridge::Install() {
     if (!Memory::SetHook(true, reinterpret_cast<void**>(&originalUpdate), UpdateHook)) {
         Memory::SetHook(false, reinterpret_cast<void**>(&originalKeyPressed), KeyPressedHook);
         return false;
-    }
-    // /work is the selected role mount; Wine's Z: drive exposes it.
-    const std::string diagnosticMarker = "Z:\\work\\auto-ap-diagnostic.enable";
-    const DWORD markerAttributes = GetFileAttributesA(diagnosticMarker.c_str());
-    if (markerAttributes != INVALID_FILE_ATTRIBUTES && !(markerAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-        const std::array<unsigned char, 8> statExpected{{0x8b, 0x54, 0x24, 0x04, 0x8d, 0x82, 0x30, 0xf8}};
-        const std::array<unsigned char, 8> modalExpected{{0xb8, 0x64, 0x71, 0xa8, 0x00, 0xe8, 0xed, 0x2f}};
-        std::array<unsigned char, 8> statBytes{}, modalBytes{};
-        if (!diagnosticAbiVerified) {
-            InterlockedExchange(&diagnosticStatus, 5);
-            DiagnosticRecord("diagnostic-abi-unverified", nullptr, 0, 0);
-        } else if (!ReadAt(0x008C522F, statBytes) || statBytes != statExpected || !ReadAt(0x004EDBA1, modalBytes)
-                   || modalBytes != modalExpected) {
-            InterlockedExchange(&diagnosticStatus, 2);
-            DiagnosticRecord("diagnostic-signature-mismatch", nullptr, 0, 0);
-            OutputDebugStringA("auto-ap diagnostic: entry signature mismatch\n");
-        } else {
-            const bool statInstalled = Memory::SetHook(true, reinterpret_cast<void**>(&originalDiagnosticStatButton),
-                                                       DiagnosticStatButtonHook);
-            if (!statInstalled
-                || !Memory::SetHook(true, reinterpret_cast<void**>(&originalDiagnosticModal), DiagnosticModalHook)) {
-                if (statInstalled)
-                    Memory::SetHook(false, reinterpret_cast<void**>(&originalDiagnosticStatButton),
-                                    DiagnosticStatButtonHook);
-                InterlockedExchange(&diagnosticStatus, 3);
-                DiagnosticRecord("diagnostic-install-failed", nullptr, 0, 0);
-                OutputDebugStringA("auto-ap diagnostic: hook installation failed\n");
-            } else {
-                InterlockedExchange(&diagnosticStatus, 1);
-                DiagnosticRecord("diagnostic-installed", nullptr, 0, 0);
-            }
-        }
     }
     return true;
 }
