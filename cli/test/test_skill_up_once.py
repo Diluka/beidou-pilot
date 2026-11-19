@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from beidou_pilot.errors import ClientError
-from beidou_pilot.skill_up import preflight_skill_up, skill_up_once
+from beidou_pilot.skill_up import _beginner_points, preflight_skill_up, skill_up_once
 
 
 def observation(sp=3):
@@ -36,6 +36,17 @@ class Backend:
         return values.pop(0)
 
 
+def beginner_backend():
+    backend = Backend()
+    backend.observations = [observation(0), observation(0), observation(0)]
+    for item in backend.observations:
+        item["character"]["level"] = 3
+    backend.characters = [{"character_id": 3, "skills_complete": True, "skills": {}},
+                          {"character_id": 3, "skills_complete": True, "skills": {}},
+                          {"character_id": 3, "skills_complete": True, "skills": {"1002": {"level": 1, "master_level": None}}}]
+    return backend
+
+
 class SkillUpOnceTest(unittest.TestCase):
     def setUp(self):
         verifier = patch("beidou_pilot.skill_up._verified_client", return_value=True)
@@ -43,8 +54,10 @@ class SkillUpOnceTest(unittest.TestCase):
         self.addCleanup(verifier.stop)
 
     def test_total_preflight_rejects_insufficient_sp(self):
+        backend = Backend()
+        backend.observations[0] = observation(0)
         with self.assertRaises(ClientError) as caught:
-            preflight_skill_up(Backend(), 2101002, 4)
+            preflight_skill_up(backend, 2101002, 1)
         self.assertEqual(caught.exception.code, "insufficient_skill_points")
 
     def test_total_preflight_refuses_unknown_batch_limit(self):
@@ -59,6 +72,13 @@ class SkillUpOnceTest(unittest.TestCase):
             with self.subTest(skill_id=skill_id), self.assertRaises(ClientError) as caught:
                 preflight_skill_up(backend, skill_id, 2)
             self.assertEqual(caught.exception.code, "skill_limit_unavailable")
+
+    def test_beginner_pool_counts_all_twelve_and_caps_level(self):
+        learned = {"skills": {"1000": {"level": 1}, "10001001": {"level": 2},
+                              "20011002": {"level": 1}}}
+        self.assertEqual(_beginner_points({"level": 20}, learned), 2)
+        with self.assertRaises(ClientError):
+            _beginner_points({"level": None}, learned)
 
     def test_total_preflight_accepts_one_with_sp(self):
         self.assertIsNone(preflight_skill_up(Backend(), 2101002, 1))
@@ -176,6 +196,81 @@ class SkillUpOnceTest(unittest.TestCase):
         result = skill_up_once(backend, 1001003)
         self.assertEqual((result["level_before"], result["level_after"]), (0, 1))
         clicked.assert_called_once()
+
+    @patch("beidou_pilot.skill_up.click_control")
+    @patch("beidou_pilot.skill_up.read_ui")
+    @patch("beidou_pilot.skill_up.open_window")
+    def test_beginner_uses_computed_pool_not_normal_sp(self, opened, read_ui, clicked):
+        backend = Backend()
+        backend.observations = [observation(0), observation(0), observation(0)]
+        for item in backend.observations:
+            item["character"]["level"] = 3
+        backend.characters = [{"character_id": 3, "skills_complete": True, "skills": {}},
+                              {"character_id": 3, "skills_complete": True, "skills": {}},
+                              {"character_id": 3, "skills_complete": True, "skills": {"1002": {"level": 1, "master_level": None}}}]
+        w = window()
+        w["skills"]["ids"] = [1000, 1001, 1002]
+        w["skills"]["selected_tab"] = 0
+        opened.return_value = w
+        read_ui.return_value = {"windows": [w], "dialog": {"focused_window": {"address": "a"}}}
+        result = skill_up_once(backend, 1002)
+        self.assertEqual((result["sp_before"], result["sp_after"]), (2, 1))
+        clicked.assert_called_once()
+        self.assertIsNone(preflight_skill_up(Backend(), 1002, 1))
+
+    @patch("beidou_pilot.skill_up.click_control")
+    @patch("beidou_pilot.skill_up.read_ui")
+    @patch("beidou_pilot.skill_up.open_window")
+    def test_beginner_preclick_changes_and_insufficient_pool(self, opened, read_ui, clicked):
+        w = window()
+        w["skills"]["ids"] = [1000, 1001, 1002]
+        w["skills"]["selected_tab"] = 0
+        opened.return_value = w
+        read_ui.return_value = {"windows": [w], "dialog": {"focused_window": {"address": "a"}}}
+        for case in ("identity", "other_skill", "insufficient"):
+            backend = beginner_backend()
+            if case == "identity":
+                backend.observations[1]["client"]["run_id"] = "different"
+            elif case == "other_skill":
+                backend.characters[1]["skills"]["1001"] = {"level": 1, "master_level": None}
+            else:
+                backend.observations[0]["character"]["level"] = 1
+            with self.subTest(case=case), self.assertRaises(ClientError) as caught:
+                skill_up_once(backend, 1002)
+            self.assertEqual(caught.exception.code, "insufficient_skill_points" if case == "insufficient" else "skill_state_changed")
+            clicked.assert_not_called()
+
+    @patch("beidou_pilot.skill_up.click_control")
+    @patch("beidou_pilot.skill_up.read_ui")
+    @patch("beidou_pilot.skill_up.open_window")
+    def test_beginner_postclick_failure_is_unknown(self, opened, read_ui, clicked):
+        w = window()
+        w["skills"]["ids"] = [1000, 1001, 1002]
+        w["skills"]["selected_tab"] = 0
+        opened.return_value = w
+        read_ui.return_value = {"windows": [w], "dialog": {"focused_window": {"address": "a"}}}
+        for case in ("identity", "incomplete", "click"):
+            backend = beginner_backend()
+            clicked.reset_mock()
+            clicked.side_effect = ClientError("backend_failed", "failed") if case == "click" else None
+            if case == "identity":
+                backend.observations[2]["client"]["run_id"] = "different"
+            elif case == "incomplete":
+                backend.characters[2]["skills_complete"] = False
+            with self.subTest(case=case), self.assertRaises(ClientError) as caught:
+                skill_up_once(backend, 1002)
+            self.assertEqual(caught.exception.code, "skill_up_unknown")
+            clicked.assert_called_once()
+
+    @patch("beidou_pilot.skill_up.open_window")
+    def test_beginner_missing_level_or_incomplete_map_never_opens(self, opened):
+        for incomplete in (False, True):
+            backend = Backend()
+            backend.observations[0]["character"]["level"] = None if not incomplete else 7
+            backend.characters[0]["skills_complete"] = not incomplete
+            with self.subTest(incomplete=incomplete), self.assertRaises(ClientError):
+                skill_up_once(backend, 1000)
+        opened.assert_not_called()
 
     @patch("beidou_pilot.skill_up.open_window")
     def test_unverified_executable_is_refused(self, opened):

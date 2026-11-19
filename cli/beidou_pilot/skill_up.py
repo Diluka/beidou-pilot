@@ -9,6 +9,19 @@ from .backend import Backend, ClientError, JsonObject
 from .engines.character import CharacterSnapshot
 from .ui import click_control, click_window, open_window, read_ui
 
+BEGINNER_SKILLS = (1000, 1001, 1002, 10001000, 10001001, 10001002,
+                   20001000, 20001001, 20001002, 20011000, 20011001, 20011002)
+
+
+def _beginner_points(character: JsonObject, learned: CharacterSnapshot) -> int:
+    level = character.get("level")
+    if type(level) is not int or not 1 <= level <= 255:
+        raise ClientError("skill_points_unavailable", "角色等级不可用。")
+    levels = [learned["skills"][str(i)]["level"] for i in BEGINNER_SKILLS if str(i) in learned["skills"]]
+    if any(type(value) is not int or value < 0 for value in levels):
+        raise ClientError("skills_unavailable", "初学者技能等级不可用。")
+    return min(level, 7) - 1 - sum(levels)
+
 
 def _verified_client(backend: Backend) -> bool:
     try:
@@ -28,13 +41,14 @@ def preflight_skill_up(backend: Backend, skill_id: int, points: int, *, batch: b
     character = cast(JsonObject | None, observation.get("character"))
     if observation.get("native_values_valid") is not True or character is None:
         raise ClientError("character_unavailable", "角色状态不可用。")
-    sp = character.get("skill_points")
-    if not isinstance(sp, int) or isinstance(sp, bool):
-        raise ClientError("skill_points_unavailable", "剩余技能点不可用。")
-    if points > sp:
-        raise ClientError("insufficient_skill_points", "剩余技能点不足。", {"requested": points, "available": sp})
     if points > 1 or batch:
         raise ClientError("skill_limit_unavailable", "原版动态技能等级加成不可观察，暂不支持 GUI 多点加点。")
+    if skill_id not in BEGINNER_SKILLS:
+        sp = character.get("skill_points")
+        if not isinstance(sp, int) or isinstance(sp, bool):
+            raise ClientError("skill_points_unavailable", "剩余技能点不可用。")
+        if points > sp:
+            raise ClientError("insufficient_skill_points", "剩余技能点不足。", {"requested": points, "available": sp})
     return None
 
 
@@ -53,11 +67,6 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
     identity = (observation.get("instance_id"), client.get("run_id"), character.get("id"))
     if any(value is None for value in identity):
         raise ClientError("character_unavailable", "角色或实例身份不可用。")
-    sp = character.get("skill_points")
-    if not isinstance(sp, int) or isinstance(sp, bool):
-        raise ClientError("skill_points_unavailable", "剩余技能点不可用。")
-    if sp < 1:
-        raise ClientError("insufficient_skill_points", "剩余技能点不足。")
     learned = cast(CharacterSnapshot, backend.read("character"))
     if not learned["skills_complete"] or learned["character_id"] != identity[2]:
         raise ClientError("skills_unavailable", "技能记录不完整或角色身份不一致。")
@@ -71,6 +80,12 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
     if skill is None and (skill_id > 2147483647 or q // 100 == 22 or q == 2001 or skill_id in fixed_one):
         raise ClientError("skill_level_unavailable", "客户端没有该技能的等级记录，无法确认初始等级。", {"skill_id": skill_id})
     before = skill["level"] if skill is not None else 0
+    beginner = skill_id in BEGINNER_SKILLS
+    sp = _beginner_points(character, learned) if beginner else character.get("skill_points")
+    if type(sp) is not int:
+        raise ClientError("skill_points_unavailable", "剩余技能点不可用。")
+    if sp < 1:
+        raise ClientError("insufficient_skill_points", "剩余技能点不足。")
     if expected is not None and (*identity, sp, before) != expected:
         raise ClientError("skill_state_changed", "批量预检后角色状态发生变化，未执行加点。")
     window = open_window(backend, "skills")
@@ -99,7 +114,8 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
         raise ClientError("skill_ambiguous", "技能页包含重复技能 ID。", {"skill_id": skill_id})
     job = character.get("job")
     if (type(job) is not int or not 0 <= job <= 32767 or job // 100 == 22 or job == 2001
-            or not 0 < view["selected_tab"] < view["tab_count"] or window["vtables"][0] != "0xb3b5cc"):
+            or not 0 <= view["selected_tab"] < view["tab_count"]
+            or (view["selected_tab"] == 0) != beginner or window["vtables"][0] != "0xb3b5cc"):
         raise ClientError("skill_points_pool_unavailable", "该职业或技能页的技能点分册尚未核实。")
     selected_tab = view["selected_tab"]
     index = view["ids"].index(skill_id)
@@ -134,11 +150,16 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
     current_skills = cast(CharacterSnapshot, backend.read("character"))
     if (current_character is None or current_client is None or current.get("native_values_valid") is not True
             or (current.get("instance_id"), current_client.get("run_id"), current_character.get("id")) != identity
-            or current_character.get("skill_points") != sp or current_character.get("job") != character.get("job")
+            or (not beginner and current_character.get("skill_points") != sp)
+            or current_character.get("job") != character.get("job")
             or not current_skills["skills_complete"]
             or current_skills["character_id"] != identity[2]
             or current_skills["skills"].get(str(skill_id)) != skill):
         raise ClientError("skill_state_changed", "加点前角色状态发生变化，请重新观察。")
+    if beginner and (current_character.get("level") != character.get("level")
+                     or _beginner_points(current_character, current_skills) != sp
+                     or any(current_skills["skills"].get(str(i)) != learned["skills"].get(str(i)) for i in BEGINNER_SKILLS)):
+        raise ClientError("skill_state_changed", "加点前初学者技能状态发生变化。")
     latest = read_ui(backend)
     matches = [entry for entry in latest["windows"] if entry.get("instance_ref") == window.get("instance_ref")]
     if (not window.get("instance_ref") or len(matches) != 1 or matches[0]["skills"] != view
@@ -181,12 +202,20 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
                 or not after_skills["skills_complete"] or after_skills["character_id"] != identity[2]):
             raise ClientError("skill_up_unknown", "已点击加点，但角色状态不可确认；请观察后再决定。", {"skill_id": skill_id})
         updated = after_skills["skills"].get(str(skill_id))
-        if updated is not None and updated["level"] == before + 1 and after_character.get("skill_points") == sp - 1:
+        try:
+            after_sp = _beginner_points(after_character, after_skills) if beginner else after_character.get("skill_points")
+        except ClientError as error:
+            raise ClientError("skill_up_unknown", "已点击加点，初学者点数不可确认。", {"skill_id": skill_id}) from error
+        if (updated is not None and updated["level"] == before + 1 and after_sp == sp - 1
+                and (not beginner or (after_character.get("level") == character.get("level")
+                     and after_character.get("job") == character.get("job")
+                     and all(after_skills["skills"].get(str(i)) == learned["skills"].get(str(i))
+                             for i in BEGINNER_SKILLS if i != skill_id)))):
             return {"skill_id": skill_id, "level_before": before, "level_after": before + 1,
                     "sp_before": sp, "sp_after": sp - 1}
         if time.monotonic() >= deadline:
             raise ClientError("skill_up_unknown", "已点击加点，但结果未确认；请观察后再决定。",
                               {"skill_id": skill_id, "level_before": before, "sp_before": sp,
                                "level_observed": updated["level"] if updated else None,
-                               "sp_observed": after_character.get("skill_points")})
+                               "sp_observed": after_sp})
         time.sleep(0.1)
