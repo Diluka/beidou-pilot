@@ -37,6 +37,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="NativeMotion.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="NativeDeath.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="NativeSceneTerrain.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\headless\src\ImgResources.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\shared\lua-runtime\SceneTerrain.h"><Filter>Header Files</Filter></ClInclude>

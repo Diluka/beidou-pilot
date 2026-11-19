@@ -9,6 +9,7 @@
 #include "NativeItemUse.h"
 #include "NativeObservation.h"
 #include "NativeMotion.h"
+#include "NativeDeath.h"
 #include "NativeSceneTerrain.h"
 #include "LoginAction.h"
 
@@ -445,6 +446,7 @@ MapleControl::State CaptureState(NativeContext& native) {
     state.character.known.fill(state.characterKnown);
     state.inGame = !native.loginStage && !(native.field == 0 && native.stats == 0 && native.user == 0);
     state.ready = state.inGame && state.mapKnown && state.characterKnown && state.positionKnown;
+    state.dead = BeiDouBridge::DeathFromState(state);
     if (state.positionKnown) state.character.SetPosition(state.x, state.y);
     state.characterUpdatesKnown = state.ready && updatedCharacter == native.user;
     state.characterUpdates = characterUpdates;
