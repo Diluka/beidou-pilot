@@ -22,6 +22,7 @@ class AutoApTest(unittest.TestCase):
 
     def test_gui_opens_stats_before_single_submission(self):
         from unittest.mock import Mock, call
+        from beidou_pilot.cli import dispatch, parser
         backend = Mock()
         backend.name = "beidou"
         backend.root = Path("/work/runtime/default/run")
@@ -29,14 +30,16 @@ class AutoApTest(unittest.TestCase):
         order = Mock()
         initial_scene = {"character_id": 1, "instance_id": "a", "scene_generation": 3, "map_id": 4}
         with patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \
+             patch("beidou_pilot.bridge.BridgeClient") as cli_bridge, \
+             patch.object(Path, "is_file", return_value=False), \
              patch("beidou_pilot.auto_ap.scene_context", return_value=initial_scene), \
              patch("beidou_pilot.auto_ap.compile_strategy", return_value="compiled") as compile_script, \
-             patch.object(Path, "is_file", return_value=True), \
              patch("beidou_pilot.ui.open_window") as open_window:
             bridge.return_value.snapshot.return_value = {"scripts": []}
+            cli_bridge.return_value.directory = Path("/nonexistent/bridge")
             order.attach_mock(open_window, "open_window")
             order.attach_mock(bridge.return_value.run_script, "run_script")
-            self.assertEqual(auto_ap(backend)["status"], "allocated")
+            self.assertEqual(dispatch(backend, parser().parse_args(["auto-ap"]))["status"], "allocated")
             self.assertEqual(order.mock_calls, [call.open_window(backend, "stats"),
                              call.run_script(code="compiled", seconds=6, timeout=9)])
             source, options, scene = compile_script.call_args.args
@@ -99,7 +102,6 @@ entry.main(entry.context)
         backend.read.return_value = observation(2)
         with patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \
              patch("beidou_pilot.auto_ap.scene_context", return_value={"character_id": 1}), \
-             patch.object(Path, "is_file", return_value=True), \
              patch("beidou_pilot.ui.open_window", side_effect=ClientError("ui_window_missing", "error")):
             bridge.return_value.snapshot.return_value = {"scripts": []}
             with self.assertRaises(ClientError) as caught:
@@ -118,31 +120,12 @@ entry.main(entry.context)
             with self.subTest(field=field), \
                  patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \
                  patch("beidou_pilot.auto_ap.scene_context", side_effect=[original, {**original, field: changed}]), \
-                 patch.object(Path, "is_file", return_value=True), \
-                 patch("beidou_pilot.ui.open_window"):
+                     patch("beidou_pilot.ui.open_window"):
                 bridge.return_value.snapshot.return_value = {"scripts": []}
                 with self.assertRaises(ClientError) as caught:
                     auto_ap(backend)
                 self.assertEqual(caught.exception.code, "character_changed")
                 bridge.return_value.run_script.assert_not_called()
-
-    def test_gui_without_marker_has_no_input(self):
-        from unittest.mock import Mock
-        backend = Mock()
-        backend.name = "beidou"
-        backend.root = Path("/work/runtime/default/run")
-        backend.read.return_value = observation(2)
-        with patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \
-             patch("beidou_pilot.auto_ap.scene_context", return_value={"character_id": 1}), \
-             patch.object(Path, "is_file", autospec=True, return_value=False) as marker, \
-             patch("beidou_pilot.ui.open_window") as open_window:
-            bridge.return_value.snapshot.return_value = {"scripts": []}
-            with self.assertRaises(ClientError) as caught:
-                auto_ap(backend)
-            self.assertEqual(caught.exception.code, "unsupported_capability")
-            marker.assert_called_once_with(Path("/work/auto-ap-diagnostic.enable"))
-            open_window.assert_not_called()
-            bridge.return_value.run_script.assert_not_called()
 
     def test_gui_guards_do_not_open_stats(self):
         from unittest.mock import Mock

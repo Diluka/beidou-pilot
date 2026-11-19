@@ -8,6 +8,14 @@ int main() {
     assert(!Tx::ReportedDispatched(true, false));
     assert(!Tx::ReportedDispatched(false, true));
     assert(Tx::ReportedDispatched(true, true));
+    assert(Tx::MayRequestInstall(0));
+    assert(Tx::MayRequestInstall(1));
+    assert(Tx::MayRequestInstall(2));
+    assert(Tx::MayRequestInstall(-2));
+    assert(!Tx::MayRequestInstall(-1));
+    assert(std::string(Tx::InstallFailureReason(-2)) == "auto_ap_install_unknown");
+    assert(std::string(Tx::InstallFailureReason(2)) == "auto_ap_install_unknown");
+    assert(std::string(Tx::InstallFailureReason(-1)) == "auto_ap_unsupported");
     const Tx::Identity owner{5, 7, 9, "original"};
     Tx tx;
     assert(!tx.Start({0, 7, 9, "original"}));

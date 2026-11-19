@@ -44,6 +44,13 @@ struct NativeAutoApTransaction {
 
     static bool ReportedDispatched(bool consumed, bool confirmed) { return consumed && confirmed; }
 
+    // Install states: 0 untried, 1 ready, 2 in progress, -1 unsupported, -2 unknown.
+    static bool MayRequestInstall(long state) { return state != -1; }
+
+    static const char* InstallFailureReason(long state) {
+        return state == -1 ? "auto_ap_unsupported" : "auto_ap_install_unknown";
+    }
+
     Phase State() const { return phase; }
 
 private:

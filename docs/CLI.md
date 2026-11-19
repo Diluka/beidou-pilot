@@ -251,9 +251,11 @@ end
 
 `revive` 在 GUI 与无头端都提交一次普通复活请求。HP 已知为正时返回 `already_alive` 且不发送请求；角色或 HP 读数不可用时拒绝操作。两端均调用共享 tick Lua 的 `player.revive()`：GUI 端只在唯一已识别复活窗口及其启用的确认按钮可验证时调用原版窗口确认动作；无头端由本端发送普通 `CHANGEMAP` 请求。请求派发不表示恢复成功：命令只在同一角色 ID 的 HP 为正、地图与位置有效时返回 `revived`；GUI 还要确认复活窗口消失。超时或身份变化时停止，不重发。
 
-## AP 自动分配（开发中）
+## AP 自动分配
 
-[#310](https://github.com/Diluka/beidou-pilot/issues/310) 的目标入口是 `workbenches/workbench dev/NAME auto-ap`，无参数，一次分配当前全部剩余 AP。该能力仍在实现和验证中，GUI 原版调用及无头规则一致性尚待确认；不要依赖尚未确认的结果字段。请求结果不明时先观察角色属性和剩余 AP，不自动重试，也不要通过数据库修改代替客户端操作。服务端负责最终校验。
+`workbenches/workbench dev/NAME auto-ap` 无参数，提交一次当前全部剩余 AP 的自动分配请求。GUI 调用原版自动分配流程，无头端按其已实现的职业规则计算；不支持的版本或职业返回 `unsupported_capability`。服务端负责最终校验，不直接修改数据库。
+
+AP 已为 0 时返回 `status=unchanged`；确认同角色 AP 已归零且属性增量合计等于原 AP 时返回 `status=allocated`。两者都返回 `before`、`after`（含 `strength`、`dexterity`、`intelligence`、`luck`、`ability_points`）、`allocated` 和 `remaining_ap`。`unknown` 表示结果未确认，先观察同一角色的属性和剩余 AP，不重复请求。完整职业覆盖不作保证。历史版本 `ead8960` 的隔离开发服试用仅覆盖战士 AP 5：GUI 样本属性变化为 STR +3、DEX +2；该实验路径不能作为当前正式路径的验收证据。最终版本的两端真实效果仍待复验。
 
 ## 无头控件交互
 

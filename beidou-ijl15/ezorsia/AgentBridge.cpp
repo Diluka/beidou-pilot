@@ -4,7 +4,6 @@
 #include "TickRuntime.h"
 #include "NativeKeyUnion.h"
 #include "NativeTickInput.h"
-#include "NativeAutoApCancelProbe.h"
 #include "NativeAutoApTransaction.h"
 #include "EventTransport.h"
 #include "NativeKeyBindings.h"
@@ -93,6 +92,7 @@ std::uint32_t nativeScanCodesOwner = 0;
 ULONGLONG lastPublishedAt = 0;
 bool eventsPublished = false;
 volatile LONG nativeAutoApReady = 0;
+DWORD nativeAutoApThread = 0;
 thread_local bool nativeAutoApActive = false;
 thread_local std::uintptr_t nativeAutoApModal = 0;
 thread_local int nativeAutoApModalResult = 0;
@@ -124,12 +124,13 @@ public:
     }
 
     bool Supports(MapleControl::ActionKind kind) const override {
+        const LONG autoApState = InterlockedCompareExchange(&nativeAutoApReady, 0, 0);
         return kind == MapleControl::ActionKind::Jump || kind == MapleControl::ActionKind::Attack
                || kind == MapleControl::ActionKind::Pickup || kind == MapleControl::ActionKind::UseItem
                || kind == MapleControl::ActionKind::Revive
                || (kind == MapleControl::ActionKind::AutoAp
                    && tickInput.Intent().kind != MapleControl::ActionKind::AutoAp
-                   && InterlockedCompareExchange(&nativeAutoApReady, 0, 0) == 1);
+                   && BeiDouBridge::NativeAutoApTransaction::MayRequestInstall(autoApState));
     }
 
     bool SupportsSkill() const override { return true; }
@@ -173,29 +174,19 @@ template <typename T> bool ReadAt(std::uintptr_t address, T& value) {
            && count == sizeof(value);
 }
 
-// Opt-in diagnostic only: do not issue input or inspect dialog contents.
-using DiagnosticStatButton = void(__thiscall*)(void*, int);
-using DiagnosticModal = int(__thiscall*)(void*);
-auto originalDiagnosticStatButton = reinterpret_cast<DiagnosticStatButton>(0x008C522F);
-auto originalDiagnosticModal = reinterpret_cast<DiagnosticModal>(0x004EDBA1);
-thread_local unsigned int diagnosticStatDepth = 0;
-thread_local BeiDouBridge::NativeAutoApCancelProbe diagnosticCancelProbe;
-volatile LONG diagnosticCancelUsed = 0;
-volatile LONG diagnosticStatus =
-    0; // 0 disabled, 1 experimental active, 2 signature mismatch, 3 unknown, 4 log failure, 5 hash unavailable/mismatch
-// Experimental diagnostics: neither this gate nor a successful install verifies the game ABI.
-volatile LONG diagnosticInit = 0;
-// Explicit experimental build: callers are not known to be confined to the update thread.
-constexpr bool experimentalDiagnosticBuild = true;
-DWORD diagnosticUpdateThread = 0;
-bool diagnosticLogging = false;
+// Native AutoAp entry points; the modal hook is installed only after a request.
+using NativeStatButton = void(__thiscall*)(void*, int);
+using NativeModal = int(__thiscall*)(void*);
+auto originalNativeModal = reinterpret_cast<NativeModal>(0x004EDBA1);
 
-bool DiagnosticExecutableMatches() {
+enum class NativeAutoApHash { Match, Mismatch, Unavailable };
+
+NativeAutoApHash NativeAutoApExecutableMatches() {
     const std::array<unsigned char, 32> expected{{0x11, 0x98, 0xfa, 0x57, 0xca, 0x5a, 0x7c, 0x48, 0x9b, 0xae, 0x43,
                                                   0xec, 0x13, 0xc6, 0x96, 0x81, 0xd9, 0xca, 0xbe, 0x0f, 0x96, 0x76,
                                                   0x2f, 0x3d, 0xc0, 0x35, 0x7f, 0xac, 0xf2, 0xe7, 0xd4, 0xdf}};
     const HMODULE library = LoadLibraryExW(L"bcrypt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!library) return false;
+    if (!library) return NativeAutoApHash::Unavailable;
     const auto open = reinterpret_cast<decltype(&BCryptOpenAlgorithmProvider)>(
         GetProcAddress(library, "BCryptOpenAlgorithmProvider"));
     const auto property = reinterpret_cast<decltype(&BCryptGetProperty)>(GetProcAddress(library, "BCryptGetProperty"));
@@ -241,128 +232,25 @@ bool DiagnosticExecutableMatches() {
     if (algorithm) close(algorithm, 0);
     if (file != INVALID_HANDLE_VALUE && !CloseHandle(file)) ok = false;
     if (!FreeLibrary(library)) ok = false;
-    return ok && digest == expected;
+    if (!ok) return NativeAutoApHash::Unavailable;
+    return digest == expected ? NativeAutoApHash::Match : NativeAutoApHash::Mismatch;
 }
 
-void DiagnosticRecord(const char* event, void* object, std::uintptr_t caller, int value) noexcept {
-    if (!diagnosticLogging) return;
-    try {
-        std::uint32_t table = 0, type = 0, manager = 0, focused = 0;
-        const auto address = reinterpret_cast<std::uintptr_t>(object);
-        const bool tableKnown = ReadAt(address, table);
-        const bool typeKnown = ReadAt(address + 0x94, type);
-        const bool focusKnown = ReadAt(0x00BEC20C, manager) && manager != 0 && ReadAt(manager + 0x80, focused);
-        DWORD foregroundProcess = 0;
-        const HWND foreground = GetForegroundWindow();
-        const DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, &foregroundProcess) : 0;
-        std::ostringstream out;
-        out << event << " run=" << runId << " instance=" << instanceId << " tick=" << GetTickCount64()
-            << " thread=" << GetCurrentThreadId() << " update_thread=" << diagnosticUpdateThread
-            << " foreground_thread=" << (foregroundProcess == GetCurrentProcessId() ? foregroundThread : 0)
-            << " depth=" << diagnosticStatDepth << " object=0x" << std::hex << address << " caller=0x" << caller
-            << " vtable=";
-        if (tableKnown)
-            out << "0x" << table;
-        else
-            out << "unknown";
-        out << " type=";
-        if (typeKnown)
-            out << "0x" << type;
-        else
-            out << "unknown";
-        out << " focus=";
-        if (focusKnown)
-            out << "0x" << focused;
-        else
-            out << "unknown";
-        out << std::dec << " value=" << value << "\n";
-        const auto text = out.str();
-        const HANDLE file = CreateFileA((directory + "\\..\\runs\\" + runId + "\\auto-ap-diagnostic.log").c_str(),
-                                        FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                        nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (file == INVALID_HANDLE_VALUE) {
-            InterlockedExchange(&diagnosticStatus, 4);
-            OutputDebugStringA("auto-ap diagnostic: cannot open log\n");
-            return;
-        }
-        DWORD written = 0;
-        if (!WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr)
-            || written != text.size()) {
-            InterlockedExchange(&diagnosticStatus, 4);
-            OutputDebugStringA("auto-ap diagnostic: log write failed or incomplete\n");
-        }
-        if (!CloseHandle(file)) {
-            InterlockedExchange(&diagnosticStatus, 4);
-            OutputDebugStringA("auto-ap diagnostic: log close failed\n");
-        }
-    } catch (...) {
-        InterlockedExchange(&diagnosticStatus, 4);
-        OutputDebugStringA("auto-ap diagnostic: log exception\n");
-    }
-}
-
-void __fastcall DiagnosticStatButtonHook(void* object, void*, int control) {
+int __fastcall NativeAutoApModalHook(void* object, void*) {
     const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-
-    struct DepthGuard {
-        DepthGuard() { ++diagnosticStatDepth; }
-
-        ~DepthGuard() { --diagnosticStatDepth; }
-    } guard;
-
-    std::uint32_t statTable = 0, statManager = 0, statFocus = 0;
-    const auto statAddress = reinterpret_cast<std::uintptr_t>(object);
-    const bool validStat = ReadAt(statAddress, statTable) && statTable == 0x00B3B908 && ReadAt(0x00BEC20C, statManager)
-                           && statManager != 0 && ReadAt(statManager + 0x80, statFocus) && statFocus == statAddress;
-    const bool arm = control == 2007 && diagnosticLogging && !nativeAutoApActive && diagnosticStatus == 1
-                     && !diagnosticCancelProbe.active && validStat && GetCurrentThreadId() == diagnosticUpdateThread
-                     && previousState.ready && previousState.characterKnown
-                     && InterlockedCompareExchange(&diagnosticCancelUsed, 1, 0) == 0;
-
-    struct ProbeGuard {
-        bool armed;
-
-        ~ProbeGuard() {
-            if (armed) diagnosticCancelProbe = {};
-        }
-    } probeGuard{arm};
-
-    if (arm) {
-        std::uint32_t context = 0;
-        if (ReadAt(0x00BE7918, context) && context != 0) {
-            diagnosticCancelProbe.active = true;
-            diagnosticCancelProbe.character = previousState.character.id;
-            diagnosticCancelProbe.scene = sceneGeneration;
-            diagnosticCancelProbe.context = context;
-        }
-    }
-    DiagnosticRecord("stat-enter", object, caller, control);
-    originalDiagnosticStatButton(object, control);
-    DiagnosticRecord("stat-return", object, caller, control);
-}
-
-int __fastcall DiagnosticModalHook(void* object, void*) {
-    const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-    const bool trace = diagnosticStatDepth != 0;
-    const bool bound = diagnosticCancelProbe.Bind(reinterpret_cast<std::uintptr_t>(object), caller);
-    const bool autoBound = nativeAutoApActive && !nativeAutoApModal && caller == 0x00992EB1;
-    if (autoBound) nativeAutoApModal = reinterpret_cast<std::uintptr_t>(object);
+    const bool bound = nativeAutoApActive && !nativeAutoApModal && caller == 0x00992EB1;
+    if (bound) nativeAutoApModal = reinterpret_cast<std::uintptr_t>(object);
 
     struct ModalGuard {
         bool bound;
-        bool autoBound;
 
         ~ModalGuard() {
-            if (bound) diagnosticCancelProbe.modal = 0;
-            if (autoBound) nativeAutoApModal = 0;
+            if (bound) nativeAutoApModal = 0;
         }
-    } modalGuard{bound, autoBound};
+    } guard{bound};
 
-    if (trace) DiagnosticRecord("modal-enter", object, caller, 0);
-    const int result = originalDiagnosticModal(object);
-    if (autoBound) nativeAutoApModalResult = result;
-    // The modal object may no longer be readable after the original call.
-    if (trace) DiagnosticRecord("modal-return", nullptr, caller, result);
+    const int result = originalNativeModal(object);
+    if (bound) nativeAutoApModalResult = result;
     return result;
 }
 
@@ -1186,7 +1074,6 @@ bool Publish(const MapleControl::State& state) {
         out << npcs.Dump();
     } else
         out << "null";
-    out << ",\"auto_ap_diagnostic_status\":" << InterlockedCompareExchange(&diagnosticStatus, 0, 0);
     out << ",\"projectiles\":null,\"projectiles_complete\":null";
     out << ",\"held_keys\":[";
     bool separator = false;
@@ -1347,6 +1234,59 @@ void ReadCommand() {
     }
 }
 
+// Called only for an admitted AutoAp after TickRuntime::Tick has returned.
+// Other threads may still execute target code; Detours is not a proof of
+// process-wide atomicity or complete recovery on failure.
+bool PrepareNativeAutoAp(std::string& error) {
+    const LONG state = InterlockedCompareExchange(&nativeAutoApReady, 2, 0);
+    if (state == 1) {
+        if (nativeAutoApThread == GetCurrentThreadId()) return true;
+        error = "auto_ap_install_unknown";
+        return false;
+    }
+    if (state != 0) {
+        error = BeiDouBridge::NativeAutoApTransaction::InstallFailureReason(state);
+        return false;
+    }
+    const std::array<unsigned char, 8> statExpected{{0x8b, 0x54, 0x24, 0x04, 0x8d, 0x82, 0x30, 0xf8}};
+    const std::array<unsigned char, 8> modalExpected{{0xb8, 0x64, 0x71, 0xa8, 0x00, 0xe8, 0xed, 0x2f}};
+    std::array<unsigned char, 8> statBytes{}, modalBytes{};
+    const auto hash = NativeAutoApExecutableMatches();
+    if (hash == NativeAutoApHash::Unavailable
+        || (hash == NativeAutoApHash::Match && (!ReadAt(0x008C522F, statBytes) || !ReadAt(0x004EDBA1, modalBytes)))) {
+        InterlockedExchange(&nativeAutoApReady, -2);
+        error = "auto_ap_install_unknown";
+        return false;
+    }
+    if (hash == NativeAutoApHash::Mismatch || statBytes != statExpected || modalBytes != modalExpected) {
+        InterlockedExchange(&nativeAutoApReady, -1);
+        error = "auto_ap_unsupported";
+        return false;
+    }
+    LONG status = DetourTransactionBegin();
+    if (status != NO_ERROR) {
+        // Abort refuses another thread's transaction, but cannot distinguish an
+        // unknown pre-existing transaction owned by this same thread.
+        DetourTransactionAbort();
+    } else {
+        status = DetourUpdateThread(GetCurrentThread());
+        if (status == NO_ERROR)
+            status = DetourAttach(reinterpret_cast<void**>(&originalNativeModal), NativeAutoApModalHook);
+        if (status == NO_ERROR)
+            status = DetourTransactionCommit();
+        else
+            DetourTransactionAbort();
+    }
+    if (status != NO_ERROR) {
+        InterlockedExchange(&nativeAutoApReady, -2);
+        error = "auto_ap_install_unknown";
+        return false;
+    }
+    nativeAutoApThread = GetCurrentThreadId();
+    InterlockedExchange(&nativeAutoApReady, 1);
+    return true;
+}
+
 bool DeliverTickInput() {
     const auto frame = sequence;
     const auto revision = tickInput.IntentRevision();
@@ -1382,6 +1322,13 @@ bool DeliverTickInput() {
         else if (!AutoApWindow(window, error)) {
             // Preserve the exact observation failure.
         }
+        if (error.empty() && !PrepareNativeAutoAp(error)) {
+            // Unsupported binaries and uncertain installation never dispatch.
+        }
+        if (error.empty() && (sequence != frame || revision != tickInput.IntentRevision())) return false;
+        if (error.empty() && !AutoApWindow(window, error)) {
+            // Revalidate focus after file hashing and hook installation.
+        }
         if (error.empty()) {
             NativeContext liveNative;
             const auto live = CaptureState(liveNative);
@@ -1414,7 +1361,7 @@ bool DeliverTickInput() {
         } guard;
 
         // Original CUIStat OnButtonClicked control 2007; the modal hook owns confirmation.
-        reinterpret_cast<DiagnosticStatButton>(0x008C522F)(reinterpret_cast<void*>(window), 2007);
+        reinterpret_cast<NativeStatButton>(0x008C522F)(reinterpret_cast<void*>(window), 2007);
         const bool confirmed =
             nativeAutoApModalResult == 6
             && nativeAutoApTransaction.State() == BeiDouBridge::NativeAutoApTransaction::Phase::AwaitingReturn;
@@ -1626,77 +1573,17 @@ void Tick() {
     DeliverTickInput();
 }
 
-void InitializeExperimentalDiagnostic() {
-    if (!previousState.ready || !previousState.characterKnown || InterlockedCompareExchange(&diagnosticInit, 1, 0) != 0)
-        return;
-    try {
-        // This marker is operator consent, not proof that the server is dev.
-        const DWORD marker = GetFileAttributesA("Z:\\work\\auto-ap-diagnostic.enable");
-        diagnosticLogging = marker != INVALID_FILE_ATTRIBUTES && !(marker & FILE_ATTRIBUTE_DIRECTORY);
-        if (!diagnosticLogging || !experimentalDiagnosticBuild) return;
-        diagnosticUpdateThread = GetCurrentThreadId();
-        if (!DiagnosticExecutableMatches()) {
-            InterlockedExchange(&diagnosticStatus, 5);
-            DiagnosticRecord("diagnostic-executable-mismatch-or-unavailable", nullptr, 0, 0);
-            return;
-        }
-        const std::array<unsigned char, 8> statExpected{{0x8b, 0x54, 0x24, 0x04, 0x8d, 0x82, 0x30, 0xf8}};
-        const std::array<unsigned char, 8> modalExpected{{0xb8, 0x64, 0x71, 0xa8, 0x00, 0xe8, 0xed, 0x2f}};
-        std::array<unsigned char, 8> statBytes{}, modalBytes{};
-        if (!ReadAt(0x008C522F, statBytes) || statBytes != statExpected || !ReadAt(0x004EDBA1, modalBytes)
-            || modalBytes != modalExpected) {
-            InterlockedExchange(&diagnosticStatus, 2);
-            DiagnosticRecord("diagnostic-signature-mismatch", nullptr, 0, 0);
-            return;
-        }
-        LONG error = DetourTransactionBegin();
-        bool abortAttempted = false;
-        LONG abortResult = NO_ERROR;
-        if (error != NO_ERROR) {
-            // Abort rejects another thread's transaction. An unknown external
-            // same-thread transaction remains a limitation of this experiment.
-            abortAttempted = true;
-            abortResult = DetourTransactionAbort();
-        } else {
-            error = DetourUpdateThread(GetCurrentThread());
-            if (error == NO_ERROR)
-                error = DetourAttach(reinterpret_cast<void**>(&originalDiagnosticStatButton), DiagnosticStatButtonHook);
-            if (error == NO_ERROR)
-                error = DetourAttach(reinterpret_cast<void**>(&originalDiagnosticModal), DiagnosticModalHook);
-            if (error == NO_ERROR)
-                error = DetourTransactionCommit();
-            else {
-                abortAttempted = true;
-                abortResult = DetourTransactionAbort();
-            }
-        }
-        if (error != NO_ERROR) {
-            InterlockedExchange(&diagnosticStatus, 3);
-            DiagnosticRecord("diagnostic-install-outcome-unknown", nullptr, 0, static_cast<int>(error));
-            if (abortAttempted) DiagnosticRecord("diagnostic-abort-result", nullptr, 0, static_cast<int>(abortResult));
-        } else {
-            InterlockedExchange(&diagnosticStatus, 1);
-            InterlockedExchange(&nativeAutoApReady, 1);
-            DiagnosticRecord("experimental-diagnostic-installed", nullptr, 0, 0);
-        }
-    } catch (...) {
-        InterlockedExchange(&diagnosticStatus, 3);
-        OutputDebugStringA("auto-ap diagnostic: initialization outcome unknown\n");
-    }
-}
-
 void DriveAutoApModal() {
-    const bool production = nativeAutoApActive;
-    const auto modal = production ? nativeAutoApModal : diagnosticCancelProbe.modal;
-    if (!modal || (!production && diagnosticCancelProbe.attempted)) return;
-    const int controlId = production ? 6 : 7;
+    const auto modal = nativeAutoApModal;
+    if (!modal) return;
+    const int controlId = 6;
     std::uint32_t manager = 0, focused = 0, table = 0, type = 0, handler = 0, context = 0;
     if (!ReadAt(0x00BEC20C, manager) || !manager || !ReadAt(manager + 0x80, focused) || !ReadAt(modal, table)
         || !ReadAt(modal + 0x94, type) || !ReadAt(table + 0x20, handler) || !ReadAt(0x00BE7918, context))
         return;
     NativeContext liveNative;
     const auto live = CaptureState(liveNative);
-    if (!live.ready || !live.characterKnown || (production && instanceId != nativeAutoApAdmission.instance)
+    if (!live.ready || !live.characterKnown || (instanceId != nativeAutoApAdmission.instance)
         || liveNative.field != currentNative.field || liveNative.stats != currentNative.stats)
         return;
     bool enabled = false;
@@ -1729,29 +1616,22 @@ void DriveAutoApModal() {
     }
     std::uint32_t focusAgain = 0;
     if (!ReadAt(manager + 0x80, focusAgain) || focusAgain != focused) return;
-    if (production) {
-        const BeiDouBridge::NativeAutoApTransaction::Identity identity{live.character.id, sceneGeneration, context,
-                                                                       instanceId};
-        const bool verified = table == 0x00B3BB24 && type == 1001 && handler == 0x008D5251 && enabled;
-        if (nativeAutoApTransaction.BindAndChoose(identity, true, focused == modal, verified)
-            != BeiDouBridge::NativeAutoApTransaction::Decision::Confirm)
-            return;
-    } else if (!diagnosticCancelProbe.TakeCancel(modal, focused, table, type, handler, live.character.id,
-                                                 sceneGeneration, context, enabled))
+    const BeiDouBridge::NativeAutoApTransaction::Identity identity{live.character.id, sceneGeneration, context,
+                                                                   instanceId};
+    const bool verified = table == 0x00B3BB24 && type == 1001 && handler == 0x008D5251 && enabled;
+    if (nativeAutoApTransaction.BindAndChoose(identity, true, focused == modal, verified)
+        != BeiDouBridge::NativeAutoApTransaction::Decision::Confirm)
         return;
-    DiagnosticRecord(production ? "auto-ap-confirm-dispatched" : "experimental-cancel-dispatched",
-                     reinterpret_cast<void*>(modal), 0, controlId);
-    reinterpret_cast<DiagnosticStatButton>(handler)(reinterpret_cast<void*>(modal), controlId);
+    reinterpret_cast<NativeStatButton>(handler)(reinterpret_cast<void*>(modal), controlId);
 }
 
 void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     originalUpdate(app, now);
-    if (diagnosticCancelProbe.active || nativeAutoApActive) {
+    if (nativeAutoApActive) {
         DriveAutoApModal();
         return;
     }
     Tick();
-    InitializeExperimentalDiagnostic();
 }
 }
 

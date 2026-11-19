@@ -27,10 +27,6 @@ def auto_ap(backend: Backend) -> JsonObject:
     if scene["character_id"] != character["id"]:
         raise ClientError("character_changed", "提交期间角色已变化，停止操作。")
     if backend.name == "beidou":
-        # 实验阶段仅允许显式标记的角色工作台触发 GUI 输入。
-        runtime = backend.root.parent.parent
-        if runtime.name != "runtime" or not (runtime.parent / "auto-ap-diagnostic.enable").is_file():
-            raise ClientError("unsupported_capability", "GUI 自动加点尚处于实验阶段，未发送请求。")
         from .ui import open_window
 
         open_window(backend, "stats")

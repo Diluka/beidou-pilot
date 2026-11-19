@@ -60,7 +60,7 @@ beidou-pilot --json bridge status
 
 ## AP 自动分配
 
-[#310](https://github.com/Diluka/beidou-pilot/issues/310) 的 `workbenches/workbench dev/NAME auto-ap` 入口仍在开发和验证中，具体后端支持以实际结果为准。结果不明时先观察同一角色的属性和剩余 AP，不重复发起；不要修改数据库代替客户端操作。详见 [CLI](../../../docs/CLI.md)。
+`workbenches/workbench dev/NAME auto-ap` 无参数，一次提交全部剩余 AP 的自动分配；支持范围以实际结果为准。返回 `unknown` 时先观察同一角色的属性和剩余 AP，不重复发起；不要修改数据库代替客户端操作。详见 [CLI](../../../docs/CLI.md)。
 
 ## 执行和取消 Lua
 
