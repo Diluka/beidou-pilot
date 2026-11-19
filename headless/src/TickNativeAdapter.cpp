@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "TickNativeAdapter.h"
+#include "AutoAp.h"
+#include "Net/Packets/PlayerPackets.h"
 #include "SharedLuaAdapter.h"
 #include "Gameplay/Stage.h"
 #include "Net/Packets/GameplayPackets.h"
@@ -50,7 +52,7 @@ MapleControl::Observation TickNativeAdapter::ObserveDomain(const std::string& do
 bool TickNativeAdapter::Supports(MapleControl::ActionKind kind) const {
     using Kind = MapleControl::ActionKind;
     return kind == Kind::Jump || kind == Kind::Attack || kind == Kind::Pickup || kind == Kind::UseItem
-           || kind == Kind::Revive;
+           || kind == Kind::Revive || kind == Kind::AutoAp;
 }
 
 bool TickNativeAdapter::SupportsSkill() const {
@@ -101,7 +103,7 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
     }
     const auto& state = Observe();
     if (action.kind != Kind::Jump && action.kind != Kind::Attack && action.kind != Kind::Pickup
-        && action.kind != Kind::UseItem && action.kind != Kind::Revive) {
+        && action.kind != Kind::UseItem && action.kind != Kind::Revive && action.kind != Kind::AutoAp) {
         error = "unsupported: tick_action";
         return false;
     }
@@ -123,11 +125,51 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
             return false;
         }
     }
+    if (autoApPending && state.characterKnown && !autoApIdentity.Observe(state.character.id)
+        && action.kind == Kind::AutoAp) {
+        result.effect = "unknown";
+        result.reason = error = "auto_ap_identity_changed";
+        return false;
+    }
+    if (action.kind == Kind::AutoAp) {
+        const auto admission = CheckAutoApAdmission(intent.kind == Kind::AutoAp, autoApPending,
+                                                    intent.sessionId, action.sessionId);
+        if (admission == AutoApAdmission::Pending) {
+            error = autoApIdentity.changed ? "auto_ap_identity_changed"
+                    : autoApPending ? "auto_ap_confirmation_pending" : "auto_ap_action_owned";
+            return false;
+        }
+        if (admission == AutoApAdmission::SameSession) return true;
+    }
     if (intent.kind == action.kind && intent.skillId == action.skillId && intent.itemId == action.itemId) {
         // Ownership may change, but an unchanged semantic hold emits no edges
         // and must not rearm a no-action skill or a consumable repeat timer.
         intent.sessionId = action.sessionId;
         return true;
+    }
+    AutoApPlan autoAp;
+    if (action.kind == Kind::AutoAp) {
+        if (!state.characterKnown || !state.character.known[0] || !state.character.known[1]
+            || !state.character.known[2] || !state.character.known[3] || !state.character.known[4]
+            || !state.character.known[5] || !state.character.known[10]) {
+            error = "character_unavailable";
+            return false;
+        }
+        const auto& v = state.character.values;
+        if (!PlanAutoAp({v[0], v[1], v[2], v[3], v[4], v[5], v[10]}, autoAp)) {
+            error = "unsupported: auto_ap_job";
+            return false;
+        }
+        if (v[10] == 0) {
+            error = "no_ability_points";
+            return false;
+        }
+        for (int i = 0; i < 4; ++i) autoApExpected[i] = v[2 + i];
+        for (int i = 0; i < 2; ++i) {
+            int index = autoAp.codes[i] == 0x40 ? 0 : autoAp.codes[i] == 0x80 ? 1 : autoAp.codes[i] == 0x100 ? 2 : 3;
+            autoApExpected[index] += autoAp.amounts[i];
+        }
+        autoApExpected[4] = 0;
     }
     auto& stage = ms::Stage::get();
     auto& player = stage.get_player();
@@ -163,6 +205,13 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
         action.kind == Kind::Attack && action.skillId != 0 ? std::optional<int32_t>(action.skillId) : std::nullopt);
     player.hold_item(action.kind == Kind::UseItem ? action.itemId : 0);
     host.SyncKeys();
+    if (action.kind == Kind::AutoAp) {
+        autoApPending = true;
+        autoApIdentity = {state.character.id, false};
+        result.dispatched = true;
+        result.reason = "auto_ap_request_dispatched";
+        ms::AutoApPacket(autoAp.codes[0], autoAp.amounts[0], autoAp.codes[1], autoAp.amounts[1]).dispatch();
+    }
     if (action.kind == Kind::Revive) {
         // Mirrors V17's normal death-confirm route: died=true, no map/portal target, no wheel.
         result.dispatched = true;
@@ -230,6 +279,12 @@ void TickNativeAdapter::Advance(std::uint64_t nativeTick, bool sceneChanged) {
     const auto motionId = player.get_motion_commit_id();
     if (movementNeedsMotion && motionId > motionTick) movementNeedsMotion = false;
     if (jumpNeedsMotion && motionId > motionTick) jumpNeedsMotion = false;
+    if (autoApPending && Observe().characterKnown && !autoApIdentity.Observe(Observe().character.id)) {
+        if (intent.kind == Kind::AutoAp) {
+            result.effect = "unknown";
+            result.reason = "auto_ap_identity_changed";
+        }
+    }
     if (sceneChanged || !Observe().ready) {
         player.clear_motion_requests();
         Release();
@@ -238,6 +293,19 @@ void TickNativeAdapter::Advance(std::uint64_t nativeTick, bool sceneChanged) {
         itemSequence = player.get_held_item_sequence();
         result.controlReleased = ActionIntentSettled();
         return;
+    }
+    if (autoApPending && !autoApIdentity.changed && Observe().characterKnown) {
+        const auto& character = Observe().character;
+        bool confirmed = character.known[10] && character.values[10] == autoApExpected[4];
+        for (int i = 0; i < 4; ++i)
+            confirmed = confirmed && character.known[2 + i] && character.values[2 + i] == autoApExpected[i];
+        if (confirmed) {
+            autoApPending = false;
+            if (intent.kind == Kind::AutoAp) {
+                result.effect = "confirmed";
+                result.reason = "auto_ap_server_confirmed";
+            }
+        }
     }
     if (Observe().dead == MapleControl::Fact::True && intent.kind != Kind::Revive) Release();
     if (ActionIntentSettled()) {

@@ -58,6 +58,10 @@ beidou-pilot --json bridge status
 
 跨图路线只使用客户端原生只读查询 `beidou-pilot --json world-map route START_MAP GOAL_MAP`：需要当前实例已在运行，不启动或控制客户端；客户端与技能都不提供其他路线计算入口，结果按正常数据状态返回，不当作观察错误。
 
+## AP 自动分配
+
+[#310](https://github.com/Diluka/beidou-pilot/issues/310) 的 `workbenches/workbench dev/NAME auto-ap` 入口仍在开发和验证中，具体后端支持以实际结果为准。结果不明时先观察同一角色的属性和剩余 AP，不重复发起；不要修改数据库代替客户端操作。详见 [CLI](../../../docs/CLI.md)。
+
 ## 执行和取消 Lua
 
 角色动作与持续脚本写在所属角色的 `scripts/`。`LUA_PATH` 可以是 UTF-8 单文件或含 `main.lua` 的目录包；`script describe/run/start` 的相对路径从 `/work/scripts` 解析，容器绝对路径也可显式使用。长期任务用 `script start`，保留返回的 `script.id` 以便查询或取消。

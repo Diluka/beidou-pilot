@@ -48,4 +48,6 @@ workbenches/workbench server dev cli call GET /server/v1/world/list
    | 金币 | `give WORLD CID mesos AMOUNT` | 金币前后差值 |
    | 地图 | `give WORLD CID map MAP_ID` | 实际地图 ID 和位置 |
 
+AP 自动分配属于客户端操作，不通过开发服管理 CLI 或直接修改数据库；[#310](https://github.com/Diluka/beidou-pilot/issues/310) 仍在开发和验证中，参见[客户端技能](../beidou-pilot-client/SKILL.md)。
+
 写操作返回 `code=20000` 只确认服务端成功。响应丢失、角色断线或客户端结果不明时，先重新观察，必要时重登入图核对，**不要重复发放**。将已核对的条件、来源和时间记入该开发角色的 `STATE.md`。发经验不是精确设级；当前入口不支持直接指定职业或技能。若要验证位移技能，传送只用于准备起点，实际位移仍由客户端施放并观察。

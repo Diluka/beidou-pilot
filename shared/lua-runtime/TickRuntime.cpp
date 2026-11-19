@@ -59,6 +59,8 @@ const char* ActionName(const Action& action) {
         return "pickup";
     case ActionKind::Revive:
         return "revive";
+    case ActionKind::AutoAp:
+        return "auto_ap";
     default:
         return "stop";
     }
@@ -293,7 +295,7 @@ struct TickRuntime::Impl {
         Clock::duration period{};
         bool limited = false, invoked = false, overran = false, previousOverrun = false, directionFence = false;
         bool actionFence = false;
-        bool reviveRequested = false;
+        bool reviveRequested = false, autoApRequested = false;
         std::uint64_t index = 0, overruns = 0;
         double time = 0, delta = 0, lastUs = 0, maxUs = 0;
         std::uint64_t generation = 0;
@@ -494,6 +496,7 @@ struct TickRuntime::Impl {
         auto& session = Invocation(lua);
         const bool idRequired = skill || kind == ActionKind::UseItem;
         if (lua_gettop(lua) != (idRequired ? 1 : 0)) return luaL_error(lua, "invalid player action arguments");
+        if (kind == ActionKind::AutoAp && session.autoApRequested) return Reply(lua, true, "already_requested");
         if (kind == ActionKind::Revive) {
             if (session.reviveRequested) return Reply(lua, true, "already_requested");
             const auto& state = session.runtime.adapter.Observe();
@@ -541,6 +544,8 @@ struct TickRuntime::Impl {
 
     static int Revive(lua_State* lua) { return Submit(lua, ActionKind::Revive); }
 
+    static int AutoAp(lua_State* lua) { return Submit(lua, ActionKind::AutoAp); }
+
     static int Stop(lua_State* lua) {
         auto& session = Invocation(lua);
         if (lua_gettop(lua) != 0) return luaL_error(lua, "stop accepts no arguments");
@@ -560,7 +565,7 @@ struct TickRuntime::Impl {
                                   : (inputActive ? &input : nullptr);
         Value keys = Value::Array();
         for (const auto& key : held) keys.Add(key);
-        if (inputActive && input.kind != ActionKind::Revive) keys.Add(ActionName(input));
+        if (inputActive && input.kind != ActionKind::Revive && input.kind != ActionKind::AutoAp) keys.Add(ActionName(input));
         const auto idle = current != nullptr ? observed.actionIdle : adapter.Observe().actionIdle;
         const bool nativeBusy = active != nullptr || idle == Fact::False;
         const Value busy = nativeBusy ? Value(true) : idle == Fact::True ? Value(false) : Value{};
@@ -768,7 +773,7 @@ struct TickRuntime::Impl {
         luaL_openlibs(lua);
         static const luaL_Reg player[]{
             {"move", Move},     {"jump", Jump},     {"attack", Attack}, {"skill", Skill},         {"use_item", UseItem},
-            {"pickup", Pickup}, {"revive", Revive}, {"stop", Stop},     {"status", PlayerStatus}, {nullptr, nullptr}};
+            {"pickup", Pickup}, {"revive", Revive}, {"auto_ap", AutoAp}, {"stop", Stop}, {"status", PlayerStatus}, {nullptr, nullptr}};
         lua_newtable(lua); // backing of game proxy
         luaL_newlib(lua, player);
         Protect(lua);
@@ -987,7 +992,8 @@ struct TickRuntime::Impl {
         auto* previousOwner = actionOwner;
         std::string error;
         if (adapter.SetActionIntent(requested, error)) {
-            if (requested.kind == ActionKind::Revive && owner != nullptr) owner->reviveRequested = true;
+            if (owner != nullptr && requested.kind == ActionKind::Revive) owner->reviveRequested = true;
+            if (owner != nullptr && requested.kind == ActionKind::AutoAp) owner->autoApRequested = true;
             input = requested;
             inputActive = requested.kind != ActionKind::Stop;
             actionOwner = inputActive ? owner : nullptr;

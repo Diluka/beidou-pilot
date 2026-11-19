@@ -251,6 +251,10 @@ end
 
 `revive` 在 GUI 与无头端都提交一次普通复活请求。HP 已知为正时返回 `already_alive` 且不发送请求；角色或 HP 读数不可用时拒绝操作。两端均调用共享 tick Lua 的 `player.revive()`：GUI 端只在唯一已识别复活窗口及其启用的确认按钮可验证时调用原版窗口确认动作；无头端由本端发送普通 `CHANGEMAP` 请求。请求派发不表示恢复成功：命令只在同一角色 ID 的 HP 为正、地图与位置有效时返回 `revived`；GUI 还要确认复活窗口消失。超时或身份变化时停止，不重发。
 
+## AP 自动分配（开发中）
+
+[#310](https://github.com/Diluka/beidou-pilot/issues/310) 的目标入口是 `workbenches/workbench dev/NAME auto-ap`，无参数，一次分配当前全部剩余 AP。该能力仍在实现和验证中，GUI 原版调用及无头规则一致性尚待确认；不要依赖尚未确认的结果字段。请求结果不明时先观察角色属性和剩余 AP，不自动重试，也不要通过数据库修改代替客户端操作。服务端负责最终校验。
+
 ## 无头控件交互
 
 无头端保留只读观察，不提供桌面输入入口：`snapshot` 与 `inspect` 返回当前 `interaction.page`、控件 `role/text/enabled/ref` 和场景 NPC 引用；`click`、`ui`、`equip`、`hotkeys`、`bind`、`talk`、`dialog`、`shop`、`notifications` 等 GUI 命令在无头端统一返回 `unsupported_capability`。需要激活页面控件或 NPC 时使用原版 GUI 会话；无头端的任务接交等交互能力当前不提供，缺口见[能力边界](CLIENT_LIMITATIONS.md)。

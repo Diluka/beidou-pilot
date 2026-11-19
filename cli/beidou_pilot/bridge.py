@@ -86,7 +86,7 @@ class BridgeTick(TypedDict):
 
 
 BridgePlayerAction = Literal["jump", "attack", "skill", "use_item", "pickup"]
-BridgePlayerInputAction = Literal["jump", "attack", "skill", "use_item", "pickup", "revive"]
+BridgePlayerInputAction = Literal["jump", "attack", "skill", "use_item", "pickup", "revive", "auto_ap"]
 
 
 class BridgePlayer(TypedDict):
@@ -223,7 +223,7 @@ def _validate_script(script: object) -> None:
             or "moving" not in player or player["moving"] not in (None, "left", "right", "up", "down")
             or "action" not in player or player["action"] not in (None, "jump", "attack", "skill", "use_item", "pickup")
             or "input_action" not in player
-            or player["input_action"] not in (None, "jump", "attack", "skill", "use_item", "pickup", "revive")
+            or player["input_action"] not in (None, "jump", "attack", "skill", "use_item", "pickup", "revive", "auto_ap")
             or any(not isinstance(player.get(field), str) for field in ("reason", "effect"))
             or "busy" not in player or (player["busy"] is not None and type(player["busy"]) is not bool)
             or type(player.get("dispatched")) is not bool

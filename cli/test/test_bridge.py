@@ -388,6 +388,15 @@ class BridgeContract(unittest.TestCase):
         self.assertEqual("revive", state["script"]["player"]["input_action"])
         self.assertIsNone(state["script"]["player"]["action"])
 
+    def test_auto_ap_is_valid_as_input_action_in_running_script_state(self) -> None:
+        script = tick_script("d" * 32)
+        script["player"].update(input_action="auto_ap", reason="", dispatched=False)
+        self.files.state["script"] = script
+        self.files.state["scripts"] = [script]
+        self.files.publish()
+        state = self.client.snapshot()
+        self.assertEqual("auto_ap", state["script"]["player"]["input_action"])
+
     def test_revive_cannot_be_a_native_action_or_held_key(self) -> None:
         for field, value in (("action", "revive"), ("held", ["revive"])):
             with self.subTest(field=field):

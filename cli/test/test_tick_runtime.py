@@ -57,6 +57,9 @@ class TickRuntimeContract(unittest.TestCase):
     def run_contract(self, scenario: str) -> None:
         subprocess.run([str(self.executable), scenario], check=True, timeout=10)
 
+    def test_auto_ap_one_shot_lifecycle(self) -> None:
+        self.run_contract("auto-ap")
+
     def test_file_leading_mode_and_budget_declarations_are_strict(self) -> None:
         self.run_contract("declarations")
 
