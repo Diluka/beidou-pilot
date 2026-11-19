@@ -11,7 +11,7 @@
 namespace MapleControl {
 
 // Native player inputs owned by the tick engine. Movement is a held-input
-// direction; action intents are held except for Revive, which is a one-shot request.
+// direction; action intents are held except for the one-shot Revive and AutoAp requests.
 enum class ActionKind { Jump, Attack, UseItem, Pickup, Stop, Revive, AutoAp };
 
 struct Character : MovableObject {
