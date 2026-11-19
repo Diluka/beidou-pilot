@@ -25,16 +25,16 @@ beidou-pilot --json inspect stage
 
 ## 缺少账号或角色
 
-`open` 要求真实已有 CID。验证首次登录或建角流程时，在 `dev/NAME` 使用独立账号，账号文件可暂不含 CID；若只需一个已有角色作前置条件，也可通过开发服 CLI 按其支持范围准备，并从客户端确认。以下是客户端流程；声明同意和账号性别按已明确的授权选择：
+`open` 要求真实已有 CID。验证首次登录或建角流程时，在 `dev/NAME` 使用独立账号，账号文件可暂不含 CID；若只需一个已有角色作前置条件，也可通过开发服 CLI 按其支持范围准备，并从客户端确认。新建 `dev` 测试角色时，按验收要求选择参数；与验收无关的姓名、账号性别和外观由执行会话自选。只有确需接受首次声明且已有明确授权时，才在 `login` 加上 `--accept-terms`；交办开发任务本身不包含同意声明。
 
 ```bash
-workbenches/workbench dev/NAME login --accept-terms --gender female
+workbenches/workbench dev/NAME login --gender female
 workbenches/workbench dev/NAME login
 workbenches/workbench dev/NAME character create --name NAME --gender female --job JOB --face FACE --hair HAIR --hair-color COLOR --skin SKIN --top TOP --bottom BOTTOM --shoes SHOES --weapon WEAPON
 workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANCE_ID --run-id RUN_ID
 ```
 
-各项角色数值按用户实际选择填写；`--hair` 是基础发型，`--hair-color` 是独立必填项，不能省略或并入 `--hair`。宿主 `login` 的选项仅用于新启动，运行中只观察、不重放选项；容器内 `beidou-pilot --json login --timeout N` 不带授权选项时只观察。GUI 容器内可显式传 `--gender male|female` 发起登录动作，需要同意声明时另加 `--accept-terms`；GUI 动作必须指定性别，由原生桥在游戏线程调用原版客户端内部入口完成；无头容器内不接受这些选项。建角是独立的单次请求，不自动入图。
+将示例中的占位符替换为所选角色参数；`--hair` 是基础发型，`--hair-color` 是独立必填项，不能省略或并入 `--hair`。宿主 `login` 的选项仅用于新启动，运行中只观察、不重放选项；容器内 `beidou-pilot --json login --timeout N` 不带授权选项时只观察。GUI 容器内可显式传 `--gender male|female` 发起登录动作，需要同意声明时另加 `--accept-terms`；GUI 动作必须指定性别，由原生桥在游戏线程调用原版客户端内部入口完成；无头容器内不接受这些选项。建角是独立的单次请求，不自动入图。
 
 保留返回的请求与运行身份：`completed` 给出真实 CID，`rejected` 表示拒绝；`accepted`、`unknown` 不是完成，不重发，使用 `character result` 查询。宿主 `character result` 要求原容器仍运行；原实例退出或身份变化时未终结结果可能无法恢复。容器停止后保留已有结果和身份等证据，人工核验，不保证可通过宿主命令查询。宿主仅在账号文件权限正确、与运行快照一致且 CID 无冲突时绑定；`binding` 失败后依据结果及实际名单人工核对恢复，不重发建角。绑定后账号模式进程不支持同进程选角：先以工作台 `close` 并核对所属容器退出，再 `open` 并确认入图。
 
