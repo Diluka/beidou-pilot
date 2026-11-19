@@ -169,11 +169,13 @@ class SkillUpOnceTest(unittest.TestCase):
 
     @patch("beidou_pilot.skill_up.open_window")
     def test_missing_initial_level_is_refused(self, opened):
-        backend = Backend()
-        backend.characters[0]["skills"] = {}
-        with self.assertRaises(ClientError) as caught:
-            skill_up_once(backend, 2001002)
-        self.assertEqual(caught.exception.code, "skill_level_unavailable")
+        for skill_id in (1009, 1010, 1011, 1020, 10001009, 10001010, 10001011, 10001020,
+                         20001009, 20001010, 20001011, 20001020, 22001000, 20011000):
+            backend = Backend()
+            backend.characters[0]["skills"] = {}
+            with self.subTest(skill_id=skill_id), self.assertRaises(ClientError) as caught:
+                skill_up_once(backend, skill_id)
+            self.assertEqual(caught.exception.code, "skill_level_unavailable")
         opened.assert_not_called()
 
     @patch("beidou_pilot.skill_up.click_control")
@@ -184,10 +186,15 @@ class SkillUpOnceTest(unittest.TestCase):
         backend.characters = [character(), character(), character(1)]
         backend.characters[0]["skills"] = {}
         backend.characters[1]["skills"] = {}
+        backend.characters[2]["skills"]["1001003"] = backend.characters[2]["skills"].pop("2101002")
+        for item in backend.observations:
+            item["character"]["job"] = 100
         w = window()
+        w["skills"]["selected_tab"] = 1
+        w["skills"]["ids"] = [1000000, 1000001, 1001003]
         opened.return_value = w
         read_ui.return_value = {"windows": [w], "dialog": {"focused_window": {"address": "a"}}}
-        result = skill_up_once(backend, 2101002)
+        result = skill_up_once(backend, 1001003)
         self.assertEqual((result["level_before"], result["level_after"]), (0, 1))
         clicked.assert_called_once()
 

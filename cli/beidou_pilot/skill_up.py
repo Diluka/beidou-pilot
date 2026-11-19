@@ -91,15 +91,18 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
     learned = cast(CharacterSnapshot, backend.read("character"))
     if not learned["skills_complete"] or learned["character_id"] != identity[2]:
         raise ClientError("skills_unavailable", "技能记录不完整或角色身份不一致。")
+    if not _verified_client(backend):
+        raise ClientError("skill_points_pool_unavailable", "客户端版本未经核实。")
     skill = learned["skills"].get(str(skill_id))
-    # 原版普通技能查询在等级映射没有记录时返回零；异常技能仍不推断。
-    if skill is None and not (character.get("job") == 210 and skill_id // 10000 == 210):
+    # FUN_007616f6 对特殊技能返回固定 1，不可把缺记录解释为零。
+    q = skill_id // 10000
+    fixed_one = {1009, 1010, 1011, 1020, 10001009, 10001010, 10001011, 10001020,
+                 20001009, 20001010, 20001011, 20001020}
+    if skill is None and (skill_id > 2147483647 or q // 100 == 22 or q == 2001 or skill_id in fixed_one):
         raise ClientError("skill_level_unavailable", "客户端没有该技能的等级记录，无法确认初始等级。", {"skill_id": skill_id})
     before = skill["level"] if skill is not None else 0
     if expected is not None and (*identity, sp, before) != expected:
         raise ClientError("skill_state_changed", "批量预检后角色状态发生变化，未执行加点。")
-    if not _verified_client(backend):
-        raise ClientError("skill_points_pool_unavailable", "客户端版本未经核实。")
     window = open_window(backend, "skills")
     if window["vtables"][0] != "0xb3b5cc":
         raise ClientError("skills_ui_unavailable", "技能窗口类型未经核实。")
