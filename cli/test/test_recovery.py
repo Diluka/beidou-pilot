@@ -1,5 +1,7 @@
 """一次普通复活请求及其同角色效果核验合同。"""
 
+import ctypes
+import ctypes.util
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -54,7 +56,7 @@ class RecoveryContract(unittest.TestCase):
         self.run_script.assert_called_once()
         code = self.run_script.call_args.kwargs["code"]
         self.assertIn("context.game.player.revive()", code)
-        self.assertIn('if status.dispatched then return "done" end', code)
+        self.assertIn('if status.dispatched or status.reason == "native_input_cleared" then return "done" end', code)
         self.assertIn(
             'if status.input_action ~= "revive" then error(status.reason or "revive_not_dispatched") end', code
         )
@@ -62,6 +64,87 @@ class RecoveryContract(unittest.TestCase):
         self.assertEqual(1, code.count("context.game.player.revive()"))
         self.assertEqual("revived", result["status"])
         self.assertEqual(7, result["state"]["character"]["id"])
+
+    def test_gui_native_clear_waits_for_real_recovery_and_rejections_are_not_replayed(self) -> None:
+        library = ctypes.util.find_library("lua5.4")
+        if not library:
+            self.skipTest("Lua 5.4 shared library unavailable")
+        lua = ctypes.CDLL(library)
+        lua.luaL_newstate.restype = ctypes.c_void_p
+        lua.luaL_openlibs.argtypes = [ctypes.c_void_p]
+        lua.luaL_loadstring.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        lua.luaL_loadstring.restype = ctypes.c_int
+        lua.lua_pcallk.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_longlong,
+            ctypes.c_void_p,
+        ]
+        lua.lua_pcallk.restype = ctypes.c_int
+        lua.lua_tolstring.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        lua.lua_tolstring.restype = ctypes.c_char_p
+        lua.lua_close.argtypes = [ctypes.c_void_p]
+
+        for reason, recovered in (
+            ("native_input_cleared", True),
+            ("native_input_cleared", False),
+            ("revive_dialog_unavailable", False),
+            ("native_input_cleared_extra", False),
+        ):
+            with self.subTest(reason=reason, recovered=recovered):
+                self.run_script.reset_mock()
+
+                def execute(*, code, **_kwargs):
+                    state = lua.luaL_newstate()
+                    self.assertTrue(state)
+                    try:
+                        lua.luaL_openlibs(state)
+                        source = (
+                            code
+                            + f'''
+local calls = 0
+local context = {{game={{player={{
+  revive=function() calls=calls+1; return true end,
+  status=function() return {{dispatched=false, input_action=nil, reason="{reason}"}} end
+}}}}}}
+assert(main(context) == nil)
+local ok, result = pcall(main, context)
+assert(calls == 1)
+'''
+                        )
+                        if reason == "native_input_cleared":
+                            source += 'assert(ok and result == "done")\n'
+                        else:
+                            source += f'assert(not ok and string.find(result, "{reason}", 1, true))\n'
+                        rc = lua.luaL_loadstring(state, source.encode())
+                        if rc == 0:
+                            rc = lua.lua_pcallk(state, 0, 0, 0, 0, None)
+                        self.assertEqual(0, rc, lua.lua_tolstring(state, -1, None) if rc else None)
+                    finally:
+                        lua.lua_close(state)
+                    if reason != "native_input_cleared":
+                        raise ClientError("bridge_script_error", reason)
+                    return {"status": "completed"}
+
+                self.run_script.side_effect = execute
+                after = self.after if recovered else self.before
+                with (
+                    patch("beidou_pilot.strategies.compile_strategy", side_effect=lambda source, *_: source),
+                    patch.object(self.backend, "read", side_effect=[self.before, after]),
+                    patch("beidou_pilot.recovery.read_ui", side_effect=[self.ui([self.window]), self.ui([])]),
+                    patch("beidou_pilot.recovery.time.monotonic", side_effect=[0, 0, 0, 0, 7]),
+                    patch("beidou_pilot.recovery.time.sleep"),
+                ):
+                    if recovered:
+                        self.assertEqual("revived", revive(self.backend)["status"])
+                    else:
+                        with self.assertRaises(ClientError) as raised:
+                            revive(self.backend)
+                        expected = "revive_not_confirmed" if reason == "native_input_cleared" else "bridge_script_error"
+                        self.assertEqual(expected, raised.exception.code)
+                self.run_script.assert_called_once()
 
     def test_gui_open_or_unavailable_window_does_not_confirm(self) -> None:
         for ui in (self.ui([self.window]), {"unavailable": ["camera unavailable"], "windows": []}):

@@ -329,13 +329,14 @@ public:
 
     bool Logs(const std::string&, const std::vector<std::string>&) override { return true; }
 
-    void Advance(MapleControl::TickRuntime& runtime) {
+    void Advance(MapleControl::TickRuntime& runtime, bool sceneChanged = false) {
         ++frame;
         ++state.sequence;
+        if (sceneChanged) ++state.sceneGeneration;
         input.Observe(User, User, frame, false);
         input.ObserveAction(nativeAction);
         state.actionIdle = nativeAction.idle;
-        runtime.Tick();
+        runtime.Tick(sceneChanged);
         const auto beforeKeys = nativeAction;
         for (auto* source : {&input.movement, &input.action})
             source->Flush(
@@ -543,11 +544,11 @@ local requested = false
 local function main(context)
     if requested then
         local status = context.game.player.status()
-        if status.dispatched then return "done" end
         if status.reason == "character_unavailable" or status.reason == "already_alive"
             or status.reason == "revive_not_requestable" or status.reason == "revive_ui_unavailable"
             or status.reason == "revive_dialog_ambiguous" or status.reason == "revive_dialog_unavailable"
             or status.reason == "revive_layout_changed" then error(status.reason) end
+        if status.dispatched or status.reason == "native_input_cleared" then return "done" end
         if status.input_action ~= "revive" then error(status.reason or "revive_not_dispatched") end
         return
     end
@@ -557,20 +558,25 @@ local function main(context)
 end
 return {main=main,context={}}
 )lua";
-    for (int scenario = 0; scenario < 3; ++scenario) {
+    for (int scenario = 0; scenario < 4; ++scenario) {
         DeferredNativeAdapter native;
         native.state.character.values[6] = 0;
         native.state.dead = MapleControl::Fact::True;
         // Model a native release that remains pending through two delivery opportunities.
         native.reviveDispatchFrame = scenario == 0 ? 3 : 0;
         native.rejectReviveAdmission = scenario == 1;
-        native.rejectReviveDispatch = scenario == 2;
+        native.rejectReviveDispatch = scenario >= 2;
         MapleControl::TickRuntime runtime(native);
         std::string error;
         Check(runtime.Start("revive-runtime", script, 1000, error), error.c_str());
         native.Advance(runtime);
         Check(native.reviveCalls == 0, "revive dispatched while delayed or rejected");
-        native.Advance(runtime);
+        native.Advance(runtime, scenario == 3);
+        if (scenario == 3) {
+            Check(Field(runtime.CurrentStatus("revive-runtime"), "status").Text() == "running",
+                  "scene transition must defer Lua observation");
+            native.Advance(runtime);
+        }
         if (scenario == 0) {
             Check(Field(runtime.CurrentStatus("revive-runtime"), "status").Text() == "running",
                   "revive must wait across ticks for native dispatch");

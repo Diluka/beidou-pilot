@@ -54,11 +54,11 @@ end
 local function main(context)
     if requested then
         local status = context.game.player.status()
-        if status.dispatched then return "done" end
         if status.reason == "character_unavailable" or status.reason == "already_alive"
             or status.reason == "revive_not_requestable" or status.reason == "revive_ui_unavailable"
             or status.reason == "revive_dialog_ambiguous" or status.reason == "revive_dialog_unavailable"
             or status.reason == "revive_layout_changed" then error(status.reason) end
+        if status.dispatched or status.reason == "native_input_cleared" then return "done" end
         if status.input_action ~= "revive" then error(status.reason or "revive_not_dispatched") end
         return
     end
@@ -108,4 +108,4 @@ end
                 if not ui_after["unavailable"] and not remaining:
                     return {"status": "revived", "changed": True, "before_map": before["map_id"], "state": after}
         time.sleep(0.15)
-    raise ClientError("revive_not_confirmed", "已提交一次复活请求，尚未观察到恢复，不重复请求。", {"state": after})
+    raise ClientError("revive_not_confirmed", "复活请求结果尚未确认，未观察到恢复，不重复请求。", {"state": after})
