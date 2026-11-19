@@ -1,4 +1,7 @@
+import io
 import unittest
+import xml.etree.ElementTree as ET
+from pathlib import Path
 from unittest.mock import patch
 
 from beidou_pilot.errors import ClientError
@@ -44,7 +47,33 @@ class SkillUpOnceTest(unittest.TestCase):
 
     def test_total_preflight_refuses_unknown_batch_limit(self):
         with self.assertRaises(ClientError) as caught:
-            preflight_skill_up(Backend(), 2101002, 2)
+            preflight_skill_up(Backend(), 2201002, 2)
+        self.assertEqual(caught.exception.code, "skill_limit_unavailable")
+
+    @patch("beidou_pilot.skill_up.ImgDirectory")
+    @patch("beidou_pilot.skill_up.hashlib.file_digest")
+    @patch("pathlib.Path.open")
+    def test_batch_checks_full_resource_limit(self, opened, digest, directory):
+        backend = Backend()
+        backend.root = Path("/client")
+        opened.side_effect = lambda *args, **kwargs: io.BytesIO(b"sample")
+        digest.return_value.hexdigest.side_effect = ["1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df", "cc4db190d9fef0523fdfe440ae23a3d2fd61359cef6e327e246a86c6c955111e"] * 3
+        level = ET.Element("imgdir")
+        for i in range(1, 21):
+            ET.SubElement(level, "imgdir", name=str(i))
+        directory.return_value.read_tree.return_value = (level, (Path("/client/client/Data/Skill/210.img"),))
+        self.assertEqual(preflight_skill_up(backend, 2101002, 2), ("i", "r", 3, 3, 15))
+        backend = Backend()
+        backend.root = Path("/client")
+        backend.characters[0] = character(19)
+        with self.assertRaises(ClientError) as caught:
+            preflight_skill_up(backend, 2101002, 2)
+        self.assertEqual(caught.exception.code, "skill_limit_exceeded")
+        backend = Backend()
+        backend.root = Path("/client")
+        directory.return_value.read_tree.return_value = (level, (Path("/other/210.img"),))
+        with self.assertRaises(ClientError) as caught:
+            preflight_skill_up(backend, 2101002, 2)
         self.assertEqual(caught.exception.code, "skill_limit_unavailable")
 
     def test_total_preflight_accepts_one_with_sp(self):
@@ -131,6 +160,13 @@ class SkillUpOnceTest(unittest.TestCase):
         result = skill_up_once(backend, 2101002)
         self.assertEqual((result["level_before"], result["level_after"]), (0, 1))
         clicked.assert_called_once()
+
+    @patch("beidou_pilot.skill_up.open_window")
+    def test_changed_identity_after_preflight_is_refused(self, opened):
+        with self.assertRaises(ClientError) as caught:
+            skill_up_once(Backend(), 2101002, ("i", "old-run", 3, 3, 15))
+        self.assertEqual(caught.exception.code, "skill_state_changed")
+        opened.assert_not_called()
 
     @patch("beidou_pilot.skill_up.open_window")
     def test_insufficient_points_refused_before_ui(self, opened):

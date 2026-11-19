@@ -40,6 +40,28 @@ class SkillUpCliTests(unittest.TestCase):
                 preflight.assert_called_once_with(backend, 1000, 1)
                 once.assert_called_once_with(backend, 1000)
 
+    def test_gui_batch_stops_and_reports_confirmed(self):
+        args = parser().parse_args(["skill-up", "2101002", "--points", "3"])
+        backend = SimpleNamespace(name="beidou")
+        with (patch("beidou_pilot.skill_up.preflight_skill_up", return_value=("i", "r", 1, 3, 15)) as preflight,
+              patch("beidou_pilot.skill_up.skill_up_once", side_effect=[{"level_after": 16}, ClientError("skill_up_unknown", "unknown")]) as once):
+            with self.assertRaises(ClientError) as caught:
+                dispatch(backend, args)
+        self.assertEqual(caught.exception.details["confirmed"], [{"level_after": 16}])
+        self.assertEqual(once.call_count, 2)
+        self.assertEqual([call.args[2] for call in preflight.call_args_list], [3, 2])
+
+    def test_gui_batch_rejects_changed_run_before_last_point(self):
+        args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
+        backend = SimpleNamespace(name="beidou")
+        with (patch("beidou_pilot.skill_up.preflight_skill_up", side_effect=[("i", "r", 1, 3, 15), ("i", "new", 1, 2, 16)]),
+              patch("beidou_pilot.skill_up.skill_up_once", return_value={"level_after": 16}) as once):
+            with self.assertRaises(ClientError) as caught:
+                dispatch(backend, args)
+        self.assertEqual(caught.exception.code, "skill_state_changed")
+        self.assertEqual(len(caught.exception.details["confirmed"]), 1)
+        once.assert_called_once()
+
     def test_headless_dispatch(self):
         args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
         backend = SimpleNamespace(name="headless")
