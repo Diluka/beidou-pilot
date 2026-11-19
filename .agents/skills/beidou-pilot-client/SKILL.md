@@ -5,7 +5,7 @@ description: "通过 beidou-pilot CLI 登录已有北斗角色、观察游戏状
 
 # 北斗客户端 CLI
 
-`beidou-pilot` 是 headless 与 GUI 共用的容器内入口。宿主用 `workbenches/workbench list [live|dev]` 找到已授权角色：常驻养成用 `live/NAME`，开发调试与复现用 `dev/NAME`。在所属实例内直接运行以下命令。同一目标同一角色只有一名控制者，GUI 保持一名明确操作者。
+`beidou-pilot` 是 headless 与 GUI 共用的容器内入口。宿主用 `workbenches/workbench list [live|dev]` 查找角色：常驻养成用已授权的 `live/NAME`；开发、复现和验收按[开发约定](../../../AGENTS.md)复用空闲的 `dev/NAME`，没有合适角色时可自行建号建角。在所属实例内直接运行以下命令。同一目标同一角色只有一名控制者，GUI 保持一名明确操作者。
 
 ## 观察当前实例
 
