@@ -20,7 +20,7 @@ MySQL 使用 Compose 的 `workbench-db` 命名卷（`${project}_workbench-db`）
 
 ## 支持的管理调用
 
-用 `workbenches/workbench server dev cli --help` 查看[开发服入口](cli.sh)。它把命令原样交给官方 JAR（`call`、`batch`、`login`、`config`、`update` 等全部可用，敏感 API 需 `--force`），不执行操作者提供的 shell 或 SQL；容器身份与 `user.home` 固定，连接指向本容器 `127.0.0.1:8686`。`apis` 显示上游静态接口清单，实际能力以运行版本为准。
+用 `workbenches/workbench server dev cli --help` 查看[开发服入口](cli.sh)。它把命令交给官方 JAR，不执行操作者提供的 shell 或 SQL；容器身份与 `user.home` 固定，连接指向本容器 `127.0.0.1:8686`。`apis` 显示上游静态接口清单，实际能力以运行版本为准。
 
 ```bash
 workbenches/workbench server dev cli version
@@ -47,6 +47,6 @@ workbenches/workbench server dev cli give "$WORLD" "$CID" exp "$POINTS"
 workbenches/workbench server dev cli give "$WORLD" "$CID" mesos "$AMOUNT"
 ```
 
-v1.12 的 `GiveService` 对在线角色按 `worldId` 和 `playerId` 定位；`give` 便捷别名固定调用 `/give/v1/resource`，使用 `type=5/13/4/3` 分别发物品、换图、加经验、加金币。角色 ID `0` 在上游表示广播，本入口拒绝。发经验不是直接设置等级。发行包中有游戏内 GM 职业、等级、技能和传送命令，但 HTTP 管理端没有执行任意游戏内命令的入口；管理 CLI 也不能直接设职业、精确等级或技能，需要时用完整透传的 `call` 核对运行版本实际提供的接口。实际道具、地图或等级均须由客户端核对，业务成功码不能代替游戏效果证据。
+v1.12 的 `GiveService` 对在线角色按 `worldId` 和 `playerId` 定位；`give` 便捷别名固定调用 `/give/v1/resource`，使用 `type=5/13/4/3` 分别发物品、换图、加经验、加金币。角色 ID `0` 在上游表示广播，本入口拒绝。发经验不是直接设置等级。发行包中有游戏内 GM 职业、等级、技能和传送命令，但 HTTP 管理端没有执行任意游戏内命令的入口；管理 CLI 也不能直接设职业、精确等级或技能，需要时用 `call` 核对运行版本实际提供的接口。实际道具、地图或等级均须由客户端核对，业务成功码不能代替游戏效果证据。
 
-入口完全透传官方 CLI；只有 `register` 与 `give` 两个便捷别名会投影业务码。原始 `batch`、任意 API 路径、配置与安装管理都可用，但仍受官方 CLI 的 `--force` 与运行版本限制；本入口不提供容器 shell 或 SQL。[离线合同测试](test_cli.py)使用假 Java 进程验证透传参数、定向参数与私密输入输出，可用 `python3 docker/dev-server/test_cli.py` 运行。
+入口不提供容器 shell 或 SQL；`register` 与 `give` 是便捷别名，只投影业务码。[离线合同测试](test_cli.py)使用假 Java 进程验证透传参数、定向参数与私密输入输出，可用 `python3 docker/dev-server/test_cli.py` 运行。

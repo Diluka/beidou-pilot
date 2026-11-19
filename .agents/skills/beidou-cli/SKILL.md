@@ -13,7 +13,7 @@ description: 查询北斗隔离开发服的在线状态、版本和世界列表�
 
 - **查接口索引**：运行 `workbenches/workbench server dev cli apis` 查看全表，或用 `apis server`、`apis give` 等按主题筛选。清单表头的 `Server v1.10` 是写在 CLI 里的参考版本。
 - **查实际服务**：HTTP 接口由游戏服务端 `BeiDou.jar` 实现。用 `call GET /server/v1/version` 查询运行版本（本开发服实测为 `1.12`）；清单中的条目不能证明当前版本支持该接口或参数。
-- **查可用操作**：入口完全透传官方 CLI；以 `workbenches/workbench server dev cli --help` 和官方 `apis` 为准，敏感 API 自行加 `--force` 并核对服务端响应。
+- **查可用操作**：以 `workbenches/workbench server dev cli --help` 和官方 `apis` 为准，核对服务端响应。
 
 ## 查询开发服
 
@@ -25,7 +25,7 @@ workbenches/workbench server dev cli call GET /server/v1/version
 workbenches/workbench server dev cli call GET /server/v1/world/list
 ```
 
-`cli version` 单独显示管理工具版本。查询要检查业务 `code=20000` **以及所需的 `data`**：确认在线还要看到 `data=true`。本入口透传官方 CLI，`call`、`batch` 与任意 API 路径均可用；`register`/`give` 仍只投影业务码。
+`cli version` 单独显示管理工具版本。查询要检查业务 `code=20000` **以及所需的 `data`**：确认在线还要看到 `data=true`。本入口把命令交给官方 CLI；`register`/`give` 只投影业务码。
 
 ## 准备开发角色
 
