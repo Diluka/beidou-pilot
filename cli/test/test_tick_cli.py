@@ -199,6 +199,27 @@ class TickCliContract(unittest.TestCase):
                 self.files.publish()
                 self.assertEqual(script["player"], self.client.snapshot()["script"]["player"])
 
+    def test_script_status_accepts_inflight_revive_action_without_held_key(self) -> None:
+        script = tick_state("b" * 32)
+        script["player"].update(
+            input_action="revive",
+            action=None,
+            phase="running",
+            busy=True,
+            held=[],
+            reason="revive_request_dispatched",
+            dispatched=True,
+        )
+        self.files.state.update(script=script, scripts=[script])
+        self.files.publish()
+
+        state = self.client.snapshot()
+        code, report = self.cli("script", "status", "--session", script["id"])
+
+        self.assertEqual("revive", state["script"]["player"]["input_action"])
+        self.assertEqual((0, script), (code, report["data"]["script"]))
+        self.assertFalse((self.files.directory / "command.txt").exists())
+
     def test_snapshot_accepts_held_input_before_native_action_starts_or_idle_is_known(self) -> None:
         for phase, busy in (("idle", False), ("unknown", None)):
             with self.subTest(phase=phase):

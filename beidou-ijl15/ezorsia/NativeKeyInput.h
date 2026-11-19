@@ -35,14 +35,14 @@ public:
         deadline = now + durationMs;
     }
 
-    void Release() {
+    void Release(bool requireCharacterUpdate = true) {
         ++epoch;
         desired.fill(false);
         active = false;
         releasing = true;
         releaseReady = false;
         releaseCharacter = controlledCharacter;
-        releaseNeedsCharacterUpdate = Any(owned);
+        releaseNeedsCharacterUpdate = requireCharacterUpdate && Any(owned);
         for (unsigned int key = 0; key < held.size(); ++key)
             if (held[key]) requiredUp[key] = true;
     }

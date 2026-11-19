@@ -12,6 +12,7 @@ SOURCES = {
     "ruff": (
         "tools/format.py",
         "cli/beidou_pilot/cli.py",
+        "cli/beidou_pilot/recovery.py",
         "cli/beidou_pilot/strategies.py",
         "cli/beidou_pilot/strategy_scene.py",
         "cli/beidou_pilot/events.py",
@@ -21,6 +22,7 @@ SOURCES = {
         "cli/test/test_quest_interaction.py",
         "cli/test/test_scripted_portals.py",
         "cli/test/test_unified_control.py",
+        "cli/test/test_recovery.py",
         "cli/test/test_strategies.py",
         "cli/test/test_tick_runtime.py",
         "cli/test/test_headless_motion.py",

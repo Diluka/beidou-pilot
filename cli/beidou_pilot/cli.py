@@ -119,7 +119,7 @@ def parser() -> Parser:
     q.add_argument("--timeout", type=float, default=90)
     command("close", "提示通过宿主工作台生命周期入口关闭本容器")
     command("stop", "显式释放当前客户端遗留控制")
-    command("revive", "GUI端请求一次正常复活并核对恢复；存活时跳过")
+    command("revive", "提交一次正常复活请求并核对同角色恢复；存活时跳过")
     q = command("snapshot", "场景、角色、对话与可操作引用")
     q.add_argument("--all", action="store_true", help="含画外实体")
     q.add_argument("-i", "--interactive", action="store_true", help="简洁列出NPC/对话/掉落")
@@ -278,6 +278,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "events",
         "inspect",
         "stop",
+        "revive",
         "batch",
     }:
         raise ClientError("unsupported_capability", "无头端尚未提供这个窗口、原始按键或GUI输入接口。", {"command": cmd})
@@ -285,6 +286,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         backend.name == "beidou"
         and cmd
         in {
+            "revive",
             "click",
             "talk",
             "dialog",
