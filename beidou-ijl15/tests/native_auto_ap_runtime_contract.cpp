@@ -5,6 +5,8 @@
 #include "TickRuntime.h"
 #include "NativeTickInput.h"
 #include <cassert>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -15,6 +17,7 @@ struct Adapter final : MapleControl::TickAdapter {
     unsigned releases = 0;
     unsigned acceptedLogs = 0;
     unsigned busyLogs = 0;
+    unsigned identityRejected = 0;
 
     Adapter() {
         state.instanceId = "test";
@@ -35,6 +38,7 @@ struct Adapter final : MapleControl::TickAdapter {
         if (action.kind == MapleControl::ActionKind::AutoAp
             && (action.autoApInstanceId != state.instanceId || action.autoApCharacterId != state.character.id
                 || action.autoApSceneGeneration != state.sceneGeneration)) {
+            ++identityRejected;
             error = "auto_ap_identity_changed";
             return false;
         }
@@ -84,7 +88,47 @@ struct Adapter final : MapleControl::TickAdapter {
     }
 };
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 || argc == 3) {
+        std::ifstream file(argv[1]);
+        assert(file);
+        std::ostringstream contents;
+        contents << file.rdbuf();
+        const auto source = contents.str();
+        std::string error;
+        if (argc == 3) {
+            Adapter adapter;
+            MapleControl::TickRuntime runtime(adapter);
+            assert(runtime.Start("invalid", source, 1000, error));
+            runtime.Tick();
+            assert(adapter.input.Intent().kind == MapleControl::ActionKind::Stop);
+            assert(runtime.CurrentStatus("invalid")["error"].Text().find("invalid auto_ap identity")
+                   != std::string::npos);
+            return 0;
+        }
+        {
+            Adapter adapter;
+            MapleControl::TickRuntime runtime(adapter);
+            assert(runtime.Start("compiled", source, 1000, error));
+            runtime.Tick();
+            assert(adapter.input.Intent().kind == MapleControl::ActionKind::AutoAp);
+            assert(adapter.input.Intent().autoApCharacterId == 7);
+            assert(adapter.input.Intent().autoApSceneGeneration == 1);
+            assert(adapter.input.Intent().autoApInstanceId == "test");
+        }
+        {
+            Adapter adapter;
+            MapleControl::TickRuntime runtime(adapter);
+            assert(runtime.Start("compiled", source, 1000, error));
+            adapter.state.sceneGeneration = 2;
+            runtime.Tick(true);
+            runtime.Tick();
+            assert(adapter.input.Intent().kind == MapleControl::ActionKind::Stop);
+            assert(!adapter.input.Dispatched());
+            assert(adapter.identityRejected == 1);
+        }
+        return 0;
+    }
     const std::string script =
         "-- @tick.gear 4\nfunction main(c) local ok, reason = c.game.player.auto_ap('test', 7, 1); "
         "if ok then c.game.log('accepted') else c.game.log(reason) end end";

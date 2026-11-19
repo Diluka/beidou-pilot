@@ -244,9 +244,9 @@ python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.
 
 完成、取消、期限、角色变化、离开游戏或错误只结束对应会话；清除该会话仍拥有的方向与动作输入，确认最新原生释放后发布终态，不清后来者的有效输入。换图清旧意图，稳定后的新main须根据当前[只读静态场景](#当前静态场景与跨图)重新决定；地形刷新不将旧动作输入带入新图，也不以输入变更改写已知原生动作。普通控件、对话、商店和装备交互由 CLI 操作；AP 自动分配接口见下文，手动 AP/SP 分配不属于该接口。`player.revive()` 不暴露通用窗口控件操作。
 
-`context.game.player.auto_ap(instance_id, character_id, scene_generation)` 是 #310 尚未发布的一次性自动分配接口，返回 `ok, reason`。三个身份参数必须取自打开属性窗口前或发起请求前的场景快照，用于绑定操作对象；CLI 的 `auto-ap` 命令仍无参数。GUI 路径仅供实验，两端规则一致性和实际效果尚待验证。意图受理或单次派发成功都不代表服务端已完成分配；结果不明时先观察同一角色的属性和剩余 AP，不重试。
+`context.game.player.auto_ap(instance_id, character_id, scene_generation)` 是 #310 尚未发布的一次性自动分配接口，返回 `ok, reason`。三个身份参数必须取自打开属性窗口前或发起请求前的场景快照，用于绑定操作对象。`instance_id` 必须是非空且不含 NUL 的字符串；`character_id` 和 `scene_generation` 必须是可精确表示的整数数值，范围分别为 1–2147483647 和 1–9007199254740991，数值字符串不接受。参数无效时产生 Lua 错误。CLI 的 `auto-ap` 命令仍无参数。GUI 路径仅供实验，两端规则一致性和实际效果尚待验证。意图受理或单次派发成功都不代表服务端已完成分配；结果不明时先观察同一角色的属性和剩余 AP，不重试。
 
-以下最小示例使用请求前的 `context.scene` 身份，在一个会话内只提交一次，并等待派发反馈；派发后仍须另行核对实际属性：
+以下示例对应 CLI 的内部脚本：调用方在开窗前单独保存三个快照值，开窗后核对身份未变，并将保存的锚点注入 `context.auto_ap_anchor`。`context.scene` 会由运行时重置，不能在开窗后拿它替代原锚点；`auto_ap_anchor` 是该调用方提供的数据，并非所有脚本自动拥有的字段。脚本在一个会话内只提交一次并等待派发反馈，派发后仍须另行核对实际属性：
 
 ```lua
 local requested = false
@@ -260,9 +260,9 @@ local function main(context)
         return
     end
     requested = true
-    local scene = context.scene
+    local anchor = context.auto_ap_anchor
     local ok, reason = context.game.player.auto_ap(
-        scene.instance_id, scene.character_id, scene.scene_generation)
+        anchor.instance_id, anchor.character_id, anchor.scene_generation)
     if not ok then error(reason or "auto_ap_rejected") end
 end
 ```

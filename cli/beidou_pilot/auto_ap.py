@@ -45,7 +45,7 @@ local function main(context)
         return
     end
     requested = true
-    local ok, reason = context.game.player.auto_ap(context.scene.instance_id, context.scene.character_id, context.scene.scene_generation)
+    local ok, reason = context.game.player.auto_ap(context.auto_ap_anchor.instance_id, context.auto_ap_anchor.character_id, context.auto_ap_anchor.scene_generation)
     if not ok then
         if reason == "unsupported" then error("auto_ap_unsupported") end
         error(reason or "auto_ap_rejected")
@@ -53,7 +53,7 @@ local function main(context)
 end
 '''
     try:
-        request = bridge.run_script(code=compile_strategy(script, {}, scene), seconds=6, timeout=9)
+        request = bridge.run_script(code=compile_strategy(script, {}, scene, extra={"auto_ap_anchor": scene}), seconds=6, timeout=9)
     except ClientError as error:
         script_result = error.details.get("script")
         message = str(script_result.get("error", "")) if isinstance(script_result, dict) else ""

@@ -535,12 +535,16 @@ struct TickRuntime::Impl {
         if (kind == ActionKind::AutoAp) {
             luaL_checktype(lua, 1, LUA_TSTRING);
             const char* instance = lua_tostring(lua, 1);
-            if (lua_rawlen(lua, 1) == 0 || std::strlen(instance) != lua_rawlen(lua, 1) || !lua_isinteger(lua, 2)
-                || !lua_isinteger(lua, 3))
+            if (lua_rawlen(lua, 1) == 0 || std::strlen(instance) != lua_rawlen(lua, 1)
+                || lua_type(lua, 2) != LUA_TNUMBER || lua_type(lua, 3) != LUA_TNUMBER)
                 return luaL_error(lua, "invalid auto_ap identity");
-            const lua_Integer character = lua_tointeger(lua, 2);
-            const lua_Integer generation = lua_tointeger(lua, 3);
-            if (character < 1 || character > 2147483647 || generation < 1)
+            int characterValid = 0, generationValid = 0;
+            const lua_Integer character = lua_tointegerx(lua, 2, &characterValid);
+            const lua_Integer generation = lua_tointegerx(lua, 3, &generationValid);
+            // Runtime observations are doubles; values beyond 2^53-1 cannot be
+            // compared reliably after a Lua number round trip.
+            if (!characterValid || !generationValid || character < 1 || character > 2147483647 || generation < 1
+                || generation > 9007199254740991LL)
                 return luaL_error(lua, "invalid auto_ap identity");
             requested.autoApInstanceId = instance;
             requested.autoApCharacterId = static_cast<std::uint32_t>(character);

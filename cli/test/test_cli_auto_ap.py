@@ -41,7 +41,55 @@ class AutoApTest(unittest.TestCase):
                              call.run_script(code="compiled", seconds=6, timeout=9)])
             source, options, scene = compile_script.call_args.args
             self.assertIs(scene, initial_scene)
-            self.assertIn("auto_ap(context.scene.instance_id, context.scene.character_id, context.scene.scene_generation)", source)
+            self.assertEqual(compile_script.call_args.kwargs["extra"], {"auto_ap_anchor": initial_scene})
+            self.assertIn("auto_ap(context.auto_ap_anchor.instance_id, context.auto_ap_anchor.character_id, context.auto_ap_anchor.scene_generation)", source)
+            self.assertNotIn("auto_ap(context.scene.", source)
+
+    def test_anchor_survives_runtime_scene_replacement(self):
+        import ctypes
+        import ctypes.util
+        from unittest.mock import Mock
+        library = ctypes.util.find_library("lua5.4")
+        if not library:
+            self.skipTest("Lua 5.4 shared library unavailable")
+        lua = ctypes.CDLL(library)
+        lua.luaL_newstate.restype = ctypes.c_void_p
+        lua.luaL_openlibs.argtypes = [ctypes.c_void_p]
+        lua.luaL_loadstring.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        lua.luaL_loadstring.restype = ctypes.c_int
+        lua.lua_pcallk.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_longlong, ctypes.c_void_p]
+        lua.lua_pcallk.restype = ctypes.c_int
+        lua.lua_tolstring.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        lua.lua_tolstring.restype = ctypes.c_char_p
+        lua.lua_close.argtypes = [ctypes.c_void_p]
+        backend = Mock()
+        backend.name = "headless"
+        backend.read.side_effect = [observation(2), observation(0, 12)]
+        scene = {"character_id": 1, "instance_id": "original", "scene_generation": 3, "map_id": 4}
+        with patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \
+             patch("beidou_pilot.auto_ap.scene_context", return_value=scene):
+            bridge.return_value.snapshot.return_value = {"scripts": []}
+            auto_ap(backend)
+            code = bridge.return_value.run_script.call_args.kwargs["code"]
+        source = "local entry = (function()\n" + code + "\nend)()\n" + '''
+entry.context.scene = {instance_id="new", character_id=2, scene_generation=4}
+entry.context.game = {player = {auto_ap = function(instance, character, generation)
+    assert(instance == "original" and character == 1 and generation == 3)
+    assert(math.type(character) == "integer" and math.type(generation) == "integer")
+    return true
+end}}
+entry.main(entry.context)
+'''
+        state = lua.luaL_newstate()
+        self.assertTrue(state)
+        try:
+            lua.luaL_openlibs(state)
+            rc = lua.luaL_loadstring(state, source.encode())
+            if rc == 0:
+                rc = lua.lua_pcallk(state, 0, 0, 0, 0, None)
+            self.assertEqual(0, rc, lua.lua_tolstring(state, -1, None) if rc else None)
+        finally:
+            lua.lua_close(state)
 
     def test_gui_window_failure_does_not_submit(self):
         from unittest.mock import Mock
@@ -146,7 +194,7 @@ class AutoApTest(unittest.TestCase):
                 backend.read.return_value = observation(2)
                 with patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \
                      patch("beidou_pilot.auto_ap.scene_context", return_value={"character_id": 1}), \
-                     patch("beidou_pilot.auto_ap.compile_strategy", side_effect=lambda code, *args: code):
+                     patch("beidou_pilot.auto_ap.compile_strategy", side_effect=lambda code, *args, **kwargs: code):
                     bridge.return_value.snapshot.return_value = {"scripts": []}
                     bridge.return_value.run_script.side_effect = ClientError(
                         "bridge_script_error", "error", {"script": {"error": message}})
