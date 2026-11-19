@@ -498,9 +498,8 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             return skill_up(backend, args.skill_id, args.points)
         from .skill_up import preflight_skill_up, skill_up_once
 
-        with control(backend, "skill-up"):
-            preflight_skill_up(backend, args.skill_id, args.points)
-            return skill_up_once(backend, args.skill_id)
+        preflight_skill_up(backend, args.skill_id, args.points)
+        return skill_up_once(backend, args.skill_id)
     if cmd == "revive":
         from .recovery import revive
 

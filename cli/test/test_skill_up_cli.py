@@ -1,10 +1,14 @@
 import unittest
-from contextlib import nullcontext
+import tempfile
+import fcntl
+import io
+from pathlib import Path
+from contextlib import nullcontext, redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from beidou_pilot.backend import ClientError
-from beidou_pilot.cli import dispatch, parser
+from beidou_pilot.cli import dispatch, main, parser
 from beidou_pilot.headless_skill_up import skill_up
 
 
@@ -16,6 +20,25 @@ class SkillUpCliTests(unittest.TestCase):
     def test_arguments(self):
         args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
         self.assertEqual((args.skill_id, args.points), (2101002, 2))
+
+    def test_gui_main_holds_single_control_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backend = SimpleNamespace(name="beidou", instance="default", paths=SimpleNamespace(
+                state_directory=root, input_lock=root / "input.lock"))
+
+            def verify_lock(*args):
+                with backend.paths.input_lock.open("a+") as handle:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            with (patch("beidou_pilot.cli.Backend", return_value=backend),
+                  patch("beidou_pilot.skill_up.preflight_skill_up", side_effect=verify_lock) as preflight,
+                  patch("beidou_pilot.skill_up.skill_up_once", return_value={"level_after": 1}) as once,
+                  redirect_stdout(io.StringIO())):
+                self.assertEqual(main(["skill-up", "1000", "--json"]), 0)
+                preflight.assert_called_once_with(backend, 1000, 1)
+                once.assert_called_once_with(backend, 1000)
 
     def test_headless_dispatch(self):
         args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
