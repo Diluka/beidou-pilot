@@ -19,7 +19,7 @@ def character(level=15):
 
 
 def window(enabled=True):
-    return {"address": "a", "instance_ref": "a:1", "vtables": ["skill"],
+    return {"address": "a", "instance_ref": "a:1", "vtables": ["0xb3b5cc"],
             "root_rect": {"left": 10, "top": 10, "right": 185, "bottom": 299},
             "buttons": [{"control_id": 2012, "enabled": enabled, "layout_x": 131,
                          "layout_y": 199, "width": 12, "height": 12}],
@@ -40,6 +40,11 @@ class Backend:
 
 
 class SkillUpOnceTest(unittest.TestCase):
+    def setUp(self):
+        verifier = patch("beidou_pilot.skill_up._verified_client", return_value=True)
+        verifier.start()
+        self.addCleanup(verifier.stop)
+
     def test_total_preflight_rejects_insufficient_sp(self):
         with self.assertRaises(ClientError) as caught:
             preflight_skill_up(Backend(), 2101002, 4)
@@ -119,6 +124,31 @@ class SkillUpOnceTest(unittest.TestCase):
     @patch("beidou_pilot.skill_up.click_control")
     @patch("beidou_pilot.skill_up.read_ui")
     @patch("beidou_pilot.skill_up.open_window")
+    def test_ordinary_nonzero_tab_and_special_jobs(self, opened, read_ui, clicked):
+        w = window()
+        w["skills"]["selected_tab"] = 1
+        w["skills"]["ids"] = [1000000, 1000001, 1001003]
+        opened.return_value = w
+        read_ui.return_value = {"windows": [w], "dialog": {"focused_window": {"address": "a"}}}
+        backend = Backend()
+        for item in backend.observations:
+            item["character"]["job"] = 100
+        for item in backend.characters:
+            item["skills"]["1001003"] = item["skills"].pop("2101002")
+        self.assertEqual(skill_up_once(backend, 1001003)["level_after"], 16)
+        clicked.reset_mock()
+        for job in (2200, 2299, 2001):
+            backend = Backend()
+            backend.observations[0]["character"]["job"] = job
+            backend.characters[0]["skills"]["1001003"] = backend.characters[0]["skills"].pop("2101002")
+            with self.assertRaises(ClientError) as caught:
+                skill_up_once(backend, 1001003)
+            self.assertEqual(caught.exception.code, "skill_points_pool_unavailable")
+        clicked.assert_not_called()
+
+    @patch("beidou_pilot.skill_up.click_control")
+    @patch("beidou_pilot.skill_up.read_ui")
+    @patch("beidou_pilot.skill_up.open_window")
     def test_confirms_one_point(self, opened, read_ui, clicked):
         w = window()
         opened.return_value = w
@@ -160,6 +190,14 @@ class SkillUpOnceTest(unittest.TestCase):
         result = skill_up_once(backend, 2101002)
         self.assertEqual((result["level_before"], result["level_after"]), (0, 1))
         clicked.assert_called_once()
+
+    @patch("beidou_pilot.skill_up.open_window")
+    def test_unverified_executable_is_refused(self, opened):
+        with patch("beidou_pilot.skill_up._verified_client", return_value=False):
+            with self.assertRaises(ClientError) as caught:
+                skill_up_once(Backend(), 2101002)
+        self.assertEqual(caught.exception.code, "skill_points_pool_unavailable")
+        opened.assert_not_called()
 
     @patch("beidou_pilot.skill_up.open_window")
     def test_changed_identity_after_preflight_is_refused(self, opened):

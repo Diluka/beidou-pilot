@@ -11,6 +11,14 @@ from .engines.character import CharacterSnapshot
 from .ui import click_control, click_window, open_window, read_ui
 
 
+def _verified_client(backend: Backend) -> bool:
+    try:
+        with (backend.root / "client" / "BeiDou.exe").open("rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest() == "1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df"
+    except OSError:
+        return False
+
+
 def preflight_skill_up(backend: Backend, skill_id: int, points: int, *, batch: bool = False) -> tuple | None:
     """在任何桌面输入前核对总量；未知技能上限时拒绝批次。"""
     if backend.name != "beidou":
@@ -90,7 +98,11 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
     before = skill["level"] if skill is not None else 0
     if expected is not None and (*identity, sp, before) != expected:
         raise ClientError("skill_state_changed", "批量预检后角色状态发生变化，未执行加点。")
+    if not _verified_client(backend):
+        raise ClientError("skill_points_pool_unavailable", "客户端版本未经核实。")
     window = open_window(backend, "skills")
+    if window["vtables"][0] != "0xb3b5cc":
+        raise ClientError("skills_ui_unavailable", "技能窗口类型未经核实。")
     view = window["skills"]
     if view is None:
         raise ClientError("skills_ui_unavailable", "技能窗口列表不可用。")
@@ -112,9 +124,11 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
         raise ClientError("skill_not_in_ui", "当前角色技能页未列出该技能。", {"skill_id": skill_id})
     if view["ids"].count(skill_id) != 1:
         raise ClientError("skill_ambiguous", "技能页包含重复技能 ID。", {"skill_id": skill_id})
-    # 仅这一职业和技能页的通用 SP 对应关系经过真实 GUI 验证。
-    if character.get("job") != 210 or view["selected_tab"] != 2:
+    job = character.get("job")
+    if (type(job) is not int or not 0 <= job <= 32767 or job // 100 == 22 or job == 2001
+            or not 0 < view["selected_tab"] < view["tab_count"] or window["vtables"][0] != "0xb3b5cc"):
         raise ClientError("skill_points_pool_unavailable", "该职业或技能页的技能点分册尚未核实。")
+    selected_tab = view["selected_tab"]
     index = view["ids"].index(skill_id)
     for _ in range(len(view["ids"])):
         if 0 <= index - view["first_index"] < 4:
@@ -129,7 +143,7 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
             raise ClientError("skills_ui_unavailable", "技能窗口已消失或身份不唯一。")
         window = matches[0]
         view = window["skills"]
-        if (view is None or view["selected_tab"] != 2 or view["ids"].count(skill_id) != 1
+        if (view is None or view["selected_tab"] != selected_tab or view["ids"].count(skill_id) != 1
                 or (direction == "down" and view["first_index"] <= first)
                 or (direction == "up" and view["first_index"] >= first)):
             raise ClientError("skill_scroll_not_confirmed", "技能列表滚动未确认。")
