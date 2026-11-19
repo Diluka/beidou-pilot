@@ -115,6 +115,7 @@ public:
     bool SupportsSkill() const override { return supportsSkills; }
 
     bool rejectAutoAp = false;
+
     bool SetActionIntent(const Action& requested, std::string& error) override {
         ++intentCalls;
         if (rejectAutoAp && requested.kind == ActionKind::AutoAp) {

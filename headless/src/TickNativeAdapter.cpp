@@ -132,11 +132,12 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
         return false;
     }
     if (action.kind == Kind::AutoAp) {
-        const auto admission = CheckAutoApAdmission(intent.kind == Kind::AutoAp, autoApPending,
-                                                    intent.sessionId, action.sessionId);
+        const auto admission =
+            CheckAutoApAdmission(intent.kind == Kind::AutoAp, autoApPending, intent.sessionId, action.sessionId);
         if (admission == AutoApAdmission::Pending) {
             error = autoApIdentity.changed ? "auto_ap_identity_changed"
-                    : autoApPending ? "auto_ap_confirmation_pending" : "auto_ap_action_owned";
+                    : autoApPending        ? "auto_ap_confirmation_pending"
+                                           : "auto_ap_action_owned";
             return false;
         }
         if (admission == AutoApAdmission::SameSession) return true;
@@ -149,9 +150,9 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
     }
     AutoApPlan autoAp;
     if (action.kind == Kind::AutoAp) {
-        if (!state.characterKnown || !state.character.known[0] || !state.character.known[1]
-            || !state.character.known[2] || !state.character.known[3] || !state.character.known[4]
-            || !state.character.known[5] || !state.character.known[10]) {
+        if (!state.characterKnown || !state.character.known[0] || !state.character.known[1] || !state.character.known[2]
+            || !state.character.known[3] || !state.character.known[4] || !state.character.known[5]
+            || !state.character.known[10]) {
             error = "character_unavailable";
             return false;
         }

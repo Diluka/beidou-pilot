@@ -565,7 +565,8 @@ struct TickRuntime::Impl {
                                   : (inputActive ? &input : nullptr);
         Value keys = Value::Array();
         for (const auto& key : held) keys.Add(key);
-        if (inputActive && input.kind != ActionKind::Revive && input.kind != ActionKind::AutoAp) keys.Add(ActionName(input));
+        if (inputActive && input.kind != ActionKind::Revive && input.kind != ActionKind::AutoAp)
+            keys.Add(ActionName(input));
         const auto idle = current != nullptr ? observed.actionIdle : adapter.Observe().actionIdle;
         const bool nativeBusy = active != nullptr || idle == Fact::False;
         const Value busy = nativeBusy ? Value(true) : idle == Fact::True ? Value(false) : Value{};
@@ -771,9 +772,10 @@ struct TickRuntime::Impl {
         // Standard libraries are provided as-is; the runtime owns scheduling, budgets
         // and native I/O only, with no capability trimming for its own scripts.
         luaL_openlibs(lua);
-        static const luaL_Reg player[]{
-            {"move", Move},     {"jump", Jump},     {"attack", Attack}, {"skill", Skill},         {"use_item", UseItem},
-            {"pickup", Pickup}, {"revive", Revive}, {"auto_ap", AutoAp}, {"stop", Stop}, {"status", PlayerStatus}, {nullptr, nullptr}};
+        static const luaL_Reg player[]{{"move", Move},           {"jump", Jump},        {"attack", Attack},
+                                       {"skill", Skill},         {"use_item", UseItem}, {"pickup", Pickup},
+                                       {"revive", Revive},       {"auto_ap", AutoAp},   {"stop", Stop},
+                                       {"status", PlayerStatus}, {nullptr, nullptr}};
         lua_newtable(lua); // backing of game proxy
         luaL_newlib(lua, player);
         Protect(lua);
