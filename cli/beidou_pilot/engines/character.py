@@ -3,7 +3,7 @@
 
 import argparse
 import json
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 
 from ..observations import observe_domain
 
@@ -23,6 +23,8 @@ class CharacterSnapshot(TypedDict):
     native_values_valid: bool
     skills: dict[str, LearnedSkill]
     skills_complete: bool
+    beginner_skill_ids: NotRequired[list[int]]
+    beginner_skill_points: NotRequired[int]
     unavailable: list[str]
     not_covered: list[str]
     read_seconds: float

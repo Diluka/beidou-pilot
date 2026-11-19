@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "SharedLuaAdapter.h"
 #include "HeadlessState.h"
+#include "SkillUpPreflight.h"
 #include "LoginState.h"
 #include "PlayerPhysicsPose.h"
 #include "WorldMapImage.h"
 
 #include "Character/Player.h"
+#include "Character/Job.h"
+#include "Character/SkillId.h"
+#include "Data/JobData.h"
+#include "Data/SkillData.h"
 #include "Constants.h"
 #include "Gameplay/Stage.h"
 #include "Gameplay/MapleMap/MapChars.h"
@@ -34,6 +39,25 @@
 namespace {
 using Json = nlohmann::json;
 using Fact = MapleControl::Fact;
+
+using headless::BeginnerSkillPointBudget;
+static_assert(BeginnerSkillPointBudget(1, 0) == 0);
+static_assert(BeginnerSkillPointBudget(5, 2) == 2);
+static_assert(BeginnerSkillPointBudget(20, 6) == 0);
+
+int BeginnerSkillPoints(ms::Player& player) {
+    const auto level = player.get_stats().get_stat(ms::MapleStat::Id::LEVEL);
+    int used = 0;
+    const ms::Job job(player.get_stats().get_stat(ms::MapleStat::Id::JOB));
+    const auto& skills = ms::JobData::get(job.get_subjob(ms::Job::BEGINNER)).get_skills();
+    for (auto skill : skills) {
+        if ((skill == ms::SkillId::Id::THREE_SNAILS || skill == ms::SkillId::Id::HEAL
+             || skill == ms::SkillId::Id::FEATHER)
+            && (!ms::SkillData::get(skill).is_invisible() || player.get_skills().get_masterlevel(skill) != 0))
+            used += player.get_skills().get_level(skill);
+    }
+    return BeginnerSkillPointBudget(level, used);
+}
 
 MapleControl::Value ObservationValue(const Json& value) {
     using Value = MapleControl::Value;
@@ -494,6 +518,7 @@ void SharedLuaAdapter::ReadCommand() {
     unsigned int protocol = 0;
     std::uint64_t generation = 0;
     std::uint64_t value = 0;
+    std::uint64_t points = 0;
     std::string instance, id, operation, scriptId, extra;
     const bool header = line.size() <= 1024
                         && static_cast<bool>(stream >> protocol >> instance >> generation >> id >> operation >> value);
@@ -517,6 +542,10 @@ void SharedLuaAdapter::ReadCommand() {
             valid = valid && generation == state.sceneGeneration && value <= 0xffffffffULL && state.ready;
         else
             valid = valid && value == 0;
+    } else if (operation == "skill-up") {
+        valid = valid && generation == state.sceneGeneration && state.ready && value > 0
+                && value <= 0x7fffffffULL && static_cast<bool>(stream >> points)
+                && points > 0 && points <= 0x7fffffffULL && !(stream >> extra);
     } else
         valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
     if (!valid) {
@@ -527,6 +556,50 @@ void SharedLuaAdapter::ReadCommand() {
     if (operation == "cancel_script" && ScriptState(scriptId).is_null()) {
         rejectedId = id;
         rejectedReason = "script_session_changed";
+        return;
+    }
+    if (operation == "skill-up") {
+        if (Running() || scriptCommand) {
+            rejectedId = id;
+            rejectedReason = "script_running";
+            return;
+        }
+        auto& player = ms::Stage::get().get_player();
+        auto& book = player.get_skills();
+        const auto skill = static_cast<std::int32_t>(value);
+        const ms::Job job(player.get_stats().get_stat(ms::MapleStat::Id::JOB));
+        bool eligible = false;
+        bool beginner = false;
+        for (int level = ms::Job::BEGINNER; level <= job.get_level(); ++level) {
+            const auto& skills = ms::JobData::get(job.get_subjob(static_cast<ms::Job::Level>(level))).get_skills();
+            if (std::find(skills.begin(), skills.end(), skill) != skills.end()) {
+                eligible = true;
+                beginner = level == ms::Job::BEGINNER;
+                break;
+            }
+        }
+        if (beginner && skill != ms::SkillId::Id::THREE_SNAILS && skill != ms::SkillId::Id::HEAL
+            && skill != ms::SkillId::Id::FEATHER)
+            eligible = false;
+        if (eligible) {
+            const auto& data = ms::SkillData::get(skill);
+            auto maximum = book.get_masterlevel(skill);
+            const bool visible = !data.is_invisible() || maximum != 0;
+            if (maximum == 0) maximum = data.get_masterlevel();
+            const auto current = book.get_level(skill);
+            const auto sp = beginner ? BeginnerSkillPoints(player)
+                                     : player.get_stats().get_stat(ms::MapleStat::Id::SP);
+            auto requirements = book.collect_required(skill);
+            if (requirements.empty()) requirements = data.get_reqskills();
+            eligible = headless::SkillUpEligible(eligible, visible, skill == ms::SkillId::Id::ANGEL_BLESSING,
+                                                  maximum, current, sp, points, requirements,
+                                                  [&](auto required) { return book.get_level(required); });
+        }
+        commandId = id;
+        scriptCommand = false;
+        commandStatus = eligible ? "completed" : "rejected";
+        commandReason = eligible ? "packet_dispatched" : "skill_not_eligible";
+        if (eligible) ms::SpendSpPacket(skill).dispatch();
         return;
     }
     commandId = id;
@@ -766,6 +839,9 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
              {"validation_source", "native_objects"},
              {"skills", std::move(knownSkills)},
              {"skills_complete", true},
+             {"beginner_skill_points", BeginnerSkillPoints(player)},
+             {"beginner_skill_ids", ms::JobData::get(ms::Job(player.get_stats().get_stat(ms::MapleStat::Id::JOB))
+                                                          .get_subjob(ms::Job::BEGINNER)).get_skills()},
              {"physics", Json::parse(state.character.physics.Document().Dump())},
              {"movement", Json::parse(state.character.movement.Document().Dump())},
              {"on_ground", FactValue(state.onGround)},

@@ -58,6 +58,12 @@ beidou-pilot --json bridge status
 
 跨图路线只使用客户端原生只读查询 `beidou-pilot --json world-map route START_MAP GOAL_MAP`：需要当前实例已在运行，不启动或控制客户端；客户端与技能都不提供其他路线计算入口，结果按正常数据状态返回，不当作观察错误。
 
+## 技能加点
+
+确认角色、技能及明确的加点授权后，可用 `beidou-pilot --json skill-up SKILL_ID --points N`；`--points` 默认 1。无头端逐点核对技能等级和 SP 后继续，失败时查看 `details.confirmed`。请求已发布但结果未知时先重新观察，不重放。
+
+GUI 当前仅支持单点、职业 `210` 的第 3 个技能页（索引 2），还要求已有技能等级记录和可用加点按钮；多点、其他职业或技能页未支持。窗口不明或结果未知时停止并核对。具体边界见 [CLI 技能加点](../../../docs/CLI.md#技能加点)，不将实现描述视为完整 GUI 验收。
+
 ## 执行和取消 Lua
 
 角色动作与持续脚本写在所属角色的 `scripts/`。`LUA_PATH` 可以是 UTF-8 单文件或含 `main.lua` 的目录包；`script describe/run/start` 的相对路径从 `/work/scripts` 解析，容器绝对路径也可显式使用。长期任务用 `script start`，保留返回的 `script.id` 以便查询或取消。

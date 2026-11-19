@@ -120,6 +120,9 @@ def parser() -> Parser:
     command("close", "提示通过宿主工作台生命周期入口关闭本容器")
     command("stop", "显式释放当前客户端遗留控制")
     command("revive", "提交一次正常复活请求并核对同角色恢复；存活时跳过")
+    q = command("skill-up", "逐点分配技能点并核对结果", allow_abbrev=False)
+    q.add_argument("skill_id", type=int)
+    q.add_argument("--points", type=int, default=1)
     q = command("snapshot", "场景、角色、对话与可操作引用")
     q.add_argument("--all", action="store_true", help="含画外实体")
     q.add_argument("-i", "--interactive", action="store_true", help="简洁列出NPC/对话/掉落")
@@ -279,6 +282,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "inspect",
         "stop",
         "revive",
+        "skill-up",
         "batch",
     }:
         raise ClientError("unsupported_capability", "无头端尚未提供这个窗口、原始按键或GUI输入接口。", {"command": cmd})
@@ -485,6 +489,18 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .bridge import BridgeClient
 
         return BridgeClient(backend.root, backend.name, backend.instance).stop()
+    if cmd == "skill-up":
+        if args.skill_id <= 0 or args.points <= 0:
+            raise ClientError("usage", "技能 ID 和点数须为正整数。")
+        if backend.name == "headless":
+            from .headless_skill_up import skill_up
+
+            return skill_up(backend, args.skill_id, args.points)
+        from .skill_up import preflight_skill_up, skill_up_once
+
+        with control(backend, "skill-up"):
+            preflight_skill_up(backend, args.skill_id, args.points)
+            return skill_up_once(backend, args.skill_id)
     if cmd == "revive":
         from .recovery import revive
 
