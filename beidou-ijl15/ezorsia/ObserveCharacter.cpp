@@ -117,7 +117,8 @@ Value Character() {
     auto result = Value::Object({
         {"source", "client-native-observation"}, {"readonly", true},
         {"mesos", Value{}}, {"mesos_checksum_valid", false}, {"skills", Value::Object()},
-        {"skills_complete", false}, {"read_seconds", 0},
+        {"skills_complete", false}, {"skill_level_deltas", Value{}},
+        {"skill_level_deltas_complete", false}, {"read_seconds", 0},
         {"velocity", Value{}}, {"physics", Value{}}, {"movement", Value{}}, {"on_ground", Value{}},
         {"action_idle", Value{}},
         {"not_covered", StringArray({"skill_names", "skill_requirements", "skill_effects",
@@ -176,6 +177,21 @@ Value Character() {
     }
     result["skills"] = std::move(skills);
     result["skills_complete"] = true;
+    try {
+        const auto records = MapRecords(character + 0x47F, 0xAF2074, 0xAF3314, 16);
+        std::map<Address, std::int32_t> deltas;
+        for (const auto& record : records) {
+            if (!deltas.emplace(At<Address>(record.bytes, 8), At<std::int32_t>(record.bytes, 12)).second)
+                throw ReadError("skill level delta records contain a duplicate ID");
+        }
+        if (CurrentCharacter() != character) throw ReadError("character changed during skill level delta observation");
+        auto values = Value::Object();
+        for (const auto& entry : deltas) values[std::to_string(entry.first)] = entry.second;
+        result["skill_level_deltas"] = std::move(values);
+        result["skill_level_deltas_complete"] = true;
+    } catch (const ReadError&) {
+        // Optional private observation remains unknown on an incomplete map.
+    }
     result["unavailable"] = std::move(unavailable);
     return result;
 }

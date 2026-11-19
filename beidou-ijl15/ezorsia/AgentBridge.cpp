@@ -128,6 +128,16 @@ MapleControl::Value TickUiView(const MapleControl::Value& ui) {
     return result;
 }
 
+MapleControl::Value TickCharacterView(const MapleControl::Value& character) {
+    using MapleControl::Value;
+    if (character.Type() != Value::Kind::Object) return character;
+    auto result = Value::Object();
+    for (const auto& field : character.Members())
+        if (field.first != "skill_level_deltas" && field.first != "skill_level_deltas_complete")
+            result[field.first] = field.second;
+    return result;
+}
+
 class BeiDouTickAdapter final : public MapleControl::TickAdapter {
 public:
     const MapleControl::State& Observe() const override { return previousState; }
@@ -137,6 +147,7 @@ public:
         auto observation = NativeObservation::Collect(domain);
         if (domain == "ui") observation.data = TickUiView(observation.data);
         if (domain == "character") {
+            observation.data = TickCharacterView(observation.data);
             // CharacterData's verified maps are learned skill levels, not active
             // TemporaryStat/buff records. Do not infer buffs from those maps.
             observation.data["buffs"] = MapleControl::Value{};
