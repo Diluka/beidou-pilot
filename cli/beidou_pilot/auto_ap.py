@@ -26,6 +26,15 @@ def auto_ap(backend: Backend) -> JsonObject:
     scene = scene_context(snapshot)
     if scene["character_id"] != character["id"]:
         raise ClientError("character_changed", "提交期间角色已变化，停止操作。")
+    if backend.name == "beidou":
+        # 临时诊断路径：打开属性窗口，不发出任何加点请求。
+        from .ui import open_window
+
+        # 工作台挂载于 /work，实例根为 /work/runtime/<instance>/<run_id>。
+        runtime = backend.root.parent.parent
+        if runtime.name == "runtime" and (runtime.parent / "auto-ap-diagnostic.enable").is_file():
+            open_window(backend, "stats")
+        raise ClientError("unsupported_capability", "GUI 自动加点尚未实现，未发送加点请求。")
     script = '''local requested = false
 local function main(context)
     if requested then
