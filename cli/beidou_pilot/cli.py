@@ -134,7 +134,8 @@ def parser() -> Parser:
     q.add_argument("--interval", type=float, default=0.025, help="watch 读取间隔，0.01 至 1 秒")
     q = command("inspect", "按需读取一个领域或静态资源")
     q.add_argument(
-        "kind", choices=["scene", "inventory", "quests", "skills", "stage", "ui", "item", "npc", "monster", "map"]
+        "kind",
+        choices=["character", "scene", "inventory", "quests", "skills", "stage", "ui", "item", "npc", "monster", "map"],
     )
     q.add_argument("id", nargs="?", type=int)
     q = command("talk", "按当前NPC名称、模板ID或引用打开对话")
@@ -519,6 +520,10 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         return None
     if cmd == "inspect":
         kind = args.kind
+        if kind == "character":
+            if args.id is not None:
+                raise ClientError("usage", "角色观察不接受 ID。")
+            return backend.read("observe")
         if kind in ("item", "npc", "monster", "map"):
             identifier = args.id
             if identifier is None and kind == "map":

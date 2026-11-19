@@ -101,6 +101,14 @@ workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANC
 | `bridge status/stop` | 只读桥状态，或停止全部脚本会话并释放输入 |
 | `stop` | 释放本实例遗留按键，等价于全停会话 |
 
+查看当前角色的实际四维与剩余 AP：
+
+```bash
+workbenches/workbench dev/NAME inspect character
+```
+
+该命令在两端读取入图后 `status` 所依据的同类原生 `observe` 快照，返回 `character`、`native_values_valid` 及采样元数据；四维为 `strength`、`dexterity`、`intelligence`、`luck`，剩余 AP 为 `ability_points`。角色不可用时保留原生空值和 `unavailable`，不补零；观察失败直接报告原错误。
+
 动作、脚本等参数由容器内客户端解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查。中断脚本 CLI 只结束等待，脚本取消另行显式 `script cancel --session`。
 
 `snapshot` 与 `inspect character` 的 `character.physics` 是本端同一次原生更新的未插值物理末态（`update_id/step_ms/x/y/velocity/on_ground`），未知字段为 `null`；它与 `character.x/y` 显示位置、`character.velocity` 区间均速语义分开，CLI 只校验并透传，不做运动计算或补齐。字段语义与校准采样见 [Tick Lua API](LUA_TICK_API.md#运动观察与静止参考)。
