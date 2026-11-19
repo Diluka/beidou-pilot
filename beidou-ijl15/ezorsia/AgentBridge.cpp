@@ -93,6 +93,41 @@ bool NativeLogs(const std::string& scriptId, const std::vector<std::string>& lin
 bool RequestNativeItem(std::uint32_t itemId, BeiDouBridge::NativeItemUse& target, std::string& error);
 const MapleControl::Value& Member(const MapleControl::Value& object, const std::string& name);
 
+// The native UI observation also serves the CLI. Its resource count is not a
+// tick API field, so project only that field out at the Lua adapter boundary.
+MapleControl::Value TickUiView(const MapleControl::Value& ui) {
+    using MapleControl::Value;
+    if (ui.Type() != Value::Kind::Object) return ui;
+    auto result = Value::Object();
+    for (const auto& field : ui.Members()) {
+        if (field.first != "windows" || field.second.Type() != Value::Kind::Array) {
+            result[field.first] = field.second;
+            continue;
+        }
+        auto windows = Value::Array();
+        for (const auto& window : field.second.Elements()) {
+            if (window.Type() != Value::Kind::Object) {
+                windows.Add(window);
+                continue;
+            }
+            auto copy = Value::Object();
+            for (const auto& member : window.Members()) {
+                if (member.first != "skills" || member.second.Type() != Value::Kind::Object) {
+                    copy[member.first] = member.second;
+                    continue;
+                }
+                auto skills = Value::Object();
+                for (const auto& skillField : member.second.Members())
+                    if (skillField.first != "resource_counts") skills[skillField.first] = skillField.second;
+                copy[member.first] = skills;
+            }
+            windows.Add(copy);
+        }
+        result[field.first] = windows;
+    }
+    return result;
+}
+
 class BeiDouTickAdapter final : public MapleControl::TickAdapter {
 public:
     const MapleControl::State& Observe() const override { return previousState; }
@@ -100,6 +135,7 @@ public:
     MapleControl::Observation ObserveDomain(const std::string& domain) const override {
         if (domain == "terrain") return BeiDouBridge::ObserveSceneTerrain(previousState, sceneDataRoot);
         auto observation = NativeObservation::Collect(domain);
+        if (domain == "ui") observation.data = TickUiView(observation.data);
         if (domain == "character") {
             // CharacterData's verified maps are learned skill levels, not active
             // TemporaryStat/buff records. Do not infer buffs from those maps.
