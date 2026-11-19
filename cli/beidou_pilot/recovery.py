@@ -42,12 +42,15 @@ def revive(backend: Backend) -> JsonObject:
     scene = scene_context(snapshot)
     if scene["character_id"] != character["id"]:
         raise ClientError("character_changed", "提交期间角色已变化，停止操作。")
-    script = """local function main(context)
+    script = (
+        """local function main(context)
     local ok, reason = context.game.player.revive()
     if not ok then error(reason or "revive_request_rejected") end
     return "done"
 end
-""" if backend.name == "headless" else """local requested = false
+"""
+        if backend.name == "headless"
+        else """local requested = false
 local function main(context)
     if requested then
         local status = context.game.player.status()
@@ -64,6 +67,7 @@ local function main(context)
     requested = true
 end
 """
+    )
     request = bridge.run_script(
         code=compile_strategy(
             script,

@@ -606,8 +606,8 @@ bool ReviveWindow(std::uint32_t& address, std::string& error) {
     std::istringstream stream(rawAddress.Text());
     stream >> std::hex >> address;
     std::uint32_t table = 0, handler = 0;
-    if (!stream || address == 0 || !ReadAt(address, table) || table != 0x00B3B1A8
-        || !ReadAt(table + 0x20, handler) || handler != 0x008981E1) {
+    if (!stream || address == 0 || !ReadAt(address, table) || table != 0x00B3B1A8 || !ReadAt(table + 0x20, handler)
+        || handler != 0x008981E1) {
         error = "revive_dialog_unavailable";
         return false;
     }

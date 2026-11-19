@@ -736,8 +736,7 @@ int main(int argc, char** argv) {
     else if (test == "revive") {
         ReviveIntent();
         ReviveRuntimeLifecycle();
-    }
-    else if (test == "attack-recovery")
+    } else if (test == "attack-recovery")
         RejectedAttackRecovery();
     else if (test == "potion-churn")
         PotionIntentChurn();
