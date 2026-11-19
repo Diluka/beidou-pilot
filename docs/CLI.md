@@ -101,6 +101,14 @@ workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANC
 | `bridge status/stop` | 只读桥状态，或停止全部脚本会话并释放输入 |
 | `stop` | 释放本实例遗留按键，等价于全停会话 |
 
+查看当前角色的实际四维与剩余 AP：
+
+```bash
+workbenches/workbench dev/NAME inspect character
+```
+
+该命令在两端读取入图后 `status` 所依据的同类原生 `observe` 快照，返回 `character`、`native_values_valid` 及采样元数据；四维为 `strength`、`dexterity`、`intelligence`、`luck`，剩余 AP 为 `ability_points`。角色不可用时保留原生空值和 `unavailable`，不补零；观察失败直接报告原错误。
+
 动作、脚本等参数由容器内客户端解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查。中断脚本 CLI 只结束等待，脚本取消另行显式 `script cancel --session`。
 
 `snapshot` 与 `inspect character` 的 `character.physics` 是本端同一次原生更新的未插值物理末态（`update_id/step_ms/x/y/velocity/on_ground`），未知字段为 `null`；它与 `character.x/y` 显示位置、`character.velocity` 区间均速语义分开，CLI 只校验并透传，不做运动计算或补齐。字段语义与校准采样见 [Tick Lua API](LUA_TICK_API.md#运动观察与静止参考)。
@@ -250,6 +258,12 @@ end
 ## 正常复活
 
 `revive` 在 GUI 与无头端都提交一次普通复活请求。HP 已知为正时返回 `already_alive` 且不发送请求；角色或 HP 读数不可用时拒绝操作。两端均调用共享 tick Lua 的 `player.revive()`：GUI 端只在唯一已识别复活窗口及其启用的确认按钮可验证时调用原版窗口确认动作；无头端由本端发送普通 `CHANGEMAP` 请求。请求派发不表示恢复成功：命令只在同一角色 ID 的 HP 为正、地图与位置有效时返回 `revived`；GUI 还要确认复活窗口消失。超时或身份变化时停止，不重发。
+
+## AP 自动分配
+
+`workbenches/workbench dev/NAME auto-ap` 无参数，提交一次当前全部剩余 AP 的自动分配请求。GUI 调用原版自动分配流程，无头端按其已实现的职业规则计算；不支持的版本或职业返回 `unsupported_capability`。服务端负责最终校验，不直接修改数据库。
+
+AP 已为 0 时返回 `status=unchanged`；确认同角色 AP 已归零且属性增量合计等于原 AP 时返回 `status=allocated`。两者都返回 `before`、`after`（含 `strength`、`dexterity`、`intelligence`、`luck`、`ability_points`）、`allocated` 和 `remaining_ap`。`unknown` 表示结果未确认，先观察同一角色的属性和剩余 AP，不重复请求。完整职业覆盖不作保证。
 
 ## 无头控件交互
 

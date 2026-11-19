@@ -4,6 +4,7 @@
 #include "TickRuntime.h"
 #include "NativeKeyUnion.h"
 #include "NativeTickInput.h"
+#include "NativeAutoApTransaction.h"
 #include "EventTransport.h"
 #include "NativeKeyBindings.h"
 #include "NativeItemUse.h"
@@ -19,6 +20,9 @@
 #include <cmath>
 #include <cstring>
 #include <iomanip>
+#include <intrin.h>
+#include <bcrypt.h>
+#include "detours.h"
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -87,6 +91,15 @@ std::array<std::uint32_t, 256> nativeScanCodes{};
 std::uint32_t nativeScanCodesOwner = 0;
 ULONGLONG lastPublishedAt = 0;
 bool eventsPublished = false;
+volatile LONG nativeAutoApReady = 0;
+DWORD nativeAutoApThread = 0;
+thread_local bool nativeAutoApActive = false;
+thread_local std::uintptr_t nativeAutoApModal = 0;
+thread_local int nativeAutoApModalResult = 0;
+thread_local BeiDouBridge::NativeAutoApTransaction nativeAutoApTransaction;
+BeiDouBridge::NativeAutoApTransaction::Identity nativeAutoApAdmission;
+std::uint32_t nativeAutoApField = 0, nativeAutoApStats = 0;
+bool nativeAutoApConfirmed = false;
 
 bool InvokeNativeSkill(std::uint32_t skillId, int& result, std::string& error);
 bool NativeLogs(const std::string& scriptId, const std::vector<std::string>& lines);
@@ -111,9 +124,13 @@ public:
     }
 
     bool Supports(MapleControl::ActionKind kind) const override {
+        const LONG autoApState = InterlockedCompareExchange(&nativeAutoApReady, 0, 0);
         return kind == MapleControl::ActionKind::Jump || kind == MapleControl::ActionKind::Attack
                || kind == MapleControl::ActionKind::Pickup || kind == MapleControl::ActionKind::UseItem
-               || kind == MapleControl::ActionKind::Revive;
+               || kind == MapleControl::ActionKind::Revive
+               || (kind == MapleControl::ActionKind::AutoAp
+                   && tickInput.Intent().kind != MapleControl::ActionKind::AutoAp
+                   && BeiDouBridge::NativeAutoApTransaction::MayRequestInstall(autoApState));
     }
 
     bool SupportsSkill() const override { return true; }
@@ -128,7 +145,13 @@ public:
 
     bool HeldKeysSettled() const override { return tickInput.HeldKeysSettled(); }
 
-    MapleControl::ActionResult Result() const override { return tickInput.Result(); }
+    MapleControl::ActionResult Result() const override {
+        auto result = tickInput.Result();
+        if (tickInput.Intent().kind == MapleControl::ActionKind::AutoAp)
+            result.dispatched =
+                BeiDouBridge::NativeAutoApTransaction::ReportedDispatched(result.dispatched, nativeAutoApConfirmed);
+        return result;
+    }
 
     void Release() override { tickInput.Release(currentNative.user); }
 
@@ -149,6 +172,86 @@ template <typename T> bool ReadAt(std::uintptr_t address, T& value) {
     SIZE_T count = 0;
     return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), &value, sizeof(value), &count)
            && count == sizeof(value);
+}
+
+// Native AutoAp entry points; the modal hook is installed only after a request.
+using NativeStatButton = void(__thiscall*)(void*, int);
+using NativeModal = int(__thiscall*)(void*);
+auto originalNativeModal = reinterpret_cast<NativeModal>(0x004EDBA1);
+
+enum class NativeAutoApHash { Match, Mismatch, Unavailable };
+
+NativeAutoApHash NativeAutoApExecutableMatches() {
+    const std::array<unsigned char, 32> expected{{0x11, 0x98, 0xfa, 0x57, 0xca, 0x5a, 0x7c, 0x48, 0x9b, 0xae, 0x43,
+                                                  0xec, 0x13, 0xc6, 0x96, 0x81, 0xd9, 0xca, 0xbe, 0x0f, 0x96, 0x76,
+                                                  0x2f, 0x3d, 0xc0, 0x35, 0x7f, 0xac, 0xf2, 0xe7, 0xd4, 0xdf}};
+    const HMODULE library = LoadLibraryExW(L"bcrypt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!library) return NativeAutoApHash::Unavailable;
+    const auto open = reinterpret_cast<decltype(&BCryptOpenAlgorithmProvider)>(
+        GetProcAddress(library, "BCryptOpenAlgorithmProvider"));
+    const auto property = reinterpret_cast<decltype(&BCryptGetProperty)>(GetProcAddress(library, "BCryptGetProperty"));
+    const auto create = reinterpret_cast<decltype(&BCryptCreateHash)>(GetProcAddress(library, "BCryptCreateHash"));
+    const auto update = reinterpret_cast<decltype(&BCryptHashData)>(GetProcAddress(library, "BCryptHashData"));
+    const auto finish = reinterpret_cast<decltype(&BCryptFinishHash)>(GetProcAddress(library, "BCryptFinishHash"));
+    const auto destroy = reinterpret_cast<decltype(&BCryptDestroyHash)>(GetProcAddress(library, "BCryptDestroyHash"));
+    const auto close = reinterpret_cast<decltype(&BCryptCloseAlgorithmProvider)>(
+        GetProcAddress(library, "BCryptCloseAlgorithmProvider"));
+    std::array<wchar_t, 32768> path{};
+    const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    HANDLE file = INVALID_HANDLE_VALUE;
+    if (length != 0 && length < path.size())
+        file = CreateFileW(path.data(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    DWORD objectLength = 0, returned = 0;
+    std::array<unsigned char, 32> digest{};
+    bool ok = open && property && create && update && finish && destroy && close && file != INVALID_HANDLE_VALUE;
+    if (ok) ok = open(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0;
+    if (ok)
+        ok = property(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&objectLength), sizeof(objectLength),
+                      &returned, 0)
+                 >= 0
+             && returned == sizeof(objectLength);
+    auto* object = ok ? static_cast<unsigned char*>(HeapAlloc(GetProcessHeap(), 0, objectLength)) : nullptr;
+    if (ok) ok = object != nullptr;
+    if (ok) ok = create(algorithm, &hash, object, objectLength, nullptr, 0, 0) >= 0;
+    std::array<unsigned char, 65536> buffer{};
+    while (ok) {
+        DWORD count = 0;
+        if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &count, nullptr)) {
+            ok = false;
+            break;
+        }
+        if (count == 0) break;
+        ok = update(hash, buffer.data(), count, 0) >= 0;
+    }
+    if (ok) ok = finish(hash, digest.data(), static_cast<ULONG>(digest.size()), 0) >= 0;
+    if (hash) destroy(hash);
+    if (object) HeapFree(GetProcessHeap(), 0, object);
+    if (algorithm) close(algorithm, 0);
+    if (file != INVALID_HANDLE_VALUE && !CloseHandle(file)) ok = false;
+    if (!FreeLibrary(library)) ok = false;
+    if (!ok) return NativeAutoApHash::Unavailable;
+    return digest == expected ? NativeAutoApHash::Match : NativeAutoApHash::Mismatch;
+}
+
+int __fastcall NativeAutoApModalHook(void* object, void*) {
+    const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    const bool bound = nativeAutoApActive && !nativeAutoApModal && caller == 0x00992EB1;
+    if (bound) nativeAutoApModal = reinterpret_cast<std::uintptr_t>(object);
+
+    struct ModalGuard {
+        bool bound;
+
+        ~ModalGuard() {
+            if (bound) nativeAutoApModal = 0;
+        }
+    } guard{bound};
+
+    const int result = originalNativeModal(object);
+    if (bound) nativeAutoApModalResult = result;
+    return result;
 }
 
 BeiDouBridge::NativeActionState CaptureNativeAction(std::uintptr_t user) {
@@ -559,6 +662,52 @@ bool ResolveOwnedKeys(const std::vector<unsigned int>& keys, BeiDouBridge::Nativ
     return true;
 }
 
+bool AutoApWindow(std::uint32_t& address, std::string& error) {
+    std::uint32_t manager = 0, table = 0, handler = 0;
+    if (!ReadAt(0x00BEC20C, manager) || !manager || !ReadAt(manager + 0x80, address) || !address
+        || !ReadAt(address, table) || table != 0x00B3B908 || !ReadAt(table + 0x20, handler) || handler != 0x008C522F) {
+        error = "auto_ap_window_unavailable";
+        return false;
+    }
+    const auto ui = NativeObservation::Collect("ui");
+    const auto& windows = Member(ui.data, "windows");
+    if (ui.status != "ok" || windows.Type() != MapleControl::Value::Kind::Array) {
+        error = "auto_ap_window_unavailable";
+        return false;
+    }
+    unsigned int matches = 0, buttons = 0;
+    bool buttonEnabled = false;
+    for (const auto& window : windows.Elements()) {
+        const auto& tables = Member(window, "vtables");
+        if (tables.Type() != MapleControl::Value::Kind::Array || tables.Elements().empty()
+            || tables.Elements().front().Type() != MapleControl::Value::Kind::String
+            || tables.Elements().front().Text() != "0xb3b908")
+            continue;
+        ++matches;
+        const auto& raw = Member(window, "address");
+        std::uint32_t found = 0;
+        if (raw.Type() != MapleControl::Value::Kind::String) continue;
+        std::istringstream stream(raw.Text());
+        stream >> std::hex >> found;
+        if (!stream || found != address) continue;
+        const auto& controls = Member(window, "buttons");
+        if (controls.Type() != MapleControl::Value::Kind::Array) continue;
+        for (const auto& control : controls.Elements()) {
+            const auto& id = Member(control, "control_id");
+            const auto& enabled = Member(control, "enabled");
+            if (id.Type() == MapleControl::Value::Kind::Number && id.Number() == 2007) {
+                ++buttons;
+                buttonEnabled = enabled.Type() == MapleControl::Value::Kind::Boolean && enabled.Boolean();
+            }
+        }
+    }
+    if (matches != 1 || buttons != 1 || !buttonEnabled) {
+        error = "auto_ap_window_unavailable";
+        return false;
+    }
+    return true;
+}
+
 bool ReviveWindow(std::uint32_t& address, std::string& error) {
     const auto ui = NativeObservation::Collect("ui");
     if (ui.status != "ok") {
@@ -684,6 +833,13 @@ bool BeiDouTickAdapter::SetHeldKeys(const std::vector<std::string>& names, std::
 }
 
 bool BeiDouTickAdapter::SetActionIntent(const MapleControl::Action& request, std::string& error) {
+    if (request.kind == MapleControl::ActionKind::AutoAp
+        && (request.autoApInstanceId != instanceId || !previousState.ready || !previousState.characterKnown
+            || request.autoApCharacterId != previousState.character.id
+            || request.autoApSceneGeneration != sceneGeneration)) {
+        error = "auto_ap_identity_changed";
+        return false;
+    }
     if (request.kind == MapleControl::ActionKind::Attack && BeiDouBridge::IsNativeKeyDownSkill(request.skillId)) {
         tickInput.ReleaseAction();
         error = "unsupported: native_keydown_skill_release";
@@ -691,6 +847,10 @@ bool BeiDouTickAdapter::SetActionIntent(const MapleControl::Action& request, std
         return false;
     }
     if (BeiDouBridge::NativeTickInput::SameIntent(tickInput.Intent(), request)) {
+        if (request.kind == MapleControl::ActionKind::AutoAp && tickInput.Intent().sessionId != request.sessionId) {
+            error = "auto_ap_input_busy";
+            return false;
+        }
         tickInput.SetIntent(request, currentNative.user);
         return true;
     }
@@ -701,6 +861,30 @@ bool BeiDouTickAdapter::SetActionIntent(const MapleControl::Action& request, std
     if (!Supports(request.kind)) {
         error = "unsupported: tick_action";
         return false;
+    }
+    if (request.kind == MapleControl::ActionKind::AutoAp) {
+        if (!previousState.ready || !previousState.characterKnown || !previousState.character.known[6]
+            || !previousState.character.known[10] || previousState.character.values[6] <= 0
+            || previousState.character.values[10] <= 0) {
+            error = "auto_ap_state_unavailable";
+            return false;
+        }
+        std::uint32_t window = 0, context = 0;
+        if (!ReadAt(0x00BE7918, context) || !context) {
+            error = "auto_ap_context_unavailable";
+            return false;
+        }
+        if (!AutoApWindow(window, error)) return false;
+        if (!tickInput.SetIntent(request, currentNative.user)) {
+            error = "auto_ap_input_busy";
+            return false;
+        }
+        nativeAutoApAdmission = {request.autoApCharacterId, request.autoApSceneGeneration, context,
+                                 request.autoApInstanceId};
+        nativeAutoApField = currentNative.field;
+        nativeAutoApStats = currentNative.stats;
+        nativeAutoApConfirmed = false;
+        return true;
     }
     if (request.kind == MapleControl::ActionKind::Revive) {
         if (!previousState.ready || !previousState.characterKnown || !previousState.character.known[6]) {
@@ -1050,6 +1234,59 @@ void ReadCommand() {
     }
 }
 
+// Called only for an admitted AutoAp after TickRuntime::Tick has returned.
+// Other threads may still execute target code; Detours is not a proof of
+// process-wide atomicity or complete recovery on failure.
+bool PrepareNativeAutoAp(std::string& error) {
+    const LONG state = InterlockedCompareExchange(&nativeAutoApReady, 2, 0);
+    if (state == 1) {
+        if (nativeAutoApThread == GetCurrentThreadId()) return true;
+        error = "auto_ap_install_unknown";
+        return false;
+    }
+    if (state != 0) {
+        error = BeiDouBridge::NativeAutoApTransaction::InstallFailureReason(state);
+        return false;
+    }
+    const std::array<unsigned char, 8> statExpected{{0x8b, 0x54, 0x24, 0x04, 0x8d, 0x82, 0x30, 0xf8}};
+    const std::array<unsigned char, 8> modalExpected{{0xb8, 0x64, 0x71, 0xa8, 0x00, 0xe8, 0xed, 0x2f}};
+    std::array<unsigned char, 8> statBytes{}, modalBytes{};
+    const auto hash = NativeAutoApExecutableMatches();
+    if (hash == NativeAutoApHash::Unavailable
+        || (hash == NativeAutoApHash::Match && (!ReadAt(0x008C522F, statBytes) || !ReadAt(0x004EDBA1, modalBytes)))) {
+        InterlockedExchange(&nativeAutoApReady, -2);
+        error = "auto_ap_install_unknown";
+        return false;
+    }
+    if (hash == NativeAutoApHash::Mismatch || statBytes != statExpected || modalBytes != modalExpected) {
+        InterlockedExchange(&nativeAutoApReady, -1);
+        error = "auto_ap_unsupported";
+        return false;
+    }
+    LONG status = DetourTransactionBegin();
+    if (status != NO_ERROR) {
+        // Abort refuses another thread's transaction, but cannot distinguish an
+        // unknown pre-existing transaction owned by this same thread.
+        DetourTransactionAbort();
+    } else {
+        status = DetourUpdateThread(GetCurrentThread());
+        if (status == NO_ERROR)
+            status = DetourAttach(reinterpret_cast<void**>(&originalNativeModal), NativeAutoApModalHook);
+        if (status == NO_ERROR)
+            status = DetourTransactionCommit();
+        else
+            DetourTransactionAbort();
+    }
+    if (status != NO_ERROR) {
+        InterlockedExchange(&nativeAutoApReady, -2);
+        error = "auto_ap_install_unknown";
+        return false;
+    }
+    nativeAutoApThread = GetCurrentThreadId();
+    InterlockedExchange(&nativeAutoApReady, 1);
+    return true;
+}
+
 bool DeliverTickInput() {
     const auto frame = sequence;
     const auto revision = tickInput.IntentRevision();
@@ -1069,6 +1306,70 @@ bool DeliverTickInput() {
     tickInput.MovementFlushed(updatedCharacter, characterUpdates, exited);
     const auto now = GetTickCount64();
     const auto& intent = tickInput.Intent();
+    if (tickInput.DispatchPending() && intent.kind == MapleControl::ActionKind::AutoAp
+        && !tickInput.action.TransitionsPending()) {
+        std::uint32_t window = 0, context = 0;
+        std::string error;
+        if (!previousState.ready || !previousState.characterKnown || !previousState.character.known[6]
+            || !previousState.character.known[10] || previousState.character.values[6] <= 0
+            || previousState.character.values[10] <= 0 || !ReadAt(0x00BE7918, context) || !context)
+            error = "auto_ap_state_unavailable";
+        else if (instanceId != nativeAutoApAdmission.instance
+                 || previousState.character.id != nativeAutoApAdmission.character
+                 || sceneGeneration != nativeAutoApAdmission.scene || context != nativeAutoApAdmission.context
+                 || currentNative.field != nativeAutoApField || currentNative.stats != nativeAutoApStats)
+            error = "auto_ap_identity_changed";
+        else if (!AutoApWindow(window, error)) {
+            // Preserve the exact observation failure.
+        }
+        if (error.empty() && !PrepareNativeAutoAp(error)) {
+            // Unsupported binaries and uncertain installation never dispatch.
+        }
+        if (error.empty() && (sequence != frame || revision != tickInput.IntentRevision())) return false;
+        if (error.empty() && !AutoApWindow(window, error)) {
+            // Revalidate focus after file hashing and hook installation.
+        }
+        if (error.empty()) {
+            NativeContext liveNative;
+            const auto live = CaptureState(liveNative);
+            std::uint32_t liveContext = 0;
+            if (!live.ready || !live.characterKnown || live.character.id != nativeAutoApAdmission.character
+                || liveNative.field != nativeAutoApField || liveNative.stats != nativeAutoApStats
+                || !ReadAt(0x00BE7918, liveContext) || liveContext != nativeAutoApAdmission.context)
+                error = "auto_ap_identity_changed";
+        }
+        if (!error.empty()) {
+            tickInput.ReleaseAction();
+            tickInput.result.reason = error;
+            return false;
+        }
+        nativeAutoApTransaction = {};
+        if (!nativeAutoApTransaction.Start(nativeAutoApAdmission)) {
+            tickInput.ReleaseAction();
+            tickInput.result.reason = "auto_ap_state_unavailable";
+            return false;
+        }
+        tickInput.TakeDispatch(now); // Consume before the native call; never replay.
+        nativeAutoApModalResult = 0;
+        nativeAutoApActive = true;
+
+        struct AutoApGuard {
+            ~AutoApGuard() {
+                nativeAutoApActive = false;
+                nativeAutoApModal = 0;
+            }
+        } guard;
+
+        // Original CUIStat OnButtonClicked control 2007; the modal hook owns confirmation.
+        reinterpret_cast<NativeStatButton>(0x008C522F)(reinterpret_cast<void*>(window), 2007);
+        const bool confirmed =
+            nativeAutoApModalResult == 6
+            && nativeAutoApTransaction.State() == BeiDouBridge::NativeAutoApTransaction::Phase::AwaitingReturn;
+        nativeAutoApTransaction.Returned(confirmed);
+        nativeAutoApConfirmed = confirmed;
+        tickInput.result.reason = confirmed ? "auto_ap_request_dispatched" : "auto_ap_confirmation_pending";
+        if (sequence != frame || revision != tickInput.IntentRevision()) return false;
+    }
     if (tickInput.DispatchPending() && intent.kind == MapleControl::ActionKind::Revive
         && !tickInput.action.TransitionsPending()) {
         std::uint32_t window = 0;
@@ -1272,8 +1573,64 @@ void Tick() {
     DeliverTickInput();
 }
 
+void DriveAutoApModal() {
+    const auto modal = nativeAutoApModal;
+    if (!modal) return;
+    const int controlId = 6;
+    std::uint32_t manager = 0, focused = 0, table = 0, type = 0, handler = 0, context = 0;
+    if (!ReadAt(0x00BEC20C, manager) || !manager || !ReadAt(manager + 0x80, focused) || !ReadAt(modal, table)
+        || !ReadAt(modal + 0x94, type) || !ReadAt(table + 0x20, handler) || !ReadAt(0x00BE7918, context))
+        return;
+    NativeContext liveNative;
+    const auto live = CaptureState(liveNative);
+    if (!live.ready || !live.characterKnown || (instanceId != nativeAutoApAdmission.instance)
+        || liveNative.field != currentNative.field || liveNative.stats != currentNative.stats)
+        return;
+    bool enabled = false;
+    try {
+        const auto ui = NativeObservation::Collect("ui");
+        const auto& windows = Member(ui.data, "windows");
+        if (ui.status != "ok" || windows.Type() != MapleControl::Value::Kind::Array) return;
+        unsigned int matches = 0;
+        for (const auto& window : windows.Elements()) {
+            const auto& address = Member(window, "address");
+            if (address.Type() != MapleControl::Value::Kind::String) continue;
+            std::uintptr_t parsed = 0;
+            std::istringstream stream(address.Text());
+            stream >> std::hex >> parsed;
+            if (!stream || parsed != modal) continue;
+            const auto& buttons = Member(window, "buttons");
+            if (buttons.Type() != MapleControl::Value::Kind::Array) return;
+            for (const auto& button : buttons.Elements()) {
+                const auto& id = Member(button, "control_id");
+                const auto& available = Member(button, "enabled");
+                if (id.Type() == MapleControl::Value::Kind::Number && id.Number() == controlId) {
+                    ++matches;
+                    enabled = available.Type() == MapleControl::Value::Kind::Boolean && available.Boolean();
+                }
+            }
+        }
+        if (matches != 1) return;
+    } catch (const NativeObservation::ReadError&) {
+        return;
+    }
+    std::uint32_t focusAgain = 0;
+    if (!ReadAt(manager + 0x80, focusAgain) || focusAgain != focused) return;
+    const BeiDouBridge::NativeAutoApTransaction::Identity identity{live.character.id, sceneGeneration, context,
+                                                                   instanceId};
+    const bool verified = table == 0x00B3BB24 && type == 1001 && handler == 0x008D5251 && enabled;
+    if (nativeAutoApTransaction.BindAndChoose(identity, true, focused == modal, verified)
+        != BeiDouBridge::NativeAutoApTransaction::Decision::Confirm)
+        return;
+    reinterpret_cast<NativeStatButton>(handler)(reinterpret_cast<void*>(modal), controlId);
+}
+
 void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     originalUpdate(app, now);
+    if (nativeAutoApActive) {
+        DriveAutoApModal();
+        return;
+    }
     Tick();
 }
 }

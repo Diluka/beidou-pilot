@@ -11,8 +11,8 @@
 namespace MapleControl {
 
 // Native player inputs owned by the tick engine. Movement is a held-input
-// direction; action intents are held except for Revive, which is a one-shot request.
-enum class ActionKind { Jump, Attack, UseItem, Pickup, Stop, Revive };
+// direction; action intents are held except for the one-shot Revive and AutoAp requests.
+enum class ActionKind { Jump, Attack, UseItem, Pickup, Stop, Revive, AutoAp };
 
 struct Character : MovableObject {
     std::uint32_t id = 0;
@@ -128,6 +128,10 @@ struct Action {
     std::uint32_t itemId = 0;
     std::uint32_t skillId = 0; // Attack: zero holds the ordinary attack input, otherwise request one skill.
     std::string sessionId;
+    // Caller-provided pre-operation identity for one-shot AutoAp.
+    std::string autoApInstanceId;
+    std::uint32_t autoApCharacterId = 0;
+    std::uint64_t autoApSceneGeneration = 0;
 };
 
 struct SkillResult {

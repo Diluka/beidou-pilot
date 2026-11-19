@@ -22,6 +22,23 @@ jobs:
       - name: Build Win32 bridge
         shell: pwsh
         run: ./beidou-ijl15/tools/build-agent-bridge.ps1
+      - name: Test x86 Detours calling convention fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $vs) { throw 'Visual Studio x86 tools unavailable' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvarsall.bat'
+          $fixture = Join-Path $env:GITHUB_WORKSPACE 'beidou-ijl15/tests/detours_thiscall_fixture.cpp'
+          $detours = Join-Path $env:GITHUB_WORKSPACE 'beidou-ijl15/out/detours'
+          $output = Join-Path $env:GITHUB_WORKSPACE 'beidou-ijl15/out/fixture'
+          New-Item -ItemType Directory -Force $output | Out-Null
+          Push-Location $output
+          try {
+            & $env:ComSpec /d /c "call `"$vcvars`" x86 >nul && cl /nologo /EHsc /Od /I `"$detours/src`" `"$fixture`" `"$detours/lib.X86/detours.lib`" /Fe:detours_thiscall_fixture.exe && detours_thiscall_fixture.exe"
+            if ($LASTEXITCODE -ne 0) { throw "x86 fixture failed: $LASTEXITCODE" }
+          } finally { Pop-Location }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: maple-agent-bridge-win32
