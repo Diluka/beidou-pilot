@@ -185,7 +185,8 @@ namespace ms
 			const std::string& megatype = megaEar ? "megaEar" : "unknown megatype";
 			error += "Unhandled [" + megatype + "] on channel [" + std::to_string(channel) + "].";
 
-			UI::get().get_element<UIChatBar>()->show_message(error.c_str(), UIChatBar::MessageType::RED);
+			if (auto chatbar = UI::get().get_element<UIChatBar>())
+				chatbar->show_message(error.c_str(), UIChatBar::MessageType::RED);
 #endif
 		}
 		else if (type == 4)
@@ -195,7 +196,8 @@ namespace ms
 		else if (type == 5)
 		{
 			// TODO: Is this actually white?
-			UI::get().get_element<UIChatBar>()->show_message(message.c_str(), UIChatBar::MessageType::WHITE);
+			if (auto chatbar = UI::get().get_element<UIChatBar>())
+				chatbar->show_message(message.c_str(), UIChatBar::MessageType::WHITE);
 		}
 		else if (type == 6)
 		{
@@ -204,7 +206,8 @@ namespace ms
 #ifdef _DEBUG
 			error += "Unhandled type [" + std::to_string(type) + "].";
 
-			UI::get().get_element<UIChatBar>()->show_message(error.c_str(), UIChatBar::MessageType::RED);
+			if (auto chatbar = UI::get().get_element<UIChatBar>())
+				chatbar->show_message(error.c_str(), UIChatBar::MessageType::RED);
 #endif
 		}
 		else if (type == 7)
@@ -214,7 +217,8 @@ namespace ms
 #ifdef _DEBUG
 			error += "Unhandled message for NPC [" + std::to_string(npc) + "].";
 
-			UI::get().get_element<UIChatBar>()->show_message(error.c_str(), UIChatBar::MessageType::RED);
+			if (auto chatbar = UI::get().get_element<UIChatBar>())
+				chatbar->show_message(error.c_str(), UIChatBar::MessageType::RED);
 #endif
 		}
 		else
@@ -222,7 +226,8 @@ namespace ms
 #ifdef _DEBUG
 			error += "Unhandled type [" + std::to_string(type) + "].";
 
-			UI::get().get_element<UIChatBar>()->show_message(error.c_str(), UIChatBar::MessageType::RED);
+			if (auto chatbar = UI::get().get_element<UIChatBar>())
+				chatbar->show_message(error.c_str(), UIChatBar::MessageType::RED);
 #endif
 		}
 	}
@@ -238,7 +243,8 @@ namespace ms
 		if (message.substr(0, MAPLETIP.length()).compare("[MapleTip]"))
 			message = "[Notice] " + message;
 
-		UI::get().get_element<UIChatBar>()->show_message(message.c_str(), UIChatBar::MessageType::YELLOW);
+		if (auto chatbar = UI::get().get_element<UIChatBar>())
+			chatbar->show_message(message.c_str(), UIChatBar::MessageType::YELLOW);
 	}
 
 	void ChatReceivedHandler::handle(InPacket& recv) const
