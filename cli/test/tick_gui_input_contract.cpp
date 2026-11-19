@@ -277,18 +277,24 @@ public:
 
     bool Supports(MapleControl::ActionKind kind) const override {
         return kind == MapleControl::ActionKind::Jump || kind == MapleControl::ActionKind::Attack
-               || kind == MapleControl::ActionKind::Pickup || kind == MapleControl::ActionKind::UseItem;
+               || kind == MapleControl::ActionKind::Pickup || kind == MapleControl::ActionKind::UseItem
+               || kind == MapleControl::ActionKind::Revive;
     }
 
     bool SupportsSkill() const override { return true; }
 
     bool SetActionIntent(const MapleControl::Action& request, std::string& error) override {
+        if (request.kind == MapleControl::ActionKind::Revive && rejectReviveAdmission) {
+            error = "revive_dialog_unavailable";
+            return false;
+        }
         if (request.kind == MapleControl::ActionKind::Attack && BeiDouBridge::IsNativeKeyDownSkill(request.skillId)) {
             input.ReleaseAction();
             error = "unsupported: native_keydown_skill_release";
             return false;
         }
         if (!input.SetIntent(request, User)) return true;
+        if (request.kind == MapleControl::ActionKind::Revive) return true;
         const bool key = request.kind == MapleControl::ActionKind::Jump
                          || request.kind == MapleControl::ActionKind::Pickup
                          || (request.kind == MapleControl::ActionKind::Attack && request.skillId == 0);
@@ -323,13 +329,14 @@ public:
 
     bool Logs(const std::string&, const std::vector<std::string>&) override { return true; }
 
-    void Advance(MapleControl::TickRuntime& runtime) {
+    void Advance(MapleControl::TickRuntime& runtime, bool sceneChanged = false) {
         ++frame;
         ++state.sequence;
+        if (sceneChanged) ++state.sceneGeneration;
         input.Observe(User, User, frame, false);
         input.ObserveAction(nativeAction);
         state.actionIdle = nativeAction.idle;
-        runtime.Tick();
+        runtime.Tick(sceneChanged);
         const auto beforeKeys = nativeAction;
         for (auto* source : {&input.movement, &input.action})
             source->Flush(
@@ -350,7 +357,17 @@ public:
         const auto& intent = input.Intent();
         input.RepeatDue(frame, repeatSettings);
         if (input.DispatchPending()) {
-            if (intent.kind == MapleControl::ActionKind::UseItem) {
+            if (intent.kind == MapleControl::ActionKind::Revive) {
+                if (!input.action.TransitionsPending() && frame >= reviveDispatchFrame) {
+                    if (rejectReviveDispatch) {
+                        input.ReleaseAction();
+                        input.result.reason = "revive_dialog_unavailable";
+                    } else {
+                        input.TakeDispatch(frame);
+                        ++reviveCalls;
+                    }
+                }
+            } else if (intent.kind == MapleControl::ActionKind::UseItem) {
                 if (input.ItemDispatchAllowed(frame)) {
                     const auto request = input.TakeDispatch(frame);
                     input.item.Request({User, 1, 0x1234, 2, request.itemId});
@@ -416,7 +433,9 @@ public:
     BeiDouBridge::NativeActionState nativeAction{MapleControl::Fact::True, -1};
     BeiDouBridge::NativeRepeatSettings repeatSettings;
     bool skillAllowed = true, skillStartsAction = false, ordinaryAttackAllowed = false;
-    unsigned itemCalls = 0, skillCalls = 0, keyDowns = 0;
+    bool rejectReviveAdmission = false, rejectReviveDispatch = false;
+    std::uint64_t reviveDispatchFrame = 0;
+    unsigned itemCalls = 0, skillCalls = 0, keyDowns = 0, reviveCalls = 0;
     std::vector<std::pair<unsigned, bool>> edges;
     std::vector<std::pair<std::uint32_t, std::uint64_t>> itemEntries;
     std::vector<std::pair<std::uint32_t, std::uint64_t>> skillEntries;
@@ -516,6 +535,66 @@ void ReviveIntent() {
     native.FlushTick();
     native.Update(false);
     Check(input.Released(), "one-shot release requires only native empty-key cleanup, not a character update");
+}
+
+void ReviveRuntimeLifecycle() {
+    // Keep this body aligned with recovery.py's GUI script; gear 4 makes each Advance a tick.
+    const std::string script = R"lua(-- @tick.gear 4
+local requested = false
+local function main(context)
+    if requested then
+        local status = context.game.player.status()
+        if status.reason == "character_unavailable" or status.reason == "already_alive"
+            or status.reason == "revive_not_requestable" or status.reason == "revive_ui_unavailable"
+            or status.reason == "revive_dialog_ambiguous" or status.reason == "revive_dialog_unavailable"
+            or status.reason == "revive_layout_changed" then error(status.reason) end
+        if status.dispatched or status.reason == "native_input_cleared" then return "done" end
+        if status.input_action ~= "revive" then error(status.reason or "revive_not_dispatched") end
+        return
+    end
+    local ok, reason = context.game.player.revive()
+    if not ok then error(reason or "revive_request_rejected") end
+    requested = true
+end
+return {main=main,context={}}
+)lua";
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        DeferredNativeAdapter native;
+        native.state.character.values[6] = 0;
+        native.state.dead = MapleControl::Fact::True;
+        // Model a native release that remains pending through two delivery opportunities.
+        native.reviveDispatchFrame = scenario == 0 ? 3 : 0;
+        native.rejectReviveAdmission = scenario == 1;
+        native.rejectReviveDispatch = scenario >= 2;
+        MapleControl::TickRuntime runtime(native);
+        std::string error;
+        Check(runtime.Start("revive-runtime", script, 1000, error), error.c_str());
+        native.Advance(runtime);
+        Check(native.reviveCalls == 0, "revive dispatched while delayed or rejected");
+        native.Advance(runtime, scenario == 3);
+        if (scenario == 3) {
+            Check(Field(runtime.CurrentStatus("revive-runtime"), "status").Text() == "running",
+                  "scene transition must defer Lua observation");
+            native.Advance(runtime);
+        }
+        if (scenario == 0) {
+            Check(Field(runtime.CurrentStatus("revive-runtime"), "status").Text() == "running",
+                  "revive must wait across ticks for native dispatch");
+            native.Advance(runtime);
+            Check(native.reviveCalls == 1, "delayed revive did not dispatch");
+            native.Advance(runtime);
+            Check(Field(runtime.CurrentStatus("revive-runtime"), "status").Text() == "completed",
+                  "revive did not complete after observing dispatch");
+            native.Advance(runtime);
+            Check(native.reviveCalls == 1, "completed revive dispatched again");
+        } else {
+            const auto status = runtime.CurrentStatus("revive-runtime");
+            Check(Field(status, "status").Text() == "cancelled", "native rejection must fail the script");
+            Check(Field(status, "error").Text().find("revive_dialog_unavailable") != std::string::npos,
+                  "native rejection reason was not visible to Lua");
+            Check(native.reviveCalls == 0, "rejected revive must not dispatch");
+        }
+    }
 }
 
 void RejectedAttackRecovery() {
@@ -660,9 +739,10 @@ int main(int argc, char** argv) {
         ActionOwnerCancellation();
     else if (test == "held-updates")
         HeldIntentUpdates();
-    else if (test == "revive")
+    else if (test == "revive") {
         ReviveIntent();
-    else if (test == "attack-recovery")
+        ReviveRuntimeLifecycle();
+    } else if (test == "attack-recovery")
         RejectedAttackRecovery();
     else if (test == "potion-churn")
         PotionIntentChurn();
