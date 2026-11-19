@@ -133,7 +133,8 @@ MapleControl::Value TickCharacterView(const MapleControl::Value& character) {
     if (character.Type() != Value::Kind::Object) return character;
     auto result = Value::Object();
     for (const auto& field : character.Members())
-        if (field.first != "skill_level_deltas" && field.first != "skill_level_deltas_complete")
+        if (field.first != "skill_level_deltas" && field.first != "skill_level_deltas_complete"
+            && field.first != "skill_point_books" && field.first != "skill_point_books_complete")
             result[field.first] = field.second;
     return result;
 }

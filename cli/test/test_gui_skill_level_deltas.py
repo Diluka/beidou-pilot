@@ -65,7 +65,7 @@ int main() {
 
     def test_native_projection_and_tick_filter(self):
         character = (ROOT / 'beidou-ijl15/ezorsia/ObserveCharacter.cpp').read_text()
-        block = character.split('    try {\n        const auto records = MapRecords(character + 0x47F', 1)[1].split('    result["unavailable"]', 1)[0]
+        block = character.split('    try {\n        const auto records = MapRecords(character + 0x47F', 1)[1].split('    try {\n        const std::array<unsigned char, 64> readerCode', 1)[0]
         block = '    try {\n        const auto records = MapRecords(character + 0x47F' + block
         bridge = (ROOT / 'beidou-ijl15/ezorsia/AgentBridge.cpp').read_text()
         helper = 'MapleControl::Value TickCharacterView(' + bridge.split('MapleControl::Value TickCharacterView(', 1)[1].split('\nclass BeiDouTickAdapter', 1)[0]
@@ -108,7 +108,10 @@ int main() {
     nodes = {record(42,-3), record(43,5)};
     auto original = sample();
     assert(original.Dump() == "{\"skill_level_deltas\":{\"42\":-3,\"43\":5},\"skill_level_deltas_complete\":true}");
-    assert(TickCharacterView(original).Dump() == "{}");
+    original["skill_point_books"] = Value::Object({{"2",9}});
+    original["skill_point_books_complete"] = true;
+    original["character_id"] = 77;
+    assert(TickCharacterView(original).Dump() == "{\"character_id\":77}");
     nodes.push_back(record(42,1));
     assert(sample().Dump() == "{\"skill_level_deltas\":null,\"skill_level_deltas_complete\":false}");
     nodes.clear(); failed = true;

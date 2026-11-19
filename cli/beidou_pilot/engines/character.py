@@ -25,6 +25,8 @@ class CharacterSnapshot(TypedDict):
     skills_complete: bool
     skill_level_deltas: NotRequired[dict[str, int] | None]
     skill_level_deltas_complete: NotRequired[bool]
+    skill_point_books: NotRequired[dict[str, int] | None]
+    skill_point_books_complete: NotRequired[bool]
     beginner_skill_ids: NotRequired[list[int]]
     beginner_skill_points: NotRequired[int]
     unavailable: list[str]
