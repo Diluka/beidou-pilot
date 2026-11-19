@@ -242,7 +242,30 @@ python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.
 
 清槽、停止、取消和放键不受药品间隔限制。清空输入不停止空中运动、受击惯性或已经发生的动画；跳跃飞行/落地看物理事实。用药、拾取、技能派发以及 `action_idle=true` 均不是命中、消耗、恢复或buff生效凭据。
 
-完成、取消、期限、角色变化、离开游戏或错误只结束对应会话；清除该会话仍拥有的方向与动作输入，确认最新原生释放后发布终态，不清后来者的有效输入。换图清旧意图，稳定后的新main须根据当前[只读静态场景](#当前静态场景与跨图)重新决定；地形刷新不将旧动作输入带入新图，也不以输入变更改写已知原生动作。普通控件、对话、商店、AP/SP 和装备交互仍由 CLI 逐步操作；`player.revive()` 是唯一的一次性复活请求接口，不暴露通用窗口控件操作。
+完成、取消、期限、角色变化、离开游戏或错误只结束对应会话；清除该会话仍拥有的方向与动作输入，确认最新原生释放后发布终态，不清后来者的有效输入。换图清旧意图，稳定后的新main须根据当前[只读静态场景](#当前静态场景与跨图)重新决定；地形刷新不将旧动作输入带入新图，也不以输入变更改写已知原生动作。普通控件、对话、商店和装备交互由 CLI 操作；AP 自动分配接口见下文，手动 AP/SP 分配不属于该接口。`player.revive()` 不暴露通用窗口控件操作。
+
+`context.game.player.auto_ap(instance_id, character_id, scene_generation)` 是一次性自动分配接口，返回 `ok, reason`。三个身份参数必须取自打开属性窗口前或发起请求前的场景快照，用于绑定操作对象。`instance_id` 必须是非空且不含 NUL 的字符串；`character_id` 和 `scene_generation` 必须是可精确表示的整数数值，范围分别为 1–2147483647 和 1–9007199254740991，数值字符串不接受。参数无效时产生 Lua 错误。CLI 的 `auto-ap` 命令仍无参数。GUI 调用原版自动分配流程，无头按已实现的职业规则处理，不保证完整职业覆盖。意图受理或单次派发成功都不代表服务端已完成分配；结果不明时先观察同一角色的属性和剩余 AP，不重试。
+
+以下示例对应 CLI 的内部脚本：调用方在开窗前单独保存三个快照值，开窗后核对身份未变，并将保存的锚点注入 `context.auto_ap_anchor`。`context.scene` 会由运行时重置，不能在开窗后拿它替代原锚点；`auto_ap_anchor` 是该调用方提供的数据，并非所有脚本自动拥有的字段。脚本在一个会话内只提交一次并等待派发反馈，派发后仍须另行核对实际属性：
+
+```lua
+local requested = false
+local function main(context)
+    if requested then
+        local status = context.game.player.status()
+        if status.dispatched then return "done" end
+        if status.input_action ~= "auto_ap" then
+            error(status.reason or "auto_ap_not_dispatched")
+        end
+        return
+    end
+    requested = true
+    local anchor = context.auto_ap_anchor
+    local ok, reason = context.game.player.auto_ap(
+        anchor.instance_id, anchor.character_id, anchor.scene_generation)
+    if not ok then error(reason or "auto_ap_rejected") end
+end
+```
 
 ## 策略参数与静态场景
 

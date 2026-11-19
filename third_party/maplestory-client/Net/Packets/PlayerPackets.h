@@ -37,6 +37,21 @@ namespace ms
 		}
 	};
 
+	// The original client's batch AP request writes a timestamp and two stat/count pairs.
+	class AutoApPacket : public OutPacket
+	{
+	public:
+		AutoApPacket(int32_t first, int32_t first_count, int32_t second, int32_t second_count) : OutPacket(0x58)
+		{
+			write_time();
+			write_int(2);
+			write_int(first);
+			write_int(first_count);
+			write_int(second);
+			write_int(second_count);
+		}
+	};
+
 	// Requests a skill level increase by spending SP
 	// Opcode: SPEND_SP(90)
 	class SpendSpPacket : public OutPacket

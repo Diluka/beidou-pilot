@@ -114,8 +114,14 @@ public:
 
     bool SupportsSkill() const override { return supportsSkills; }
 
-    bool SetActionIntent(const Action& requested, std::string&) override {
+    bool rejectAutoAp = false;
+
+    bool SetActionIntent(const Action& requested, std::string& error) override {
         ++intentCalls;
+        if (rejectAutoAp && requested.kind == ActionKind::AutoAp) {
+            error = "auto_ap_confirmation_pending";
+            return false;
+        }
         const bool changed = desired.kind != requested.kind || desired.skillId != requested.skillId
                              || desired.itemId != requested.itemId;
         desired = requested;
@@ -236,7 +242,7 @@ public:
         }
         // A native consumer may admit the current held input when A finishes.
         // Clearing/replacing B removes it here; there is no history to replay.
-        if (armed && desired.kind == ActionKind::Revive) {
+        if (armed && (desired.kind == ActionKind::Revive || desired.kind == ActionKind::AutoAp)) {
             armed = false;
             delivered.push_back(desired);
             result.dispatched = true;
@@ -1331,6 +1337,49 @@ end)lua"));
     Check(unavailable.requests.empty(), "known-unrequestable revive must not dispatch");
 }
 
+void AutoApAction() {
+    NativeBoundary native;
+    TickRuntime runtime(native);
+    Start(runtime, "auto-ap", Source(R"lua(function main(c)
+  local p=c.game.player
+  if c.tick.index==1 then
+    assert(p.auto_ap('tick-contract', 1, 1)); assert(p.auto_ap('tick-contract', 1, 1)); assert(p.stop())
+  elseif c.tick.index==2 then
+    local ok, reason=p.auto_ap('tick-contract', 1, 1); assert(ok and reason==nil)
+  else
+    local ok, reason=p.auto_ap('tick-contract', 1, 1); assert(ok and reason=='already_requested')
+    p.stop()
+  end
+end)lua"));
+    Step(native, runtime);
+    Check(native.requests.empty(), "overwritten auto ap draft must not dispatch");
+    Step(native, runtime);
+    Check(native.requests.size() == 1 && native.requests[0].kind == ActionKind::AutoAp,
+          "auto ap must be admitted once");
+    Check(native.requests[0].autoApInstanceId == "tick-contract" && native.requests[0].autoApCharacterId == 1
+              && native.requests[0].autoApSceneGeneration == 1,
+          "auto ap must preserve the caller-provided identity");
+    Step(native, runtime);
+    Check(native.delivered.size() == 1 && native.requests.size() == 1, "same session must not replay auto ap");
+    runtime.Cancel("auto-ap", "explicit_cancel");
+    Drain(native, runtime, "auto-ap", "cancelled");
+    Check(native.delivered.size() == 1, "cancellation must not replay or retract dispatched auto ap");
+
+    NativeBoundary rejected;
+    rejected.rejectAutoAp = true;
+    TickRuntime other(rejected);
+    Start(other, "rejected", Source(R"lua(function main(c)
+  local ok, reason=c.game.player.auto_ap('tick-contract', 1, 1); assert(ok and reason==nil)
+end)lua"));
+    Step(rejected, other);
+    Check(rejected.requests.empty(), "rejected auto ap must not be admitted");
+    rejected.rejectAutoAp = false;
+    Step(rejected, other);
+    Check(rejected.requests.size() == 1, "rejection must not consume the session one-shot");
+    other.Cancel("rejected", "explicit_cancel");
+    Drain(rejected, other, "rejected", "cancelled");
+}
+
 void IdleFacts() {
     NativeBoundary native;
     native.allowStart = false; // Native admission is external to draft acceptance.
@@ -2111,6 +2160,8 @@ int main(int argc, char** argv) {
         Actions();
     else if (scenario == "revive")
         ReviveAction();
+    else if (scenario == "auto-ap")
+        AutoApAction();
     else if (scenario == "held-intents")
         HeldIntents();
     else if (scenario == "idle-facts")

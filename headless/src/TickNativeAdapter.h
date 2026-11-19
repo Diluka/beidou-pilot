@@ -2,6 +2,7 @@
 #pragma once
 
 #include "TickRuntime.h"
+#include "AutoAp.h"
 #include "IO/KeyAction.h"
 
 class SharedLuaAdapter;
@@ -48,6 +49,9 @@ private:
     bool jumpNeedsMotion = false;
     std::uint64_t moveSequence = 0;
     std::uint64_t itemSequence = 0;
+    std::array<std::uint32_t, 5> autoApExpected{};
+    bool autoApPending = false;
+    AutoApIdentity autoApIdentity;
     bool movementChanged = false;
     bool intentChanged = false;
     bool nativeActive = false;

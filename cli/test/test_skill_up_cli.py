@@ -24,7 +24,7 @@ class SkillUpCliTests(unittest.TestCase):
     def test_gui_main_holds_single_control_lock(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            backend = SimpleNamespace(name="beidou", instance="default", paths=SimpleNamespace(
+            backend = SimpleNamespace(root=root, name="beidou", instance="default", paths=SimpleNamespace(
                 state_directory=root, input_lock=root / "input.lock"))
 
             def verify_lock(*args):
@@ -40,9 +40,25 @@ class SkillUpCliTests(unittest.TestCase):
                 preflight.assert_called_once_with(backend, 1000, 1)
                 once.assert_called_once_with(backend, 1000)
 
+    def test_gui_running_lua_blocks_skill_up_before_desktop_input(self):
+        args = parser().parse_args(["skill-up", "2101002"])
+        backend = SimpleNamespace(root=Path("/unused"), name="beidou", instance="default")
+        with (patch("beidou_pilot.bridge.BridgeClient") as bridge_cls,
+              patch("beidou_pilot.skill_up.preflight_skill_up") as preflight,
+              patch("beidou_pilot.skill_up.skill_up_once") as once):
+            bridge = bridge_cls.return_value
+            bridge.directory.__truediv__.return_value.exists.return_value = True
+            bridge.snapshot.return_value = {"scripts": [{"id": "script-1", "status": "running"}]}
+            with self.assertRaises(ClientError) as caught:
+                dispatch(backend, args)
+            self.assertEqual(caught.exception.code, "input_busy")
+            self.assertEqual(caught.exception.details["script_id"], "script-1")
+            preflight.assert_not_called()
+            once.assert_not_called()
+
     def test_gui_batch_is_refused_before_any_click(self):
         args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
-        backend = SimpleNamespace(name="beidou", read=unittest.mock.Mock(return_value={
+        backend = SimpleNamespace(root=Path("/nonexistent"), instance="default", name="beidou", read=unittest.mock.Mock(return_value={
             "native_values_valid": True, "character": {"id": 1, "job": 210, "skill_points": 3}}))
         with patch("beidou_pilot.skill_up.skill_up_once") as once:
             with self.assertRaises(ClientError) as caught:

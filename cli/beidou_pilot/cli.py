@@ -123,6 +123,7 @@ def parser() -> Parser:
     q = command("skill-up", "逐点分配技能点并核对结果", allow_abbrev=False)
     q.add_argument("skill_id", type=int)
     q.add_argument("--points", type=int, default=1)
+    command("auto-ap", "一次自动分配全部AP并核对实际属性")
     q = command("snapshot", "场景、角色、对话与可操作引用")
     q.add_argument("--all", action="store_true", help="含画外实体")
     q.add_argument("-i", "--interactive", action="store_true", help="简洁列出NPC/对话/掉落")
@@ -136,7 +137,8 @@ def parser() -> Parser:
     q.add_argument("--interval", type=float, default=0.025, help="watch 读取间隔，0.01 至 1 秒")
     q = command("inspect", "按需读取一个领域或静态资源")
     q.add_argument(
-        "kind", choices=["scene", "inventory", "quests", "skills", "stage", "ui", "item", "npc", "monster", "map"]
+        "kind",
+        choices=["character", "scene", "inventory", "quests", "skills", "stage", "ui", "item", "npc", "monster", "map"],
     )
     q.add_argument("id", nargs="?", type=int)
     q = command("talk", "按当前NPC名称、模板ID或引用打开对话")
@@ -283,6 +285,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "stop",
         "revive",
         "skill-up",
+        "auto-ap",
         "batch",
     }:
         raise ClientError("unsupported_capability", "无头端尚未提供这个窗口、原始按键或GUI输入接口。", {"command": cmd})
@@ -291,6 +294,8 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         and cmd
         in {
             "revive",
+            "auto-ap",
+            "skill-up",
             "click",
             "talk",
             "dialog",
@@ -519,6 +524,10 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         if args.points == 1:
             return confirmed[0]
         return {"skill_id": args.skill_id, "confirmed_points": len(confirmed), "allocations": confirmed}
+    if cmd == "auto-ap":
+        from .auto_ap import auto_ap
+
+        return auto_ap(backend)
     if cmd == "revive":
         from .recovery import revive
 
@@ -546,6 +555,10 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         return None
     if cmd == "inspect":
         kind = args.kind
+        if kind == "character":
+            if args.id is not None:
+                raise ClientError("usage", "角色观察不接受 ID。")
+            return backend.read("observe")
         if kind in ("item", "npc", "monster", "map"):
             identifier = args.id
             if identifier is None and kind == "map":
