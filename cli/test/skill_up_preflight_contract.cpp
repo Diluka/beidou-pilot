@@ -6,8 +6,8 @@
 int main() {
     const std::map<int, int> requirements{{42, 3}};
     auto check = [&](bool job, int sp, int current, unsigned points, int prerequisite) {
-        return headless::SkillUpEligible(job, true, false, 10, current, sp, points,
-            requirements, [&](int) { return prerequisite; });
+        return headless::SkillUpEligible(job, true, false, 10, current, sp, points, requirements,
+                                         [&](int) { return prerequisite; });
     };
     assert(headless::BeginnerSkillPointBudget(5, 2) == 2);
     assert(headless::BeginnerSkillPointBudget(20, 6) == 0);

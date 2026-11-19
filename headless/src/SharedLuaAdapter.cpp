@@ -543,9 +543,8 @@ void SharedLuaAdapter::ReadCommand() {
         else
             valid = valid && value == 0;
     } else if (operation == "skill-up") {
-        valid = valid && generation == state.sceneGeneration && state.ready && value > 0
-                && value <= 0x7fffffffULL && static_cast<bool>(stream >> points)
-                && points > 0 && points <= 0x7fffffffULL && !(stream >> extra);
+        valid = valid && generation == state.sceneGeneration && state.ready && value > 0 && value <= 0x7fffffffULL
+                && static_cast<bool>(stream >> points) && points > 0 && points <= 0x7fffffffULL && !(stream >> extra);
     } else
         valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
     if (!valid) {
@@ -587,13 +586,12 @@ void SharedLuaAdapter::ReadCommand() {
             const bool visible = !data.is_invisible() || maximum != 0;
             if (maximum == 0) maximum = data.get_masterlevel();
             const auto current = book.get_level(skill);
-            const auto sp = beginner ? BeginnerSkillPoints(player)
-                                     : player.get_stats().get_stat(ms::MapleStat::Id::SP);
+            const auto sp = beginner ? BeginnerSkillPoints(player) : player.get_stats().get_stat(ms::MapleStat::Id::SP);
             auto requirements = book.collect_required(skill);
             if (requirements.empty()) requirements = data.get_reqskills();
-            eligible = headless::SkillUpEligible(eligible, visible, skill == ms::SkillId::Id::ANGEL_BLESSING,
-                                                  maximum, current, sp, points, requirements,
-                                                  [&](auto required) { return book.get_level(required); });
+            eligible = headless::SkillUpEligible(eligible, visible, skill == ms::SkillId::Id::ANGEL_BLESSING, maximum,
+                                                 current, sp, points, requirements,
+                                                 [&](auto required) { return book.get_level(required); });
         }
         commandId = id;
         scriptCommand = false;
@@ -840,8 +838,10 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
              {"skills", std::move(knownSkills)},
              {"skills_complete", true},
              {"beginner_skill_points", BeginnerSkillPoints(player)},
-             {"beginner_skill_ids", ms::JobData::get(ms::Job(player.get_stats().get_stat(ms::MapleStat::Id::JOB))
-                                                          .get_subjob(ms::Job::BEGINNER)).get_skills()},
+             {"beginner_skill_ids",
+              ms::JobData::get(
+                  ms::Job(player.get_stats().get_stat(ms::MapleStat::Id::JOB)).get_subjob(ms::Job::BEGINNER))
+                  .get_skills()},
              {"physics", Json::parse(state.character.physics.Document().Dump())},
              {"movement", Json::parse(state.character.movement.Document().Dump())},
              {"on_ground", FactValue(state.onGround)},
