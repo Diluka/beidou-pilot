@@ -4,6 +4,7 @@
 #include "TickRuntime.h"
 #include "NativeKeyUnion.h"
 #include "NativeTickInput.h"
+#include "NativeAutoApCancelProbe.h"
 #include "EventTransport.h"
 #include "NativeKeyBindings.h"
 #include "NativeItemUse.h"
@@ -160,6 +161,8 @@ using DiagnosticModal = int(__thiscall*)(void*);
 auto originalDiagnosticStatButton = reinterpret_cast<DiagnosticStatButton>(0x008C522F);
 auto originalDiagnosticModal = reinterpret_cast<DiagnosticModal>(0x004EDBA1);
 thread_local unsigned int diagnosticStatDepth = 0;
+thread_local BeiDouBridge::NativeAutoApCancelProbe diagnosticCancelProbe;
+volatile LONG diagnosticCancelUsed = 0;
 volatile LONG diagnosticStatus =
     0; // 0 disabled, 1 experimental active, 2 signature mismatch, 3 unknown, 4 log failure, 5 hash unavailable/mismatch
 // Experimental diagnostics: neither this gate nor a successful install verifies the game ABI.
@@ -287,6 +290,31 @@ void __fastcall DiagnosticStatButtonHook(void* object, void*, int control) {
         ~DepthGuard() { --diagnosticStatDepth; }
     } guard;
 
+    std::uint32_t statTable = 0, statManager = 0, statFocus = 0;
+    const auto statAddress = reinterpret_cast<std::uintptr_t>(object);
+    const bool validStat = ReadAt(statAddress, statTable) && statTable == 0x00B3B908 && ReadAt(0x00BEC20C, statManager)
+                           && statManager != 0 && ReadAt(statManager + 0x80, statFocus) && statFocus == statAddress;
+    const bool arm = control == 2007 && diagnosticStatus == 1 && !diagnosticCancelProbe.active && validStat
+                     && GetCurrentThreadId() == diagnosticUpdateThread && previousState.ready
+                     && previousState.characterKnown && InterlockedCompareExchange(&diagnosticCancelUsed, 1, 0) == 0;
+
+    struct ProbeGuard {
+        bool armed;
+
+        ~ProbeGuard() {
+            if (armed) diagnosticCancelProbe = {};
+        }
+    } probeGuard{arm};
+
+    if (arm) {
+        std::uint32_t context = 0;
+        if (ReadAt(0x00BE7918, context) && context != 0) {
+            diagnosticCancelProbe.active = true;
+            diagnosticCancelProbe.character = previousState.character.id;
+            diagnosticCancelProbe.scene = sceneGeneration;
+            diagnosticCancelProbe.context = context;
+        }
+    }
     DiagnosticRecord("stat-enter", object, caller, control);
     originalDiagnosticStatButton(object, control);
     DiagnosticRecord("stat-return", object, caller, control);
@@ -295,6 +323,16 @@ void __fastcall DiagnosticStatButtonHook(void* object, void*, int control) {
 int __fastcall DiagnosticModalHook(void* object, void*) {
     const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
     const bool trace = diagnosticStatDepth != 0;
+    const bool bound = diagnosticCancelProbe.Bind(reinterpret_cast<std::uintptr_t>(object), caller);
+
+    struct ModalGuard {
+        bool bound;
+
+        ~ModalGuard() {
+            if (bound) diagnosticCancelProbe.modal = 0;
+        }
+    } modalGuard{bound};
+
     if (trace) DiagnosticRecord("modal-enter", object, caller, 0);
     const int result = originalDiagnosticModal(object);
     // The modal object may no longer be readable after the original call.
@@ -1482,8 +1520,61 @@ void InitializeExperimentalDiagnostic() {
     }
 }
 
+void DriveDiagnosticCancel() {
+    if (!diagnosticCancelProbe.modal || diagnosticCancelProbe.attempted) return;
+    const auto modal = diagnosticCancelProbe.modal;
+    std::uint32_t manager = 0, focused = 0, table = 0, type = 0, handler = 0, context = 0;
+    if (!ReadAt(0x00BEC20C, manager) || !manager || !ReadAt(manager + 0x80, focused) || !ReadAt(modal, table)
+        || !ReadAt(modal + 0x94, type) || !ReadAt(table + 0x20, handler) || !ReadAt(0x00BE7918, context))
+        return;
+    NativeContext liveNative;
+    const auto live = CaptureState(liveNative);
+    if (!live.ready || !live.characterKnown || liveNative.field != currentNative.field
+        || liveNative.stats != currentNative.stats)
+        return;
+    bool enabled = false;
+    try {
+        const auto ui = NativeObservation::Collect("ui");
+        const auto& windows = Member(ui.data, "windows");
+        if (ui.status != "ok" || windows.Type() != MapleControl::Value::Kind::Array) return;
+        unsigned int matches = 0;
+        for (const auto& window : windows.Elements()) {
+            const auto& address = Member(window, "address");
+            if (address.Type() != MapleControl::Value::Kind::String) continue;
+            std::uintptr_t parsed = 0;
+            std::istringstream stream(address.Text());
+            stream >> std::hex >> parsed;
+            if (!stream || parsed != modal) continue;
+            const auto& buttons = Member(window, "buttons");
+            if (buttons.Type() != MapleControl::Value::Kind::Array) return;
+            for (const auto& button : buttons.Elements()) {
+                const auto& id = Member(button, "control_id");
+                const auto& available = Member(button, "enabled");
+                if (id.Type() == MapleControl::Value::Kind::Number && id.Number() == 7) {
+                    ++matches;
+                    enabled = available.Type() == MapleControl::Value::Kind::Boolean && available.Boolean();
+                }
+            }
+        }
+        if (matches != 1) return;
+    } catch (const NativeObservation::ReadError&) {
+        return;
+    }
+    std::uint32_t focusAgain = 0;
+    if (!ReadAt(manager + 0x80, focusAgain) || focusAgain != focused) return;
+    if (!diagnosticCancelProbe.TakeCancel(modal, focused, table, type, handler, live.character.id, sceneGeneration,
+                                          context, enabled))
+        return;
+    DiagnosticRecord("experimental-cancel-dispatched", reinterpret_cast<void*>(modal), 0, 7);
+    reinterpret_cast<DiagnosticStatButton>(handler)(reinterpret_cast<void*>(modal), 7);
+}
+
 void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     originalUpdate(app, now);
+    if (diagnosticCancelProbe.active) {
+        DriveDiagnosticCancel();
+        return;
+    }
     Tick();
     InitializeExperimentalDiagnostic();
 }
