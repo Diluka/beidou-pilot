@@ -244,7 +244,28 @@ python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.
 
 完成、取消、期限、角色变化、离开游戏或错误只结束对应会话；清除该会话仍拥有的方向与动作输入，确认最新原生释放后发布终态，不清后来者的有效输入。换图清旧意图，稳定后的新main须根据当前[只读静态场景](#当前静态场景与跨图)重新决定；地形刷新不将旧动作输入带入新图，也不以输入变更改写已知原生动作。普通控件、对话、商店和装备交互由 CLI 操作；AP 自动分配接口见下文，手动 AP/SP 分配不属于该接口。`player.revive()` 不暴露通用窗口控件操作。
 
-`context.game.player.auto_ap()` 是 #310 开发中的一次性自动分配接口，返回 `ok, reason`；单次派发不代表服务端已完成分配。GUI 原版调用与无头规则一致性尚待实现和验证，结果不明时先观察属性与剩余 AP，不重试。
+`context.game.player.auto_ap(instance_id, character_id, scene_generation)` 是 #310 尚未发布的一次性自动分配接口，返回 `ok, reason`。三个身份参数必须取自打开属性窗口前或发起请求前的场景快照，用于绑定操作对象；CLI 的 `auto-ap` 命令仍无参数。GUI 路径仅供实验，两端规则一致性和实际效果尚待验证。意图受理或单次派发成功都不代表服务端已完成分配；结果不明时先观察同一角色的属性和剩余 AP，不重试。
+
+以下最小示例使用请求前的 `context.scene` 身份，在一个会话内只提交一次，并等待派发反馈；派发后仍须另行核对实际属性：
+
+```lua
+local requested = false
+local function main(context)
+    if requested then
+        local status = context.game.player.status()
+        if status.dispatched then return "done" end
+        if status.input_action ~= "auto_ap" then
+            error(status.reason or "auto_ap_not_dispatched")
+        end
+        return
+    end
+    requested = true
+    local scene = context.scene
+    local ok, reason = context.game.player.auto_ap(
+        scene.instance_id, scene.character_id, scene.scene_generation)
+    if not ok then error(reason or "auto_ap_rejected") end
+end
+```
 
 ## 策略参数与静态场景
 

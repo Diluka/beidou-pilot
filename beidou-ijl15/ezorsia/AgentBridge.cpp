@@ -5,6 +5,7 @@
 #include "NativeKeyUnion.h"
 #include "NativeTickInput.h"
 #include "NativeAutoApCancelProbe.h"
+#include "NativeAutoApTransaction.h"
 #include "EventTransport.h"
 #include "NativeKeyBindings.h"
 #include "NativeItemUse.h"
@@ -91,6 +92,14 @@ std::array<std::uint32_t, 256> nativeScanCodes{};
 std::uint32_t nativeScanCodesOwner = 0;
 ULONGLONG lastPublishedAt = 0;
 bool eventsPublished = false;
+volatile LONG nativeAutoApReady = 0;
+thread_local bool nativeAutoApActive = false;
+thread_local std::uintptr_t nativeAutoApModal = 0;
+thread_local int nativeAutoApModalResult = 0;
+thread_local BeiDouBridge::NativeAutoApTransaction nativeAutoApTransaction;
+BeiDouBridge::NativeAutoApTransaction::Identity nativeAutoApAdmission;
+std::uint32_t nativeAutoApField = 0, nativeAutoApStats = 0;
+bool nativeAutoApConfirmed = false;
 
 bool InvokeNativeSkill(std::uint32_t skillId, int& result, std::string& error);
 bool NativeLogs(const std::string& scriptId, const std::vector<std::string>& lines);
@@ -117,7 +126,10 @@ public:
     bool Supports(MapleControl::ActionKind kind) const override {
         return kind == MapleControl::ActionKind::Jump || kind == MapleControl::ActionKind::Attack
                || kind == MapleControl::ActionKind::Pickup || kind == MapleControl::ActionKind::UseItem
-               || kind == MapleControl::ActionKind::Revive;
+               || kind == MapleControl::ActionKind::Revive
+               || (kind == MapleControl::ActionKind::AutoAp
+                   && tickInput.Intent().kind != MapleControl::ActionKind::AutoAp
+                   && InterlockedCompareExchange(&nativeAutoApReady, 0, 0) == 1);
     }
 
     bool SupportsSkill() const override { return true; }
@@ -132,7 +144,13 @@ public:
 
     bool HeldKeysSettled() const override { return tickInput.HeldKeysSettled(); }
 
-    MapleControl::ActionResult Result() const override { return tickInput.Result(); }
+    MapleControl::ActionResult Result() const override {
+        auto result = tickInput.Result();
+        if (tickInput.Intent().kind == MapleControl::ActionKind::AutoAp)
+            result.dispatched =
+                BeiDouBridge::NativeAutoApTransaction::ReportedDispatched(result.dispatched, nativeAutoApConfirmed);
+        return result;
+    }
 
     void Release() override { tickInput.Release(currentNative.user); }
 
@@ -170,6 +188,7 @@ volatile LONG diagnosticInit = 0;
 // Explicit experimental build: callers are not known to be confined to the update thread.
 constexpr bool experimentalDiagnosticBuild = true;
 DWORD diagnosticUpdateThread = 0;
+bool diagnosticLogging = false;
 
 bool DiagnosticExecutableMatches() {
     const std::array<unsigned char, 32> expected{{0x11, 0x98, 0xfa, 0x57, 0xca, 0x5a, 0x7c, 0x48, 0x9b, 0xae, 0x43,
@@ -226,6 +245,7 @@ bool DiagnosticExecutableMatches() {
 }
 
 void DiagnosticRecord(const char* event, void* object, std::uintptr_t caller, int value) noexcept {
+    if (!diagnosticLogging) return;
     try {
         std::uint32_t table = 0, type = 0, manager = 0, focused = 0;
         const auto address = reinterpret_cast<std::uintptr_t>(object);
@@ -294,9 +314,10 @@ void __fastcall DiagnosticStatButtonHook(void* object, void*, int control) {
     const auto statAddress = reinterpret_cast<std::uintptr_t>(object);
     const bool validStat = ReadAt(statAddress, statTable) && statTable == 0x00B3B908 && ReadAt(0x00BEC20C, statManager)
                            && statManager != 0 && ReadAt(statManager + 0x80, statFocus) && statFocus == statAddress;
-    const bool arm = control == 2007 && diagnosticStatus == 1 && !diagnosticCancelProbe.active && validStat
-                     && GetCurrentThreadId() == diagnosticUpdateThread && previousState.ready
-                     && previousState.characterKnown && InterlockedCompareExchange(&diagnosticCancelUsed, 1, 0) == 0;
+    const bool arm = control == 2007 && diagnosticLogging && !nativeAutoApActive && diagnosticStatus == 1
+                     && !diagnosticCancelProbe.active && validStat && GetCurrentThreadId() == diagnosticUpdateThread
+                     && previousState.ready && previousState.characterKnown
+                     && InterlockedCompareExchange(&diagnosticCancelUsed, 1, 0) == 0;
 
     struct ProbeGuard {
         bool armed;
@@ -324,17 +345,22 @@ int __fastcall DiagnosticModalHook(void* object, void*) {
     const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
     const bool trace = diagnosticStatDepth != 0;
     const bool bound = diagnosticCancelProbe.Bind(reinterpret_cast<std::uintptr_t>(object), caller);
+    const bool autoBound = nativeAutoApActive && !nativeAutoApModal && caller == 0x00992EB1;
+    if (autoBound) nativeAutoApModal = reinterpret_cast<std::uintptr_t>(object);
 
     struct ModalGuard {
         bool bound;
+        bool autoBound;
 
         ~ModalGuard() {
             if (bound) diagnosticCancelProbe.modal = 0;
+            if (autoBound) nativeAutoApModal = 0;
         }
-    } modalGuard{bound};
+    } modalGuard{bound, autoBound};
 
     if (trace) DiagnosticRecord("modal-enter", object, caller, 0);
     const int result = originalDiagnosticModal(object);
+    if (autoBound) nativeAutoApModalResult = result;
     // The modal object may no longer be readable after the original call.
     if (trace) DiagnosticRecord("modal-return", nullptr, caller, result);
     return result;
@@ -748,6 +774,52 @@ bool ResolveOwnedKeys(const std::vector<unsigned int>& keys, BeiDouBridge::Nativ
     return true;
 }
 
+bool AutoApWindow(std::uint32_t& address, std::string& error) {
+    std::uint32_t manager = 0, table = 0, handler = 0;
+    if (!ReadAt(0x00BEC20C, manager) || !manager || !ReadAt(manager + 0x80, address) || !address
+        || !ReadAt(address, table) || table != 0x00B3B908 || !ReadAt(table + 0x20, handler) || handler != 0x008C522F) {
+        error = "auto_ap_window_unavailable";
+        return false;
+    }
+    const auto ui = NativeObservation::Collect("ui");
+    const auto& windows = Member(ui.data, "windows");
+    if (ui.status != "ok" || windows.Type() != MapleControl::Value::Kind::Array) {
+        error = "auto_ap_window_unavailable";
+        return false;
+    }
+    unsigned int matches = 0, buttons = 0;
+    bool buttonEnabled = false;
+    for (const auto& window : windows.Elements()) {
+        const auto& tables = Member(window, "vtables");
+        if (tables.Type() != MapleControl::Value::Kind::Array || tables.Elements().empty()
+            || tables.Elements().front().Type() != MapleControl::Value::Kind::String
+            || tables.Elements().front().Text() != "0xb3b908")
+            continue;
+        ++matches;
+        const auto& raw = Member(window, "address");
+        std::uint32_t found = 0;
+        if (raw.Type() != MapleControl::Value::Kind::String) continue;
+        std::istringstream stream(raw.Text());
+        stream >> std::hex >> found;
+        if (!stream || found != address) continue;
+        const auto& controls = Member(window, "buttons");
+        if (controls.Type() != MapleControl::Value::Kind::Array) continue;
+        for (const auto& control : controls.Elements()) {
+            const auto& id = Member(control, "control_id");
+            const auto& enabled = Member(control, "enabled");
+            if (id.Type() == MapleControl::Value::Kind::Number && id.Number() == 2007) {
+                ++buttons;
+                buttonEnabled = enabled.Type() == MapleControl::Value::Kind::Boolean && enabled.Boolean();
+            }
+        }
+    }
+    if (matches != 1 || buttons != 1 || !buttonEnabled) {
+        error = "auto_ap_window_unavailable";
+        return false;
+    }
+    return true;
+}
+
 bool ReviveWindow(std::uint32_t& address, std::string& error) {
     const auto ui = NativeObservation::Collect("ui");
     if (ui.status != "ok") {
@@ -873,6 +945,13 @@ bool BeiDouTickAdapter::SetHeldKeys(const std::vector<std::string>& names, std::
 }
 
 bool BeiDouTickAdapter::SetActionIntent(const MapleControl::Action& request, std::string& error) {
+    if (request.kind == MapleControl::ActionKind::AutoAp
+        && (request.autoApInstanceId != instanceId || !previousState.ready || !previousState.characterKnown
+            || request.autoApCharacterId != previousState.character.id
+            || request.autoApSceneGeneration != sceneGeneration)) {
+        error = "auto_ap_identity_changed";
+        return false;
+    }
     if (request.kind == MapleControl::ActionKind::Attack && BeiDouBridge::IsNativeKeyDownSkill(request.skillId)) {
         tickInput.ReleaseAction();
         error = "unsupported: native_keydown_skill_release";
@@ -880,6 +959,10 @@ bool BeiDouTickAdapter::SetActionIntent(const MapleControl::Action& request, std
         return false;
     }
     if (BeiDouBridge::NativeTickInput::SameIntent(tickInput.Intent(), request)) {
+        if (request.kind == MapleControl::ActionKind::AutoAp && tickInput.Intent().sessionId != request.sessionId) {
+            error = "auto_ap_input_busy";
+            return false;
+        }
         tickInput.SetIntent(request, currentNative.user);
         return true;
     }
@@ -890,6 +973,30 @@ bool BeiDouTickAdapter::SetActionIntent(const MapleControl::Action& request, std
     if (!Supports(request.kind)) {
         error = "unsupported: tick_action";
         return false;
+    }
+    if (request.kind == MapleControl::ActionKind::AutoAp) {
+        if (!previousState.ready || !previousState.characterKnown || !previousState.character.known[6]
+            || !previousState.character.known[10] || previousState.character.values[6] <= 0
+            || previousState.character.values[10] <= 0) {
+            error = "auto_ap_state_unavailable";
+            return false;
+        }
+        std::uint32_t window = 0, context = 0;
+        if (!ReadAt(0x00BE7918, context) || !context) {
+            error = "auto_ap_context_unavailable";
+            return false;
+        }
+        if (!AutoApWindow(window, error)) return false;
+        if (!tickInput.SetIntent(request, currentNative.user)) {
+            error = "auto_ap_input_busy";
+            return false;
+        }
+        nativeAutoApAdmission = {request.autoApCharacterId, request.autoApSceneGeneration, context,
+                                 request.autoApInstanceId};
+        nativeAutoApField = currentNative.field;
+        nativeAutoApStats = currentNative.stats;
+        nativeAutoApConfirmed = false;
+        return true;
     }
     if (request.kind == MapleControl::ActionKind::Revive) {
         if (!previousState.ready || !previousState.characterKnown || !previousState.character.known[6]) {
@@ -1259,6 +1366,63 @@ bool DeliverTickInput() {
     tickInput.MovementFlushed(updatedCharacter, characterUpdates, exited);
     const auto now = GetTickCount64();
     const auto& intent = tickInput.Intent();
+    if (tickInput.DispatchPending() && intent.kind == MapleControl::ActionKind::AutoAp
+        && !tickInput.action.TransitionsPending()) {
+        std::uint32_t window = 0, context = 0;
+        std::string error;
+        if (!previousState.ready || !previousState.characterKnown || !previousState.character.known[6]
+            || !previousState.character.known[10] || previousState.character.values[6] <= 0
+            || previousState.character.values[10] <= 0 || !ReadAt(0x00BE7918, context) || !context)
+            error = "auto_ap_state_unavailable";
+        else if (instanceId != nativeAutoApAdmission.instance
+                 || previousState.character.id != nativeAutoApAdmission.character
+                 || sceneGeneration != nativeAutoApAdmission.scene || context != nativeAutoApAdmission.context
+                 || currentNative.field != nativeAutoApField || currentNative.stats != nativeAutoApStats)
+            error = "auto_ap_identity_changed";
+        else if (!AutoApWindow(window, error)) {
+            // Preserve the exact observation failure.
+        }
+        if (error.empty()) {
+            NativeContext liveNative;
+            const auto live = CaptureState(liveNative);
+            std::uint32_t liveContext = 0;
+            if (!live.ready || !live.characterKnown || live.character.id != nativeAutoApAdmission.character
+                || liveNative.field != nativeAutoApField || liveNative.stats != nativeAutoApStats
+                || !ReadAt(0x00BE7918, liveContext) || liveContext != nativeAutoApAdmission.context)
+                error = "auto_ap_identity_changed";
+        }
+        if (!error.empty()) {
+            tickInput.ReleaseAction();
+            tickInput.result.reason = error;
+            return false;
+        }
+        nativeAutoApTransaction = {};
+        if (!nativeAutoApTransaction.Start(nativeAutoApAdmission)) {
+            tickInput.ReleaseAction();
+            tickInput.result.reason = "auto_ap_state_unavailable";
+            return false;
+        }
+        tickInput.TakeDispatch(now); // Consume before the native call; never replay.
+        nativeAutoApModalResult = 0;
+        nativeAutoApActive = true;
+
+        struct AutoApGuard {
+            ~AutoApGuard() {
+                nativeAutoApActive = false;
+                nativeAutoApModal = 0;
+            }
+        } guard;
+
+        // Original CUIStat OnButtonClicked control 2007; the modal hook owns confirmation.
+        reinterpret_cast<DiagnosticStatButton>(0x008C522F)(reinterpret_cast<void*>(window), 2007);
+        const bool confirmed =
+            nativeAutoApModalResult == 6
+            && nativeAutoApTransaction.State() == BeiDouBridge::NativeAutoApTransaction::Phase::AwaitingReturn;
+        nativeAutoApTransaction.Returned(confirmed);
+        nativeAutoApConfirmed = confirmed;
+        tickInput.result.reason = confirmed ? "auto_ap_request_dispatched" : "auto_ap_confirmation_pending";
+        if (sequence != frame || revision != tickInput.IntentRevision()) return false;
+    }
     if (tickInput.DispatchPending() && intent.kind == MapleControl::ActionKind::Revive
         && !tickInput.action.TransitionsPending()) {
         std::uint32_t window = 0;
@@ -1468,8 +1632,8 @@ void InitializeExperimentalDiagnostic() {
     try {
         // This marker is operator consent, not proof that the server is dev.
         const DWORD marker = GetFileAttributesA("Z:\\work\\auto-ap-diagnostic.enable");
-        if (marker == INVALID_FILE_ATTRIBUTES || (marker & FILE_ATTRIBUTE_DIRECTORY)) return;
-        if (!experimentalDiagnosticBuild) return;
+        diagnosticLogging = marker != INVALID_FILE_ATTRIBUTES && !(marker & FILE_ATTRIBUTE_DIRECTORY);
+        if (!diagnosticLogging || !experimentalDiagnosticBuild) return;
         diagnosticUpdateThread = GetCurrentThreadId();
         if (!DiagnosticExecutableMatches()) {
             InterlockedExchange(&diagnosticStatus, 5);
@@ -1512,6 +1676,7 @@ void InitializeExperimentalDiagnostic() {
             if (abortAttempted) DiagnosticRecord("diagnostic-abort-result", nullptr, 0, static_cast<int>(abortResult));
         } else {
             InterlockedExchange(&diagnosticStatus, 1);
+            InterlockedExchange(&nativeAutoApReady, 1);
             DiagnosticRecord("experimental-diagnostic-installed", nullptr, 0, 0);
         }
     } catch (...) {
@@ -1520,17 +1685,19 @@ void InitializeExperimentalDiagnostic() {
     }
 }
 
-void DriveDiagnosticCancel() {
-    if (!diagnosticCancelProbe.modal || diagnosticCancelProbe.attempted) return;
-    const auto modal = diagnosticCancelProbe.modal;
+void DriveAutoApModal() {
+    const bool production = nativeAutoApActive;
+    const auto modal = production ? nativeAutoApModal : diagnosticCancelProbe.modal;
+    if (!modal || (!production && diagnosticCancelProbe.attempted)) return;
+    const int controlId = production ? 6 : 7;
     std::uint32_t manager = 0, focused = 0, table = 0, type = 0, handler = 0, context = 0;
     if (!ReadAt(0x00BEC20C, manager) || !manager || !ReadAt(manager + 0x80, focused) || !ReadAt(modal, table)
         || !ReadAt(modal + 0x94, type) || !ReadAt(table + 0x20, handler) || !ReadAt(0x00BE7918, context))
         return;
     NativeContext liveNative;
     const auto live = CaptureState(liveNative);
-    if (!live.ready || !live.characterKnown || liveNative.field != currentNative.field
-        || liveNative.stats != currentNative.stats)
+    if (!live.ready || !live.characterKnown || (production && instanceId != nativeAutoApAdmission.instance)
+        || liveNative.field != currentNative.field || liveNative.stats != currentNative.stats)
         return;
     bool enabled = false;
     try {
@@ -1550,7 +1717,7 @@ void DriveDiagnosticCancel() {
             for (const auto& button : buttons.Elements()) {
                 const auto& id = Member(button, "control_id");
                 const auto& available = Member(button, "enabled");
-                if (id.Type() == MapleControl::Value::Kind::Number && id.Number() == 7) {
+                if (id.Type() == MapleControl::Value::Kind::Number && id.Number() == controlId) {
                     ++matches;
                     enabled = available.Type() == MapleControl::Value::Kind::Boolean && available.Boolean();
                 }
@@ -1562,17 +1729,25 @@ void DriveDiagnosticCancel() {
     }
     std::uint32_t focusAgain = 0;
     if (!ReadAt(manager + 0x80, focusAgain) || focusAgain != focused) return;
-    if (!diagnosticCancelProbe.TakeCancel(modal, focused, table, type, handler, live.character.id, sceneGeneration,
-                                          context, enabled))
+    if (production) {
+        const BeiDouBridge::NativeAutoApTransaction::Identity identity{live.character.id, sceneGeneration, context,
+                                                                       instanceId};
+        const bool verified = table == 0x00B3BB24 && type == 1001 && handler == 0x008D5251 && enabled;
+        if (nativeAutoApTransaction.BindAndChoose(identity, true, focused == modal, verified)
+            != BeiDouBridge::NativeAutoApTransaction::Decision::Confirm)
+            return;
+    } else if (!diagnosticCancelProbe.TakeCancel(modal, focused, table, type, handler, live.character.id,
+                                                 sceneGeneration, context, enabled))
         return;
-    DiagnosticRecord("experimental-cancel-dispatched", reinterpret_cast<void*>(modal), 0, 7);
-    reinterpret_cast<DiagnosticStatButton>(handler)(reinterpret_cast<void*>(modal), 7);
+    DiagnosticRecord(production ? "auto-ap-confirm-dispatched" : "experimental-cancel-dispatched",
+                     reinterpret_cast<void*>(modal), 0, controlId);
+    reinterpret_cast<DiagnosticStatButton>(handler)(reinterpret_cast<void*>(modal), controlId);
 }
 
 void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     originalUpdate(app, now);
-    if (diagnosticCancelProbe.active) {
-        DriveDiagnosticCancel();
+    if (diagnosticCancelProbe.active || nativeAutoApActive) {
+        DriveAutoApModal();
         return;
     }
     Tick();

@@ -495,7 +495,8 @@ struct TickRuntime::Impl {
     static int Submit(lua_State* lua, ActionKind kind, bool skill = false) {
         auto& session = Invocation(lua);
         const bool idRequired = skill || kind == ActionKind::UseItem;
-        if (lua_gettop(lua) != (idRequired ? 1 : 0)) return luaL_error(lua, "invalid player action arguments");
+        const int expectedArguments = kind == ActionKind::AutoAp ? 3 : (idRequired ? 1 : 0);
+        if (lua_gettop(lua) != expectedArguments) return luaL_error(lua, "invalid player action arguments");
         if (kind == ActionKind::AutoAp && session.autoApRequested) return Reply(lua, true, "already_requested");
         if (kind == ActionKind::Revive) {
             if (session.reviveRequested) return Reply(lua, true, "already_requested");
@@ -519,6 +520,11 @@ struct TickRuntime::Impl {
             if (id < 1 || id > 2147483647) return luaL_error(lua, "action id must be between 1 and 2147483647");
         }
         auto& runtime = session.runtime;
+        if (kind == ActionKind::AutoAp
+            && ((runtime.actionOwner != nullptr && runtime.actionOwner != &session)
+                || (runtime.draft.actionSet && runtime.draft.actionOwner != nullptr
+                    && runtime.draft.actionOwner != &session)))
+            return Reply(lua, false, "input_busy");
         if (!runtime.adapter.Supports(kind) || (skill && !runtime.adapter.SupportsSkill()))
             return Reply(lua, false, "unsupported");
         Action requested;
@@ -526,6 +532,20 @@ struct TickRuntime::Impl {
         requested.skillId = skill ? static_cast<std::uint32_t>(id) : 0;
         requested.itemId = kind == ActionKind::UseItem ? static_cast<std::uint32_t>(id) : 0;
         requested.sessionId = session.id;
+        if (kind == ActionKind::AutoAp) {
+            luaL_checktype(lua, 1, LUA_TSTRING);
+            const char* instance = lua_tostring(lua, 1);
+            if (lua_rawlen(lua, 1) == 0 || std::strlen(instance) != lua_rawlen(lua, 1) || !lua_isinteger(lua, 2)
+                || !lua_isinteger(lua, 3))
+                return luaL_error(lua, "invalid auto_ap identity");
+            const lua_Integer character = lua_tointeger(lua, 2);
+            const lua_Integer generation = lua_tointeger(lua, 3);
+            if (character < 1 || character > 2147483647 || generation < 1)
+                return luaL_error(lua, "invalid auto_ap identity");
+            requested.autoApInstanceId = instance;
+            requested.autoApCharacterId = static_cast<std::uint32_t>(character);
+            requested.autoApSceneGeneration = static_cast<std::uint64_t>(generation);
+        }
         runtime.draft.actionSet = true;
         runtime.draft.action = requested;
         runtime.draft.actionOwner = &session;

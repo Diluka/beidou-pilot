@@ -128,6 +128,10 @@ struct Action {
     std::uint32_t itemId = 0;
     std::uint32_t skillId = 0; // Attack: zero holds the ordinary attack input, otherwise request one skill.
     std::string sessionId;
+    // Caller-provided pre-operation identity for one-shot AutoAp.
+    std::string autoApInstanceId;
+    std::uint32_t autoApCharacterId = 0;
+    std::uint64_t autoApSceneGeneration = 0;
 };
 
 struct SkillResult {

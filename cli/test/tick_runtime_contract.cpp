@@ -1343,11 +1343,11 @@ void AutoApAction() {
     Start(runtime, "auto-ap", Source(R"lua(function main(c)
   local p=c.game.player
   if c.tick.index==1 then
-    assert(p.auto_ap()); assert(p.auto_ap()); assert(p.stop())
+    assert(p.auto_ap('tick-contract', 1, 1)); assert(p.auto_ap('tick-contract', 1, 1)); assert(p.stop())
   elseif c.tick.index==2 then
-    local ok, reason=p.auto_ap(); assert(ok and reason==nil)
+    local ok, reason=p.auto_ap('tick-contract', 1, 1); assert(ok and reason==nil)
   else
-    local ok, reason=p.auto_ap(); assert(ok and reason=='already_requested')
+    local ok, reason=p.auto_ap('tick-contract', 1, 1); assert(ok and reason=='already_requested')
     p.stop()
   end
 end)lua"));
@@ -1356,6 +1356,9 @@ end)lua"));
     Step(native, runtime);
     Check(native.requests.size() == 1 && native.requests[0].kind == ActionKind::AutoAp,
           "auto ap must be admitted once");
+    Check(native.requests[0].autoApInstanceId == "tick-contract" && native.requests[0].autoApCharacterId == 1
+              && native.requests[0].autoApSceneGeneration == 1,
+          "auto ap must preserve the caller-provided identity");
     Step(native, runtime);
     Check(native.delivered.size() == 1 && native.requests.size() == 1, "same session must not replay auto ap");
     runtime.Cancel("auto-ap", "explicit_cancel");
@@ -1366,7 +1369,7 @@ end)lua"));
     rejected.rejectAutoAp = true;
     TickRuntime other(rejected);
     Start(other, "rejected", Source(R"lua(function main(c)
-  local ok, reason=c.game.player.auto_ap(); assert(ok and reason==nil)
+  local ok, reason=c.game.player.auto_ap('tick-contract', 1, 1); assert(ok and reason==nil)
 end)lua"));
     Step(rejected, other);
     Check(rejected.requests.empty(), "rejected auto ap must not be admitted");

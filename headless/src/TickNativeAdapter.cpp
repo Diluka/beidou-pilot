@@ -132,6 +132,12 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
         return false;
     }
     if (action.kind == Kind::AutoAp) {
+        if (!state.characterKnown || action.autoApInstanceId != state.instanceId
+            || action.autoApCharacterId != state.character.id
+            || action.autoApSceneGeneration != state.sceneGeneration) {
+            error = "auto_ap_identity_changed";
+            return false;
+        }
         const auto admission =
             CheckAutoApAdmission(intent.kind == Kind::AutoAp, autoApPending, intent.sessionId, action.sessionId);
         if (admission == AutoApAdmission::Pending) {
@@ -207,6 +213,13 @@ bool TickNativeAdapter::SetActionIntent(const MapleControl::Action& action, std:
     player.hold_item(action.kind == Kind::UseItem ? action.itemId : 0);
     host.SyncKeys();
     if (action.kind == Kind::AutoAp) {
+        const auto& current = Observe();
+        if (!current.ready || !current.characterKnown || current.instanceId != action.autoApInstanceId
+            || current.character.id != action.autoApCharacterId
+            || current.sceneGeneration != action.autoApSceneGeneration) {
+            error = "auto_ap_identity_changed";
+            return false;
+        }
         autoApPending = true;
         autoApIdentity = {state.character.id, false};
         result.dispatched = true;

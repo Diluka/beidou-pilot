@@ -27,14 +27,15 @@ def auto_ap(backend: Backend) -> JsonObject:
     if scene["character_id"] != character["id"]:
         raise ClientError("character_changed", "提交期间角色已变化，停止操作。")
     if backend.name == "beidou":
-        # 临时诊断路径：打开属性窗口，不发出任何加点请求。
+        # 实验阶段仅允许显式标记的角色工作台触发 GUI 输入。
+        runtime = backend.root.parent.parent
+        if runtime.name != "runtime" or not (runtime.parent / "auto-ap-diagnostic.enable").is_file():
+            raise ClientError("unsupported_capability", "GUI 自动加点尚处于实验阶段，未发送请求。")
         from .ui import open_window
 
-        # 工作台挂载于 /work，实例根为 /work/runtime/<instance>/<run_id>。
-        runtime = backend.root.parent.parent
-        if runtime.name == "runtime" and (runtime.parent / "auto-ap-diagnostic.enable").is_file():
-            open_window(backend, "stats")
-        raise ClientError("unsupported_capability", "GUI 自动加点尚未实现，未发送加点请求。")
+        open_window(backend, "stats")
+        if scene_context(bridge.snapshot()) != scene:
+            raise ClientError("character_changed", "打开属性窗口期间角色或场景已变化，未发送加点请求。")
     script = '''local requested = false
 local function main(context)
     if requested then
@@ -44,7 +45,7 @@ local function main(context)
         return
     end
     requested = true
-    local ok, reason = context.game.player.auto_ap()
+    local ok, reason = context.game.player.auto_ap(context.scene.instance_id, context.scene.character_id, context.scene.scene_generation)
     if not ok then
         if reason == "unsupported" then error("auto_ap_unsupported") end
         error(reason or "auto_ap_rejected")
@@ -56,6 +57,8 @@ end
     except ClientError as error:
         script_result = error.details.get("script")
         message = str(script_result.get("error", "")) if isinstance(script_result, dict) else ""
+        if "input_busy" in message or "auto_ap_input_busy" in message:
+            raise ClientError("input_busy", "已有其他脚本占用角色动作，未发送加点请求。", error.details) from error
         if any(reason in message for reason in ("auto_ap_job", "unsupported_capability", "auto_ap_unsupported")):
             raise ClientError("unsupported_capability", "当前客户端不支持该角色的自动加点。", error.details) from error
         raise ClientError("unknown", "自动加点结果未知，请观察角色属性，切勿重试。", error.details) from error

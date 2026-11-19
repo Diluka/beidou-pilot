@@ -58,9 +58,12 @@ struct NativeTickInput {
     bool SetIntent(const MapleControl::Action& request, std::uint32_t user) {
         const auto previousKind = intent.kind;
         const bool oneShotBoundary =
-            request.kind == MapleControl::ActionKind::Revive
-            || (previousKind == MapleControl::ActionKind::Revive && request.kind == MapleControl::ActionKind::Stop);
+            request.kind == MapleControl::ActionKind::Revive || request.kind == MapleControl::ActionKind::AutoAp
+            || ((previousKind == MapleControl::ActionKind::Revive || previousKind == MapleControl::ActionKind::AutoAp)
+                && request.kind == MapleControl::ActionKind::Stop);
         if (SameIntent(intent, request)) {
+            // One-shot AutoAp never transfers ownership across sessions.
+            if (request.kind == MapleControl::ActionKind::AutoAp && intent.sessionId != request.sessionId) return false;
             // Same physical input can transfer between sessions. Only the
             // current intent/result owner changes; the copied actual A and
             // native repeat/consumption clocks keep their original identity.
@@ -169,7 +172,7 @@ struct NativeTickInput {
     bool HeldKeysSettled() const { return !movementPending && !movement.TransitionsPending(); }
 
     bool ActionIntentSettled() const {
-        if (intent.kind == MapleControl::ActionKind::Revive)
+        if (intent.kind == MapleControl::ActionKind::Revive || intent.kind == MapleControl::ActionKind::AutoAp)
             return !dispatchPending && !action.TransitionsPending() && !skill.Pending() && !item.Pending();
         return !actionPending && !action.TransitionsPending() && !skill.Pending() && !item.Pending();
     }
@@ -248,10 +251,11 @@ struct NativeTickInput {
 
     MapleControl::ActionResult Result() const {
         auto value = result;
-        value.dispatched = intent.kind == MapleControl::ActionKind::Revive ? dispatched
-                           : itemResult
-                               ? item.Dispatched()
-                               : action.Dispatched() || (value.skillRequested && value.skill.nativeResultKnown);
+        value.dispatched =
+            intent.kind == MapleControl::ActionKind::Revive || intent.kind == MapleControl::ActionKind::AutoAp
+                ? dispatched
+            : itemResult ? item.Dispatched()
+                         : action.Dispatched() || (value.skillRequested && value.skill.nativeResultKnown);
         value.controlReleased = Released();
         return value;
     }
