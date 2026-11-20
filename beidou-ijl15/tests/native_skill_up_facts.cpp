@@ -142,6 +142,34 @@ int main() {
     assert(!GroupContains(reader, 0x5000, {0}, 1000000, 0x5500));
     assert(!GroupContains(reader, 0x5000, {100}, 1000000, 0x5504));
     assert(!GroupContains(reader, 0x5000, {200}, 1000000, 0x5500));
+    // Group zero is admitted only through the explicit three-skill mode.
+    put(0x5208, 0); put(0x5500, 1001);
+    assert(!GroupContains(reader, 0x5000, {0}, 1001, 0x5500));
+    assert(GroupContains(reader, 0x5000, {0}, 1001, 0x5500, true));
+    assert(!GroupContains(reader, 0x5000, {0, 100}, 1001, 0x5500, true));
+    put(0x5500, 1003);
+    assert(!GroupContains(reader, 0x5000, {0}, 1003, 0x5500, true));
+    put(0x5500, 1001);
+    BeginnerVisibilitySnapshot visibility, later;
+    for (int i = 0; i < 20; ++i) memory[0x5528 + i] = 0;
+    put(0x3008, 1100000); put(0x300c, 1); // beginner absent
+    assert(BeginnerVisible(reader, 0x1000, 1001, 0x5500, visibility));
+    put(0x5528, 1); assert(!BeginnerVisible(reader, 0x1000, 1001, 0x5500, visibility));
+    put(0x3008, 1001); put(0x300c, 0);
+    assert(BeginnerVisible(reader, 0x1000, 1001, 0x5500, visibility));
+    put(0x5538, 1); assert(!BeginnerVisible(reader, 0x1000, 1001, 0x5500, visibility));
+    put(0x300c, 1); assert(BeginnerVisible(reader, 0x1000, 1001, 0x5500, visibility));
+    put(0x5528, 0);
+    assert(BeginnerVisible(reader, 0x1000, 1001, 0x5500, later) && !(visibility == later));
+    int flagReads = 0;
+    auto changingFlags = [&](std::uint32_t address, std::size_t size) {
+        auto bytes = reader(address, size);
+        if (address == 0x5528 && ++flagReads == 2) bytes[0] ^= 1;
+        return bytes;
+    };
+    assert(!BeginnerVisible(changingFlags, 0x1000, 1001, 0x5500, visibility));
+    assert(!BeginnerVisible(reader, 0x9000, 1001, 0x5500, visibility));
+    put(0x5208, 100); put(0x5500, 1000000);
     put(0x5204, 0x5200);
     assert(!GroupContains(reader, 0x5000, {100}, 1000000, 0x5500));
     put(0x5204, 0); put(0x5400, 4097);
