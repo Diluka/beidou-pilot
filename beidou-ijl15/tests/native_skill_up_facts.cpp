@@ -55,6 +55,13 @@ int main() {
     };
     map(0x1467, 0x2000, 0x3000, 3);
     map(0x147F, 0x2100, 0x3100, 0xFFFFFFFF);
+    map(0x1497, 0x2200, 0x3300, 15);
+    std::uint32_t master = 99;
+    assert(SkillMaster(reader, 0x1000, 1000000, master) && master == 15);
+    assert(!SkillMaster(reader, 0x1000, 1000001, master) && master == 15);
+    put(0x330c, 0xffffffffu);
+    assert(!SkillMaster(reader, 0x1000, 1000000, master) && master == 15);
+    put(0x330c, 15);
     auto levels = SkillLevels(reader, 0x1000, 1000000);
     assert(levels.base == 3 && levels.delta == -1);
     levels = SkillLevels(reader, 0x1000, 1000001);

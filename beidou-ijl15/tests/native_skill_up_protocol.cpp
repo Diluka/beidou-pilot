@@ -63,6 +63,16 @@ int main() {
     state.known = true; state.count = 0; assert(std::string(BatchFailure(request, state)) == "skill_up_state_unavailable");
     state.count = 20; state.base = 1; state.delta = -2;
     assert(std::string(BatchFailure(request, state)) == "skill_up_state_unavailable");
+    Request fourth = request; fourth.skill = 1120000; fourth.remaining = 2;
+    Eligibility cap{true, 7, 123, 112, 5, 20, 19, -5};
+    assert(std::string(BatchFailure(fourth, cap)) == "skill_up_master_unavailable");
+    cap.masterKnown = true; cap.master = 30;
+    assert(std::string(BatchFailure(fourth, cap)) == "skill_up_insufficient_level_capacity");
+    cap.base = 10; cap.master = 11;
+    assert(std::string(BatchFailure(fourth, cap)) == "skill_up_insufficient_master_capacity");
+    cap.master = 20; assert(BatchFailure(fourth, cap) == nullptr);
+    cap.delta = 9; assert(std::string(BatchFailure(fourth, cap)) == "skill_up_insufficient_level_capacity");
+    cap.delta = -11; assert(std::string(BatchFailure(fourth, cap)) == "skill_up_state_unavailable");
     Request beginner = request; beginner.skill = 1000; beginner.remaining = 2;
     Eligibility beginnerState{true, 7, 123, 100, 4, 3, 2, 0};
     assert(std::string(BatchFailure(beginner, beginnerState)) == "skill_up_insufficient_level_capacity");

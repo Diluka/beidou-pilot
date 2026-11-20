@@ -65,11 +65,18 @@ inline bool SupportedSkill(std::uint32_t job, std::uint32_t skill) {
     return OrdinaryJob(job) && !FixedLevelSkill(skill) && skill / 10000 >= 100
         && skill / 10000 <= 522 && skill <= INT32_MAX;
 }
+// For the admitted ordinary skill groups, the server classifies a skill as
+// fourth-job by its group (not by the player's current job).
+inline bool RequiresMaster(std::uint32_t skill) {
+    return !BeginnerSkill(skill) && (skill / 10000) % 10 == 2;
+}
 struct Eligibility {
     bool known = false;
     std::uint64_t scene = 0;
     std::uint32_t character = 0, job = 0, sp = 0, count = 0, base = 0;
     std::int32_t delta = 0;
+    bool masterKnown = false;
+    std::uint32_t master = 0;
 };
 // Only validates the observed batch bounds. Native requirements and object
 // identity must still be verified in the game thread before dispatch.
@@ -80,7 +87,13 @@ inline const char* BatchFailure(const Request& request, const Eligibility& state
     if (!SupportedSkill(state.job, request.skill)) return "skill_up_job_skill_unsupported";
     const std::int64_t raw = state.base == 0 ? 0 : static_cast<std::int64_t>(state.base) + state.delta;
     if (raw < 0 || raw > INT32_MAX) return "skill_up_state_unavailable";
+    if (RequiresMaster(request.skill) && !state.masterKnown) return "skill_up_master_unavailable";
     if (request.remaining > state.sp) return "skill_up_insufficient_sp";
+    if (state.base > state.count || request.remaining > state.count - state.base)
+        return "skill_up_insufficient_level_capacity";
+    if (RequiresMaster(request.skill)
+        && (state.base > state.master || request.remaining > state.master - state.base))
+        return "skill_up_insufficient_master_capacity";
     const auto level = raw > state.count ? state.count : static_cast<std::uint32_t>(raw);
     if (request.remaining > state.count - level) return "skill_up_insufficient_level_capacity";
     return nullptr;

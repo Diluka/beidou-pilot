@@ -1698,8 +1698,10 @@ void Tick() {
                 }
                 const auto levels = Facts::SkillLevels(bytes, native.stats, request.skill);
                 const auto count = Facts::ResourceCount(skill, request.skill);
-                const Eligibility facts{true,   sceneGeneration, job.character, job.job,
-                                        job.sp, count,           levels.base,   levels.delta};
+                Eligibility facts{true,   sceneGeneration, job.character, job.job,
+                                  job.sp, count,           levels.base,   levels.delta};
+                if (RequiresMaster(request.skill))
+                    facts.masterKnown = Facts::SkillMaster(bytes, native.stats, request.skill, facts.master);
                 if (const auto failure = BatchFailure(request, facts)) {
                     reason = failure;
                     return false;
@@ -1762,6 +1764,24 @@ void Tick() {
                 if (liveLevels.base != levels.base || liveLevels.delta != levels.delta
                     || Facts::ResourceCount(skill, request.skill) != count) {
                     reason = "skill_up_state_changed";
+                    return false;
+                }
+                Eligibility liveFacts{true,       sceneGeneration, liveJob.character, liveJob.job,
+                                      liveJob.sp, count,           liveLevels.base,   liveLevels.delta};
+                if (RequiresMaster(request.skill)) {
+                    liveFacts.masterKnown =
+                        Facts::SkillMaster(bytes, liveNative.stats, request.skill, liveFacts.master);
+                    if (!liveFacts.masterKnown) {
+                        reason = "skill_up_master_unavailable";
+                        return false;
+                    }
+                    if (!facts.masterKnown || liveFacts.master != facts.master) {
+                        reason = "skill_up_state_changed";
+                        return false;
+                    }
+                }
+                if (const auto failure = BatchFailure(request, liveFacts)) {
+                    reason = failure;
                     return false;
                 }
                 if (!BeginnerSkill(request.skill)) {

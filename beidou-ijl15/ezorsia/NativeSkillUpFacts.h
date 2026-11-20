@@ -212,6 +212,18 @@ inline bool CaptureJobSp(const MapleControl::State& state, const NativeSkillUp::
     result = {character.id, character.values[1], character.values[11]};
     return true;
 }
+// Missing master entry is unknown for this client observation, not zero.
+template<class Reader>
+inline bool SkillMaster(Reader read, std::uint32_t character, std::uint32_t skill, std::uint32_t& master) {
+    if (!character || character > UINT32_MAX - 0x497) return false;
+    try {
+        const auto records = MapRecords(read, character + 0x497);
+        const auto found = records.find(skill);
+        if (found == records.end() || found->second > INT32_MAX) return false;
+        master = found->second;
+        return true;
+    } catch (const NativeObservation::ReadError&) { return false; }
+}
 struct Levels { std::uint32_t base; std::int32_t delta; };
 template<class Reader>
 inline Levels SkillLevels(Reader read, std::uint32_t character, std::uint32_t skill) {
