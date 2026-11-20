@@ -78,12 +78,15 @@ class ReconcileTest(unittest.TestCase):
             name = 'headless'
             instance = 'default'
         state = {'ready': True, 'instance_id': 'inst', 'run_id': 'run',
-                 'character': {'id': 42}, 'skill_up_records': [
+                 'character': {'id': 42, 'job': 100}, 'skill_up_records': [
                      {'request_id': 'a' * 32, 'run_id': 'run', 'instance_id': 'inst',
-                      'character_id': 42, 'skill_id': 1000, 'status': 'confirmed'}]}
+                      'character_id': 42, 'skill_id': 1000, 'job': 100, 'status': 'confirmed'}]}
         with patch('beidou_pilot.headless_skill_up.BridgeClient') as bridge:
             bridge.return_value.snapshot.return_value = state
             self.assertEqual(reconcile_skill_up(Backend(), 1000, 'a' * 32)['status'], 'confirmed')
+            state['character']['job'] = 110
+            self.assertEqual(reconcile_skill_up(Backend(), 1000, 'a' * 32)['status'], 'unresolved')
+            state['character']['job'] = 100
             state['run_id'] = 'another'
             self.assertEqual(reconcile_skill_up(Backend(), 1000, 'a' * 32)['status'], 'unresolved')
             state['run_id'] = 'run'

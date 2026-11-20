@@ -22,7 +22,7 @@ def reconcile_skill_up(backend: Backend, skill_id: int, original_id: str) -> Jso
         isinstance(record, dict) and record.get("request_id") == original_id
         and record.get("run_id") == state["run_id"] and record.get("instance_id") == state["instance_id"]
         and record.get("character_id") == character["id"] and record.get("skill_id") == skill_id
-        and record.get("status") == "confirmed" for record in records)
+        and record.get("job") == character["job"] and record.get("status") == "confirmed" for record in records)
     return {"original_request_id": original_id, "skill_id": skill_id,
             "status": "confirmed" if confirmed else "unresolved",
             "reason": "native_observed" if confirmed else "native_record_unresolved"}
