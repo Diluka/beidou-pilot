@@ -101,12 +101,12 @@ world = {
   scene_generation = 3,
   now = 12.345,
   character = {x=0, y=0, hp=100, max_hp=100, mp=50, max_mp=50,
-               level=10, job=100, action_idle=true, on_ground=true},
+               level=10, job=100, action_idle=true, on_ground=true, platform=3},
   owner = {present=true, name="Owner", character_id=123,
            x=0, y=0, distance=50, platform=3},  -- 不同图时 present=false
-  mobs = {{object_id=1, template_id=100100, x=0, y=0,
+  mobs = {{object_id=1, template_id=100100, x=0, y=0, platform=3,
            hp_percent=80, active=true}},
-  drops = {{object_id=2, item_id=4001007, x=0, y=0, landed=true}},
+  drops = {{object_id=2, item_id=4001007, x=0, y=0, platform=3, landed=true}},
   inventory = {{item_id=2000000, quantity=10}},
 }
 ```
@@ -133,14 +133,14 @@ function M.update(ctx, world) -> action
 
 -- combat
 function M.select(world, options) -> mob | nil
-function M.step(ctx, world, mob) -> "running"|"done"|"failed", reason
+function M.step(ctx, world, mob, mover) -> "running"|"done"|"failed", reason
 
 -- sustain
 function M.step(ctx, world) -> handled, reason
 
 -- loot
 function M.select(world, options) -> drop | nil
-function M.step(ctx, world, drop) -> "running"|"done"|"failed", reason
+function M.step(ctx, world, drop, mover) -> "running"|"done"|"failed", reason
 
 -- io
 function M.poll(ctx, now) -> commands
@@ -158,6 +158,8 @@ function M.observe(ctx) -> world
 -- main
 local function main(context) ... end
 ```
+
+主流程负责创建唯一 `mover = move.new(graph)`，用 `terrain.platform_at` 填充 `character/owner/mobs/drops.platform`，并把 `mover` 传给 `combat.step`/`loot.step`；模块不各自创建 mover。
 
 ### 6.4 文件与命令
 
