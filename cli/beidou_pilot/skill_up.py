@@ -139,7 +139,7 @@ def preflight_skill_up(backend: Backend, skill_id: int, points: int, *, batch: b
     character = state["character"]
     if not state["ready"] or character is None or character["id"] <= 0:
         raise ClientError("character_unavailable", "角色状态不可用。")
-    if (beginner and character["job"] not in (100, 210)) or (not beginner and character["job"] not in ordinary_jobs):
+    if character["job"] not in ordinary_jobs:
         raise ClientError("skill_up_unsupported", "该职业和技能组合尚不支持无窗口加点。")
     learned = cast(CharacterSnapshot, backend.read("character"))
     if not learned["skills_complete"] or learned["character_id"] != character["id"]:

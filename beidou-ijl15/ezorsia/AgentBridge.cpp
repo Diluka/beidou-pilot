@@ -1660,10 +1660,15 @@ void Tick() {
                 auto bytes = [](std::uintptr_t address, std::size_t size) {
                     return NativeObservation::Bytes(address, size);
                 };
-                const auto groups = OrdinaryGroups(job.job);
-                if (!BeginnerSkill(request.skill)
-                    && !Facts::GroupContains(bytes, manager, groups, request.skill, skill)) {
+                const bool beginner = BeginnerSkill(request.skill);
+                const auto groups = beginner ? std::vector<std::uint32_t>{0} : OrdinaryGroups(job.job);
+                if (!Facts::GroupContains(bytes, manager, groups, request.skill, skill, beginner)) {
                     reason = "skill_up_group_unavailable_or_not_member";
+                    return false;
+                }
+                Facts::BeginnerVisibilitySnapshot visibility;
+                if (beginner && !Facts::BeginnerVisible(bytes, native.stats, request.skill, skill, visibility)) {
+                    reason = "skill_up_visibility_unavailable_or_hidden";
                     return false;
                 }
                 if (pending.pending) {
@@ -1728,9 +1733,15 @@ void Tick() {
                     reason = "skill_up_state_changed";
                     return false;
                 }
-                if (!BeginnerSkill(request.skill)
-                    && !Facts::GroupContains(bytes, liveManager, groups, request.skill, skill)) {
+                if (!Facts::GroupContains(bytes, liveManager, groups, request.skill, skill, beginner)) {
                     reason = "skill_up_group_unavailable_or_not_member";
+                    return false;
+                }
+                Facts::BeginnerVisibilitySnapshot liveVisibility;
+                if (beginner
+                    && (!Facts::BeginnerVisible(bytes, liveNative.stats, request.skill, skill, liveVisibility)
+                        || !(liveVisibility == visibility))) {
+                    reason = "skill_up_visibility_unavailable_or_hidden";
                     return false;
                 }
                 if (!SelectPoints(

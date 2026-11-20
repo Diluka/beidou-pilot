@@ -48,15 +48,18 @@ inline std::map<std::uint32_t, std::uint32_t> MapRecords(Reader read, std::uint3
         throw NativeObservation::ReadError("skill ZMap changed");
     return result;
 }
-// Same-thread, read-only membership check; group zero is not evidence of job
-// ownership. All borrowed pointers are discarded when this call returns.
+// Same-thread, read-only membership check. Group zero is permitted only in
+// explicit beginner mode for the three supported skill IDs.
 template<class Reader>
 inline bool GroupContains(Reader read, std::uint32_t manager, const std::vector<std::uint32_t>& groups,
-                          std::uint32_t skill, std::uint32_t expectedObject) {
+                          std::uint32_t skill, std::uint32_t expectedObject, bool beginnerGroup = false) {
     using A = std::uint32_t;
     if (!manager || manager > UINT32_MAX - 0x1c || !skill || !expectedObject || groups.empty()) return false;
     std::set<A> wanted(groups.begin(), groups.end());
-    if (wanted.size() != groups.size() || wanted.count(0)) return false;
+    if (wanted.size() != groups.size()) return false;
+    if (beginnerGroup) {
+        if (wanted.size() != 1 || !wanted.count(0) || !NativeSkillUp::BeginnerSkill(skill)) return false;
+    } else if (wanted.count(0)) return false;
     try {
         std::vector<std::pair<A, std::vector<unsigned char>>> snapshots;
         auto take = [&](A address, std::size_t size) {
@@ -111,6 +114,36 @@ inline bool GroupContains(Reader read, std::uint32_t manager, const std::vector<
         for (const auto& snapshot : snapshots)
             if (read(snapshot.first, snapshot.second.size()) != snapshot.second) return false;
         return found;
+    } catch (const NativeObservation::ReadError&) { return false; }
+}
+// Reproduce the ordinary window's visibility filter for the three beginner
+// skills. Missing data is unknown, not an empty skill map or zero flag.
+struct BeginnerVisibilitySnapshot {
+    std::vector<unsigned char> flags;
+    bool levelPresent = false;
+    std::uint32_t level = 0;
+    bool operator==(const BeginnerVisibilitySnapshot& other) const {
+        return flags == other.flags && levelPresent == other.levelPresent && level == other.level;
+    }
+};
+template<class Reader>
+inline bool BeginnerVisible(Reader read, std::uint32_t character, std::uint32_t skill, std::uint32_t object,
+                            BeginnerVisibilitySnapshot& snapshot) {
+    if (!NativeSkillUp::BeginnerSkill(skill) || !character || character > UINT32_MAX - 0x467
+        || !object || object > UINT32_MAX - 0x3b) return false;
+    try {
+        const auto flags = read(object + 0x28, 20);
+        if (flags.size() != 20) return false;
+        std::uint32_t hiddenWhenAbsent = 0, requiresLearned = 0;
+        std::memcpy(&hiddenWhenAbsent, flags.data(), 4);
+        std::memcpy(&requiresLearned, flags.data() + 0x10, 4);
+        const auto levels = MapRecords(read, character + 0x467);
+        const auto found = levels.find(skill);
+        if (found == levels.end() && hiddenWhenAbsent != 0) return false;
+        if (requiresLearned != 0 && (found == levels.end() || found->second == 0)) return false;
+        if (read(object + 0x28, 20) != flags) return false;
+        snapshot = {flags, found != levels.end(), found == levels.end() ? 0u : found->second};
+        return true;
     } catch (const NativeObservation::ReadError&) { return false; }
 }
 // Ordinary skill window cumulative stage-point gate. This is only one

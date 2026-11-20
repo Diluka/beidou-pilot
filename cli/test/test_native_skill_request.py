@@ -141,22 +141,27 @@ class NativeSkillRequestTest(unittest.TestCase):
                 preflight_skill_up(backend, 1001003, 1)
             self.assertEqual(raised.exception.code, 'insufficient_skill_points')
 
-    def test_beginner_allowlist_covers_six_observed_combinations(self):
+    def test_beginner_candidates_cover_ordinary_adventurer_jobs(self):
         backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
         backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7, 'skills': {}})
         state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
                  'character': {'id': 7, 'job': 100, 'level': 3, 'skill_points': 0}}
         with patch('beidou_pilot.skill_up.BridgeClient') as bridge:
             bridge.return_value.snapshot.return_value = state
-            for job in (100, 210):
+            for job in (100, 110, 111, 112, 120, 121, 122, 130, 131, 132,
+                        200, 210, 211, 212, 220, 221, 222, 230, 231, 232,
+                        300, 310, 311, 312, 320, 321, 322,
+                        400, 410, 411, 412, 420, 421, 422,
+                        500, 510, 511, 512, 520, 521, 522):
                 state['character']['job'] = job
                 for skill in (1000, 1001, 1002):
                     with self.subTest(job=job, skill=skill):
                         self.assertEqual(preflight_skill_up(backend, skill, 2)[3], 2)
-            state['character']['job'] = 110
-            with self.assertRaises(ClientError) as raised:
-                preflight_skill_up(backend, 1000, 1)
-            self.assertEqual(raised.exception.code, 'skill_up_unsupported')
+            for job in (0, 113, 2001, 2200, 900):
+                state['character']['job'] = job
+                with self.subTest(job=job), self.assertRaises(ClientError) as raised:
+                    preflight_skill_up(backend, 1000, 1)
+                self.assertEqual(raised.exception.code, 'skill_up_unsupported')
 
     def test_invalid_beginner_pool_is_unavailable(self):
         backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')

@@ -61,7 +61,7 @@ inline bool FixedLevelSkill(std::uint32_t skill) {
 // A candidate is not authorization: ordinary skills must additionally be
 // found in the current client's matching group, twice, before the event.
 inline bool SupportedSkill(std::uint32_t job, std::uint32_t skill) {
-    if (BeginnerSkill(skill)) return job == 100 || job == 210;
+    if (BeginnerSkill(skill)) return OrdinaryJob(job);
     return OrdinaryJob(job) && !FixedLevelSkill(skill) && skill / 10000 >= 100
         && skill / 10000 <= 522 && skill <= INT32_MAX;
 }

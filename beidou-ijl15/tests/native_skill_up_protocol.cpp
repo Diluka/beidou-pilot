@@ -38,7 +38,8 @@ int main() {
             assert(SupportedSkill(job, skill) && BeginnerSkill(skill));
         assert(!SupportedSkill(job, 1003) && !SupportedSkill(job, 10001000));
     }
-    assert(!SupportedSkill(200, 1001) && !BeginnerSkill(1003));
+    assert(SupportedSkill(200, 1001) && SupportedSkill(522, 1002));
+    assert(!SupportedSkill(0, 1001) && !SupportedSkill(1000, 1001) && !BeginnerSkill(1003));
     assert(SupportedSkill(100, 1001005));
     for (auto skill : {2100000u, 2101001u, 2101002u, 2101003u, 2101004u, 2101005u})
         assert(SupportedSkill(210, skill));
