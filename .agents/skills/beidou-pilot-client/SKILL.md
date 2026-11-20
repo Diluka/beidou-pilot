@@ -5,6 +5,8 @@ description: "通过 beidou-pilot CLI 登录已有北斗角色、观察游戏状
 
 # 北斗客户端 CLI
 
+> 项目当前方向是“客户端自动化工具 + 伴游机器人应用层”。旧 Issue/PR 是历史记录，不是路线图；机器人设计、当前缺口和阶段见 [伴游机器人设计与路线](../../../docs/COMPANION_BOT.md) 与 [客户端能力边界](../../../docs/CLIENT_LIMITATIONS.md)。本技能只讲已交付的 CLI/Lua 操作，不把计划写成可用能力。
+
 `beidou-pilot` 是 headless 与 GUI 共用的容器内入口。宿主用 `workbenches/workbench list [live|dev]` 查找角色：常驻养成用已授权的 `live/NAME`；开发、复现和验收按[开发约定](../../../AGENTS.md)复用空闲的 `dev/NAME`，没有合适角色时可自行建号建角。在所属实例内直接运行以下命令。同一目标同一角色只有一名控制者，GUI 保持一名明确操作者。
 
 ## 观察当前实例

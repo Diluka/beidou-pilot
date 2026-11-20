@@ -184,7 +184,7 @@ workbenches/workbench dev/GUI_NAME notifications respond @notificationCURRENT --
 
 返回的 `input_dispatched=true` 仅确认本轮桌面输入已派发；`after` 分别报告气泡是否还在、是否仍待处理及可响应，`effect` 保持 `unknown`。主按钮操作后气泡仍在属于正常结果，再次点击需重新读取后决定。输入派发后采样不可用时，结果保留该事实并返回 `observation_error`，派发按已提交处理。
 
-业务结果另外核对：实际入队需要成员状态，接受交易邀请需要确认交易窗口，最终成交则是不同动作，需要独立明确授权；气泡消失与否作为界面事实单独记录。本接口只响应气泡按钮，物品、金币和成交由对应命令完成。组队成员接口和真实核验继续由 [#92](https://github.com/Diluka/beidou-pilot/issues/92) 完成。GUI 气泡由 GUI 端提供，无头端按结构化事件交付。
+业务结果另外核对：实际入队需要成员状态，接受交易邀请需要确认交易窗口，最终成交则是不同动作，需要独立明确授权；气泡消失与否作为界面事实单独记录。本接口只响应气泡按钮，物品、金币和成交由对应命令完成。组队成员接口和真实核验仍是缺口，见[客户端能力边界](CLIENT_LIMITATIONS.md)。GUI 气泡由 GUI 端提供，无头端按结构化事件交付。
 
 ## 动作与 Lua
 
@@ -249,7 +249,7 @@ local function main(context)
 end
 ```
 
-`script describe FILE` 显示动态参数帮助及有效默认值。策略的 `context.options` 包含 CLI 值和声明默认值；`context.scene` 带有只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 及静态地形，调用方已有的 `context.route` 按原规则保留。`context.scene.terrain.status` 是 `available`、`unavailable` 或 `unsupported`；只有 `available` 时才提供有来源的 `footholds` 与 `ropes`。换图与场景代次变化由原生 tick 引擎更新只读 `context.scene`，策略在 `context.state` 中管理自己的缓存。
+`script describe FILE` 显示动态参数帮助及有效默认值。策略的 `context.options` 包含 CLI 值和声明默认值；`context.scene` 带有只读身份锚点 `instance_id`、`character_id`、`map_id`、`scene_generation` 及静态地形，调用方已有的 `context.route` 按原规则保留；普通 `script run/start` 当前不自动查询或注入路线。`context.scene.terrain.status` 是 `available`、`unavailable` 或 `unsupported`；只有 `available` 时才提供有来源的 `footholds` 与 `ropes`。换图与场景代次变化由原生 tick 引擎更新只读 `context.scene`，策略在 `context.state` 中管理自己的缓存。
 
 `script status` 保留最新接纳的 `script`，并列出全部会话 `scripts`；每项含 `mode`、状态、原因、会话级 `control_released`，tick 另含有效 gear、实际调用 index/time/delta、场景代次、预算、超限策略及共享 `player` 动作状态。`player` 只区分当前输入槽和已开始的原生动作，不是角色 HP/buff。指定 `--session` 后 `script` 选择对应会话，`scripts` 仍保留全部会话；`command` 是最近命令，不能代替会话身份。同一客户端可追加多个 tick 会话，共享唯一角色状态机，后写覆盖；精确取消只检查目标会话终态及所属输入释放，需要全部停止时显式 `stop` 或 `bridge stop`。
 

@@ -8,7 +8,9 @@
 - Python 只做参数、装载/取消和结果投影，角色控制策略写在 Lua；tick 脚本在入口及每次采样核对原生 instance_id/CID/map/scene_generation，旧规划只作用于原进程。
 - tick Lua 状态契约：`context.game.player` 动作设置返回 `ok, reason`，只表示本 tick 意图草稿受理；观察领域未知字段为 `nil` 或带 status/error，不把缺失字段当已知。核对脚本断言时不要按测试替身可造出的缺字段推断。
 - 写脚本先查 docs/LUA_API.md 导航，接口细节以 docs/LUA_TICK_API.md 为准；公共接口变化同步更新该文档，记忆只保存入口。
-- shared/scripts 只保存随镜像固定的 tick 示例，由调用方显式加载；真实策略写在用户工作台 /work/scripts。示例按实际游戏事实迭代，详见 shared/scripts/AGENTS.md；原生错误从源头修复。
+- 文档按 docs/README.md 分层：当前能力、设计与路线、研究记录分开写；计划中的接口不能写成已支持，历史临时证据路径不能当作可访问入口。
+- shared/scripts 只保存随镜像固定的 tick 示例和校准探针，由调用方显式加载；真实策略写在用户工作台 /work/scripts，应用层（伴游机器人）也放在用户工作台。示例按实际游戏事实迭代，详见 shared/scripts/AGENTS.md；原生错误从源头修复。
+- 伴游机器人固定 headless、玩家 GUI；一个角色一个客户端/一个控制者。聊天、队伍、headless 交互、运行时路线、交易、手动 AP 是待补能力，不能按计划文档宣称已可用；养成走停手→handover→维护窗口→重启。
 - 原版 V17 跳跃绑定为 type5/id53，id51 是 sit；公共 jump 必须调用跳跃，GUI 专属补丁保留在 GUI 适配层。
 - 原生脚本由所属 TickRuntime 持有生命周期。script run 同步等结果，script start 等受理；CLI 中断、等待超时或观察失败只结束等待，已发布脚本继续运行。多会话从 scripts 按 script.id 核对状态，script 仅为最近接纳会话；明确取消用 script cancel --session 并核对该会话终态和放键，客户端另行 close。
 - tick 只在宿主帧结束统一提交草稿；正常结束/abort_commit=true 的一次性动作须先经原生消费再终态，显式取消/期限可打断。方向变更确认与动作释放独立，取消动作不能对其他会话方向产生额外边沿；具体合同见 TickRuntime、两端 tick 适配器及 cli/test/tick_*_contract.cpp。

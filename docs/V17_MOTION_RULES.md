@@ -1,5 +1,8 @@
 # V17 原版普通运动规则（GUI 基准）
 
+> **文档类别：研究记录。** 本文用于理解原版行为和复核证据，不是当前产品契约，也不表示相关能力已经交付。当前接口以 [Tick Lua API](LUA_TICK_API.md) 为准，当前能力与缺口以[客户端能力边界](CLIENT_LIMITATIONS.md)为准。文中 `tmp/` 路径是当时本机证据索引，目录已清理；不要按路径查找，结论以正文中的版本、VA、公式和符号为准。
+
+
 本文整理原版 V17 GUI 客户端（`BeiDou.exe`，SHA256 `1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df`）的**普通地面/普通跳跃/普通空中运动**规则，供 [#239](https://github.com/Diluka/beidou-pilot/issues/239) 的 headless 运动对齐与 [#243](https://github.com/Diluka/beidou-pilot/issues/243) 的 C++ 普通运动预测器共同使用。它是规则依据文档，不定义公共 API；实际实现以对应任务的代码为准。
 
 攀爬、受击、移动技能、场地特例、其他实体及运动包的后续取证统一见 [V17 其余运动规则与 headless 差异](V17_EXTENDED_MOTION_RULES.md)（#250，仅调查记录）；该文同时更正了本文早期的 G1/G4、场地倍率和包尾推断。

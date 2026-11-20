@@ -1,6 +1,27 @@
 # beidou-pilot
 
-面向脚本和 AI 操作者的游戏客户端工具。通过 CLI 观察角色和场景，使用 tick Lua 持续执行游戏动作。无头端用于自动化，北斗 GUI 用于原版界面操作和验证；两端的 Docker 镜像安装同一份 CLI 与 Lua。
+面向脚本和 AI 操作者的北斗游戏客户端工具：通过 CLI 观察角色与场景，用 tick Lua 提交持续动作，在 headless 或原版 GUI 客户端中核对实际游戏结果。
+
+## 项目定位
+
+- **是**：一套可核验的客户端自动化工具。CLI 负责实例、观察、脚本装载/取消和结果投影；tick Lua 负责角色动作；Docker 负责客户端、资源与运行环境隔离。
+- **不是**：游戏服务端、外挂或开箱即用的游戏机器人。仓库不包含服务端实现、数据库、存档或账号；角色策略和玩法流程由使用者编写。
+- **应用层**：伴游机器人（跟随、组队、组队任务、BOSS、可选大模型）是建立在本工具之上的应用层，当前处于设计与分阶段实施中，不是已交付能力。设计见 [伴游机器人设计与路线](docs/COMPANION_BOT.md)。
+- **后端**：机器人固定跑 headless，玩家用原版 GUI；GUI 专属的对话、商店、换装等操作通过维护窗口完成，不与常驻脚本并发。
+
+## 当前能力
+
+| 能力 | 状态 |
+| --- | --- |
+| headless / GUI 客户端、登录与实例生命周期 | 已交付 |
+| CLI 观察：角色、场景、背包、任务、同图玩家、通知 | 按后端交付 |
+| tick Lua：动作槽、预算、会话、取消与放键 | 已交付 |
+| 静态地形/导航数据、世界门户路线只读查询 | 已交付 |
+| 脚本目录包、模块装载、物理/BOSS 观察 | 已交付 |
+| 聊天、队伍、headless 对象交互、运行时跨图路线、交易、手动 AP | 缺口，见 [能力边界](docs/CLIENT_LIMITATIONS.md) |
+| 内置寻路/狩猎/组队任务/伴游机器人 | 不在客户端内置；由用户脚本或应用层实现 |
+
+能力以当前 `capabilities`、领域响应和真实结果为准；文档没有写到的能力不等于已支持。
 
 ## 组件布局
 
@@ -12,11 +33,12 @@ headless/                       无头原生宿主和适配器
 beidou-ijl15/                   原版客户端 DLL 工程和适配器
 shared/
   lua-runtime/                  两端共用的 tick Lua 调度、领域观察与动作槽
-  scripts/                      随镜像固定的 tick 示例
+  scripts/                      随镜像固定的 tick 示例和校准探针
 third_party/                    上游依赖
+docs/                           产品文档、接口契约、研究记录和路线
 ```
 
-宿主统一使用 [workbench](workbenches/workbench)，容器内命令仍叫 `beidou-pilot`。真实配置、账号、角色记录和运行数据均留在主检出目录的 `private/workbenches/`，不纳入版本控制。
+宿主统一使用 `workbenches/workbench`，容器内命令仍叫 `beidou-pilot`。真实配置、账号、角色记录和运行数据留在主检出 `private/workbenches/`，不纳入版本控制。
 
 ## 准备
 
@@ -27,55 +49,46 @@ git submodule update --init --recursive
 workbenches/workbench --help
 ```
 
-先按[工作台指南](workbenches/README.md)准备主检出目录的 `private/workbenches/config/`：`resources.json` 指向只读原版资源，`live.server.json` 和 `dev.server.json` 各指定本区服务器。开发服配置、数据和网络独立于常驻服，各 Git worktree 使用同一套私密目录。
+先按[工作台指南](workbenches/README.md)准备主检出 `private/workbenches/config/`：`resources.json` 指向只读原版资源，`live.server.json` 和 `dev.server.json` 各指定本区服务器。开发服配置、数据和网络独立于常驻服，各 Git worktree 使用同一套私密目录。
 
 | 用途 | 角色标识 | 接续依据 |
 | --- | --- | --- |
 | 常驻服自然游玩与养成 | `live/NAME` | 已授权角色的 `PLAN.md` 与实际游戏进度 |
-| 半常驻开发服的调试、复现与验收 | `dev/NAME` | `STATE.md` 记录角色条件、核对来源和时间，不维护养成进度 |
+| 开发服调试、复现与验收 | `dev/NAME` | `STATE.md` 记录角色条件、来源与核对时间 |
 
-标识映射到 `private/workbenches/live/NAME/` 或 `private/workbenches/dev/NAME/`。每个角色目录有自己的账号文件（`0600`）、可选 `workbench.json`、`scripts/` 和运行记录。角色目录整体挂载到容器 `/work`；两区不共用账号、存档或运行目录。GUI 角色在 `workbench.json` 设置 `{"backend":"beidou"}`。
+角色目录整体挂载到容器 `/work`；`account.json` 权限为 `0600`。GUI 角色在 `workbench.json` 设置 `{"backend":"beidou"}`。
 
 ## 操作工作台
 
-以下在仓库根执行；用本次已授权角色的工作台目录名替换 `NAME`。先列出已有角色并核对环境、角色占用和操作者，再打开客户端。
+以下在仓库根执行；用本次已授权角色的工作台目录名替换 `NAME`。
 
 ```bash
 workbenches/workbench list dev
 workbenches/workbench server dev status
-workbenches/workbench dev/NAME notes
-workbenches/workbench dev/NAME status
 workbenches/workbench dev/NAME plan
+workbenches/workbench dev/NAME status
 workbenches/workbench dev/NAME open
 workbenches/workbench dev/NAME snapshot
 workbenches/workbench dev/NAME capabilities
+workbenches/workbench dev/NAME script run control.lua --seconds 20
 workbenches/workbench dev/NAME close
 ```
 
-`list` 列出两个分区，可加 `live` 或 `dev` 筛选。开发服由 `server dev up` 显式启动，`server dev stop` 停服并保留数据。角色 `close` 只关闭其客户端；离线资源检查 `resources-check` 无需登录。
+`script run` 同步等结果，`script start` 等原生受理；中断等待不会取消已受理会话。需要停止时先 `script status`，再按 `script.id` 显式 `script cancel --session` 并核对终态/放键；客户端关闭另用 `close`。完整参数见 [CLI](docs/CLI.md)，操作流程见 [使用指引](docs/PLAY_GUIDE.md)。
 
-新实例按 `workbench.json.ref`（默认 `main`）的已提交版本构建或复用镜像；GUI Compose 由当前宿主入口提供。已有实例保留启动时的 CLI、内置 Lua 和原生组件，实际版本查 `status` 的 `source_revision/image/run_id`。
+## 文档
 
-日常命令经宿主入口转到所属容器内的 `beidou-pilot`。核对容器归属后也可只读排查：`docker exec CONTAINER beidou-pilot --json status`。脚本 CLI 中断只结束等待，已发布的原生任务继续；等待超时或观察失败时，任务是否停止以当前脚本状态为准。先读当前脚本状态，明确取消用 `script cancel --session`，核对终态和放键；`close` 另行关闭并回收所属容器。Lua 返回或取消后实例继续运行，真实断线或错误会保留退出原因。完整参数见 [CLI](docs/CLI.md)。
+- [文档索引](docs/README.md)：产品文档、契约、应用路线和研究记录的分层入口。
+- [伴游机器人设计与路线](docs/COMPANION_BOT.md)：常驻运行时、组队任务/BOSS、LLM 参谋与分阶段验收。
+- [架构与支持范围](docs/ARCHITECTURE.md)：组件职责、容器/版本、外部资源与两端能力。
+- [CLI](docs/CLI.md)、[控制协议](docs/CONTROL.md)、[Tick Lua API](docs/LUA_TICK_API.md)：命令、脚本生命周期和公开接口。
+- [能力边界](docs/CLIENT_LIMITATIONS.md)：当前缺口与下一步能力建设。
+- [使用指引](docs/PLAY_GUIDE.md)：AI 操作者的最小上手、核对和交接流程。
+- [业务地图](docs/business-map/README.md)：按领域查看用户结果、责任边界和源码入口。
+- [V17 运动规则](docs/V17_MOTION_RULES.md)、[扩展运动规则](docs/V17_EXTENDED_MOTION_RULES.md)：原版运动研究记录，不是产品契约。
+- [依赖管理](docs/DEPENDENCIES.md)、[CI 与合并验收](docs/CI.md)、[开发约定](AGENTS.md)：维护与交付流程。
 
-## 文档与开发
-
-- [北斗游戏攻略技能](.agents/skills/beidou-game-guide/SKILL.md)：收录彩虹岛与骑士团新手任务、青苹果乐园支线、冒险家三转任务、冒险家二转三转及骑士团一至三转终态加点；各篇注明来源与实测范围。
-- [业务地图](docs/business-map/README.md)：按领域查看用户结果、责任边界、主要流程与源码入口。
-- [AI 操作者的客户端使用指引](docs/PLAY_GUIDE.md)：确认授权目标与角色占用，完成上手观察、动作核对和停止交接。
-- [客户端操作技能](.agents/skills/beidou-pilot-client/SKILL.md)：供新会话接续工作台、登录已有角色，并区分账号注册与首次建角；可显式调用 `$beidou-pilot-client`。
-- [命令使用](docs/CLI.md)：实例、观察、动作、GUI 入口和错误结果。
-- [Lua API 导航](docs/LUA_API.md)：指向 [tick API](docs/LUA_TICK_API.md)，说明入口、档位、只读领域、动作槽、参数、返回值与执行语义。
-- [Lua 示例目录说明](shared/scripts/README.md)：随镜像固定的 tick 示例及其运行方式。
-- [Lua 与控制协议](docs/CONTROL.md)：脚本、控制权、取消和效果边界。
-- [架构与支持范围](docs/ARCHITECTURE.md)：代码职责、外部资源、两端能力和限制。
-- [V17 普通运动规则](docs/V17_MOTION_RULES.md)：原版 GUI 普通地面/跳跃/空中运动的参数、倍率缺省、分支公式、真机基线与未闭环项；供 headless 普通运动对齐与 C++ 运动预测复用。
-- [V17 其余运动规则与差异](docs/V17_EXTENDED_MOTION_RULES.md)：攀爬、受击、移动技能、场地特例、实体及运动包的原版规则、headless差异和后续调整记录。
-- [客户端能力边界与缺口索引](docs/CLIENT_LIMITATIONS.md)：实际使用成本、已记录的需求和已有能力的适用范围。
-- [依赖管理](docs/DEPENDENCIES.md)：子模块、派生源码与许可来源。
-- [CI 与合并验收](docs/CI.md)：PR 自动检查、本地复现入口及与真实游戏试用的分工。
-- [开放功能需求](https://github.com/Diluka/beidou-pilot/issues?q=is%3Aissue%20is%3Aopen%20type%3AFeature)：按独立用户结果收集；缺陷和领域筛选见 [Issue 分类](docs/ISSUE_LABELS.md)。
-- [开发约定](AGENTS.md)：需求收集、任务拆分、CI 与真实客户端验收、PR 合并、维护规则及 Serena 项目记忆。
+## 开发与验收
 
 从仓库根运行离线测试：
 
@@ -83,6 +96,8 @@ workbenches/workbench dev/NAME close
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
 ```
 
-项目采用 [AGPL-3.0-only](LICENSE)，第三方保留各自授权，详见 [NOTICE](NOTICE)。外部游戏客户端与素材不属于本项目的软件许可范围。
+离线合同、镜像构建和真实游戏结果分别判断。涉及客户端行为时，在开发服准备匹配样本并用真实客户端核对；纯文档或不改变运行行为的改动说明“游戏试用不适用”及理由。开发约定见 [AGENTS.md](AGENTS.md)，CI 见 [docs/CI.md](docs/CI.md)。
 
-项目开发记忆入口为 [.serena/memories/core.md](.serena/memories/core.md)。使用仓库真实绝对路径激活 Serena 项目 `beidou-pilot`；当前只启用记忆，不启动语言服务，维护规则见 [AGENTS.md](AGENTS.md)。
+项目采用 [AGPL-3.0-only](LICENSE)，第三方保留各自授权，详见 [NOTICE](NOTICE)。外部游戏客户端与素材不属于本项目软件许可范围。
+
+项目开发记忆入口为 [.serena/memories/core.md](.serena/memories/core.md)。使用仓库真实绝对路径激活 Serena 项目 `beidou-pilot`；当前只启用项目记忆，不启动语言服务。

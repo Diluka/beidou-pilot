@@ -1,5 +1,8 @@
 # V17 其余运动规则与 headless 差异
 
+> **文档类别：研究记录。** 本文用于理解原版行为和复核证据，不是当前产品契约，也不表示相关能力已经交付。当前接口以 [Tick Lua API](LUA_TICK_API.md) 为准，当前能力与缺口以[客户端能力边界](CLIENT_LIMITATIONS.md)为准。文中 `tmp/` 路径是当时本机证据索引，目录已清理；不要按路径查找，结论以正文中的版本、VA、公式和符号为准。
+
+
 本文是 [#250](https://github.com/Diluka/beidou-pilot/issues/250) 的调查交付：挖掘原版规则、保存可复核依据、记录 headless 后续调整项。普通地面/跳跃/空中规则继续以 [V17_MOTION_RULES.md](V17_MOTION_RULES.md) 为权威入口；本文覆盖其余状态、场地特例、实体与运动包，**本轮未调整 headless 实现**。
 
 ## 1. 版本、证据与阅读方式
