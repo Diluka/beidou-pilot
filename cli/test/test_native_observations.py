@@ -299,8 +299,7 @@ class NativeObservationContract(unittest.TestCase):
         self.assertEqual(["1", "native-1", self.requests[0][2], "scene"], self.requests[0])
 
     def test_bootstrap_uses_this_container_before_native_observation_is_ready(self) -> None:
-        with patch("beidou_pilot.observations.verify_binaries", return_value=True):
-            session = active_session(self.root, "beidou")
+        session = active_session(self.root, "beidou")
         self.assertEqual("bridge-contract", session.run_id)
         (session.run_dir / "renderer.log").write_text("OpenGL renderer string: Mesa Intel(R) Graphics (ADL GT2)\n")
         with patch("beidou_pilot.observations.active_session", return_value=None):

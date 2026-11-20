@@ -14,7 +14,6 @@ import time
 from typing import Iterator, cast
 import uuid
 
-from .binaries import CLIENT_SHA256, verify_binaries
 from .errors import ClientError, JsonObject, JsonValue
 from .instances import InstancePaths, selected_instance
 from .runtime import load_runtime
@@ -47,8 +46,6 @@ def active_session(root: Path, backend: str, instance: str = "default") -> Sessi
     runtime = load_runtime(root, backend, instance)
     if not runtime.running:
         return None
-    if backend == "beidou" and not verify_binaries(root):
-        raise ClientError("native_observation_unsupported", "当前客户端未登记原生观察构建。")
     return Session(runtime.container_id, runtime.run_id, runtime.run_dir, backend, runtime.image)
 
 
@@ -98,8 +95,6 @@ class NativeObserver:
         client: JsonObject = {"container_id": self.session.container_id[:12], "run_id": self.session.run_id,
                               "run_dir": str(self.session.run_dir), "instance_id": state["instance_id"],
                               "runtime_image": self.session.image}
-        if self.backend == "beidou":
-            client["binary_sha256"] = CLIENT_SHA256
         return {"source": "client-native-api", "readonly": True, "backend": self.backend, "instance": self.instance,
                 "observed_at": datetime.fromtimestamp(cast(int, state["observed_at_ms"]) / 1000,
                                                        timezone.utc).isoformat(),

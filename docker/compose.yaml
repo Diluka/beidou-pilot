@@ -23,7 +23,7 @@ services:
     devices:
       - /dev/dri/renderD128:/dev/dri/renderD128
     environment:
-      TARGET_IP: ${TARGET_IP:?请通过 beidou-pilot 核验并选择隔离目标}
+      TARGET_IP: ${TARGET_IP:?请通过 beidou-pilot 选择目标服务}
       TARGET_CONTAINER_ID: ${TARGET_CONTAINER_ID:?需要已核验的目标容器身份}
       CLIENT_IMAGE_ID: ${CLIENT_IMAGE_ID:?需要已选择的 GUI 镜像 ID}
       RENDER_GID: ${RENDER_GID:?需要渲染设备的宿主组 ID}
@@ -43,6 +43,8 @@ services:
       beidou.target.id: ${TARGET_CONTAINER_ID:?需要已核验的目标容器身份}
       beidou.character.id: ${CHARACTER_ID:-}
       beidou.world: ${WORLD_ID:?需要角色大区索引}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - target
     volumes:

@@ -1,5 +1,4 @@
 {
   "project": "beidou-pilot-dev",
-  "service": "beidou-server-all",
-  "network": "beidou-pilot-dev_game"
+  "service": "beidou-server-all"
 }

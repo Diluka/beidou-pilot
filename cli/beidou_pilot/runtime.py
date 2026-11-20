@@ -46,8 +46,6 @@ class ContainerRuntime:
         return True
 
     def verify_request(self, profile: LoginProfile, server: Path | None = None) -> None:
-        if (profile.character_id, profile.world, profile.channel) != (self.character_id, self.world, self.channel):
-            raise ClientError("character_mismatch", "本容器的角色、世界或频道与账号配置不同，未切换客户端。")
         if server is not None:
             try:
                 requested = json.loads(server.read_text())

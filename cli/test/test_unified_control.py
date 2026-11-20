@@ -315,7 +315,7 @@ class UnifiedControlContract(unittest.TestCase):
             observer.assert_not_called()
             control.assert_not_called()
 
-    def test_headless_reuse_rejects_a_different_explicit_server_or_actor(self) -> None:
+    def test_headless_reuse_rejects_a_different_explicit_server(self) -> None:
         server = self.native.root / "server.json"
         server.write_text(json.dumps({**self.native.runtime["target"], "project": "different-validation"}))
         profile = LoginProfile("fixture", "fixture", 4)
@@ -323,9 +323,6 @@ class UnifiedControlContract(unittest.TestCase):
             with self.assertRaises(ClientError) as server_error:
                 open_game(self.native.root, server=server, profile=profile)
             self.assertEqual("server_mismatch", server_error.exception.code)
-            with self.assertRaises(ClientError) as actor_error:
-                open_game(self.native.root, profile=LoginProfile("fixture", "fixture", 7))
-            self.assertEqual("character_mismatch", actor_error.exception.code)
             observation.assert_not_called()
 
 

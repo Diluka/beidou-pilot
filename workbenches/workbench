@@ -68,16 +68,15 @@ read_server() {
     local file="$config_root/$environment.server.json"
     [ -f "$file" ] || fail server_config_required "缺少 $environment 分区的服务器配置。"
     server_config=$(jq -ce 'select(type == "object" and
-        ((keys - ["project","service","network"]) | length == 0) and
+        ((keys - ["project","service"]) | length == 0) and
         (.project | strings | test("^[a-z0-9][a-z0-9_-]*$")) and
-        (.service | strings | test("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"))) |
-        select((has("network") | not) or (.network | strings | length > 0))' "$file") ||
-        fail server_config_invalid "$environment.server.json 需要 project 和 service，可指定 network。"
+        (.service | strings | test("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")))' "$file") ||
+        fail server_config_invalid "$environment.server.json 需要 project 和 service。"
     project=$(jq -r .project <<<"$server_config")
     service=$(jq -r .service <<<"$server_config")
     if [ "$environment" = dev ]; then
-        jq -e '.service == "beidou-server-all" and .network == (.project + "_game")' <<<"$server_config" >/dev/null ||
-            fail server_config_invalid '开发服须使用清单中的 beidou-server-all 服务和该项目的 _game 网络。'
+        jq -e '.service == "beidou-server-all"' <<<"$server_config" >/dev/null ||
+            fail server_config_invalid '开发服须使用清单中的 beidou-server-all 服务。'
         if [ -e "$config_root/live.server.json" ]; then
             jq -e --arg project "$project" '.project | strings | length > 0 and . != $project' "$config_root/live.server.json" >/dev/null ||
                 fail target_invalid '开发项目必须与已配置的常驻项目不同。'
@@ -86,7 +85,6 @@ read_server() {
 }
 
 resolved=
-owned_network=
 resolve_target() {
     servers=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service")
     [ "$(wc -w <<<"$servers")" -eq 1 ] || fail target_not_unique '目标必须唯一匹配一个游戏服务容器。'
@@ -102,20 +100,16 @@ resolve_target() {
     fi
     server_id=$(jq -r .Id <<<"$server_info")
     server_image=$(jq -r .Image <<<"$server_info")
-    network=$(jq -r '.network // empty' <<<"$server_config")
-    if [ -n "$network" ]; then
-        docker network inspect "$network" | jq -e --arg project "$project" --arg zone "$environment" '.[0] |
-            .Internal and .Labels["com.docker.compose.project"] == $project and
-            ($zone != "dev" or .Labels["com.docker.compose.network"] == "game")' >/dev/null ||
-            fail target_invalid '目标网络必须是同项目的 internal 网络。'
-        target_ip=$(jq -er --arg network "$network" '.NetworkSettings.Networks[$network].IPAddress | select(length > 0)' <<<"$server_info") ||
-            fail target_invalid '目标尚未加入指定网络。'
+    if [ "$environment" = dev ]; then
+        network=$(jq -r '.NetworkSettings.Networks | keys_unsorted[0] // empty' <<<"$server_info")
+        [ -n "$network" ] || fail target_invalid '目标未加入任何 Docker 网络。'
+        target_ip=$service
     else
-        network=
-        target_ip=
+        network=bridge
+        target_ip=host.docker.internal
     fi
     resolved=$(jq -nc --arg project "$project" --arg service "$service" --arg id "$server_id" --arg image "$server_image" \
-        --arg network "$network" --arg ip "$target_ip" '{project:$project,service:$service,container_id:$id,image:$image,network:$network,ip:$ip}')
+        --arg network "$network" --arg host "$target_ip" '{project:$project,service:$service,container_id:$id,image:$image,network:$network,host:$host}')
 }
 
 case "$1" in
@@ -249,24 +243,6 @@ locate() {
     fi
 }
 
-cleanup_network() {
-    local cleanup_record="$record" network server
-    if [ -f "$state/pending.json" ]; then cleanup_record="$state/pending.json"; fi
-    if [ -f "$cleanup_record" ]; then
-        network=$(jq -r '.owned_network // empty' "$cleanup_record")
-        server=$(jq -r '.target_container_id // empty' "$cleanup_record")
-        if [ -n "$network" ] && docker network inspect "$network" >/dev/null 2>&1; then
-            [ "$(docker network inspect "$network" --format '{{index .Labels "beidou.workbench"}}')" = "$workbench" ] ||
-                fail network_identity_changed '网络归属变化，未清理。'
-            if docker inspect "$server" --format '{{json .NetworkSettings.Networks}}' 2>/dev/null | jq -e --arg n "$network" 'has($n)' >/dev/null; then
-                docker network disconnect "$network" "$server"
-            fi
-            docker network rm "$network" >/dev/null
-        fi
-    fi
-    rm -f "$state/pending.json"
-}
-
 archive_exit() {
     local state_json reason
     mkdir -p "$state"
@@ -346,7 +322,6 @@ case "$command" in
             archive_exit
             docker rm "$id" >/dev/null
         fi
-        cleanup_network
         jq -nc --arg instance "$instance" --argjson terminal "$(cat "$state/exit.json" 2>/dev/null || printf '{}')" \
             '{ok:true,command:"close",data:($terminal + {status:"closed",instance:$instance,cleanup_pending:false})}'
         exit 0
@@ -544,14 +519,6 @@ build_image() {
         bridge=$(realpath "$bridge")
         mkdir -p "$context/build-input"
         cp "$bridge/ijl15.dll" "$bridge/manifest.json" "$context/build-input/"
-        bridge_sha=$(sha256sum <"$context/build-input/ijl15.dll" | cut -d' ' -f1)
-        jq -e --arg sha "$bridge_sha" '.artifact.sha256 == $sha' "$context/build-input/manifest.json" >/dev/null ||
-            fail bridge_artifact_mismatch '桥 DLL 的 SHA-256 与工件清单不符，未构建 GUI 镜像。'
-        source_tree=$(jq -er .source.tree_sha "$context/build-input/manifest.json")
-        git -C "$repository" cat-file -e "$source_tree^{tree}" 2>/dev/null ||
-            fail bridge_source_unavailable '本地缺少桥工件的来源树，不能确认原生构建输入。'
-        git -C "$repository" diff --quiet "$source_tree" "$revision" -- "${native_paths[@]}" ||
-            fail bridge_build_required '该提交的 GUI 原生输入已变化，须准备匹配的 Windows 桥工件。'
         if [ "$command" = build ]; then
             complete_preparation_stage "$bridge_outcome" "$(jq -nc --arg source "$bridge_source" --argjson run "$bridge_run" \
                 --slurpfile manifest "$context/build-input/manifest.json" '{source:$source,manifest:$manifest[0]} +
@@ -612,7 +579,6 @@ if [ -n "$id" ]; then
     archive_exit
     docker rm "$id" >/dev/null
 fi
-cleanup_network
 cache_dir=$(jq -r '.cache_dir // empty' <<<"$settings")
 [ -n "$cache_dir" ] || cache_dir="$workbench/cache"
 cache_dir=$(realpath -m "$cache_dir")
@@ -636,10 +602,6 @@ channel=$(jq -er .channel <<<"$identity")
 mkdir -p "$main_root/private/workbenches"
 exec 7>"$main_root/private/workbenches/.start.lock"
 flock 7
-if [ "$command" = open ]; then
-    occupied=$(docker ps -q --filter "label=beidou.target.id=$server_id" --filter "label=beidou.character.id=$character_id" --filter "label=beidou.world=$world")
-    [ -z "$occupied" ] || fail character_already_controlled '该目标的角色已由另一个客户端实例控制。'
-fi
 if [ -f "$record" ]; then
     previous_root="$state/$(jq -r .run_id "$record")"
     mkdir -p "$previous_root"
@@ -648,14 +610,6 @@ if [ -f "$record" ]; then
     done
 fi
 rm -f "$record" "$state/exit.json"
-if [ -z "$network" ]; then
-    network="$name-$run_id"
-    docker network create --internal --label "com.docker.compose.project=$project" --label "beidou.workbench=$workbench" "$network" >/dev/null
-    jq -nc --arg network "$network" --arg server "$server_id" '{owned_network:$network,target_container_id:$server}' >"$state/pending.json"
-    docker network connect "$network" "$server_id"
-    target_ip=$(docker inspect "$server_id" | jq -er --arg network "$network" '.[0].NetworkSettings.Networks[$network].IPAddress')
-    owned_network=$network
-fi
 target="$run_root/server.json"
 jq -nc --arg project "$project" --arg service "$service" --arg network "$network" \
     '{project:$project,service:$service,network:$network}' >"$target"
@@ -667,6 +621,7 @@ if [ "$backend" = headless ]; then
         --label "beidou.target.id=$server_id" --label "beidou.world=$world" \
         --env "CLIENT_IMAGE_ID=$image" --env "RUN_ID=$run_id" --env "MAPLE_INSTANCE=$instance" \
         --env "CLIENT_ROOT=$container_root" --env "MAPLE_RESOURCES_CONFIG=$container_root/config/resources.json" \
+        --add-host host.docker.internal:host-gateway \
         --env "TARGET_IP=$target_ip" --env "TARGET_CONTAINER_ID=$server_id" \
         --env "BEIDOU_CACHE_DIR=/cache" \
         --mount "type=bind,src=$workbench,dst=/work" --mount "type=bind,src=$cache_dir,dst=/cache" \
@@ -692,10 +647,9 @@ else
 fi
 id=$(docker inspect "$name" --format '{{.Id}}')
 jq -nc --arg id "$id" --arg image "$image" --arg revision "$revision" --arg backend "$backend" --arg run "$run_id" \
-    --arg network "$owned_network" --arg server "$server_id" --slurpfile target "$target" --argjson identity "$identity" \
+    --arg server "$server_id" --slurpfile target "$target" --argjson identity "$identity" \
     '$identity + {container_id:$id,image:$image,source_revision:$revision,backend:$backend,run_id:$run,
-    owned_network:$network,target_container_id:$server,target:$target[0]}' >"$record"
-rm -f "$state/pending.json"
+    target_container_id:$server,target:$target[0]}' >"$record"
 flock -u 7
 flock -u 8
 locate

@@ -20,7 +20,7 @@
 - 两端镜像安装同一份 CLI、tick Lua 运行时和 Lua，各自提供原生环境。新实例按 `workbench.json.ref`（默认 `main`）的已提交版本构建或复用镜像；GUI Compose 使用当前宿主启动器配套版本。已有实例通过 docker exec 使用启动时的代码，不挂载宿主开发源码。
 - 客户端 Docker 定义在 `docker/`：`docker/headless/Dockerfile` 与 `docker/gui/Dockerfile` 使用根构建上下文，`docker/compose.yaml` 装配 GUI 客户端。GUI 桥默认取得所选提交成功 CI 的 Windows 工件；显式复用工件也须匹配原生输入。原版客户端 `/client` 与配置的 `Data/` `/data` 只读挂载，两端通过共享原生 IMG 解析器读取。资源格式和来源变更须单独验收。游戏资源、账号、配置、角色记录、用户 Lua 与运行数据不进入镜像或构建上下文。
 - Docker 负责进程和资源生命周期，宿主 close 正常发信号并核对所属容器退出；容器内 CLI 直接使用本容器进程、桥和显示环境，不挂 Docker socket。桥仍负责单次 Lua 取消、放键与游戏效果确认；不维护宿主游戏 PID 查杀或进程期限兼容。
-- 客户端通过已核验的 internal 目标网络连接游戏服务器。
+- 客户端通过已核验的目标服务连接游戏服务器：开发服使用默认 Compose 网络和服务名，常驻服使用宿主发布端口和 host-gateway。
 
 ## 开发工作目录
 

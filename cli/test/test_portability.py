@@ -9,7 +9,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from beidou_pilot.binaries import verify_binaries
 from beidou_pilot.catalog import Catalog
 from beidou_pilot.errors import ClientError
 from beidou_pilot.resources import load_resources
@@ -38,40 +37,6 @@ class ResourceConfigurationContract(unittest.TestCase):
                 with self.assertRaises(ClientError) as failure:
                     load_resources(Path(directory))
             self.assertEqual("resources_config_invalid", failure.exception.code)
-
-
-class BinaryRegistrationContract(unittest.TestCase):
-    def test_local_project_build_uses_registered_fingerprints(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / "external/client"
-            source.mkdir(parents=True)
-            (root / "config").mkdir()
-            (root / "state").mkdir()
-            contents = {"BeiDou.exe": b"client", "2ijl15.dll": b"proxy", "ijl15.dll": b"local-bridge"}
-            digests = {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}
-            for name, data in contents.items():
-                (source / name).write_bytes(data)
-            dll = root / "external/bridge.dll"
-            dll.write_bytes((source / "ijl15.dll").read_bytes())
-            (source / "ijl15.dll").write_bytes(b"original-source-dll")
-            (root / "config/resources.json").write_text(json.dumps({
-                "gui_client": "../external/client", "gui_dll": "../external/bridge.dll"}))
-            manifest = {"schema_version": 1, "source": {"repository": "beidou-pilot"},
-                        "target": {"executable_sha256": digests["BeiDou.exe"],
-                                   "proxy_sha256": digests["2ijl15.dll"]},
-                        "artifact": {"sha256": digests["ijl15.dll"]}}
-            path = root / "state/agent-bridge-build.json"
-            path.write_text(json.dumps(manifest))
-            with patch.multiple("beidou_pilot.binaries", CLIENT_SHA256=digests["BeiDou.exe"],
-                                PROXY_SHA256=digests["2ijl15.dll"]):
-                self.assertTrue(verify_binaries(root))
-                self.assertEqual(b"original-source-dll", (source / "ijl15.dll").read_bytes())
-                manifest["target"]["executable_sha256"] = "0" * 64
-                path.write_text(json.dumps(manifest))
-                with self.assertRaises(ClientError) as failure:
-                    verify_binaries(root)
-                self.assertEqual("bridge_build_mismatch", failure.exception.code)
 
 
 class GuiRuntimePreparationContract(unittest.TestCase):

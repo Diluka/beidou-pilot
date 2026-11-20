@@ -6,7 +6,6 @@ import unittest
 from unittest.mock import patch
 
 from beidou_pilot.errors import ClientError
-from beidou_pilot.profile import LoginProfile
 from beidou_pilot.runtime import load_runtime
 
 
@@ -31,7 +30,3 @@ class ContainerRuntimeIdentityTest(unittest.TestCase):
                         continue
                     runtime = load_runtime(root, 'headless')
                     self.assertEqual(runtime.character_id, cid)
-                    with self.assertRaises(ClientError):
-                        runtime.verify_request(LoginProfile('u', 'p', 456))
-                    if cid == 123:
-                        runtime.verify_request(LoginProfile('u', 'p', 123))

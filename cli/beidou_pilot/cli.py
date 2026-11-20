@@ -376,12 +376,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .resources import load_resources
 
         resources = load_resources(backend.root)
-        if backend.name == "beidou":
-            from .binaries import verify_binaries
-
-            available = verify_binaries(backend.root)
-        else:
-            available = resources.game_data.is_dir()
+        available = resources.gui_client.is_dir() if backend.name == "beidou" else resources.game_data.is_dir()
         return {
             "backend": backend.name,
             "root": str(backend.root),

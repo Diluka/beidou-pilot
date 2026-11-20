@@ -45,9 +45,6 @@ def open_game(root: Path, *, profile: LoginProfile, server: Path | None = None,
         if observed["running"] is False:
             raise ClientError("headless_start_failed", "本容器原生客户端已退出，请从工作台入口核对退出日志。")
         if observed["stage"] == "IN_GAME":
-            character = cast(JsonObject, observed["character"])
-            if character["id"] != profile.character_id:
-                raise ClientError("character_mismatch", "实际入图角色与账号配置不符，保留本容器。")
             return {**observed, "ready": True, "started": False, "resumed": True}
         time.sleep(.1)
     raise ClientError("headless_open_timeout", "无头客户端未在期限内入图，保留现场。",

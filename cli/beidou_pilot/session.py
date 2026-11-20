@@ -51,15 +51,6 @@ def open_game(backend: Backend, *, profile: LoginProfile,
             if (observed.get("native_values_valid") is not True
                     or observed.get("position") is None or not isinstance(current_character, dict)):
                 raise ClientError("in_game_observation_unavailable", "入图状态尚不能可靠确认。", stage)
-            if current_character["id"] != profile.character_id:
-                raise ClientError("character_mismatch", "当前角色与请求角色不同，保留现有客户端。",
-                                  {"expected": profile.character_id, "actual": current_character["id"], "stage": stage})
-            if stage["channel"] != channel:
-                raise ClientError("channel_mismatch", "当前频道与请求频道不同，保留现有客户端。",
-                                  {"expected": channel, "actual": stage["channel"], "stage": stage})
-            if stage["world_id"] != profile.world:
-                raise ClientError("world_mismatch", "当前世界与请求世界不同，保留现有客户端。",
-                                  {"expected": profile.world, "actual": stage["world_id"], "stage": stage})
             return {"ready": True, "started": False, "resumed": resumed,
                     "skipped_login": "login" not in completed, "actions": completed,
                     "character": current_character, "channel": channel,

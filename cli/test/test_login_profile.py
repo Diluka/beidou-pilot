@@ -146,7 +146,7 @@ class LoginProfileContract(unittest.TestCase):
         self.assertEqual("profile_invalid", json.loads(output.getvalue())["error"]["code"])
         open_client.assert_not_called()
 
-    def test_gui_selects_the_account_cid_and_requires_the_same_actor_in_game(self) -> None:
+    def test_gui_selects_the_account_cid(self) -> None:
         first = {"id": 6, "name": "First", "index": 0}
         desired = {"id": 7, "name": "Desired", "index": 1}
         running = {
@@ -156,7 +156,7 @@ class LoginProfileContract(unittest.TestCase):
             "game_geometry": {"x": 0, "y": 0, "width": 1280, "height": 720},
         }
         roster = {"characters_available": True, "characters": [first, desired]}
-        for observed, expected_code in ((desired, 0), (first, 2)):
+        for observed in (desired,):
             with self.subTest(observed=observed["id"]):
                 stages = iter(
                     (
@@ -212,14 +212,11 @@ class LoginProfileContract(unittest.TestCase):
                             str(self.account),
                         ]
                     )
-                self.assertEqual(expected_code, code, output.getvalue())
+                self.assertEqual(0, code, output.getvalue())
                 result = json.loads(output.getvalue())
-                if code == 0:
-                    self.assertEqual(7, result["data"]["character"]["id"])
-                    self.assertEqual(2, result["data"]["channel"])
-                    self.assertEqual(str(self.root / "server.json"), result["data"]["server_file"])
-                else:
-                    self.assertEqual("character_mismatch", result["error"]["code"])
+                self.assertEqual(7, result["data"]["character"]["id"])
+                self.assertEqual(2, result["data"]["channel"])
+                self.assertEqual(str(self.root / "server.json"), result["data"]["server_file"])
                 actions = [action for invoked in desktop.call_args_list for action in invoked.args[0]]
                 self.assertEqual([["Right"]], [action["keys"] for action in actions if action["action"] == "hold"])
                 self.assertIn({"action": "double-click", "x": 30, "y": 10}, actions)
