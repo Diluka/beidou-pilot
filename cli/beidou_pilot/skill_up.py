@@ -193,7 +193,7 @@ def skill_up_once(backend: Backend, skill_id: int, expected: tuple | None = None
                 current_sp = current["skill_points"]
             if updated is not None and updated["level"] == level + 1 and current_sp == sp - 1:
                 return {"skill_id": skill_id, "level_before": level, "level_after": level + 1,
-                        "sp_before": sp, "sp_after": sp - 1}
+                        "sp_before": sp, "sp_after": sp - 1, "request_id": request_id, "run_id": run}
         except ClientError as error:
             if error.code == "skill_up_unknown":
                 raise

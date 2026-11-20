@@ -85,6 +85,16 @@ class SkillUpCliTests(unittest.TestCase):
         self.assertEqual(len(caught.exception.details["confirmed"]), 1)
         once.assert_called_once()
 
+    def test_gui_batch_allocations_preserve_request_and_run_ids(self):
+        args = parser().parse_args(['skill-up', '1001003', '--points', '2'])
+        backend = SimpleNamespace(root=Path('/nonexistent'), instance='default', name='beidou')
+        states = [('i', 'r', 1, 3, 0, 1, 2), ('i', 'r', 1, 2, 1, 1, 1)]
+        allocations = [{'request_id': 'a' * 32, 'run_id': 'r'}, {'request_id': 'b' * 32, 'run_id': 'r'}]
+        with (patch('beidou_pilot.skill_up.preflight_skill_up', side_effect=states),
+              patch('beidou_pilot.skill_up.skill_up_once', side_effect=allocations)):
+            result = dispatch(backend, args)
+        self.assertEqual(result['allocations'], allocations)
+
     def test_gui_batch_gate_rejection_preserves_confirmed(self):
         args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
         backend = SimpleNamespace(root=Path("/nonexistent"), instance="default", name="beidou")

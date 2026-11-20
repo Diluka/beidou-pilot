@@ -236,6 +236,7 @@ class NativeSkillRequestTest(unittest.TestCase):
             result = skill_up_once(backend, 2101002, before)
         publish.assert_called_once_with(backend, 'i', 'r', 8, 7, 2101002, 2)
         self.assertEqual((result['level_after'], result['sp_after']), (4, 2))
+        self.assertEqual((result['request_id'], result['run_id']), ('request', 'r'))
 
     def test_rejected_response_is_not_replayed(self):
         with tempfile.TemporaryDirectory() as directory:
