@@ -33,8 +33,16 @@ int main() {
     assert(!Parse("1 instance run bad 1 1 1 1 1", request));
     assert(!Parse("1 instance run " + id + " 1 1 1 1 1 extra", request));
     assert(!Parse("1 instance run 0123456789ABCDEF0123456789ABCDEF 1 1 1 1 1", request));
-    assert(SupportedSkill(100, 1000) && !SupportedSkill(100, 1001) && !SupportedSkill(210, 1000));
-    assert(SupportedSkill(100, 1001005) && SupportedSkill(210, 2101005));
+    for (auto job : {100u, 210u}) {
+        for (auto skill : {1000u, 1001u, 1002u})
+            assert(SupportedSkill(job, skill) && BeginnerSkill(skill));
+        assert(!SupportedSkill(job, 1003) && !SupportedSkill(job, 10001000));
+    }
+    assert(!SupportedSkill(200, 1001) && !BeginnerSkill(1003));
+    assert(SupportedSkill(100, 1001005));
+    for (auto skill : {2100000u, 2101001u, 2101002u, 2101003u, 2101004u, 2101005u})
+        assert(SupportedSkill(210, skill));
+    assert(!SupportedSkill(210, 2101006));
     assert(!SupportedSkill(210, 1001005) && !SupportedSkill(211, 2101005));
     assert(Parse("1 instance run " + id + " 7 123 1001005 3 123456789", request));
     Eligibility state{true, 7, 123, 100, 3, 20, 17, 0};
@@ -75,6 +83,33 @@ int main() {
     assert(!ParseReconcile(line + " extra", reconciliation, originalId));
     assert(!ParseReconcile("1 instance run " + id + " 8 123 1001005 2 123456789 " + id, reconciliation, originalId));
     assert(ParseReconcile(line, reconciliation, originalId));
+    // Exercise the same pool selector used by the bridge for admissions,
+    // pending confirmation and explicit reconciliation.
+    for (auto firstSkill : {1000u, 1000000u}) {
+        const auto nextSkill = BeginnerSkill(firstSkill) ? 1000000u : 1001u;
+        std::uint32_t normal = 8, beginnerPoints = 5, selected = 0;
+        auto readBeginner = [&](std::uint32_t& out) { out = beginnerPoints; return true; };
+        Request firstRequest = request; firstRequest.skill = firstSkill;
+        assert(SelectPoints(firstSkill, normal, readBeginner, selected));
+        PendingFence transition;
+        transition.Arm(firstRequest, 100, 1, selected);
+        if (BeginnerSkill(firstSkill)) --beginnerPoints; else --normal;
+        std::uint32_t prior = 0, next = 0;
+        assert(SelectPoints(firstSkill, normal, readBeginner, prior));
+        assert(SelectPoints(nextSkill, normal, readBeginner, next));
+        assert(!transition.Confirm(123, 100, 2, next)); // wrong pool cannot confirm
+        assert(ReconcileObserved(transition, firstRequest, firstRequest.requestId, firstRequest.scene, 1, 100, 2, prior));
+        assert(!transition.pending);
+        assert(next == (BeginnerSkill(nextSkill) ? beginnerPoints : normal));
+    }
+    for (auto skill : {1000u, 1001u, 1002u}) {
+        Request beginnerPending = request; beginnerPending.skill = skill;
+        PendingFence separate;
+        separate.Arm(beginnerPending, 210, 1, 4);
+        assert(BeginnerSkill(separate.skill));
+        assert(!separate.Confirm(123, 210, 2, 9)); // ordinary SP is not the beginner pool
+        assert(separate.Confirm(123, 210, 2, 3));
+    }
     PendingFence fence;
     fence.Arm(request, 100, 17, 3);
     assert(fence.Matches(reconciliation, id));

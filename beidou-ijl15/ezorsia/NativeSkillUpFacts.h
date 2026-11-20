@@ -28,6 +28,7 @@ inline std::map<std::uint32_t, std::uint32_t> MapRecords(Reader read, std::uint3
     if (table && pointers.size() != buckets * 4) throw NativeObservation::ReadError("short ZMap buckets");
     std::set<A> visited;
     std::map<A, A> result;
+    std::vector<std::pair<A, std::vector<unsigned char>>> nodeSnapshots;
     for (std::size_t i = 0; i < pointers.size(); i += 4) {
         auto node = at(pointers, i);
         while (node) {
@@ -36,12 +37,114 @@ inline std::map<std::uint32_t, std::uint32_t> MapRecords(Reader read, std::uint3
             const auto data = read(node, 16);
             if (data.size() != 16 || at(data, 0) != 0xAF3314 || !result.emplace(at(data, 8), at(data, 12)).second)
                 throw NativeObservation::ReadError("invalid skill ZMap node");
+            nodeSnapshots.emplace_back(node, data);
             node = at(data, 4);
         }
     }
+    for (const auto& snapshot : nodeSnapshots)
+        if (read(snapshot.first, snapshot.second.size()) != snapshot.second)
+            throw NativeObservation::ReadError("skill ZMap node changed");
     if (visited.size() != count || read(address, 24) != header || (table && read(table, pointers.size()) != pointers))
         throw NativeObservation::ReadError("skill ZMap changed");
     return result;
+}
+// Same-thread, read-only membership check; group zero is not evidence of job
+// ownership. All borrowed pointers are discarded when this call returns.
+template<class Reader>
+inline bool GroupContains(Reader read, std::uint32_t manager, const std::vector<std::uint32_t>& groups,
+                          std::uint32_t skill, std::uint32_t expectedObject) {
+    using A = std::uint32_t;
+    if (!manager || manager > UINT32_MAX - 0x1c || !skill || !expectedObject || groups.empty()) return false;
+    std::set<A> wanted(groups.begin(), groups.end());
+    if (wanted.size() != groups.size() || wanted.count(0)) return false;
+    try {
+        std::vector<std::pair<A, std::vector<unsigned char>>> snapshots;
+        auto take = [&](A address, std::size_t size) {
+            if (!address || size > UINT32_MAX || address > UINT32_MAX - (size - 1))
+                throw NativeObservation::ReadError("invalid group address");
+            auto bytes = read(address, size);
+            if (bytes.size() != size) throw NativeObservation::ReadError("short group read");
+            snapshots.emplace_back(address, bytes);
+            return bytes;
+        };
+        auto at = [](const std::vector<unsigned char>& bytes, std::size_t offset) {
+            A value; std::memcpy(&value, bytes.data() + offset, 4); return value;
+        };
+        const auto header = take(manager + 0x1c, 24);
+        const auto table = at(header, 4), buckets = at(header, 8), count = at(header, 12);
+        if (at(header, 0) != 0xB3F4C8 || !buckets || buckets > 65536 || count > 65536 || (count && !table)) return false;
+        const auto pointers = table ? take(table, buckets * 4) : std::vector<unsigned char>{};
+        std::set<A> nodes, keys;
+        bool found = false;
+        for (std::size_t i = 0; i < pointers.size(); i += 4) {
+            auto node = at(pointers, i);
+            while (node) {
+                if (nodes.size() >= count || !nodes.insert(node).second) return false;
+                const auto record = take(node, 20);
+                const auto key = at(record, 8), group = at(record, 16);
+                if (at(record, 0) != 0xAFE390 || !keys.insert(key).second || !group) return false;
+                if (wanted.count(key)) {
+                    if (group > UINT32_MAX - 8) return false;
+                    const auto array = at(take(group + 8, 4), 0);
+                    if (array) {
+                        if (array < 4) return false;
+                        const auto length = at(take(array - 4, 4), 0);
+                        if (length > 4096) return false;
+                        const auto entries = length ? take(array, length * 8) : std::vector<unsigned char>{};
+                        std::set<A> ids, objects;
+                        for (A j = 0; j < length; ++j) {
+                            const auto object = at(entries, j * 8 + 4);
+                            if (!object || !objects.insert(object).second) return false;
+                            const auto id = at(take(object, 4), 0);
+                            if (!id || !ids.insert(id).second) return false;
+                            if (id == skill) {
+                                if (object != expectedObject || found) return false;
+                                found = true;
+                            }
+                        }
+                    }
+                }
+                node = at(record, 4);
+            }
+        }
+        if (nodes.size() != count) return false;
+        for (const auto& snapshot : snapshots)
+            if (read(snapshot.first, snapshot.second.size()) != snapshot.second) return false;
+        return found;
+    } catch (const NativeObservation::ReadError&) { return false; }
+}
+// Ordinary skill window cumulative stage-point gate. This is only one
+// eligibility condition; membership and all other checks remain mandatory.
+enum class StagePointsResult { Allowed, Limit, Unavailable };
+template<class Reader>
+inline StagePointsResult StagePointsDecision(Reader read, std::uint32_t character, std::uint32_t level,
+                                             std::uint32_t skill, std::uint32_t remaining) {
+    if (!character || character > UINT32_MAX - 0x467 || !level || level > 255 || !skill || skill > INT32_MAX || !remaining) return StagePointsResult::Unavailable;
+    const auto q = skill / 10000;
+    try {
+        const auto records = MapRecords(read, character + 0x467);
+        for (const auto& record : records)
+            if (!record.first || record.first > INT32_MAX || record.second > INT32_MAX) return StagePointsResult::Unavailable;
+        if (q % 100 == 0 || q % 10 > 2) return StagePointsResult::Allowed;
+        std::uint64_t sum = 0;
+        const auto category = q % 10;
+        for (const auto& record : records) {
+            const auto group = record.first / 10000;
+            if ((category == 0 && group % 100 != 0 && group % 10 == 0) ||
+                (category != 0 && group % 10 == category)) {
+                sum += record.second;
+                if (sum > UINT32_MAX) return StagePointsResult::Unavailable;
+            }
+        }
+        const std::int64_t limit = 3LL * level - (category == 0 ? 89 : category == 1 ? 209 : 357);
+        return limit >= 0 && sum + remaining <= static_cast<std::uint64_t>(limit)
+            ? StagePointsResult::Allowed : StagePointsResult::Limit;
+    } catch (const NativeObservation::ReadError&) { return StagePointsResult::Unavailable; }
+}
+template<class Reader>
+inline bool StagePointsEligible(Reader read, std::uint32_t character, std::uint32_t level,
+                                std::uint32_t skill, std::uint32_t remaining) {
+    return StagePointsDecision(read, character, level, skill, remaining) == StagePointsResult::Allowed;
 }
 // V17 0x765e9e sums base levels across all twelve beginner IDs.
 // A negative or otherwise inconsistent result is unknown for admission.

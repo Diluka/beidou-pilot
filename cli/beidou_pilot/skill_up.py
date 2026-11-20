@@ -130,7 +130,7 @@ def preflight_skill_up(backend: Backend, skill_id: int, points: int, *, batch: b
     supported = {100: {1000000, 1000001, 1000002, 1001003, 1001004, 1001005},
                  210: {2100000, 2101001, 2101002, 2101003, 2101004, 2101005}}
     beginner = skill_id in BEGINNER_SKILLS
-    if beginner and skill_id != 1000:
+    if beginner and skill_id not in (1000, 1001, 1002):
         raise ClientError("skill_up_unsupported", "该初学者技能的职业映射尚未核实。", {"skill_id": skill_id})
     if not beginner and not any(skill_id in skills for skills in supported.values()):
         raise ClientError("skill_up_unsupported", "该技能尚不支持无窗口加点。", {"skill_id": skill_id})
@@ -138,7 +138,7 @@ def preflight_skill_up(backend: Backend, skill_id: int, points: int, *, batch: b
     character = state["character"]
     if not state["ready"] or character is None or character["id"] <= 0:
         raise ClientError("character_unavailable", "角色状态不可用。")
-    if (beginner and character["job"] != 100) or (not beginner and skill_id not in supported.get(character["job"], set())):
+    if (beginner and character["job"] not in (100, 210)) or (not beginner and skill_id not in supported.get(character["job"], set())):
         raise ClientError("skill_up_unsupported", "该职业和技能组合尚不支持无窗口加点。")
     learned = cast(CharacterSnapshot, backend.read("character"))
     if not learned["skills_complete"] or learned["character_id"] != character["id"]:

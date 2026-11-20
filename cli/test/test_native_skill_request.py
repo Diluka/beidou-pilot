@@ -78,27 +78,59 @@ class NativeSkillRequestTest(unittest.TestCase):
 
     def test_previously_supported_beginner_is_explicitly_unavailable(self):
         backend = SimpleNamespace(name='beidou')
-        for skill in (1001, 1009, 22001000):
+        for skill in (10001000, 1009, 22001000):
             with self.subTest(skill=skill), self.assertRaises(ClientError) as raised:
                 preflight_skill_up(backend, skill, 1)
+            self.assertEqual(raised.exception.code, 'skill_up_unsupported')
+
+    def test_job210_ordinary_skills_are_allowed_for_matching_job(self):
+        backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
+        backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7, 'skills': {}})
+        state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                 'character': {'id': 7, 'job': 210, 'skill_points': 3}}
+        with patch('beidou_pilot.skill_up.BridgeClient') as bridge:
+            bridge.return_value.snapshot.return_value = state
+            for skill in (2100000, 2101001, 2101002, 2101003, 2101004, 2101005):
+                with self.subTest(skill=skill):
+                    self.assertEqual(preflight_skill_up(backend, skill, 1)[3], 3)
+            state['character']['job'] = 220
+            with self.assertRaises(ClientError) as raised:
+                preflight_skill_up(backend, 2101002, 1)
             self.assertEqual(raised.exception.code, 'skill_up_unsupported')
 
     def test_unknown_normal_sp_is_not_insufficient(self):
         backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
         backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7, 'skills': {}})
         state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
-                 'character': {'id': 7, 'job': 210, 'skill_points': None}}
+                 'character': {'id': 7, 'job': 100, 'skill_points': None}}
         with patch('beidou_pilot.skill_up.BridgeClient') as bridge:
             bridge.return_value.snapshot.return_value = state
             for value in (None, True, '3', -1):
                 state['character']['skill_points'] = value
                 with self.subTest(value=value), self.assertRaises(ClientError) as raised:
-                    preflight_skill_up(backend, 2101002, 1)
+                    preflight_skill_up(backend, 1001003, 1)
                 self.assertEqual(raised.exception.code, 'skill_points_unavailable')
             state['character']['skill_points'] = 0
             with self.assertRaises(ClientError) as raised:
-                preflight_skill_up(backend, 2101002, 1)
+                preflight_skill_up(backend, 1001003, 1)
             self.assertEqual(raised.exception.code, 'insufficient_skill_points')
+
+    def test_beginner_allowlist_covers_six_observed_combinations(self):
+        backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
+        backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7, 'skills': {}})
+        state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                 'character': {'id': 7, 'job': 100, 'level': 3, 'skill_points': 0}}
+        with patch('beidou_pilot.skill_up.BridgeClient') as bridge:
+            bridge.return_value.snapshot.return_value = state
+            for job in (100, 210):
+                state['character']['job'] = job
+                for skill in (1000, 1001, 1002):
+                    with self.subTest(job=job, skill=skill):
+                        self.assertEqual(preflight_skill_up(backend, skill, 2)[3], 2)
+            state['character']['job'] = 110
+            with self.assertRaises(ClientError) as raised:
+                preflight_skill_up(backend, 1000, 1)
+            self.assertEqual(raised.exception.code, 'skill_up_unsupported')
 
     def test_invalid_beginner_pool_is_unavailable(self):
         backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')

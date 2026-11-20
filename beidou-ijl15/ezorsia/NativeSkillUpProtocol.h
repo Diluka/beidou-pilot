@@ -15,15 +15,24 @@ struct Request {
     std::uint32_t character = 0, skill = 0, remaining = 0;
 };
 inline bool Expired(const Request& request, std::uint64_t nowMs) { return nowMs >= request.deadlineMs; }
+// These three beginner skills use the separate beginner SP pool.
+inline bool BeginnerSkill(std::uint32_t skill) { return skill == 1000 || skill == 1001 || skill == 1002; }
+// Keep normal and beginner pools separate at every admission and confirmation.
+template<class ReadBeginner>
+bool SelectPoints(std::uint32_t skill, std::uint32_t normal, ReadBeginner readBeginner, std::uint32_t& out) {
+    if (BeginnerSkill(skill)) return readBeginner(out);
+    out = normal;
+    return true;
+}
 // Only the two observed job/skill families are candidates; this is not an
 // eligibility check and must never authorize a native call by itself.
 inline bool SupportedSkill(std::uint32_t job, std::uint32_t skill) {
     switch (job) {
     case 100:
-        return skill == 1000 || skill == 1000000 || skill == 1000001 || skill == 1000002
+        return BeginnerSkill(skill) || skill == 1000000 || skill == 1000001 || skill == 1000002
             || skill == 1001003 || skill == 1001004 || skill == 1001005;
     case 210:
-        return skill == 2100000 || skill == 2101001 || skill == 2101002
+        return BeginnerSkill(skill) || skill == 2100000 || skill == 2101001 || skill == 2101002
             || skill == 2101003 || skill == 2101004 || skill == 2101005;
     default: return false;
     }

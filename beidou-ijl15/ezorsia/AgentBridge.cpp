@@ -8,6 +8,7 @@
 #include "NativeSkillUp.h"
 #include "NativeSkillUpCalls.h"
 #include "NativeSkillUpFacts.h"
+#include "NativeSkillUpStage.h"
 #include "EventTransport.h"
 #include "NativeKeyBindings.h"
 #include "NativeItemUse.h"
@@ -1661,21 +1662,28 @@ void Tick() {
                 };
                 if (pending.pending) {
                     const auto prior = Facts::SkillLevels(bytes, native.stats, pending.skill);
-                    auto priorSp = job.sp;
-                    if ((pending.skill == 1000
-                         && (!state.character.known[0]
-                             || !Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], priorSp)))
+                    std::uint32_t priorSp = 0;
+                    if (!SelectPoints(
+                            pending.skill, job.sp,
+                            [&](std::uint32_t& points) {
+                                return state.character.known[0]
+                                       && Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], points);
+                            },
+                            priorSp)
                         || !pending.Confirm(job.character, job.job, prior.base, priorSp)) {
                         reason = "skill_up_confirmation_pending";
                         return false;
                     }
                 }
-                if (request.skill == 1000) {
-                    if (!state.character.known[0]
-                        || !Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], job.sp)) {
-                        reason = "skill_up_state_unavailable";
-                        return false;
-                    }
+                if (!SelectPoints(
+                        request.skill, job.sp,
+                        [&](std::uint32_t& points) {
+                            return state.character.known[0]
+                                   && Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], points);
+                        },
+                        job.sp)) {
+                    reason = "skill_up_state_unavailable";
+                    return false;
                 }
                 const auto levels = Facts::SkillLevels(bytes, native.stats, request.skill);
                 const auto count = Facts::ResourceCount(skill, request.skill);
@@ -1685,6 +1693,16 @@ void Tick() {
                     reason = failure;
                     return false;
                 }
+                auto checkStage = [&](const MapleControl::State& snapshot, std::uint32_t character) {
+                    if (const auto failure =
+                            StageFailure(bytes, character, snapshot.character.known[0], snapshot.character.values[0],
+                                         request.skill, request.remaining)) {
+                        reason = failure;
+                        return false;
+                    }
+                    return true;
+                };
+                if (!checkStage(state, native.stats)) return false;
                 if (!calls.CanRaise(context, skill)) {
                     reason = "skill_up_requirements_unmet";
                     return false;
@@ -1704,9 +1722,13 @@ void Tick() {
                     reason = "skill_up_state_changed";
                     return false;
                 }
-                if (request.skill == 1000
-                    && (!live.character.known[0]
-                        || !Facts::BeginnerPoints(bytes, liveNative.stats, live.character.values[0], liveJob.sp))) {
+                if (!SelectPoints(
+                        request.skill, liveJob.sp,
+                        [&](std::uint32_t& points) {
+                            return live.character.known[0]
+                                   && Facts::BeginnerPoints(bytes, liveNative.stats, live.character.values[0], points);
+                        },
+                        liveJob.sp)) {
                     reason = "skill_up_state_unavailable";
                     return false;
                 }
@@ -1719,6 +1741,14 @@ void Tick() {
                     || Facts::ResourceCount(skill, request.skill) != count) {
                     reason = "skill_up_state_changed";
                     return false;
+                }
+                if (!BeginnerSkill(request.skill)) {
+                    if (const auto failure = LevelRecheckFailure(live.character.known[0], state.character.values[0],
+                                                                 live.character.values[0])) {
+                        reason = failure;
+                        return false;
+                    }
+                    if (!checkStage(live, liveNative.stats)) return false;
                 }
                 if (request.scene != sceneGeneration || tickRuntime.Running() || tickInput.HasIntent()
                     || !ReadAt(0x00BE7918, liveContext) || liveContext != context
@@ -1767,10 +1797,14 @@ void Tick() {
                     return true;
                 }
                 if (!pending.Matches(request, originalId) || job.job != pending.job) return false;
-                auto sp = job.sp;
-                if (pending.skill == 1000
-                    && (!state.character.known[0]
-                        || !Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], sp)))
+                std::uint32_t sp = 0;
+                if (!BeiDouBridge::NativeSkillUp::SelectPoints(
+                        pending.skill, job.sp,
+                        [&](std::uint32_t& points) {
+                            return state.character.known[0]
+                                   && Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], points);
+                        },
+                        sp))
                     return false;
                 const auto levels = Facts::SkillLevels(bytes, native.stats, pending.skill);
                 NativeContext verifyNative;
@@ -1781,10 +1815,15 @@ void Tick() {
                     || verifyNative.stats != native.stats || verifyNative.field != native.field
                     || verifyNative.user != native.user)
                     return false;
-                auto verifySp = verifyJob.sp;
-                if (pending.skill == 1000
-                    && (!verify.character.known[0]
-                        || !Facts::BeginnerPoints(bytes, verifyNative.stats, verify.character.values[0], verifySp)))
+                std::uint32_t verifySp = 0;
+                if (!BeiDouBridge::NativeSkillUp::SelectPoints(
+                        pending.skill, verifyJob.sp,
+                        [&](std::uint32_t& points) {
+                            return verify.character.known[0]
+                                   && Facts::BeginnerPoints(bytes, verifyNative.stats, verify.character.values[0],
+                                                            points);
+                        },
+                        verifySp))
                     return false;
                 const auto verifyLevels = Facts::SkillLevels(bytes, verifyNative.stats, pending.skill);
                 std::uint32_t context = 0, character = 0;
