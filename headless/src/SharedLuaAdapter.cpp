@@ -48,16 +48,10 @@ static_assert(BeginnerSkillPointBudget(20, 6) == 0);
 
 int BeginnerSkillPoints(ms::Player& player) {
     const auto level = player.get_stats().get_stat(ms::MapleStat::Id::LEVEL);
-    int used = 0;
-    const ms::Job job(player.get_stats().get_stat(ms::MapleStat::Id::JOB));
-    const auto& skills = ms::JobData::get(job.get_subjob(ms::Job::BEGINNER)).get_skills();
-    for (auto skill : skills) {
-        if ((skill == ms::SkillId::Id::THREE_SNAILS || skill == ms::SkillId::Id::HEAL
-             || skill == ms::SkillId::Id::FEATHER)
-            && (!ms::SkillData::get(skill).is_invisible() || player.get_skills().get_masterlevel(skill) != 0))
-            used += player.get_skills().get_level(skill);
-    }
-    return BeginnerSkillPointBudget(level, used);
+    const auto group = headless::BeginnerGroup(player.get_stats().get_stat(ms::MapleStat::Id::JOB));
+    if (group < 0) return -1;
+    if (!headless::BeginnerResourceValid(group, ms::JobData::get(group).get_skills())) return -1;
+    return headless::BeginnerPoolPoints(group, level, [&](auto skill) { return player.get_skills().get_level(skill); });
 }
 
 MapleControl::Value ObservationValue(const Json& value) {
@@ -583,7 +577,7 @@ void SharedLuaAdapter::ReadCommand() {
         auto& book = player.get_skills();
         const auto skill = static_cast<std::int32_t>(value);
         const auto jobId = player.get_stats().get_stat(ms::MapleStat::Id::JOB);
-        if (headless::UnsupportedSkillAllocation(skill, jobId)) {
+        if (headless::UnsupportedSkillAllocation(skill, jobId) || BeginnerSkillPoints(player) < 0) {
             commandId = id;
             scriptCommand = false;
             commandStatus = "rejected";
@@ -593,17 +587,18 @@ void SharedLuaAdapter::ReadCommand() {
         const ms::Job job(jobId);
         bool eligible = false;
         bool beginner = false;
+        const auto beginnerGroup = headless::BeginnerGroup(jobId);
         for (int level = ms::Job::BEGINNER; level <= job.get_level(); ++level) {
-            const auto& skills = ms::JobData::get(job.get_subjob(static_cast<ms::Job::Level>(level))).get_skills();
+            const auto group =
+                level == ms::Job::BEGINNER ? beginnerGroup : job.get_subjob(static_cast<ms::Job::Level>(level));
+            if (group < 0) continue;
+            const auto& skills = ms::JobData::get(group).get_skills();
             if (std::find(skills.begin(), skills.end(), skill) != skills.end()) {
-                eligible = true;
-                beginner = level == ms::Job::BEGINNER;
+                beginner = group == beginnerGroup;
+                eligible = !beginner || headless::BeginnerPoolSkill(skill, jobId);
                 break;
             }
         }
-        if (beginner && skill != ms::SkillId::Id::THREE_SNAILS && skill != ms::SkillId::Id::HEAL
-            && skill != ms::SkillId::Id::FEATHER)
-            eligible = false;
         if (eligible) {
             const auto& data = ms::SkillData::get(skill);
             auto maximum = book.get_masterlevel(skill);
@@ -893,11 +888,13 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
              {"validation_source", "native_objects"},
              {"skills", std::move(knownSkills)},
              {"skills_complete", true},
-             {"beginner_skill_points", BeginnerSkillPoints(player)},
+             {"beginner_skill_points",
+              BeginnerSkillPoints(player) < 0 ? Json(nullptr) : Json(BeginnerSkillPoints(player))},
              {"beginner_skill_ids",
-              ms::JobData::get(
-                  ms::Job(player.get_stats().get_stat(ms::MapleStat::Id::JOB)).get_subjob(ms::Job::BEGINNER))
-                  .get_skills()},
+              BeginnerSkillPoints(player) < 0
+                  ? Json(nullptr)
+                  : Json(ms::JobData::get(headless::BeginnerGroup(player.get_stats().get_stat(ms::MapleStat::Id::JOB)))
+                             .get_skills())},
              {"physics", Json::parse(state.character.physics.Document().Dump())},
              {"movement", Json::parse(state.character.movement.Document().Dump())},
              {"on_ground", FactValue(state.onGround)},

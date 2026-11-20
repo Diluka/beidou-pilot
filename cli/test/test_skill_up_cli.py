@@ -14,7 +14,7 @@ from beidou_pilot.headless_skill_up import skill_up
 
 def state(level_sp=3):
     return {"instance_id": "i", "run_id": "r", "ready": True, "scene_generation": 1,
-            "character": {"id": 1, "skill_points": level_sp},
+            "character": {"id": 1, "job": 100, "skill_points": level_sp},
             "skill_up_records": [
                 {"request_id": request, "instance_id": "i", "run_id": "r", "character_id": 1,
                  "skill_id": skill, "level_before": 0, "sp_before": 3, "status": "confirmed"}
@@ -135,8 +135,8 @@ class SkillUpCliTests(unittest.TestCase):
 
     def test_single_point_observed(self):
         backend = SimpleNamespace(root=None, name="headless", instance="default")
-        backend.read = unittest.mock.Mock(side_effect=[{"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {}},
-                                                       {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}}])
+        backend.read = unittest.mock.Mock(side_effect=[{"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {}},
+                                                       {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}}])
         with patch("beidou_pilot.headless_skill_up.BridgeClient") as cls:
             bridge = cls.return_value
             bridge._control.return_value = nullcontext()
@@ -152,8 +152,8 @@ class SkillUpCliTests(unittest.TestCase):
             with self.subTest(failure=failure):
                 backend = SimpleNamespace(root=None, name="headless", instance="default")
                 backend.read = unittest.mock.Mock(side_effect=[
-                    {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {}},
-                    {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}}])
+                    {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {}},
+                    {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}}])
                 current = state(2)
                 if failure == "record":
                     current["skill_up_records"][0]["status"] = "unresolved"
@@ -172,7 +172,7 @@ class SkillUpCliTests(unittest.TestCase):
 
     def test_preflight_rejection_stops_without_next_packet(self):
         backend = SimpleNamespace(root=None, name="headless", instance="default")
-        backend.read = unittest.mock.Mock(return_value={"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {}})
+        backend.read = unittest.mock.Mock(return_value={"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {}})
         with patch("beidou_pilot.headless_skill_up.BridgeClient") as cls:
             bridge = cls.return_value
             bridge._control.return_value = nullcontext()
@@ -187,9 +187,9 @@ class SkillUpCliTests(unittest.TestCase):
 
     def test_partial_success_then_timeout(self):
         backend = SimpleNamespace(root=None, name="headless", instance="default")
-        backend.read = unittest.mock.Mock(side_effect=[{"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {}},
-            {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}},
-            {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}}])
+        backend.read = unittest.mock.Mock(side_effect=[{"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {}},
+            {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}},
+            {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}}])
         with patch("beidou_pilot.headless_skill_up.BridgeClient") as cls:
             bridge = cls.return_value
             bridge._control.return_value = nullcontext()
@@ -208,8 +208,8 @@ class SkillUpCliTests(unittest.TestCase):
         for failure in ("ready", "read", "publish"):
             with self.subTest(failure=failure):
                 backend = SimpleNamespace(root=None, name="headless", instance="default")
-                first = {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {}}
-                second = {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}}
+                first = {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {}}
+                second = {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}}
                 backend.read = unittest.mock.Mock(side_effect=[first, second, ClientError("read_failed", "read") if failure == "read" else second])
                 with patch("beidou_pilot.headless_skill_up.BridgeClient") as cls:
                     bridge = cls.return_value
@@ -226,8 +226,8 @@ class SkillUpCliTests(unittest.TestCase):
     def test_beginner_uses_observed_beginner_sp(self):
         backend = SimpleNamespace(root=None, name="headless", instance="default")
         backend.read = unittest.mock.Mock(side_effect=[
-            {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000], "beginner_skill_points": 3, "skills": {}},
-            {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000], "beginner_skill_points": 2, "skills": {"1000": {"level": 1}}},
+            {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {}},
+            {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 2, "skills": {"1000": {"level": 1}}},
         ])
         with patch("beidou_pilot.headless_skill_up.BridgeClient") as cls:
             bridge = cls.return_value
@@ -250,9 +250,46 @@ class SkillUpCliTests(unittest.TestCase):
             self.assertEqual(error.exception.code, "skills_unavailable")
             bridge._publish.assert_not_called()
 
+    def test_invalid_beginner_resources_fail_before_publish(self):
+        for ids in (None, [], [1000, 1001], [10001000, 10001001, 20001002]):
+            with self.subTest(ids=ids):
+                backend = SimpleNamespace(root=None, name="headless", instance="default")
+                backend.read = unittest.mock.Mock(return_value={"skills_complete": True, "character_id": 1,
+                    "beginner_skill_ids": ids, "beginner_skill_points": 3, "skills": {}})
+                with patch("beidou_pilot.headless_skill_up.BridgeClient") as cls:
+                    bridge = cls.return_value
+                    bridge._control.return_value = nullcontext()
+                    bridge._ready_state.return_value = state()
+                    with self.assertRaises(ClientError) as error:
+                        skill_up(backend, 1000, 1)
+                    self.assertEqual(error.exception.code, "skills_unavailable")
+                    bridge._publish.assert_not_called()
+
+    def test_beginner_group_must_match_job(self):
+        for job, ids, allowed in ((1112, [10001000, 10001001, 10001002], True),
+                                  (2112, [20001000, 20001001, 20001002], True),
+                                  (1112, [20001000, 20001001, 20001002], False),
+                                  (2112, [10001000, 10001001, 10001002], False),
+                                  (1, [1000, 1001, 1002], False)):
+            with self.subTest(job=job, ids=ids):
+                backend = SimpleNamespace(root=None, name="headless", instance="default")
+                backend.read = unittest.mock.Mock(return_value={"skills_complete": True, "character_id": 1,
+                    "beginner_skill_ids": ids, "beginner_skill_points": 3, "skills": {}})
+                with patch("beidou_pilot.headless_skill_up.BridgeClient") as cls:
+                    bridge = cls.return_value
+                    bridge._control.return_value = nullcontext()
+                    before = state()
+                    before["character"]["job"] = job
+                    bridge._ready_state.return_value = before
+                    bridge._wait.side_effect = ClientError("bridge_command_rejected", "rejected")
+                    with self.assertRaises(ClientError) as error:
+                        skill_up(backend, ids[0], 1)
+                    self.assertEqual(error.exception.code, "bridge_command_rejected" if allowed else "skills_unavailable")
+                    self.assertEqual(bridge._publish.call_count, int(allowed))
+
     def test_timeout_is_unknown_and_never_replayed(self):
         backend = SimpleNamespace(root=None, name="headless", instance="default")
-        backend.read = unittest.mock.Mock(return_value={"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {}})
+        backend.read = unittest.mock.Mock(return_value={"skills_complete": True, "character_id": 1, "beginner_skill_ids": [1000, 1001, 1002], "beginner_skill_points": 3, "skills": {}})
         with patch("beidou_pilot.headless_skill_up.BridgeClient") as cls:
             bridge = cls.return_value
             bridge._control.return_value = nullcontext()

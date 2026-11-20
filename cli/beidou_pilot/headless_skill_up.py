@@ -9,6 +9,16 @@ from .bridge import BridgeClient
 from .engines.character import CharacterSnapshot
 
 
+_BEGINNER_GROUPS = {
+    **dict.fromkeys((0, 100, 110, 111, 112, 120, 121, 122, 130, 131, 132, 200, 210, 211, 212,
+                     220, 221, 222, 230, 231, 232, 300, 310, 311, 312, 320, 321, 322, 400,
+                     410, 411, 412, 420, 421, 422, 500, 510, 511, 512, 520, 521, 522), 0),
+    **dict.fromkeys((1000, 1100, 1110, 1111, 1112, 1200, 1210, 1211, 1212, 1300, 1310, 1311,
+                     1312, 1400, 1410, 1411, 1412, 1500, 1510, 1511, 1512), 1000),
+    **dict.fromkeys((2000, 2100, 2110, 2111, 2112), 2000),
+}
+
+
 def reconcile_skill_up(backend: Backend, skill_id: int, original_id: str) -> JsonObject:
     """只查询当前运行的原生记录，绝不发布命令。"""
     if not 0 < skill_id <= 0x7fffffff or not re.fullmatch(r"[0-9a-f]{32}", original_id):
@@ -46,7 +56,10 @@ def skill_up(backend: Backend, skill_id: int, points: int, timeout: float = 3.0)
                     raise ClientError("skills_unavailable", "角色技能观察不完整。")
                 beginner_ids = learned.get("beginner_skill_ids")
                 beginner_sp = learned.get("beginner_skill_points")
-                if (not isinstance(beginner_ids, list) or any(type(item) is not int for item in beginner_ids)
+                group = _BEGINNER_GROUPS.get(character.get("job"))
+                if (group is None or not isinstance(beginner_ids, list)
+                        or any(type(item) is not int for item in beginner_ids)
+                        or not all(group * 10000 + 1000 + i in beginner_ids for i in range(3))
                         or type(beginner_sp) is not int):
                     raise ClientError("skills_unavailable", "新手技能分册观察不可用。")
                 beginner = skill_id in beginner_ids
@@ -64,7 +77,8 @@ def skill_up(backend: Backend, skill_id: int, points: int, timeout: float = 3.0)
                     current = state["character"]
                     if (not state["ready"] or state["scene_generation"] != before["scene_generation"]
                             or state["instance_id"] != before["instance_id"] or state["run_id"] != before["run_id"]
-                            or current is None or current["id"] != character["id"]):
+                            or current is None or current["id"] != character["id"]
+                            or current.get("job") != character.get("job")):
                         raise ClientError("bridge_identity_changed", "角色或实例身份发生变化。")
                     observed = cast(CharacterSnapshot, backend.read("character"))
                     if not observed["skills_complete"] or observed["character_id"] != character["id"]:

@@ -14,11 +14,11 @@ class ReconcileTest(unittest.TestCase):
     def test_two_confirmed_points_keep_each_request(self):
         backend = SimpleNamespace(root=None, name='headless', instance='default')
         def learned(level):
-            return {'skills_complete': True, 'character_id': 42, 'beginner_skill_ids': [],
+            return {'skills_complete': True, 'character_id': 42, 'beginner_skill_ids': [1000, 1001, 1002],
                     'beginner_skill_points': 0, 'skills': {'123': {'level': level}}}
         def state(sp, records=()):
             return {'ready': True, 'instance_id': 'i', 'run_id': 'r', 'scene_generation': 1,
-                    'character': {'id': 42, 'skill_points': sp}, 'skill_up_records': list(records)}
+                    'character': {'id': 42, 'job': 100, 'skill_points': sp}, 'skill_up_records': list(records)}
         def record(request, level, sp):
             return {'request_id': request, 'instance_id': 'i', 'run_id': 'r', 'character_id': 42,
                     'skill_id': 123, 'level_before': level, 'sp_before': sp, 'status': 'confirmed'}
@@ -41,14 +41,14 @@ class ReconcileTest(unittest.TestCase):
             with self.subTest(cause=cause):
                 backend = SimpleNamespace(root=None, name='headless', instance='default')
                 backend.read = Mock(side_effect=[
-                    {'skills_complete': True, 'character_id': 42, 'beginner_skill_ids': [],
+                    {'skills_complete': True, 'character_id': 42, 'beginner_skill_ids': [1000, 1001, 1002],
                      'beginner_skill_points': 0, 'skills': {}},
-                    {'skills_complete': True, 'character_id': 42, 'beginner_skill_ids': [],
+                    {'skills_complete': True, 'character_id': 42, 'beginner_skill_ids': [1000, 1001, 1002],
                      'beginner_skill_points': 0, 'skills': {'123': {'level': 1}}}])
                 before = {'ready': True, 'instance_id': 'i', 'run_id': 'r', 'scene_generation': 1,
-                          'character': {'id': 42, 'skill_points': 2}}
+                          'character': {'id': 42, 'job': 100, 'skill_points': 2}}
                 after = {**before, 'scene_generation': 2 if cause == 'scene' else 1,
-                         'character': {'id': 42, 'skill_points': 1}, 'skill_up_records': [
+                         'character': {'id': 42, 'job': 100, 'skill_points': 1}, 'skill_up_records': [
                              {'request_id': 'first', 'instance_id': 'i', 'run_id': 'r', 'character_id': 42,
                               'skill_id': 123, 'level_before': 0, 'sp_before': 2, 'status': 'unresolved'}]}
                 with patch('beidou_pilot.headless_skill_up.BridgeClient') as cls:
