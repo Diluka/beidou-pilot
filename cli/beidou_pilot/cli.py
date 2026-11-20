@@ -120,6 +120,12 @@ def parser() -> Parser:
     command("close", "提示通过宿主工作台生命周期入口关闭本容器")
     command("stop", "显式释放当前客户端遗留控制")
     command("revive", "提交一次正常复活请求并核对同角色恢复；存活时跳过")
+    q = command("skill-up", "逐点分配技能点并核对结果", allow_abbrev=False)
+    q.add_argument("skill_id", type=int)
+    q.add_argument("--points", type=int, default=1)
+    q = command("skill-up-reconcile", "显式核对未知的原生加点请求，不发加点事件", allow_abbrev=False)
+    q.add_argument("skill_id", type=int)
+    q.add_argument("--request-id", required=True, help="原加点请求 ID")
     command("auto-ap", "一次自动分配全部AP并核对实际属性")
     q = command("snapshot", "场景、角色、对话与可操作引用")
     q.add_argument("--all", action="store_true", help="含画外实体")
@@ -281,6 +287,8 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "inspect",
         "stop",
         "revive",
+        "skill-up",
+        "skill-up-reconcile",
         "auto-ap",
         "batch",
     }:
@@ -291,6 +299,8 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         in {
             "revive",
             "auto-ap",
+            "skill-up",
+            "skill-up-reconcile",
             "click",
             "talk",
             "dialog",
@@ -489,6 +499,45 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .bridge import BridgeClient
 
         return BridgeClient(backend.root, backend.name, backend.instance).stop()
+    if cmd == "skill-up-reconcile":
+        if backend.name == "headless":
+            from .headless_skill_up import reconcile_skill_up
+        else:
+            from .skill_up import reconcile_skill_up
+
+        return reconcile_skill_up(backend, args.skill_id, args.request_id)
+    if cmd == "skill-up":
+        if args.skill_id <= 0 or args.points <= 0:
+            raise ClientError("usage", "技能 ID 和点数须为正整数。")
+        if backend.name == "headless":
+            from .headless_skill_up import skill_up
+
+            return skill_up(backend, args.skill_id, args.points)
+        from .skill_up import preflight_skill_up, skill_up_once
+
+        confirmed = []
+        identity = None
+        try:
+            for remaining in range(args.points, 0, -1):
+                if args.points == 1:
+                    expected = preflight_skill_up(backend, args.skill_id, remaining)
+                    if expected is None:
+                        raise ClientError("skill_state_changed", "预检身份不可用。")
+                    confirmed.append(skill_up_once(backend, args.skill_id, expected))
+                else:
+                    expected = preflight_skill_up(backend, args.skill_id, remaining, batch=True)
+                    if expected is None:
+                        raise ClientError("skill_state_changed", "批量预检身份不可用。")
+                    if identity is None:
+                        identity = expected[:3]
+                    elif identity != expected[:3]:
+                        raise ClientError("skill_state_changed", "批量加点期间角色或实例发生变化。")
+                    confirmed.append(skill_up_once(backend, args.skill_id, expected))
+        except ClientError as error:
+            raise ClientError(error.code, error.message, {**error.details, "confirmed": confirmed}) from error
+        if args.points == 1:
+            return confirmed[0]
+        return {"skill_id": args.skill_id, "confirmed_points": len(confirmed), "allocations": confirmed}
     if cmd == "auto-ap":
         from .auto_ap import auto_ap
 

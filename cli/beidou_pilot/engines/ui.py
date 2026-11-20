@@ -25,6 +25,7 @@ class UIButton(TypedDict):
 
 class SkillsView(TypedDict):
     ids: list[int]
+    resource_counts: NotRequired[list[int | None]]
     first_index: int
     selected_tab: int
     tab_count: int

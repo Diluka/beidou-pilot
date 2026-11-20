@@ -5,6 +5,10 @@
 #include "NativeKeyUnion.h"
 #include "NativeTickInput.h"
 #include "NativeAutoApTransaction.h"
+#include "NativeSkillUp.h"
+#include "NativeSkillUpCalls.h"
+#include "NativeSkillUpFacts.h"
+#include "NativeSkillUpStage.h"
 #include "EventTransport.h"
 #include "NativeKeyBindings.h"
 #include "NativeItemUse.h"
@@ -73,6 +77,7 @@ std::string rejectedReason;
 std::string lastConsumedId;
 std::string latestScriptId;
 BeiDouBridge::NativeTickInput tickInput;
+BeiDouBridge::NativeSkillUp::PendingFence nativeSkillUpPending;
 BeiDouBridge::NativeKeyUnion nativeKeys{&tickInput.movement, &tickInput.action};
 bool scriptCommand = false;
 bool stopCommand = false;
@@ -106,6 +111,52 @@ bool NativeLogs(const std::string& scriptId, const std::vector<std::string>& lin
 bool RequestNativeItem(std::uint32_t itemId, BeiDouBridge::NativeItemUse& target, std::string& error);
 const MapleControl::Value& Member(const MapleControl::Value& object, const std::string& name);
 
+// The native UI observation also serves the CLI. Its resource count is not a
+// tick API field, so project only that field out at the Lua adapter boundary.
+MapleControl::Value TickUiView(const MapleControl::Value& ui) {
+    using MapleControl::Value;
+    if (ui.Type() != Value::Kind::Object) return ui;
+    auto result = Value::Object();
+    for (const auto& field : ui.Members()) {
+        if (field.first != "windows" || field.second.Type() != Value::Kind::Array) {
+            result[field.first] = field.second;
+            continue;
+        }
+        auto windows = Value::Array();
+        for (const auto& window : field.second.Elements()) {
+            if (window.Type() != Value::Kind::Object) {
+                windows.Add(window);
+                continue;
+            }
+            auto copy = Value::Object();
+            for (const auto& member : window.Members()) {
+                if (member.first != "skills" || member.second.Type() != Value::Kind::Object) {
+                    copy[member.first] = member.second;
+                    continue;
+                }
+                auto skills = Value::Object();
+                for (const auto& skillField : member.second.Members())
+                    if (skillField.first != "resource_counts") skills[skillField.first] = skillField.second;
+                copy[member.first] = skills;
+            }
+            windows.Add(copy);
+        }
+        result[field.first] = windows;
+    }
+    return result;
+}
+
+MapleControl::Value TickCharacterView(const MapleControl::Value& character) {
+    using MapleControl::Value;
+    if (character.Type() != Value::Kind::Object) return character;
+    auto result = Value::Object();
+    for (const auto& field : character.Members())
+        if (field.first != "skill_level_deltas" && field.first != "skill_level_deltas_complete"
+            && field.first != "skill_point_books" && field.first != "skill_point_books_complete")
+            result[field.first] = field.second;
+    return result;
+}
+
 class BeiDouTickAdapter final : public MapleControl::TickAdapter {
 public:
     const MapleControl::State& Observe() const override { return previousState; }
@@ -113,7 +164,9 @@ public:
     MapleControl::Observation ObserveDomain(const std::string& domain) const override {
         if (domain == "terrain") return BeiDouBridge::ObserveSceneTerrain(previousState, sceneDataRoot);
         auto observation = NativeObservation::Collect(domain);
+        if (domain == "ui") observation.data = TickUiView(observation.data);
         if (domain == "character") {
+            observation.data = TickCharacterView(observation.data);
             // CharacterData's verified maps are learned skill levels, not active
             // TemporaryStat/buff records. Do not infer buffs from those maps.
             observation.data["buffs"] = MapleControl::Value{};
@@ -1560,6 +1613,276 @@ void Tick() {
     }
     NativeObservation::Tick(directory, instanceId, runId, sceneGeneration, sequence, sceneDataRoot);
     BeiDouBridge::LoginAction::Tick(directory, instanceId, runId);
+    BeiDouBridge::NativeSkillUp::Tick(
+        directory, instanceId, runId, [](const BeiDouBridge::NativeSkillUp::Request& request, const char*& reason) {
+            using namespace BeiDouBridge::NativeSkillUp;
+            namespace Facts = BeiDouBridge::NativeSkillUpFacts;
+            auto& pending = nativeSkillUpPending;
+            if (Expired(request, UnixMilliseconds())) {
+                reason = "skill_up_expired";
+                return false;
+            }
+            if (tickRuntime.Running() || tickInput.HasIntent() || request.scene != sceneGeneration) {
+                reason = "skill_up_busy_or_scene_changed";
+                return false;
+            }
+            const auto hash = NativeAutoApExecutableMatches();
+            auto read = [](std::uint32_t address, auto& value) { return ReadAt(address, value); };
+            NativeCalls<decltype(read)> calls{read};
+            if (hash != NativeAutoApHash::Match || !calls.Fingerprints()) {
+                reason = "skill_up_unsupported";
+                return false;
+            }
+            try {
+                NativeContext native;
+                auto state = CaptureState(native);
+                Facts::JobSp job{};
+                std::uint32_t context = 0, manager = 0;
+                if (state.ready && state.dead == MapleControl::Fact::False && request.scene == sceneGeneration
+                    && state.characterKnown && state.character.id == request.character && state.character.known[1]
+                    && !SupportedSkill(state.character.values[1], request.skill)) {
+                    reason = "skill_up_job_skill_unsupported";
+                    return false;
+                }
+                if (!state.ready || state.dead != MapleControl::Fact::False || request.scene != sceneGeneration
+                    || tickRuntime.Running() || tickInput.HasIntent() || !Facts::CaptureJobSp(state, request, job)
+                    || !ReadAt(0x00BE7918, context) || !context || !ReadAt(0x00BE78DC, manager) || !manager
+                    || !native.stats) {
+                    reason = "skill_up_state_unavailable";
+                    return false;
+                }
+                const auto skill = calls.Lookup(manager, request.skill);
+                std::uint32_t blocked = 0;
+                if (!skill || !ReadAt(skill + 0x2c, blocked) || blocked != 0) {
+                    reason = "skill_up_skill_unavailable";
+                    return false;
+                }
+                auto bytes = [](std::uintptr_t address, std::size_t size) {
+                    return NativeObservation::Bytes(address, size);
+                };
+                const bool beginner = BeginnerSkill(request.skill);
+                const auto groups = beginner ? std::vector<std::uint32_t>{0} : OrdinaryGroups(job.job);
+                if (!Facts::GroupContains(bytes, manager, groups, request.skill, skill, beginner)) {
+                    reason = "skill_up_group_unavailable_or_not_member";
+                    return false;
+                }
+                Facts::BeginnerVisibilitySnapshot visibility;
+                if (beginner && !Facts::BeginnerVisible(bytes, native.stats, request.skill, skill, visibility)) {
+                    reason = "skill_up_visibility_unavailable_or_hidden";
+                    return false;
+                }
+                if (pending.pending) {
+                    const auto prior = Facts::SkillLevels(bytes, native.stats, pending.skill);
+                    std::uint32_t priorSp = 0;
+                    if (!SelectPoints(
+                            pending.skill, job.sp,
+                            [&](std::uint32_t& points) {
+                                return state.character.known[0]
+                                       && Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], points);
+                            },
+                            priorSp)
+                        || !pending.Confirm(job.character, job.job, prior.base, priorSp)) {
+                        reason = "skill_up_confirmation_pending";
+                        return false;
+                    }
+                }
+                if (!SelectPoints(
+                        request.skill, job.sp,
+                        [&](std::uint32_t& points) {
+                            return state.character.known[0]
+                                   && Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], points);
+                        },
+                        job.sp)) {
+                    reason = "skill_up_state_unavailable";
+                    return false;
+                }
+                const auto levels = Facts::SkillLevels(bytes, native.stats, request.skill);
+                const auto count = Facts::ResourceCount(skill, request.skill);
+                Eligibility facts{true,   sceneGeneration, job.character, job.job,
+                                  job.sp, count,           levels.base,   levels.delta};
+                if (RequiresMaster(request.skill))
+                    facts.masterKnown = Facts::SkillMaster(bytes, native.stats, request.skill, facts.master);
+                if (const auto failure = BatchFailure(request, facts)) {
+                    reason = failure;
+                    return false;
+                }
+                auto checkStage = [&](const MapleControl::State& snapshot, std::uint32_t character) {
+                    if (const auto failure =
+                            StageFailure(bytes, character, snapshot.character.known[0], snapshot.character.values[0],
+                                         request.skill, request.remaining)) {
+                        reason = failure;
+                        return false;
+                    }
+                    return true;
+                };
+                if (!checkStage(state, native.stats)) return false;
+                if (!calls.CanRaise(context, skill)) {
+                    reason = "skill_up_requirements_unmet";
+                    return false;
+                }
+                NativeContext liveNative;
+                const auto live = CaptureState(liveNative);
+                Facts::JobSp liveJob{};
+                std::uint32_t liveContext = 0, liveManager = 0, liveBlocked = 0;
+                if (!live.ready || live.dead != MapleControl::Fact::False || tickRuntime.Running()
+                    || tickInput.HasIntent() || request.scene != sceneGeneration
+                    || !Facts::CaptureJobSp(live, request, liveJob) || liveJob.job != job.job
+                    || liveNative.field != native.field || liveNative.stats != native.stats
+                    || liveNative.user != native.user || !ReadAt(0x00BE7918, liveContext) || liveContext != context
+                    || !ReadAt(0x00BE78DC, liveManager) || liveManager != manager
+                    || calls.Lookup(manager, request.skill) != skill || !ReadAt(skill + 0x2c, liveBlocked)
+                    || liveBlocked != 0) {
+                    reason = "skill_up_state_changed";
+                    return false;
+                }
+                if (!Facts::GroupContains(bytes, liveManager, groups, request.skill, skill, beginner)) {
+                    reason = "skill_up_group_unavailable_or_not_member";
+                    return false;
+                }
+                Facts::BeginnerVisibilitySnapshot liveVisibility;
+                if (beginner
+                    && (!Facts::BeginnerVisible(bytes, liveNative.stats, request.skill, skill, liveVisibility)
+                        || !(liveVisibility == visibility))) {
+                    reason = "skill_up_visibility_unavailable_or_hidden";
+                    return false;
+                }
+                if (!SelectPoints(
+                        request.skill, liveJob.sp,
+                        [&](std::uint32_t& points) {
+                            return live.character.known[0]
+                                   && Facts::BeginnerPoints(bytes, liveNative.stats, live.character.values[0], points);
+                        },
+                        liveJob.sp)) {
+                    reason = "skill_up_state_unavailable";
+                    return false;
+                }
+                if (liveJob.sp != job.sp) {
+                    reason = "skill_up_state_changed";
+                    return false;
+                }
+                const auto liveLevels = Facts::SkillLevels(bytes, liveNative.stats, request.skill);
+                if (liveLevels.base != levels.base || liveLevels.delta != levels.delta
+                    || Facts::ResourceCount(skill, request.skill) != count) {
+                    reason = "skill_up_state_changed";
+                    return false;
+                }
+                Eligibility liveFacts{true,       sceneGeneration, liveJob.character, liveJob.job,
+                                      liveJob.sp, count,           liveLevels.base,   liveLevels.delta};
+                if (RequiresMaster(request.skill)) {
+                    liveFacts.masterKnown =
+                        Facts::SkillMaster(bytes, liveNative.stats, request.skill, liveFacts.master);
+                    if (!liveFacts.masterKnown) {
+                        reason = "skill_up_master_unavailable";
+                        return false;
+                    }
+                    if (!facts.masterKnown || liveFacts.master != facts.master) {
+                        reason = "skill_up_state_changed";
+                        return false;
+                    }
+                }
+                if (const auto failure = BatchFailure(request, liveFacts)) {
+                    reason = failure;
+                    return false;
+                }
+                if (!BeginnerSkill(request.skill)) {
+                    if (const auto failure = LevelRecheckFailure(live.character.known[0], state.character.values[0],
+                                                                 live.character.values[0])) {
+                        reason = failure;
+                        return false;
+                    }
+                    if (!checkStage(live, liveNative.stats)) return false;
+                }
+                if (request.scene != sceneGeneration || tickRuntime.Running() || tickInput.HasIntent()
+                    || !ReadAt(0x00BE7918, liveContext) || liveContext != context
+                    || !ReadAt(context + 0x20b8, liveContext) || liveContext != native.stats
+                    || !ReadAt(0x00BE78DC, liveManager) || liveManager != manager) {
+                    reason = "skill_up_state_changed";
+                    return false;
+                }
+                if (!calls.Gate(context)) {
+                    reason = "skill_up_gate_closed";
+                    return false;
+                }
+                if (Expired(request, UnixMilliseconds())) {
+                    reason = "skill_up_expired";
+                    return false;
+                }
+                pending.Arm(request, job.job, levels.base, job.sp);
+                calls.Request(context, request.skill);
+                reason = "skill_up_event_invoked";
+                return true;
+            } catch (const NativeObservation::ReadError&) {
+                reason = "skill_up_state_unavailable";
+                return false;
+            }
+        });
+    BeiDouBridge::NativeSkillUp::TickReconcile(
+        directory, instanceId, runId,
+        [](const BeiDouBridge::NativeSkillUp::Request& request, const std::string& originalId, const char*& reason) {
+            namespace Facts = BeiDouBridge::NativeSkillUpFacts;
+            auto& pending = nativeSkillUpPending;
+            reason = "skill_up_confirmation_pending";
+            if (BeiDouBridge::NativeSkillUp::Expired(request, UnixMilliseconds()) || request.scene != sceneGeneration
+                || tickRuntime.Running() || tickInput.HasIntent())
+                return false;
+            try {
+                auto bytes = [](std::uintptr_t address, std::size_t size) {
+                    return NativeObservation::Bytes(address, size);
+                };
+                NativeContext native;
+                const auto state = CaptureState(native);
+                Facts::JobSp job{};
+                if (!state.ready || !Facts::CaptureJobSp(state, request, job) || !native.stats) return false;
+                if (BeiDouBridge::NativeSkillUp::ReconcileRecorded(pending, request, originalId, sceneGeneration,
+                                                                   UnixMilliseconds(), job.job)) {
+                    reason = "skill_up_observed_delta";
+                    return true;
+                }
+                if (!pending.Matches(request, originalId) || job.job != pending.job) return false;
+                std::uint32_t sp = 0;
+                if (!BeiDouBridge::NativeSkillUp::SelectPoints(
+                        pending.skill, job.sp,
+                        [&](std::uint32_t& points) {
+                            return state.character.known[0]
+                                   && Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], points);
+                        },
+                        sp))
+                    return false;
+                const auto levels = Facts::SkillLevels(bytes, native.stats, pending.skill);
+                NativeContext verifyNative;
+                const auto verify = CaptureState(verifyNative);
+                Facts::JobSp verifyJob{};
+                if (!verify.ready || request.scene != sceneGeneration || tickRuntime.Running() || tickInput.HasIntent()
+                    || !Facts::CaptureJobSp(verify, request, verifyJob) || verifyJob.job != job.job
+                    || verifyNative.stats != native.stats || verifyNative.field != native.field
+                    || verifyNative.user != native.user)
+                    return false;
+                std::uint32_t verifySp = 0;
+                if (!BeiDouBridge::NativeSkillUp::SelectPoints(
+                        pending.skill, verifyJob.sp,
+                        [&](std::uint32_t& points) {
+                            return verify.character.known[0]
+                                   && Facts::BeginnerPoints(bytes, verifyNative.stats, verify.character.values[0],
+                                                            points);
+                        },
+                        verifySp))
+                    return false;
+                const auto verifyLevels = Facts::SkillLevels(bytes, verifyNative.stats, pending.skill);
+                std::uint32_t context = 0, character = 0;
+                if (sp != verifySp || levels.base != verifyLevels.base || levels.delta != verifyLevels.delta
+                    || request.scene != sceneGeneration || tickRuntime.Running() || tickInput.HasIntent()
+                    || !ReadAt(0x00BE7918, context) || !context || !ReadAt(context + 0x20b8, character)
+                    || character != native.stats || BeiDouBridge::NativeSkillUp::Expired(request, UnixMilliseconds()))
+                    return false;
+                if (!BeiDouBridge::NativeSkillUp::ReconcileObserved(pending, request, originalId, sceneGeneration,
+                                                                    UnixMilliseconds(), job.job, levels.base, sp))
+                    return false;
+                reason = "skill_up_observed_delta";
+                return true;
+            } catch (const NativeObservation::ReadError&) {
+                return false;
+            }
+        });
     if (now - lastPublishedAt >= 25) {
         NativeObservation::PollNotifications(*eventTransport, previousState);
         eventsPublished = eventTransport->Flush(previousState);

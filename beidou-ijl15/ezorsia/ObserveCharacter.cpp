@@ -117,7 +117,9 @@ Value Character() {
     auto result = Value::Object({
         {"source", "client-native-observation"}, {"readonly", true},
         {"mesos", Value{}}, {"mesos_checksum_valid", false}, {"skills", Value::Object()},
-        {"skills_complete", false}, {"read_seconds", 0},
+        {"skills_complete", false}, {"skill_level_deltas", Value{}},
+        {"skill_level_deltas_complete", false}, {"skill_point_books", Value{}},
+        {"skill_point_books_complete", false}, {"read_seconds", 0},
         {"velocity", Value{}}, {"physics", Value{}}, {"movement", Value{}}, {"on_ground", Value{}},
         {"action_idle", Value{}},
         {"not_covered", StringArray({"skill_names", "skill_requirements", "skill_effects",
@@ -176,6 +178,91 @@ Value Character() {
     }
     result["skills"] = std::move(skills);
     result["skills_complete"] = true;
+    try {
+        const auto records = MapRecords(character + 0x47F, 0xAF2074, 0xAF3314, 16);
+        std::map<Address, std::int32_t> deltas;
+        for (const auto& record : records) {
+            if (!deltas.emplace(At<Address>(record.bytes, 8), At<std::int32_t>(record.bytes, 12)).second)
+                throw ReadError("skill level delta records contain a duplicate ID");
+        }
+        if (CurrentCharacter() != character) throw ReadError("character changed during skill level delta observation");
+        auto values = Value::Object();
+        for (const auto& entry : deltas) values[std::to_string(entry.first)] = entry.second;
+        result["skill_level_deltas"] = std::move(values);
+        result["skill_level_deltas_complete"] = true;
+    } catch (const ReadError&) {
+        // Optional private observation remains unknown on an incomplete map.
+    }
+    try {
+        const std::array<unsigned char, 64> readerCode = {{
+            0x56,0x8b,0x71,0x0c,0x57,0x85,0xf6,0x74,0x3e,0x8b,0xfe,0xff,0x77,0x02,0x8b,0xc6,
+            0x83,0xc6,0xf0,0xf7,0xd8,0x1b,0xc0,0x23,0xc6,0x8b,0x40,0x04,0x8b,0xc8,0x83,0xc0,
+            0x10,0xf7,0xd9,0x1b,0xc9,0x23,0xc8,0x57,0x8b,0xf1,0xe8,0x79,0x1f,0xf9,0xff,0x3a,
+            0x44,0x24,0x14,0x59,0x59,0x75,0xce,0xff,0x77,0x08,0x83,0xc7,0x06,0x57,0xe8,0x65}};
+        const std::array<unsigned char, 32> decodeCode = {{
+            0x55,0x8b,0xec,0x8b,0x4d,0x08,0x0f,0xb6,0x01,0x0f,0xb6,0x49,0x01,0x53,0x8a,0xd8,
+            0x35,0x0d,0xf0,0xad,0xba,0x6a,0x05,0x50,0x89,0x4d,0x08,0x32,0xd9,0xe8,0x95,0xc9}};
+        const std::array<unsigned char, 14> readerTail = {{0x1f,0xf9,0xff,0x59,0x59,0xeb,0x02,0x32,0xc0,0x5f,0x5e,0xc2,0x04,0x00}};
+        const std::array<unsigned char, 38> decodeTail = {{
+            0x5e,0x00,0x03,0x45,0x08,0x59,0x3b,0x45,0x0c,0x59,0x74,0x15,0x68,0xe0,0x4e,0xb4,
+            0x00,0x8d,0x45,0x08,0x50,0xc7,0x45,0x08,0x05,0x00,0x00,0x00,0xe8,0x19,0xc5,0x5e,
+            0x00,0x8a,0xc3,0x5b,0x5d,0xc3}};
+        const std::array<unsigned char, 35> statsCode = {{
+            0x55,0x8b,0xec,0x51,0x8b,0x81,0xb8,0x20,0x00,0x00,0x83,0x65,0xfc,0x00,0x56,0x8b,
+            0x75,0x08,0x8b,0xce,0x89,0x46,0x04,0xe8,0x73,0x2c,0x00,0x00,0x8b,0xc6,0x5e,0xc9,
+            0xc2,0x04,0x00}};
+        const std::array<unsigned char, 53> callerCode = {{
+            0x8d,0x45,0xf4,0x50,0x8b,0xce,0xe8,0xa6,0x96,0xb6,0xff,0x39,0x5d,0xf8,0x8b,0x70,
+            0x04,0x74,0x09,0x53,0x8d,0x4d,0xf4,0xe8,0xce,0xc5,0xb6,0xff,0x8b,0x87,0xb8,0x05,
+            0x00,0x00,0x8b,0x40,0x3c,0x3b,0xc3,0x74,0x10,0x50,0x8d,0x8e,0xbd,0x00,0x00,0x00,
+            0xe8,0x26,0x60,0xc2,0xff}};
+        const std::array<unsigned char, 41> rotateCode = {{
+            0x8b,0x4c,0x24,0x08,0x8b,0x44,0x24,0x04,0x83,0xe1,0x1f,0x8b,0xd1,0x49,0x85,0xd2,
+            0x74,0x16,0x8d,0x51,0x01,0x8b,0xc8,0x83,0xe1,0x01,0xd1,0xe8,0x85,0xc9,0x74,0x05,
+            0x0d,0x00,0x00,0x00,0x80,0x4a,0x75,0xed,0xc3}};
+        const std::array<unsigned char, 43> callerPrefix = {{
+            0x55,0x8b,0xec,0x83,0xec,0x0c,0x53,0x56,0x8b,0x35,0x18,0x79,0xbe,0x00,0x57,0x33,
+            0xdb,0x53,0x8b,0xf9,0x68,0xf4,0x01,0x00,0x00,0x8b,0xce,0x89,0x75,0xfc,0xe8,0xa5,
+            0x95,0xbc,0xff,0x85,0xc0,0x0f,0x84,0x9d,0x00,0x00,0x00}};
+        if (Read<std::array<unsigned char, 41>>(0xA61014) != rotateCode ||
+            Read<std::array<unsigned char, 43>>(0x8BC62F) != callerPrefix ||
+            Read<std::array<unsigned char, 64>>(0x4E26B5) != readerCode ||
+            Read<std::array<unsigned char, 14>>(0x4E26F5) != readerTail ||
+            Read<std::array<unsigned char, 32>>(0x47465D) != decodeCode ||
+            Read<std::array<unsigned char, 38>>(0x47467D) != decodeTail ||
+            Read<std::array<unsigned char, 35>>(0x425D0B) != statsCode ||
+            Read<std::array<unsigned char, 53>>(0x8BC65A) != callerCode)
+            throw ReadError("skill point book layout is unsupported");
+        const auto first = U32(character + 0xC9);
+        auto pointer = first;
+        std::set<Address> visited;
+        std::map<unsigned int, unsigned int> books;
+        while (pointer != 0) {
+            if (pointer < 16 || pointer > UINT32_MAX - 11 || visited.size() >= 256 || !visited.insert(pointer).second)
+                throw ReadError("skill point book list has invalid bounds or a cycle");
+            const auto bytes = Bytes(pointer, 12);
+            const auto decode = [&](std::size_t offset) {
+                const std::uint32_t a = bytes[offset], b = bytes[offset + 1];
+                const auto mixed = a ^ 0xBAADF00D;
+                if (((mixed >> 5) | (mixed << 27)) + b != At<std::uint32_t>(bytes, offset + 2))
+                    throw ReadError("skill point book checksum mismatch");
+                return a ^ b;
+            };
+            if (!books.emplace(decode(0), decode(6)).second)
+                throw ReadError("skill point book contains a duplicate key");
+            const auto next = U32(pointer - 12);
+            if (next > UINT32_MAX - 16) throw ReadError("skill point book next pointer is invalid");
+            pointer = next == 0 ? 0 : next + 16;
+        }
+        if (CurrentCharacter() != character || U32(character + 0xC9) != first)
+            throw ReadError("skill point book list changed during observation");
+        auto values = Value::Object();
+        for (const auto& entry : books) values[std::to_string(entry.first)] = entry.second;
+        result["skill_point_books"] = std::move(values);
+        result["skill_point_books_complete"] = true;
+    } catch (const ReadError&) {
+        // A failed optional read is unknown, not an empty book list.
+    }
     result["unavailable"] = std::move(unavailable);
     return result;
 }

@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "SharedLuaAdapter.h"
 #include "HeadlessState.h"
+#include "SkillUpPreflight.h"
+#include "SkillUpRecords.h"
 #include "LoginState.h"
 #include "PlayerPhysicsPose.h"
 #include "WorldMapImage.h"
 
 #include "Character/Player.h"
+#include "Character/Job.h"
+#include "Character/SkillId.h"
+#include "Data/JobData.h"
+#include "Data/SkillData.h"
 #include "Constants.h"
 #include "Gameplay/Stage.h"
 #include "Gameplay/MapleMap/MapChars.h"
@@ -34,6 +40,19 @@
 namespace {
 using Json = nlohmann::json;
 using Fact = MapleControl::Fact;
+
+using headless::BeginnerSkillPointBudget;
+static_assert(BeginnerSkillPointBudget(1, 0) == 0);
+static_assert(BeginnerSkillPointBudget(5, 2) == 2);
+static_assert(BeginnerSkillPointBudget(20, 6) == 0);
+
+int BeginnerSkillPoints(ms::Player& player) {
+    const auto level = player.get_stats().get_stat(ms::MapleStat::Id::LEVEL);
+    const auto group = headless::BeginnerGroup(player.get_stats().get_stat(ms::MapleStat::Id::JOB));
+    if (group < 0) return -1;
+    if (!headless::BeginnerResourceValid(group, ms::JobData::get(group).get_skills())) return -1;
+    return headless::BeginnerPoolPoints(group, level, [&](auto skill) { return player.get_skills().get_level(skill); });
+}
 
 MapleControl::Value ObservationValue(const Json& value) {
     using Value = MapleControl::Value;
@@ -494,7 +513,9 @@ void SharedLuaAdapter::ReadCommand() {
     unsigned int protocol = 0;
     std::uint64_t generation = 0;
     std::uint64_t value = 0;
-    std::string instance, id, operation, scriptId, extra;
+    std::uint64_t points = 0;
+    std::int64_t requestCharacter = 0;
+    std::string instance, id, operation, scriptId, extra, requestRun;
     const bool header = line.size() <= 1024
                         && static_cast<bool>(stream >> protocol >> instance >> generation >> id >> operation >> value);
     if (!header) {
@@ -517,6 +538,12 @@ void SharedLuaAdapter::ReadCommand() {
             valid = valid && generation == state.sceneGeneration && value <= 0xffffffffULL && state.ready;
         else
             valid = valid && value == 0;
+    } else if (operation == "skill-up") {
+        valid = valid && generation == state.sceneGeneration && state.ready && value > 0 && value <= 0x7fffffffULL
+                && static_cast<bool>(stream >> points >> requestRun >> requestCharacter)
+                && headless::SkillRequestIdentity(requestRun, runId, requestCharacter, state.characterKnown,
+                                                  state.character.id)
+                && points > 0 && points <= 0x7fffffffULL && !(stream >> extra);
     } else
         valid = valid && operation == "stop" && value == 0 && !(stream >> extra);
     if (!valid) {
@@ -529,6 +556,84 @@ void SharedLuaAdapter::ReadCommand() {
         rejectedReason = "script_session_changed";
         return;
     }
+    if (operation == "skill-up") {
+        if (std::any_of(skillUpRecords.begin(), skillUpRecords.end(),
+                        [&](const auto& record) { return record["request_id"] == id; })) {
+            rejectedId = id;
+            rejectedReason = "duplicate_request";
+            return;
+        }
+        if (headless::SkillRequestPending(skillUpRecords)) {
+            rejectedId = id;
+            rejectedReason = "skill_up_pending";
+            return;
+        }
+        if (Running() || scriptCommand) {
+            rejectedId = id;
+            rejectedReason = "script_running";
+            return;
+        }
+        auto& player = ms::Stage::get().get_player();
+        auto& book = player.get_skills();
+        const auto skill = static_cast<std::int32_t>(value);
+        const auto jobId = player.get_stats().get_stat(ms::MapleStat::Id::JOB);
+        if (headless::UnsupportedSkillAllocation(skill, jobId) || BeginnerSkillPoints(player) < 0) {
+            commandId = id;
+            scriptCommand = false;
+            commandStatus = "rejected";
+            commandReason = "skill_not_eligible";
+            return;
+        }
+        const ms::Job job(jobId);
+        bool eligible = false;
+        bool beginner = false;
+        const auto beginnerGroup = headless::BeginnerGroup(jobId);
+        for (int level = ms::Job::BEGINNER; level <= job.get_level(); ++level) {
+            const auto group =
+                level == ms::Job::BEGINNER ? beginnerGroup : job.get_subjob(static_cast<ms::Job::Level>(level));
+            if (group < 0) continue;
+            const auto& skills = ms::JobData::get(group).get_skills();
+            if (std::find(skills.begin(), skills.end(), skill) != skills.end()) {
+                beginner = group == beginnerGroup;
+                eligible = !beginner || headless::BeginnerPoolSkill(skill, jobId);
+                break;
+            }
+        }
+        if (eligible) {
+            const auto& data = ms::SkillData::get(skill);
+            auto maximum = book.get_masterlevel(skill);
+            const bool visible = !data.is_invisible() || maximum != 0;
+            if (maximum == 0 && !headless::ServerFourthJobSkill(skill)) maximum = data.get_masterlevel();
+            const auto current = book.get_level(skill);
+            const auto sp = beginner ? BeginnerSkillPoints(player) : player.get_stats().get_stat(ms::MapleStat::Id::SP);
+            auto requirements = book.collect_required(skill);
+            if (requirements.empty()) requirements = data.get_reqskills();
+            eligible = headless::SkillUpEligible(eligible, visible, skill == ms::SkillId::Id::ANGEL_BLESSING, maximum,
+                                                 current, sp, points, requirements,
+                                                 [&](auto required) { return book.get_level(required); });
+        }
+        commandId = id;
+        scriptCommand = false;
+        commandStatus = eligible ? "completed" : "rejected";
+        commandReason = eligible ? "packet_dispatched" : "skill_not_eligible";
+        if (eligible) {
+            const auto sp = beginner ? BeginnerSkillPoints(player) : player.get_stats().get_stat(ms::MapleStat::Id::SP);
+            skillUpRecords.push_back({{"request_id", id},
+                                      {"run_id", runId},
+                                      {"instance_id", state.instanceId},
+                                      {"character_id", player.get_oid()},
+                                      {"skill_id", skill},
+                                      {"scene_generation", state.sceneGeneration},
+                                      {"job", jobId},
+                                      {"beginner", beginner},
+                                      {"level_before", book.get_level(skill)},
+                                      {"sp_before", sp},
+                                      {"status", "pending"}});
+            ms::SpendSpPacket(skill).dispatch();
+        }
+        return;
+    }
+    headless::InvalidatePendingSkillRequests(skillUpRecords);
     commandId = id;
     commandStatus = "running";
     commandReason.clear();
@@ -586,6 +691,23 @@ void SharedLuaAdapter::ReadCommand() {
 void SharedLuaAdapter::Tick(std::uint64_t nativeTick) {
     const auto generation = state.sceneGeneration;
     Capture();
+    for (auto& record : skillUpRecords) {
+        if (record["status"] != "pending") continue;
+        if (!state.ready || !state.characterKnown || state.character.id != record["character_id"]
+            || state.sceneGeneration != record["scene_generation"]) {
+            headless::ObserveSkillRequest(record, false, 0, 0);
+            continue;
+        }
+        auto& player = ms::Stage::get().get_player();
+        if (player.get_stats().get_stat(ms::MapleStat::Id::JOB) != record["job"]) {
+            headless::ObserveSkillRequest(record, false, 0, 0);
+            continue;
+        }
+        const auto sp = record["beginner"].get<bool>() ? BeginnerSkillPoints(player)
+                                                       : player.get_stats().get_stat(ms::MapleStat::Id::SP);
+        headless::ObserveSkillRequest(record, true,
+                                      player.get_skills().get_level(record["skill_id"].get<std::int32_t>()), sp);
+    }
     const bool changed = generation != state.sceneGeneration;
     // Read the just-consumed native input before the scheduler can change the
     // key union and erase the dispatch's ownership evidence.
@@ -766,6 +888,13 @@ Json SharedLuaAdapter::ObservationData(const std::string& domain, std::string& s
              {"validation_source", "native_objects"},
              {"skills", std::move(knownSkills)},
              {"skills_complete", true},
+             {"beginner_skill_points",
+              BeginnerSkillPoints(player) < 0 ? Json(nullptr) : Json(BeginnerSkillPoints(player))},
+             {"beginner_skill_ids",
+              BeginnerSkillPoints(player) < 0
+                  ? Json(nullptr)
+                  : Json(ms::JobData::get(headless::BeginnerGroup(player.get_stats().get_stat(ms::MapleStat::Id::JOB)))
+                             .get_skills())},
              {"physics", Json::parse(state.character.physics.Document().Dump())},
              {"movement", Json::parse(state.character.movement.Document().Dump())},
              {"on_ground", FactValue(state.onGround)},
@@ -991,6 +1120,7 @@ Json SharedLuaAdapter::StateDocument() const {
                                  : Json{{"id", rejectedId}, {"status", "rejected"}, {"reason", rejectedReason}}},
         {"script", ScriptState(latestScriptId)},
         {"scripts", ScriptsDocument()},
+        {"skill_up_records", skillUpRecords},
         {"tick_profile", Json::parse(tickRuntime.Profile().Dump())},
         {"input_events", inputEvents},
         {"capabilities",

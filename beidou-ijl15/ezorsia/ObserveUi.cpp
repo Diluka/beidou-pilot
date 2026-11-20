@@ -499,11 +499,52 @@ Value CaptureWindow(Address address, const OptionalRect& camera) {
         const auto length = array == 0 ? 0 : Read<Address>(array - 4);
         if (length > 512) throw ReadError("Visible skill list exceeds the supported range");
         auto ids = Value::Array();
+        auto resourceCounts = Value::Array();
+        // Complete fixed V17 PCOM binding getter. Never invoke it.
+        const std::array<unsigned char, 29> fingerprint = {{
+            0x8b,0x44,0x24,0x08,0x85,0xc0,0x75,0x07,0xb8,0x03,0x40,0x00,0x80,0xeb,0x0b,0x8b,
+            0x4c,0x24,0x04,0x8b,0x49,0x30,0x89,0x08,0x33,0xc0,0xc2,0x08,0x00}};
+        const std::array<Address, 16> pcomVtable = {{
+            0x50C034FA,0x50C034E9,0x50C0391D,0x50C0D90A,
+            0x50C0D939,0x50C0CF8F,0x50C0CF52,0x50C0CD03,
+            0x50C0CCE6,0x50C0CD7A,0x50C0D323,0x50C11666,
+            0x50C034C3,0x50C0349D,0x50C102FA,0x50C102FA}};
+        bool pcomVerified = false;
+        try {
+            pcomVerified = Read<std::array<Address, 16>>(0x50C131C4) == pcomVtable &&
+                Read<std::array<unsigned char, 29>>(0x50C0CCE6) == fingerprint;
+        } catch (const ReadError&) {}
         for (Address skillIndex = 0; skillIndex < length; ++skillIndex) {
             const auto skill = Read<Address>(array + skillIndex * 8 + 4);
-            ids.Add(Read<Address>(skill));
+            const auto id = Read<Address>(skill);
+            ids.Add(id);
+            Value count;
+            if (pcomVerified) {
+                try {
+                    const auto binding = Read<Address>(skill + 0x5C);
+                    if (binding && Read<Address>(binding) == 0x50C131C4) {
+                        const auto value = Read<unsigned int>(binding + 0x30);
+                        // Conservative supported observation range, not a game maximum.
+                        if (value >= 1 && value <= 255 &&
+                            Read<Address>(skill + 0x5C) == binding &&
+                            Read<Address>(array + skillIndex * 8 + 4) == skill &&
+                            Read<Address>(skill) == id) count = value;
+                    }
+                } catch (const ReadError&) {}
+            }
+            resourceCounts.Add(count);
         }
-        skills = Value::Object({{"ids", ids}, {"first_index", Read<Address>(scroll + 0x38)},
+        bool sameArray = false;
+        try {
+            sameArray = Read<Address>(address + 0x5F4) == array &&
+                (!array || Read<Address>(array - 4) == length);
+        } catch (const ReadError&) {}
+        if (!sameArray) {
+            resourceCounts = Value::Array();
+            for (Address skillIndex = 0; skillIndex < length; ++skillIndex)
+                resourceCounts.Add(Value());
+        }
+        skills = Value::Object({{"ids", ids}, {"resource_counts", resourceCounts}, {"first_index", Read<Address>(scroll + 0x38)},
             {"selected_tab", Read<Address>(tab + 0x3C)}, {"tab_count", Read<Address>(tab + 0x48)}});
     }
     const auto name = WindowName(tables[0]);
