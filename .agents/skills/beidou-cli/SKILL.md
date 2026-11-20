@@ -12,7 +12,7 @@ description: 查询北斗隔离开发服的在线状态、版本和世界列表�
 `apis` 显示的是**官方管理 CLI JAR 自带的静态接口表**。在 `beidou-cli` v1.0.5 中，[ApiListCommand 的 `APIS` 表](https://github.com/BeiDouMS/beidou-cli/blob/eaffe8849a5d0f57f986ba95c92b108e3d7b625d/src/main/java/org/gms/command/ApiListCommand.java#L42-L53)逐项记录 HTTP 方法、路径、简述和敏感标记；[`apis` 命令](https://github.com/BeiDouMS/beidou-cli/blob/eaffe8849a5d0f57f986ba95c92b108e3d7b625d/src/main/java/org/gms/command/ApiListCommand.java#L172-L194)只筛选、打印这张表，不向游戏服务端请求文档。官方另有 [CLI 使用指南](https://github.com/BeiDouMS/beidou-cli/blob/eaffe8849a5d0f57f986ba95c92b108e3d7b625d/beidou-cli.md)，用于查命令语法。
 
 - **查接口索引**：运行 `workbenches/workbench server dev cli apis` 查看全表，或用 `apis server`、`apis give` 等按主题筛选。清单表头的 `Server v1.10` 是写在 CLI 里的参考版本。
-- **查实际服务**：HTTP 接口由游戏服务端 `BeiDou.jar` 实现。用 `call GET /server/v1/version` 查询运行版本（本开发服实测为 `1.12`）；清单中的条目不能证明当前版本支持该接口或参数。
+- **查实际服务**：HTTP 接口由游戏服务端 `BeiDou.jar` 实现。用 `call GET /server/v1/version` 查询运行版本（当前开发服运行 `1.12`）；清单中的条目不能证明当前版本支持该接口或参数。
 - **查可用操作**：以 `workbenches/workbench server dev cli --help` 和官方 `apis` 为准，核对服务端响应。
 
 ## 查询开发服
