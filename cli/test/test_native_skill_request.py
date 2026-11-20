@@ -124,6 +124,61 @@ class NativeSkillRequestTest(unittest.TestCase):
                 preflight_skill_up(backend, skill, 1)
             self.assertEqual(raised.exception.code, 'skill_up_unsupported')
 
+    def test_normal_insufficient_sp_never_publishes(self):
+        backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
+        backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7, 'skills': {}})
+        state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                 'character': {'id': 7, 'job': 100, 'skill_points': 0}}
+        with (patch('beidou_pilot.skill_up.BridgeClient') as bridge,
+              patch('beidou_pilot.skill_up._native_skill_request') as publish):
+            bridge.return_value.snapshot.return_value = state
+            with self.assertRaises(ClientError) as raised:
+                skill_up_once(backend, 1001003)
+        self.assertEqual(raised.exception.code, 'insufficient_skill_points')
+        publish.assert_not_called()
+
+    def test_full_call_published_invalid_or_missing_response_is_unknown(self):
+        for invalid in (False, True):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory)
+                backend = SimpleNamespace(root=path, name='beidou', instance='default', paths=SimpleNamespace(bridge=path))
+                backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7, 'skills': {}})
+                state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                         'character': {'id': 7, 'job': 100, 'skill_points': 3}}
+                request_id = 'a' * 32
+                if invalid:
+                    (path / ('skill-up-result-' + request_id + '.json')).write_text(json.dumps(
+                        {'protocol': 2, 'request_id': request_id, 'status': 'invoked', 'reason': 'x'}))
+                with (patch('beidou_pilot.skill_up.BridgeClient') as bridge,
+                      patch('beidou_pilot.skill_up.uuid.uuid4', return_value=SimpleNamespace(hex=request_id)),
+                      patch('beidou_pilot.skill_up.time.monotonic', side_effect=[0, 3])):
+                    bridge.return_value.snapshot.return_value = state
+                    with self.assertRaises(ClientError) as raised:
+                        skill_up_once(backend, 1001003)
+                self.assertEqual(raised.exception.code, 'skill_up_unknown')
+                self.assertEqual(raised.exception.details['request_id'], request_id)
+                self.assertEqual((path / 'skill-up.txt').read_text().split()[3], request_id)
+                self.assertEqual(len(list(path.glob('skill-up*.txt'))), 1)
+
+    def test_normal_missing_level_zero_to_one_full_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            backend = SimpleNamespace(root=path, name='beidou', instance='default', paths=SimpleNamespace(bridge=path))
+            backend.read = unittest.mock.Mock(side_effect=[{'skills_complete': True, 'character_id': 7, 'skills': {}},
+                {'skills_complete': True, 'character_id': 7, 'skills': {'1001003': {'level': 1}}}])
+            before = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                      'character': {'id': 7, 'job': 100, 'skill_points': 3}}
+            after = {**before, 'character': {**before['character'], 'skill_points': 2}}
+            request_id = 'a' * 32
+            (path / ('skill-up-result-' + request_id + '.json')).write_text(json.dumps(
+                {'protocol': 1, 'request_id': request_id, 'status': 'invoked', 'reason': 'skill_up_event_invoked'}))
+            with (patch('beidou_pilot.skill_up.BridgeClient') as bridge,
+                  patch('beidou_pilot.skill_up.uuid.uuid4', return_value=SimpleNamespace(hex=request_id))):
+                bridge.return_value.snapshot.side_effect = [before, after]
+                result = skill_up_once(backend, 1001003)
+            self.assertEqual((result['level_before'], result['level_after'], result['sp_before'], result['sp_after']), (0, 1, 3, 2))
+            self.assertEqual(result['request_id'], request_id)
+
     def test_unknown_normal_sp_is_not_insufficient(self):
         backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
         backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7, 'skills': {}})
