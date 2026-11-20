@@ -2,7 +2,7 @@ name: beidou-pilot-dev
 
 services:
   beidou-db:
-    image: mysql:8.4.0@sha256:dab7049abafe3a0e12cbe5e49050cf149881c0cd9665c289e5808b9dad39c9e0
+    image: mysql:8.4.0
     labels:
       beidou.workbench.environment: dev
     environment:
@@ -23,7 +23,7 @@ services:
       retries: 30
 
   beidou-server-all:
-    image: ${BEIDOU_SERVER_IMAGE:-ghcr.io/beidoums/beidou-server-all:v1.12@sha256:fbf6f63c85995b42816a00aac9fe047016b59a5ad4b975666095d67897a68952}
+    image: ${BEIDOU_SERVER_IMAGE:-ghcr.io/beidoums/beidou-server-all:v1.12}
     labels:
       beidou.workbench.environment: dev
     depends_on:
