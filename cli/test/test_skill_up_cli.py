@@ -31,6 +31,7 @@ class SkillUpCliTests(unittest.TestCase):
                 with backend.paths.input_lock.open("a+") as handle:
                     with self.assertRaises(BlockingIOError):
                         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return ("i", "r", 1, 3, 0, 1, 1, None)
 
             with (patch("beidou_pilot.cli.Backend", return_value=backend),
                   patch("beidou_pilot.skill_up.preflight_skill_up", side_effect=verify_lock) as preflight,
@@ -38,7 +39,7 @@ class SkillUpCliTests(unittest.TestCase):
                   redirect_stdout(io.StringIO())):
                 self.assertEqual(main(["skill-up", "1000", "--json"]), 0)
                 preflight.assert_called_once_with(backend, 1000, 1)
-                once.assert_called_once_with(backend, 1000)
+                once.assert_called_once_with(backend, 1000, ("i", "r", 1, 3, 0, 1, 1, None))
 
     def test_gui_running_lua_blocks_skill_up_before_desktop_input(self):
         args = parser().parse_args(["skill-up", "2101002"])
@@ -56,16 +57,30 @@ class SkillUpCliTests(unittest.TestCase):
             preflight.assert_not_called()
             once.assert_not_called()
 
-    def test_gui_batch_is_refused_before_any_click(self):
+    def test_gui_batch_stops_if_identity_changes(self):
         args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
-        backend = SimpleNamespace(root=Path("/nonexistent"), instance="default", name="beidou", read=unittest.mock.Mock(return_value={
-            "native_values_valid": True, "character": {"id": 1, "job": 210, "skill_points": 3}}))
-        with patch("beidou_pilot.skill_up.skill_up_once") as once:
+        backend = SimpleNamespace(root=Path("/nonexistent"), instance="default", name="beidou")
+        states = [("i", "r", 1, 3, 0, 1, 2), ("i", "other", 1, 2, 1, 1, 1)]
+        with (patch("beidou_pilot.skill_up.preflight_skill_up", side_effect=states),
+              patch("beidou_pilot.skill_up.skill_up_once", return_value={"level_after": 1}) as once):
             with self.assertRaises(ClientError) as caught:
                 dispatch(backend, args)
-        self.assertEqual(caught.exception.code, "skill_limit_unavailable")
-        self.assertEqual(caught.exception.details["confirmed"], [])
-        once.assert_not_called()
+        self.assertEqual(caught.exception.code, "skill_state_changed")
+        self.assertEqual(len(caught.exception.details["confirmed"]), 1)
+        once.assert_called_once()
+
+    def test_gui_batch_gate_rejection_preserves_confirmed(self):
+        args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
+        backend = SimpleNamespace(root=Path("/nonexistent"), instance="default", name="beidou")
+        states = [("i", "r", 1, 3, 0, 1, 2), ("i", "r", 1, 2, 1, 1, 1)]
+        with (patch("beidou_pilot.skill_up.preflight_skill_up", side_effect=states),
+              patch("beidou_pilot.skill_up.skill_up_once", side_effect=[{"level_after": 1},
+                    ClientError("skill_up_gate_closed", "门禁关闭")]) as once):
+            with self.assertRaises(ClientError) as caught:
+                dispatch(backend, args)
+        self.assertEqual(caught.exception.code, "skill_up_gate_closed")
+        self.assertEqual(caught.exception.details["confirmed"], [{"level_after": 1}])
+        self.assertEqual(once.call_count, 2)
 
     def test_headless_dispatch(self):
         args = parser().parse_args(["skill-up", "2101002", "--points", "2"])

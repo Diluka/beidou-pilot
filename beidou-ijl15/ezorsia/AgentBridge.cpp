@@ -5,6 +5,9 @@
 #include "NativeKeyUnion.h"
 #include "NativeTickInput.h"
 #include "NativeAutoApTransaction.h"
+#include "NativeSkillUp.h"
+#include "NativeSkillUpCalls.h"
+#include "NativeSkillUpFacts.h"
 #include "EventTransport.h"
 #include "NativeKeyBindings.h"
 #include "NativeItemUse.h"
@@ -1608,6 +1611,132 @@ void Tick() {
     }
     NativeObservation::Tick(directory, instanceId, runId, sceneGeneration, sequence, sceneDataRoot);
     BeiDouBridge::LoginAction::Tick(directory, instanceId, runId);
+    BeiDouBridge::NativeSkillUp::Tick(
+        directory, instanceId, runId, [](const BeiDouBridge::NativeSkillUp::Request& request, const char*& reason) {
+            using namespace BeiDouBridge::NativeSkillUp;
+            namespace Facts = BeiDouBridge::NativeSkillUpFacts;
+            static PendingFence pending;
+            if (Expired(request, UnixMilliseconds())) {
+                reason = "skill_up_expired";
+                return false;
+            }
+            if (tickRuntime.Running() || tickInput.HasIntent() || request.scene != sceneGeneration) {
+                reason = "skill_up_busy_or_scene_changed";
+                return false;
+            }
+            const auto hash = NativeAutoApExecutableMatches();
+            auto read = [](std::uint32_t address, auto& value) { return ReadAt(address, value); };
+            NativeCalls<decltype(read)> calls{read};
+            if (hash != NativeAutoApHash::Match || !calls.Fingerprints()) {
+                reason = "skill_up_unsupported";
+                return false;
+            }
+            try {
+                NativeContext native;
+                auto state = CaptureState(native);
+                Facts::JobSp job{};
+                std::uint32_t context = 0, manager = 0;
+                if (!state.ready || state.dead != MapleControl::Fact::False || request.scene != sceneGeneration
+                    || tickRuntime.Running() || tickInput.HasIntent() || !Facts::CaptureJobSp(state, request, job)
+                    || !ReadAt(0x00BE7918, context) || !context || !ReadAt(0x00BE78DC, manager) || !manager
+                    || !native.stats) {
+                    reason = "skill_up_state_unavailable";
+                    return false;
+                }
+                const auto skill = calls.Lookup(manager, request.skill);
+                std::uint32_t blocked = 0;
+                if (!skill || !ReadAt(skill + 0x2c, blocked) || blocked != 0) {
+                    reason = "skill_up_skill_unavailable";
+                    return false;
+                }
+                auto bytes = [](std::uintptr_t address, std::size_t size) {
+                    return NativeObservation::Bytes(address, size);
+                };
+                if (pending.pending) {
+                    const auto prior = Facts::SkillLevels(bytes, native.stats, pending.skill);
+                    auto priorSp = job.sp;
+                    if ((pending.skill == 1000
+                         && (!state.character.known[0]
+                             || !Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], priorSp)))
+                        || !pending.Confirm(job.character, job.job, prior.base, priorSp)) {
+                        reason = "skill_up_confirmation_pending";
+                        return false;
+                    }
+                }
+                if (request.skill == 1000) {
+                    if (!state.character.known[0]
+                        || !Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], job.sp)) {
+                        reason = "skill_up_state_unavailable";
+                        return false;
+                    }
+                }
+                const auto levels = Facts::SkillLevels(bytes, native.stats, request.skill);
+                const auto count = Facts::ResourceCount(skill, request.skill);
+                const Eligibility facts{true,   sceneGeneration, job.character, job.job,
+                                        job.sp, count,           levels.base,   levels.delta};
+                if (!BatchEligible(request, facts)) {
+                    reason = "skill_up_ineligible";
+                    return false;
+                }
+                if (!calls.CanRaise(context, skill)) {
+                    reason = "skill_up_requirements_unmet";
+                    return false;
+                }
+                NativeContext liveNative;
+                const auto live = CaptureState(liveNative);
+                Facts::JobSp liveJob{};
+                std::uint32_t liveContext = 0, liveManager = 0, liveBlocked = 0;
+                if (!live.ready || live.dead != MapleControl::Fact::False || tickRuntime.Running()
+                    || tickInput.HasIntent() || request.scene != sceneGeneration
+                    || !Facts::CaptureJobSp(live, request, liveJob) || liveJob.job != job.job
+                    || liveNative.field != native.field || liveNative.stats != native.stats
+                    || liveNative.user != native.user || !ReadAt(0x00BE7918, liveContext) || liveContext != context
+                    || !ReadAt(0x00BE78DC, liveManager) || liveManager != manager
+                    || calls.Lookup(manager, request.skill) != skill || !ReadAt(skill + 0x2c, liveBlocked)
+                    || liveBlocked != 0) {
+                    reason = "skill_up_state_changed";
+                    return false;
+                }
+                if (request.skill == 1000
+                    && (!live.character.known[0]
+                        || !Facts::BeginnerPoints(bytes, liveNative.stats, live.character.values[0], liveJob.sp))) {
+                    reason = "skill_up_state_unavailable";
+                    return false;
+                }
+                if (liveJob.sp != job.sp) {
+                    reason = "skill_up_state_changed";
+                    return false;
+                }
+                const auto liveLevels = Facts::SkillLevels(bytes, liveNative.stats, request.skill);
+                if (liveLevels.base != levels.base || liveLevels.delta != levels.delta
+                    || Facts::ResourceCount(skill, request.skill) != count) {
+                    reason = "skill_up_state_changed";
+                    return false;
+                }
+                if (request.scene != sceneGeneration || tickRuntime.Running() || tickInput.HasIntent()
+                    || !ReadAt(0x00BE7918, liveContext) || liveContext != context
+                    || !ReadAt(context + 0x20b8, liveContext) || liveContext != native.stats
+                    || !ReadAt(0x00BE78DC, liveManager) || liveManager != manager) {
+                    reason = "skill_up_state_changed";
+                    return false;
+                }
+                if (!calls.Gate(context)) {
+                    reason = "skill_up_gate_closed";
+                    return false;
+                }
+                if (Expired(request, UnixMilliseconds())) {
+                    reason = "skill_up_expired";
+                    return false;
+                }
+                pending.Arm(request, job.job, levels.base, job.sp);
+                calls.Request(context, request.skill);
+                reason = "skill_up_event_invoked";
+                return true;
+            } catch (const NativeObservation::ReadError&) {
+                reason = "skill_up_state_unavailable";
+                return false;
+            }
+        });
     if (now - lastPublishedAt >= 25) {
         NativeObservation::PollNotifications(*eventTransport, previousState);
         eventsPublished = eventTransport->Flush(previousState);

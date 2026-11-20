@@ -508,8 +508,10 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         try:
             for remaining in range(args.points, 0, -1):
                 if args.points == 1:
-                    preflight_skill_up(backend, args.skill_id, remaining)
-                    confirmed.append(skill_up_once(backend, args.skill_id))
+                    expected = preflight_skill_up(backend, args.skill_id, remaining)
+                    if expected is None:
+                        raise ClientError("skill_state_changed", "预检身份不可用。")
+                    confirmed.append(skill_up_once(backend, args.skill_id, expected))
                 else:
                     expected = preflight_skill_up(backend, args.skill_id, remaining, batch=True)
                     if expected is None:
