@@ -64,7 +64,7 @@ beidou-pilot --json bridge status
 
 确认角色、技能及明确的加点授权后，可用 `beidou-pilot --json skill-up SKILL_ID --points N`；`--points` 默认 1。逐点核对技能等级和 SP 后继续，失败时查看 `details.confirmed`。结果已发布但未知时先观察，不重放；可在同一运行实例用 `beidou-pilot --json skill-up-reconcile SKILL_ID --request-id REQUEST_ID` 只读核对（`confirmed`/`unresolved`），未决记录会阻断当前 run 的后续加点。重启不证明旧请求失败，不得自动重发。
 
-当前覆盖普通冒险家职业 `100`–`522` 的祖先组技能，以及初学者技能 `1000`、`1001`、`1002`；特殊职业、其他初学者组和未核验的多册技能会被拒绝，不绕过。无头端覆盖普通冒险家和已核验的初学者分册。完整范围、门禁与已知限制见 [CLI 技能加点](../../../docs/CLI.md#技能加点)。
+当前目标是冒险家职业群：`100`–`522` 的祖先组技能及初学者技能 `1000`、`1001`、`1002`；其他职业群不在本阶段范围，GUI 会拒绝，headless 不承诺。完整范围、门禁与已知限制见 [CLI 技能加点](../../../docs/CLI.md#技能加点)。
 
 ## AP 自动分配
 
