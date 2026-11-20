@@ -94,8 +94,34 @@ class NativeSkillRequestTest(unittest.TestCase):
                 with self.subTest(skill=skill):
                     self.assertEqual(preflight_skill_up(backend, skill, 1)[3], 3)
             state['character']['job'] = 220
+            self.assertEqual(preflight_skill_up(backend, 2101002, 1)[4], 0)
+            state['character']['job'] = 2211
             with self.assertRaises(ClientError) as raised:
                 preflight_skill_up(backend, 2101002, 1)
+            self.assertEqual(raised.exception.code, 'skill_up_unsupported')
+
+    def test_missing_level_is_zero_only_with_complete_matching_records(self):
+        backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
+        learned = {'skills_complete': True, 'character_id': 7, 'skills': {}}
+        backend.read = unittest.mock.Mock(return_value=learned)
+        state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                 'character': {'id': 7, 'job': 311, 'skill_points': 3}}
+        with patch('beidou_pilot.skill_up.BridgeClient') as bridge:
+            bridge.return_value.snapshot.return_value = state
+            self.assertEqual(preflight_skill_up(backend, 3101003, 1)[4], 0)
+            for complete, character_id in ((False, 7), (True, 8)):
+                learned.update(skills_complete=complete, character_id=character_id)
+                with self.subTest(complete=complete, character_id=character_id), self.assertRaises(ClientError) as raised:
+                    preflight_skill_up(backend, 3101003, 1)
+                self.assertEqual(raised.exception.code, 'skills_unavailable')
+
+    def test_special_fixed_levels_and_outside_group_candidates_refused(self):
+        backend = SimpleNamespace(name='beidou')
+        for skill in (1009, 1010, 1011, 1020, 10001009, 10001010, 10001011, 10001020,
+                      20001009, 20001010, 20001011, 20001020, 20011009, 20011010, 20011011,
+                      20011020, 22001000, 5230000):
+            with self.subTest(skill=skill), self.assertRaises(ClientError) as raised:
+                preflight_skill_up(backend, skill, 1)
             self.assertEqual(raised.exception.code, 'skill_up_unsupported')
 
     def test_unknown_normal_sp_is_not_insufficient(self):

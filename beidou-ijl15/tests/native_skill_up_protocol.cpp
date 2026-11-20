@@ -42,14 +42,21 @@ int main() {
     assert(SupportedSkill(100, 1001005));
     for (auto skill : {2100000u, 2101001u, 2101002u, 2101003u, 2101004u, 2101005u})
         assert(SupportedSkill(210, skill));
-    assert(!SupportedSkill(210, 2101006));
-    assert(!SupportedSkill(210, 1001005) && !SupportedSkill(211, 2101005));
+    // These are candidates only: client group membership is still required.
+    assert(SupportedSkill(210, 2101006) && SupportedSkill(211, 2101005));
+    assert(!SupportedSkill(999, 2101005));
+    assert((OrdinaryGroups(112) == std::vector<std::uint32_t>{100, 110, 111, 112}));
+    assert((OrdinaryGroups(210) == std::vector<std::uint32_t>{200, 210}));
+    assert(OrdinaryGroups(430).empty() && OrdinaryGroups(900).empty());
+    for (auto skill : {1009u,1010u,1011u,1020u,10001009u,10001010u,10001011u,10001020u,
+                       20001009u,20001010u,20001011u,20001020u,20011009u,20011010u,20011011u,20011020u})
+        assert(FixedLevelSkill(skill) && !SupportedSkill(210, skill));
     assert(Parse("1 instance run " + id + " 7 123 1001005 3 123456789", request));
     Eligibility state{true, 7, 123, 100, 3, 20, 17, 0};
     assert(BatchFailure(request, state) == nullptr);
     state.delta = 1; assert(std::string(BatchFailure(request, state)) == "skill_up_insufficient_level_capacity");
     state.delta = 0; state.sp = 2; assert(std::string(BatchFailure(request, state)) == "skill_up_insufficient_sp");
-    state.sp = 3; state.job = 210; assert(std::string(BatchFailure(request, state)) == "skill_up_job_skill_unsupported");
+    state.sp = 3; state.job = 999; assert(std::string(BatchFailure(request, state)) == "skill_up_job_skill_unsupported");
     state.job = 100; state.scene = 8; assert(std::string(BatchFailure(request, state)) == "skill_up_state_unavailable");
     state.scene = 7; state.known = false; assert(std::string(BatchFailure(request, state)) == "skill_up_state_unavailable");
     state.known = true; state.count = 0; assert(std::string(BatchFailure(request, state)) == "skill_up_state_unavailable");

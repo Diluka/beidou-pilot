@@ -32,7 +32,7 @@ int main() {
         assert(CaptureJobSp(state, request, jobsp) && jobsp.job == 100);
     }
     state.character.values[1] = 210; request.skill = 1000000;
-    assert(!CaptureJobSp(state, request, jobsp));
+    assert(CaptureJobSp(state, request, jobsp)); // Candidate only; group membership is checked separately.
     state.character.id = 43; request.skill = 2101001;
     assert(!CaptureJobSp(state, request, jobsp));
     std::map<std::uint32_t, unsigned char> memory;
@@ -137,6 +137,8 @@ int main() {
     put(0x5208, 100); put(0x520c, 0); put(0x5210, 0x5300);
     put(0x5308, 0x5404); put(0x5400, 1); put(0x5404, 0); put(0x5408, 0x5500); put(0x5500, 1000000);
     assert(GroupContains(reader, 0x5000, {100}, 1000000, 0x5500));
+    assert(GroupContains(reader, 0x5000, BeiDouBridge::NativeSkillUp::OrdinaryGroups(112), 1000000, 0x5500));
+    assert(!GroupContains(reader, 0x5000, BeiDouBridge::NativeSkillUp::OrdinaryGroups(210), 1000000, 0x5500));
     assert(!GroupContains(reader, 0x5000, {0}, 1000000, 0x5500));
     assert(!GroupContains(reader, 0x5000, {100}, 1000000, 0x5504));
     assert(!GroupContains(reader, 0x5000, {200}, 1000000, 0x5500));

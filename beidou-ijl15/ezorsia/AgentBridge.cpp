@@ -1660,6 +1660,12 @@ void Tick() {
                 auto bytes = [](std::uintptr_t address, std::size_t size) {
                     return NativeObservation::Bytes(address, size);
                 };
+                const auto groups = OrdinaryGroups(job.job);
+                if (!BeginnerSkill(request.skill)
+                    && !Facts::GroupContains(bytes, manager, groups, request.skill, skill)) {
+                    reason = "skill_up_group_unavailable_or_not_member";
+                    return false;
+                }
                 if (pending.pending) {
                     const auto prior = Facts::SkillLevels(bytes, native.stats, pending.skill);
                     std::uint32_t priorSp = 0;
@@ -1720,6 +1726,11 @@ void Tick() {
                     || calls.Lookup(manager, request.skill) != skill || !ReadAt(skill + 0x2c, liveBlocked)
                     || liveBlocked != 0) {
                     reason = "skill_up_state_changed";
+                    return false;
+                }
+                if (!BeginnerSkill(request.skill)
+                    && !Facts::GroupContains(bytes, liveManager, groups, request.skill, skill)) {
+                    reason = "skill_up_group_unavailable_or_not_member";
                     return false;
                 }
                 if (!SelectPoints(

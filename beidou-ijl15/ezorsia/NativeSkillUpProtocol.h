@@ -7,6 +7,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace BeiDouBridge { namespace NativeSkillUp {
 struct Request {
@@ -24,18 +25,45 @@ bool SelectPoints(std::uint32_t skill, std::uint32_t normal, ReadBeginner readBe
     out = normal;
     return true;
 }
-// Only the two observed job/skill families are candidates; this is not an
-// eligibility check and must never authorize a native call by itself.
-inline bool SupportedSkill(std::uint32_t job, std::uint32_t skill) {
+// Exact ordinary-adventurer jobs; never infer a job merely from its digits.
+inline bool OrdinaryJob(std::uint32_t job) {
     switch (job) {
-    case 100:
-        return BeginnerSkill(skill) || skill == 1000000 || skill == 1000001 || skill == 1000002
-            || skill == 1001003 || skill == 1001004 || skill == 1001005;
-    case 210:
-        return BeginnerSkill(skill) || skill == 2100000 || skill == 2101001 || skill == 2101002
-            || skill == 2101003 || skill == 2101004 || skill == 2101005;
+    case 100: case 110: case 111: case 112: case 120: case 121: case 122: case 130: case 131: case 132:
+    case 200: case 210: case 211: case 212: case 220: case 221: case 222: case 230: case 231: case 232:
+    case 300: case 310: case 311: case 312: case 320: case 321: case 322:
+    case 400: case 410: case 411: case 412: case 420: case 421: case 422:
+    case 500: case 510: case 511: case 512: case 520: case 521: case 522: return true;
     default: return false;
     }
+}
+inline std::vector<std::uint32_t> OrdinaryGroups(std::uint32_t job) {
+    if (!OrdinaryJob(job)) return {};
+    const auto base = (job / 1000) * 1000 + (job % 1000) / 100 * 100;
+    std::vector<std::uint32_t> result{base};
+    const auto branch = (job % 100) / 10;
+    if (branch != 0) {
+        const auto advanced = base + branch * 10;
+        result.push_back(advanced);
+        for (std::uint32_t i = 1; i <= job % 10 && i <= 8; ++i) result.push_back(advanced + i);
+    }
+    return result;
+}
+// Native effective-level reader returns fixed values for these special IDs.
+inline bool FixedLevelSkill(std::uint32_t skill) {
+    switch (skill) {
+    case 1009: case 1010: case 1011: case 1020:
+    case 10001009: case 10001010: case 10001011: case 10001020:
+    case 20001009: case 20001010: case 20001011: case 20001020:
+    case 20011009: case 20011010: case 20011011: case 20011020: return true;
+    default: return false;
+    }
+}
+// A candidate is not authorization: ordinary skills must additionally be
+// found in the current client's matching group, twice, before the event.
+inline bool SupportedSkill(std::uint32_t job, std::uint32_t skill) {
+    if (BeginnerSkill(skill)) return job == 100 || job == 210;
+    return OrdinaryJob(job) && !FixedLevelSkill(skill) && skill / 10000 >= 100
+        && skill / 10000 <= 522 && skill <= INT32_MAX;
 }
 struct Eligibility {
     bool known = false;
