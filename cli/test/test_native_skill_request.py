@@ -163,6 +163,31 @@ class NativeSkillRequestTest(unittest.TestCase):
                     preflight_skill_up(backend, 1000, 1)
                 self.assertEqual(raised.exception.code, 'skill_up_unsupported')
 
+    def test_beginner_missing_level_incomplete_and_insufficient_refuse_publication(self):
+        backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
+        learned = {'skills_complete': True, 'character_id': 7, 'skills': {}}
+        backend.read = unittest.mock.Mock(return_value=learned)
+        state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                 'character': {'id': 7, 'job': 100, 'level': 3, 'skill_points': 0}}
+        with (patch('beidou_pilot.skill_up.BridgeClient') as bridge,
+              patch('beidou_pilot.skill_up._native_skill_request') as publish):
+            bridge.return_value.snapshot.return_value = state
+            state['character']['level'] = None
+            with self.assertRaises(ClientError) as raised:
+                skill_up_once(backend, 1000)
+            self.assertEqual(raised.exception.code, 'skill_points_unavailable')
+            state['character']['level'] = 3
+            learned['skills_complete'] = False
+            with self.assertRaises(ClientError) as raised:
+                skill_up_once(backend, 1000)
+            self.assertEqual(raised.exception.code, 'skills_unavailable')
+            learned['skills_complete'] = True
+            state['character']['level'] = 1
+            with self.assertRaises(ClientError) as raised:
+                skill_up_once(backend, 1000)
+            self.assertEqual(raised.exception.code, 'insufficient_skill_points')
+            publish.assert_not_called()
+
     def test_invalid_beginner_pool_is_unavailable(self):
         backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
         backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7,
@@ -213,6 +238,64 @@ class NativeSkillRequestTest(unittest.TestCase):
                 self.assertEqual(raised.exception.code, 'skill_state_changed')
                 publish.assert_not_called()
 
+    def test_beginner_changes_before_publication_are_refused(self):
+        backend = SimpleNamespace(name='beidou')
+        baseline = ('i', 'r', 7, 2, 0, 8, 1, (3, 100, tuple([None] * 12)))
+        changed = list(baseline)
+        for index, value in ((0, 'other'), (1, 'other'), (2, 8), (3, 1),
+                             (7, (3, 100, ({'level': 1},) + tuple([None] * 11)))):
+            altered = changed.copy()
+            altered[index] = value
+            with (self.subTest(index=index),
+                  patch('beidou_pilot.skill_up.preflight_skill_up', return_value=tuple(altered)),
+                  patch('beidou_pilot.skill_up._native_skill_request') as publish):
+                with self.assertRaises(ClientError) as raised:
+                    skill_up_once(backend, 1000, baseline)
+                self.assertEqual(raised.exception.code, 'skill_state_changed')
+                publish.assert_not_called()
+
+    def test_post_invocation_observation_failures_are_unknown(self):
+        backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
+        baseline = ('i', 'r', 7, 2, 0, 8, 1, (3, 100, tuple([None] * 12)))
+        state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                 'character': {'id': 7, 'job': 100, 'level': 3, 'skill_points': 0}}
+        learned = {'skills_complete': True, 'character_id': 7, 'skills': {'1000': {'level': 1}}}
+        cases = [({'instance_id': 'other'}, learned), ({'run_id': 'other'}, learned),
+                 ({'scene_generation': 9}, learned), ({'character': None}, learned),
+                 ({}, {'skills_complete': False, 'character_id': 7, 'skills': {}}),
+                 ({}, {'skills_complete': True, 'character_id': 7, 'skills': {'1001': {'level': 1}}})]
+        for state_change, observed in cases:
+            backend.read = unittest.mock.Mock(return_value=observed)
+            with (self.subTest(state_change=state_change, observed=observed),
+                  patch('beidou_pilot.skill_up.preflight_skill_up', return_value=baseline),
+                  patch('beidou_pilot.skill_up._native_skill_request', return_value=('request', 1000)) as publish,
+                  patch('beidou_pilot.skill_up.BridgeClient') as bridge):
+                bridge.return_value.snapshot.return_value = {**state, **state_change}
+                with self.assertRaises(ClientError) as raised:
+                    skill_up_once(backend, 1000, baseline)
+                self.assertEqual(raised.exception.code, 'skill_up_unknown')
+                publish.assert_called_once()
+
+    def test_post_invocation_read_error_and_unconfirmed_delta_are_unknown(self):
+        backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
+        baseline = ('i', 'r', 7, 3, 3, 8, 1, (None, 210, None))
+        state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                 'character': {'id': 7, 'job': 210, 'skill_points': 3}}
+        for read_result in (ClientError('backend_failed', 'failed'),
+                            {'skills_complete': True, 'character_id': 7, 'skills': {'2101002': {'level': 3}}}):
+            backend.read = unittest.mock.Mock(side_effect=read_result if isinstance(read_result, Exception) else None,
+                                              return_value=read_result)
+            with (self.subTest(read_result=read_result),
+                  patch('beidou_pilot.skill_up.preflight_skill_up', return_value=baseline),
+                  patch('beidou_pilot.skill_up._native_skill_request', return_value=('request', 1000)) as publish,
+                  patch('beidou_pilot.skill_up.BridgeClient') as bridge,
+                  patch('beidou_pilot.skill_up.time.monotonic', side_effect=[0, 3])):
+                bridge.return_value.snapshot.return_value = state
+                with self.assertRaises(ClientError) as raised:
+                    skill_up_once(backend, 2101002, baseline)
+                self.assertEqual(raised.exception.code, 'skill_up_unknown')
+                publish.assert_called_once()
+
     def test_job_change_after_invocation_is_unknown(self):
         backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
         backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7,
@@ -254,6 +337,19 @@ class NativeSkillRequestTest(unittest.TestCase):
                 with self.assertRaises(ClientError) as raised:
                     _native_skill_request(backend, 'i', 'r', 1, 2, 3, 4)
             self.assertEqual(raised.exception.code, 'skill_up_insufficient_level_capacity')
+
+    def test_native_version_rejection_is_reported_without_replay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            backend = SimpleNamespace(paths=SimpleNamespace(bridge=path))
+            request_id = 'e' * 32
+            (path / ('skill-up-result-' + request_id + '.json')).write_text(json.dumps(
+                {'protocol': 1, 'request_id': request_id, 'status': 'rejected', 'reason': 'skill_up_unsupported'}))
+            with patch('beidou_pilot.skill_up.uuid.uuid4', return_value=SimpleNamespace(hex=request_id)):
+                with self.assertRaises(ClientError) as raised:
+                    _native_skill_request(backend, 'i', 'r', 1, 2, 3, 1)
+            self.assertEqual(raised.exception.code, 'skill_up_unsupported')
+            self.assertTrue((path / 'skill-up.txt').exists())
 
     def test_existing_request_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
