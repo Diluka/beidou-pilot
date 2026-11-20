@@ -6,10 +6,76 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from beidou_pilot.errors import ClientError
-from beidou_pilot.skill_up import _native_skill_request, preflight_skill_up, skill_up_once
+from beidou_pilot.skill_up import _native_skill_request, preflight_skill_up, reconcile_skill_up, skill_up_once
 
 
 class NativeSkillRequestTest(unittest.TestCase):
+    def test_reconcile_publishes_only_independent_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            backend = SimpleNamespace(root=path, name='beidou', instance='default', paths=SimpleNamespace(bridge=path))
+            new_id, old_id = 'a' * 32, 'b' * 32
+            state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                     'character': {'id': 7}}
+            (path / ('skill-up-reconcile-result-' + new_id + '.json')).write_text(json.dumps(
+                {'protocol': 1, 'request_id': new_id, 'status': 'confirmed', 'reason': 'skill_up_observed_delta'}))
+            with (patch('beidou_pilot.skill_up.BridgeClient') as bridge,
+                  patch('beidou_pilot.skill_up.uuid.uuid4', return_value=SimpleNamespace(hex=new_id))):
+                bridge.return_value.snapshot.return_value = state
+                result = reconcile_skill_up(backend, 1000, old_id)
+            self.assertEqual(result['status'], 'confirmed')
+            self.assertEqual((path / 'skill-up-reconcile.txt').read_text().split()[-1], old_id)
+            self.assertFalse((path / 'skill-up.txt').exists())
+
+    def test_reconcile_confirmed_can_be_queried_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            backend = SimpleNamespace(root=path, name='beidou', instance='default', paths=SimpleNamespace(bridge=path))
+            original, first, second = 'd' * 32, 'a' * 32, 'b' * 32
+            for request_id in (first, second):
+                (path / ('skill-up-reconcile-result-' + request_id + '.json')).write_text(json.dumps(
+                    {'protocol': 1, 'request_id': request_id, 'status': 'confirmed', 'reason': 'skill_up_observed_delta'}))
+            with (patch('beidou_pilot.skill_up.BridgeClient') as bridge,
+                  patch('beidou_pilot.skill_up.uuid.uuid4', side_effect=[SimpleNamespace(hex=first), SimpleNamespace(hex=second)])):
+                bridge.return_value.snapshot.return_value = {'instance_id': 'i', 'run_id': 'r',
+                    'scene_generation': 8, 'ready': True, 'character': {'id': 7}}
+                one = reconcile_skill_up(backend, 1000, original)
+                (path / 'skill-up-reconcile.txt').unlink()  # 桥消费首个请求
+                two = reconcile_skill_up(backend, 1000, original)
+            self.assertEqual((one['status'], two['status']), ('confirmed', 'confirmed'))
+            self.assertEqual((one['original_request_id'], two['original_request_id']), (original, original))
+            self.assertNotEqual(one['request_id'], two['request_id'])
+            self.assertFalse((path / 'skill-up.txt').exists())
+
+    def test_reconcile_timeout_is_unknown_without_skill_event(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            backend = SimpleNamespace(root=path, name='beidou', instance='default', paths=SimpleNamespace(bridge=path))
+            with (patch('beidou_pilot.skill_up.BridgeClient') as bridge,
+                  patch('beidou_pilot.skill_up.time.monotonic', side_effect=[0, 3])):
+                bridge.return_value.snapshot.return_value = {'instance_id': 'i', 'run_id': 'r',
+                    'scene_generation': 8, 'ready': True, 'character': {'id': 7}}
+                with self.assertRaises(ClientError) as raised:
+                    reconcile_skill_up(backend, 1000, 'd' * 32)
+            self.assertEqual(raised.exception.code, 'skill_up_reconcile_unknown')
+            self.assertEqual(raised.exception.details['original_request_id'], 'd' * 32)
+            self.assertFalse((path / 'skill-up.txt').exists())
+
+    def test_reconcile_unresolved_does_not_issue_skill_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            backend = SimpleNamespace(root=path, name='beidou', instance='default', paths=SimpleNamespace(bridge=path))
+            new_id, old_id = 'c' * 32, 'd' * 32
+            (path / ('skill-up-reconcile-result-' + new_id + '.json')).write_text(json.dumps(
+                {'protocol': 1, 'request_id': new_id, 'status': 'unresolved', 'reason': 'skill_up_confirmation_pending'}))
+            with (patch('beidou_pilot.skill_up.BridgeClient') as bridge,
+                  patch('beidou_pilot.skill_up.uuid.uuid4', return_value=SimpleNamespace(hex=new_id))):
+                bridge.return_value.snapshot.return_value = {'instance_id': 'i', 'run_id': 'r',
+                    'scene_generation': 8, 'ready': True, 'character': {'id': 7}}
+                result = reconcile_skill_up(backend, 1000, old_id)
+            self.assertEqual(result['status'], 'unresolved')
+            self.assertFalse((path / 'skill-up.txt').exists())
+
     def test_previously_supported_beginner_is_explicitly_unavailable(self):
         backend = SimpleNamespace(name='beidou')
         for skill in (1001, 1009, 22001000):

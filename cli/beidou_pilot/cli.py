@@ -123,6 +123,9 @@ def parser() -> Parser:
     q = command("skill-up", "逐点分配技能点并核对结果", allow_abbrev=False)
     q.add_argument("skill_id", type=int)
     q.add_argument("--points", type=int, default=1)
+    q = command("skill-up-reconcile", "显式核对未知的原生加点请求，不发加点事件", allow_abbrev=False)
+    q.add_argument("skill_id", type=int)
+    q.add_argument("--request-id", required=True, help="原加点请求 ID")
     command("auto-ap", "一次自动分配全部AP并核对实际属性")
     q = command("snapshot", "场景、角色、对话与可操作引用")
     q.add_argument("--all", action="store_true", help="含画外实体")
@@ -296,6 +299,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             "revive",
             "auto-ap",
             "skill-up",
+            "skill-up-reconcile",
             "click",
             "talk",
             "dialog",
@@ -494,6 +498,10 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .bridge import BridgeClient
 
         return BridgeClient(backend.root, backend.name, backend.instance).stop()
+    if cmd == "skill-up-reconcile":
+        from .skill_up import reconcile_skill_up
+
+        return reconcile_skill_up(backend, args.skill_id, args.request_id)
     if cmd == "skill-up":
         if args.skill_id <= 0 or args.points <= 0:
             raise ClientError("usage", "技能 ID 和点数须为正整数。")

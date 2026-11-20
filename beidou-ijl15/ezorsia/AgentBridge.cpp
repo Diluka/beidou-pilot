@@ -76,6 +76,7 @@ std::string rejectedReason;
 std::string lastConsumedId;
 std::string latestScriptId;
 BeiDouBridge::NativeTickInput tickInput;
+BeiDouBridge::NativeSkillUp::PendingFence nativeSkillUpPending;
 BeiDouBridge::NativeKeyUnion nativeKeys{&tickInput.movement, &tickInput.action};
 bool scriptCommand = false;
 bool stopCommand = false;
@@ -1615,7 +1616,7 @@ void Tick() {
         directory, instanceId, runId, [](const BeiDouBridge::NativeSkillUp::Request& request, const char*& reason) {
             using namespace BeiDouBridge::NativeSkillUp;
             namespace Facts = BeiDouBridge::NativeSkillUpFacts;
-            static PendingFence pending;
+            auto& pending = nativeSkillUpPending;
             if (Expired(request, UnixMilliseconds())) {
                 reason = "skill_up_expired";
                 return false;
@@ -1740,6 +1741,64 @@ void Tick() {
                 return true;
             } catch (const NativeObservation::ReadError&) {
                 reason = "skill_up_state_unavailable";
+                return false;
+            }
+        });
+    BeiDouBridge::NativeSkillUp::TickReconcile(
+        directory, instanceId, runId,
+        [](const BeiDouBridge::NativeSkillUp::Request& request, const std::string& originalId, const char*& reason) {
+            namespace Facts = BeiDouBridge::NativeSkillUpFacts;
+            auto& pending = nativeSkillUpPending;
+            reason = "skill_up_confirmation_pending";
+            if (BeiDouBridge::NativeSkillUp::Expired(request, UnixMilliseconds()) || request.scene != sceneGeneration
+                || tickRuntime.Running() || tickInput.HasIntent())
+                return false;
+            try {
+                auto bytes = [](std::uintptr_t address, std::size_t size) {
+                    return NativeObservation::Bytes(address, size);
+                };
+                NativeContext native;
+                const auto state = CaptureState(native);
+                Facts::JobSp job{};
+                if (!state.ready || !Facts::CaptureJobSp(state, request, job) || !native.stats) return false;
+                if (BeiDouBridge::NativeSkillUp::ReconcileRecorded(pending, request, originalId, sceneGeneration,
+                                                                   UnixMilliseconds(), job.job)) {
+                    reason = "skill_up_observed_delta";
+                    return true;
+                }
+                if (!pending.Matches(request, originalId) || job.job != pending.job) return false;
+                auto sp = job.sp;
+                if (pending.skill == 1000
+                    && (!state.character.known[0]
+                        || !Facts::BeginnerPoints(bytes, native.stats, state.character.values[0], sp)))
+                    return false;
+                const auto levels = Facts::SkillLevels(bytes, native.stats, pending.skill);
+                NativeContext verifyNative;
+                const auto verify = CaptureState(verifyNative);
+                Facts::JobSp verifyJob{};
+                if (!verify.ready || request.scene != sceneGeneration || tickRuntime.Running() || tickInput.HasIntent()
+                    || !Facts::CaptureJobSp(verify, request, verifyJob) || verifyJob.job != job.job
+                    || verifyNative.stats != native.stats || verifyNative.field != native.field
+                    || verifyNative.user != native.user)
+                    return false;
+                auto verifySp = verifyJob.sp;
+                if (pending.skill == 1000
+                    && (!verify.character.known[0]
+                        || !Facts::BeginnerPoints(bytes, verifyNative.stats, verify.character.values[0], verifySp)))
+                    return false;
+                const auto verifyLevels = Facts::SkillLevels(bytes, verifyNative.stats, pending.skill);
+                std::uint32_t context = 0, character = 0;
+                if (sp != verifySp || levels.base != verifyLevels.base || levels.delta != verifyLevels.delta
+                    || request.scene != sceneGeneration || tickRuntime.Running() || tickInput.HasIntent()
+                    || !ReadAt(0x00BE7918, context) || !context || !ReadAt(context + 0x20b8, character)
+                    || character != native.stats || BeiDouBridge::NativeSkillUp::Expired(request, UnixMilliseconds()))
+                    return false;
+                if (!BeiDouBridge::NativeSkillUp::ReconcileObserved(pending, request, originalId, sceneGeneration,
+                                                                    UnixMilliseconds(), job.job, levels.base, sp))
+                    return false;
+                reason = "skill_up_observed_delta";
+                return true;
+            } catch (const NativeObservation::ReadError&) {
                 return false;
             }
         });

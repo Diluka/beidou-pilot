@@ -3,6 +3,7 @@
 #include "LoginActionProtocol.h"
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -50,19 +51,46 @@ inline const char* BatchFailure(const Request& request, const Eligibility& state
 struct PendingFence {
     bool pending = false;
     std::uint32_t character = 0, job = 0, skill = 0, base = 0, sp = 0;
+    std::string requestId;
+    struct Confirmed { std::uint32_t character, job, skill; };
+    std::map<std::string, Confirmed> confirmed;
+    bool WasConfirmed(const Request& request, const std::string& originalId, std::uint32_t currentJob) const {
+        const auto found = confirmed.find(originalId);
+        return found != confirmed.end() && found->second.character == request.character
+            && found->second.skill == request.skill && found->second.job == currentJob;
+    }
+    bool Matches(const Request& request, const std::string& originalId) const {
+        return pending && originalId == requestId && request.character == character && request.skill == skill;
+    }
     bool Confirm(std::uint32_t currentCharacter, std::uint32_t currentJob,
                  std::uint32_t currentBase, std::uint32_t currentSp) {
         if (!pending) return true;
         if (character != currentCharacter || job != currentJob || base == UINT32_MAX || sp == 0
             || currentBase != base + 1 || currentSp != sp - 1) return false;
+        // Preserve the terminal observation before releasing the fence, so a
+        // lost result or a later batch rejection does not erase confirmation.
+        if (confirmed.size() >= 4096 || !confirmed.emplace(requestId, Confirmed{character, job, skill}).second)
+            return false;
         pending = false;
         return true;
     }
     void Arm(const Request& request, std::uint32_t currentJob, std::uint32_t currentBase, std::uint32_t currentSp) {
-        pending = true; character = request.character; job = currentJob;
+        pending = true; requestId = request.requestId; character = request.character; job = currentJob;
         skill = request.skill; base = currentBase; sp = currentSp;
     }
 };
+// Called only after the adapter has captured a fresh identity on the game thread.
+inline bool ReconcileRecorded(const PendingFence& fence, const Request& request, const std::string& originalId,
+                              std::uint64_t scene, std::uint64_t nowMs, std::uint32_t job) {
+    return !Expired(request, nowMs) && request.scene == scene && fence.WasConfirmed(request, originalId, job);
+}
+// The adapter must first validate both complete snapshots and their equality.
+inline bool ReconcileObserved(PendingFence& fence, const Request& request, const std::string& originalId,
+                              std::uint64_t scene, std::uint64_t nowMs, std::uint32_t job,
+                              std::uint32_t base, std::uint32_t sp) {
+    return !Expired(request, nowMs) && request.scene == scene && fence.Matches(request, originalId)
+        && fence.Confirm(request.character, job, base, sp);
+}
 // The adapter owns version checks, same-thread capture and final identity/fact
 // revalidation. Success means the native event was invoked, not that a packet was sent.
 template<class Backend>
@@ -107,5 +135,19 @@ inline bool Parse(const std::string& line, Request& request) {
     request.skill = static_cast<std::uint32_t>(values[2]); request.remaining = static_cast<std::uint32_t>(values[3]);
     request.deadlineMs = values[4];
     return true;
+}
+// Reconcile uses the same nine fields as a skill-up request, followed by the
+// original request ID. remaining must be 1; no skill event is issued.
+inline bool ParseReconcile(const std::string& line, Request& request, std::string& originalId) {
+    std::istringstream input(line);
+    std::string fields[10], extra;
+    for (auto& field : fields) if (!(input >> field)) return false;
+    if (input >> extra) return false;
+    originalId = fields[9];
+    if (!LoginAction::ValidRequestId(originalId)) return false;
+    for (char c : originalId) if (c >= 'A' && c <= 'F') return false;
+    std::string common = fields[0];
+    for (int i = 1; i < 9; ++i) common += " " + fields[i];
+    return Parse(common, request) && request.remaining == 1;
 }
 } }

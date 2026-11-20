@@ -23,3 +23,13 @@ class NativeSkillUpTests(unittest.TestCase):
 
     def test_facts(self):
         self.compile_and_run('native_skill_up_facts.cpp')
+
+    def test_transport(self):
+        self.compile_and_run('native_skill_up_transport.cpp')
+
+    def test_reconcile_does_not_invoke_skill_event(self):
+        bridge = (ROOT / 'beidou-ijl15/ezorsia/AgentBridge.cpp').read_text()
+        reconcile = bridge.split('BeiDouBridge::NativeSkillUp::TickReconcile(', 1)[1].split(
+            'if (now - lastPublishedAt', 1)[0]
+        self.assertNotIn('calls.Request(', reconcile)
+        self.assertNotIn('NativeCalls<', reconcile)

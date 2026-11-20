@@ -41,6 +41,22 @@ class SkillUpCliTests(unittest.TestCase):
                 preflight.assert_called_once_with(backend, 1000, 1)
                 once.assert_called_once_with(backend, 1000, ("i", "r", 1, 3, 0, 1, 1, None))
 
+    def test_reconcile_main_holds_input_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backend = SimpleNamespace(root=root, name='beidou', instance='default', paths=SimpleNamespace(
+                state_directory=root, input_lock=root / 'input.lock'))
+            def verify_lock(*args):
+                with backend.paths.input_lock.open('a+') as handle:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return {'status': 'unresolved'}
+            with (patch('beidou_pilot.cli.Backend', return_value=backend),
+                  patch('beidou_pilot.skill_up.reconcile_skill_up', side_effect=verify_lock) as reconcile,
+                  redirect_stdout(io.StringIO())):
+                self.assertEqual(main(['skill-up-reconcile', '1000', '--request-id', 'a' * 32, '--json']), 0)
+            reconcile.assert_called_once_with(backend, 1000, 'a' * 32)
+
     def test_gui_running_lua_blocks_skill_up_before_desktop_input(self):
         args = parser().parse_args(["skill-up", "2101002"])
         backend = SimpleNamespace(root=Path("/unused"), name="beidou", instance="default")
