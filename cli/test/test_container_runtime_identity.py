@@ -18,7 +18,7 @@ class ContainerRuntimeIdentityTest(unittest.TestCase):
             value = dict(backend='headless', instance='default', run_id='run', container_id='container',
                          image='image', source_revision='revision', pid=1, run_dir='/work/run',
                          character_id=None, world=0, channel=0,
-                         target=dict(project='p', service='s', network='n', expected_image='i'),
+                         target=dict(project='p', service='s', network='n'),
                          target_ip='ip', target_container_id='target', started_at='now')
             path = root / 'state/container.json'
             with patch.dict(os.environ, {'RUN_ID': 'run', 'HOSTNAME': 'container'}):

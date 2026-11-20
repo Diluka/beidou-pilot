@@ -33,10 +33,6 @@ elif a[:2] == ['volume','ls']:
             print(name)
 elif a[:2] == ['volume','inspect']:
     print(json.dumps([s['volumes'][a[2]]]))
-elif a[:2] == ['image','inspect']:
-    if a[2] not in s['images']:
-        sys.exit(1)
-    print(s['images'][a[2]])
 elif a[0] in ('compose', 'exec'):
     pass
 else:
@@ -50,13 +46,12 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
         self.live = self.private_root / "live/fixture"
         self.live.mkdir(parents=True)
         self.targets = {}
-        self.state = {"calls": [], "containers": {}, "networks": {}, "images": {}, "volumes": {}}
+        self.state = {"calls": [], "containers": {}, "networks": {}, "volumes": {}}
         for env, digit in (("live", "1"), ("dev", "2")):
             # 同名角色、不同项目、镜像和网络；结果必须由所选分区决定。
             project = "fixture-" + env
             network = project + "_game"
             image_id = "sha256:" + digit * 64
-            image = "fixture.invalid/server@sha256:" + str(int(digit) + 2) * 64
             server_id = env + "-game"
             labels = {"com.docker.compose.project": project, "com.docker.compose.service": "beidou-server-all"}
             if env == "dev":
@@ -73,12 +68,9 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
                 "Internal": True,
                 "Labels": {"com.docker.compose.project": project, "com.docker.compose.network": "game"},
             }
-            self.state["images"][image] = image_id
-            self.state["images"][image_id] = image_id
             self.targets[env] = {
                 "project": project,
                 "service": "beidou-server-all",
-                "expected_image": image,
                 "network": network,
             }
             (self.config / (env + ".server.json")).write_text(json.dumps(self.targets[env]))
@@ -138,10 +130,7 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
                 link.unlink()
         self.assertEqual([], self.calls())
 
-    def test_plan_verifies_local_image_id_or_pinned_digest_in_the_selected_partition(self):
-        target = self.targets["live"]
-        target["expected_image"] = self.state["containers"]["live-game"]["Image"]
-        (self.config / "live.server.json").write_text(json.dumps(target))
+    def test_plan_reports_actual_server_image_without_expected_hash(self):
         for env in ("dev", "live"):
             with self.subTest(env=env):
                 result = self.command(env + "/fixture", "plan")
@@ -151,7 +140,7 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
                 self.assertEqual(self.targets[env]["project"], data["project"])
                 self.assertEqual(self.targets[env]["network"], data["network"])
                 self.assertEqual(self.state["containers"][data["container_id"]]["Image"], data["image"])
-        self.assertFalse(any(c[0] == "compose" or "connect" in c for c in self.calls()))
+        self.assertFalse(any(c[0] in ("compose", "image") or "connect" in c for c in self.calls()))
 
     def test_missing_config_or_role_override_never_selects_other_target(self):
         (self.config / "dev.server.json").unlink()
@@ -207,16 +196,11 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
                 self.assert_error(self.command("server", "dev", "up"), "server_config_invalid")
         self.assertFalse(any(c[0] == "compose" for c in self.calls()))
 
-    def test_dev_rejects_unpinned_or_mismatched_image(self):
-        self.state["images"][self.targets["dev"]["expected_image"]] = self.state["containers"]["live-game"]["Image"]
-        self.state_path.write_text(json.dumps(self.state))
-        self.assert_error(self.invoke("plan"), "server_image_changed")
+    def test_server_config_rejects_removed_expected_image(self):
         target = {**self.targets["dev"], "expected_image": "fixture.invalid/server:latest"}
-        self.state["images"][target["expected_image"]] = self.state["containers"]["dev-game"]["Image"]
-        self.state_path.write_text(json.dumps(self.state))
         (self.config / "dev.server.json").write_text(json.dumps(target))
-        self.assert_error(self.invoke("plan"))
-        self.assert_error(self.command("server", "dev", "up"))
+        self.assert_error(self.invoke("plan"), "server_config_invalid")
+        self.assert_error(self.command("server", "dev", "up"), "server_config_invalid")
         self.assertFalse(any(c[0] == "compose" for c in self.calls()))
 
     def test_server_management_only_targets_dev_and_stop_preserves_volumes(self):

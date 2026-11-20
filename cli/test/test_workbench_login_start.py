@@ -77,7 +77,7 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         (self.workbench / 'workbench.json').write_text(json.dumps({'ref': self.revision, 'timeout': 37}))
         image_id = 'sha256:' + '1' * 64
         (self.config / 'dev.server.json').write_text(json.dumps({'project': 'fixture', 'service': 'beidou-server-all',
-            'expected_image': image_id, 'network': 'fixture_game'}))
+            'network': 'fixture_game'}))
         state = json.loads(self.state_path.read_text())
         state.update(server={'Id': 'server', 'Image': image_id, 'State': {'Running': True},
             'Config': {'Labels': {'beidou.workbench.environment': 'dev'}},

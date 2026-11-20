@@ -76,7 +76,7 @@ class BridgeFiles:
             "container_id": self.environment["HOSTNAME"], "image": "sha256:image",
             "source_revision": "fixture-revision", "pid": os.getpid(), "run_dir": str(run_dir),
             "character_id": 4, "world": 0, "channel": 0,
-            "target": {"project": "isolated", "service": "app", "network": "isolated", "expected_image": "sha256:server"},
+            "target": {"project": "isolated", "service": "app", "network": "isolated"},
             "target_ip": "10.0.0.2", "target_container_id": "server", "started_at": "2026-11-11T00:00:00Z",
         }
         (self.root / "state/container.json").write_text(json.dumps(self.runtime))

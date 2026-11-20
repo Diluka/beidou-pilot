@@ -20,7 +20,7 @@ class GuiAccountContainerTest(unittest.TestCase):
     def run_entrypoint(self, root, mode, account):
         root.joinpath('account.json').write_text(json.dumps(account))
         root.joinpath('account.json').chmod(0o600)
-        root.joinpath('server.json').write_text(json.dumps(dict(project='p', service='s', network='n', expected_image='i')))
+        root.joinpath('server.json').write_text(json.dumps(dict(project='p', service='s', network='n')))
         env = dict(CLIENT_ROOT=str(root), MAPLE_BACKEND='beidou', MAPLE_INSTANCE='default', RUN_ID='run',
                    MAPLE_LOGIN_MODE=mode, HOSTNAME='container', CLIENT_IMAGE_ID='image', TARGET_IP='127.0.0.1', TARGET_CONTAINER_ID='target')
         original_read = Path.read_text

@@ -32,7 +32,7 @@ private/workbenches/                 # 整体忽略，不进镜像
 ## 首次准备及选服
 
 1. 在主检出的 `private/workbenches/` 下建立 `config/`、`live/` 和 `dev/`。从 [examples](examples/) 复制对应样例，去掉文件名的 `.example`；按本机实际安装填写 `resources.json` 的 `gui_client` 和 `game_data`。相对资源路径以该配置文件所在目录为基准。
-2. 每个环境各自填写服务器 Compose 项目、服务、固定的镜像内容标识（本地 `sha256:<64 位十六进制>` 或 `镜像名@sha256:<64 位十六进制>`，不接受可变标签）和网络。常驻服只连接已存在的服务；不指定网络时由启动器为其客户端维护单独的临时 internal 连接。开发游戏服务与其数据库由[开发服 Compose](../docker/dev-server/compose.yaml)装配，使用独立存储，不发布宿主端口。分区配置缺失或目标身份不符时停止，不跨区回退。
+2. 每个环境各自填写服务器 Compose 项目、服务和网络。常驻服只连接已存在的服务；不指定网络时由启动器为其客户端维护单独的临时 internal 连接。开发游戏服务与其数据库由[开发服 Compose](../docker/dev-server/compose.yaml)装配，使用独立存储，不发布宿主端口。分区配置缺失或目标身份不符时停止，不跨区回退。
 3. 一个角色一个实际目录，放在对应分区内。已有角色的 `account.json` 使用 `username/password/character_id`，权限 `0600`；新号先不填 CID，走 [首次登录和建角](../.agents/skills/beidou-pilot-client/references/first-login.md)。`workbench.json` 默认 headless、main；GUI 设 `backend=beidou`，开发版本或工件见 [CLI](../docs/CLI.md)。不要把密码、连接凭据、DB 文件或验收原始记录提交 Git。
 
 ```bash

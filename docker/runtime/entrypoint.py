@@ -47,10 +47,10 @@ def main() -> None:
     target = json.loads((root / "server.json").read_text())
     if (
         not isinstance(target, dict)
-        or set(target) != {"project", "service", "network", "expected_image"}
+        or set(target) != {"project", "service", "network"}
         or any(not isinstance(value, str) or not value for value in target.values())
     ):
-        raise ClientError("server_invalid", "本次服务器配置须提供 project、service、network 和 expected_image。")
+        raise ClientError("server_invalid", "本次服务器配置须提供 project、service 和 network。")
     run_dir = paths.runs / run_id
     directories = {
         root / "state",

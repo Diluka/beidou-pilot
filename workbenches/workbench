@@ -68,12 +68,11 @@ read_server() {
     local file="$config_root/$environment.server.json"
     [ -f "$file" ] || fail server_config_required "缺少 $environment 分区的服务器配置。"
     server_config=$(jq -ce 'select(type == "object" and
-        ((keys - ["project","service","expected_image","network"]) | length == 0) and
+        ((keys - ["project","service","network"]) | length == 0) and
         (.project | strings | test("^[a-z0-9][a-z0-9_-]*$")) and
-        (.service | strings | test("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")) and
-        (.expected_image | strings | test("^([^@[:space:]]+@)?sha256:[0-9a-f]{64}$"))) |
+        (.service | strings | test("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"))) |
         select((has("network") | not) or (.network | strings | length > 0))' "$file") ||
-        fail server_config_invalid "$environment.server.json 需要 project、service 和 expected_image，可指定 network。"
+        fail server_config_invalid "$environment.server.json 需要 project 和 service，可指定 network。"
     project=$(jq -r .project <<<"$server_config")
     service=$(jq -r .service <<<"$server_config")
     if [ "$environment" = dev ]; then
@@ -103,11 +102,6 @@ resolve_target() {
     fi
     server_id=$(jq -r .Id <<<"$server_info")
     server_image=$(jq -r .Image <<<"$server_info")
-    expected_image=$(jq -r .expected_image <<<"$server_config")
-    if [ "$expected_image" != "$server_image" ]; then
-        expected_id=$(docker image inspect "$expected_image" --format '{{.Id}}') || fail server_image_unavailable '缺少配置的服务器镜像。'
-        [ "$expected_id" = "$server_image" ] || fail server_image_changed '服务器镜像与已确认配置不符。'
-    fi
     network=$(jq -r '.network // empty' <<<"$server_config")
     if [ -n "$network" ]; then
         docker network inspect "$network" | jq -e --arg project "$project" --arg zone "$environment" '.[0] |
@@ -151,7 +145,6 @@ server)
     fi
     env_file="$config_root/dev-server.env"
     [ -f "$env_file" ] && [ "$(stat -Lc %a "$env_file")" = 600 ] || fail private_file_permissions 'dev-server.env 须存在且权限为 0600。'
-    export BEIDOU_SERVER_IMAGE; BEIDOU_SERVER_IMAGE=$(jq -r .expected_image <<<"$server_config")
     compose=(docker compose --env-file "$env_file" -p "$project" -f "$repository/docker/dev-server/compose.yaml")
     case "$operation" in
         up)
@@ -664,8 +657,8 @@ if [ -z "$network" ]; then
     owned_network=$network
 fi
 target="$run_root/server.json"
-jq -nc --arg project "$project" --arg service "$service" --arg network "$network" --arg image "$server_image" \
-    '{project:$project,service:$service,network:$network,expected_image:$image}' >"$target"
+jq -nc --arg project "$project" --arg service "$service" --arg network "$network" \
+    '{project:$project,service:$service,network:$network}' >"$target"
 if [ "$backend" = headless ]; then
     set -- docker run -d --init --name "$name" --network "$network" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=64m \
         --cpus 2 --memory 1g --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges \

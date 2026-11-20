@@ -14,7 +14,6 @@ class TargetConfig(TypedDict):
     project: str
     service: str
     network: str
-    expected_image: str
 
 
 @dataclass(frozen=True)
@@ -56,13 +55,13 @@ class ContainerRuntime:
                 raise ClientError("server_unreadable", "无法读取服务器配置，保留本容器。") from error
             if (
                 not isinstance(requested, dict)
-                or not {"project", "service", "expected_image"}.issubset(requested)
-                or requested.keys() - {"project", "service", "expected_image", "network"}
+                or not {"project", "service"}.issubset(requested)
+                or requested.keys() - {"project", "service", "network"}
                 or any(not isinstance(value, str) or not value for value in requested.values())
             ):
-                raise ClientError("server_invalid", "服务器配置须提供 project、service、expected_image，可选 network。")
+                raise ClientError("server_invalid", "服务器配置须提供 project、service，可选 network。")
             if (
-                any(requested[key] != self.target[key] for key in ("project", "service", "expected_image"))
+                any(requested[key] != self.target[key] for key in ("project", "service"))
                 or "network" in requested
                 and requested["network"] != self.target["network"]
             ):
@@ -95,7 +94,7 @@ def load_runtime(root: Path, backend: str, instance: str = "default") -> Contain
         or (value["character_id"] is not None and (type(value["character_id"]) is not int or not 1 <= value["character_id"] <= 2**31 - 1))
         or any(type(value.get(key)) is not int or value[key] < 0 for key in ("world", "channel"))
         or not isinstance(value.get("target"), dict)
-        or set(value["target"]) != {"project", "service", "network", "expected_image"}
+        or set(value["target"]) != {"project", "service", "network"}
         or any(not isinstance(item, str) or not item for item in value["target"].values())
     ):
         raise ClientError("container_runtime_unavailable", "本容器启动登记无效，未执行客户端操作。")
