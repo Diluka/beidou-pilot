@@ -1,11 +1,31 @@
 """无头技能点请求：每次发包后独立观察，不重放未知结果。"""
 
+import re
 import time
 from typing import cast
 
 from .backend import Backend, ClientError, JsonObject
 from .bridge import BridgeClient
 from .engines.character import CharacterSnapshot
+
+
+def reconcile_skill_up(backend: Backend, skill_id: int, original_id: str) -> JsonObject:
+    """只查询当前运行的原生记录，绝不发布命令。"""
+    if not 0 < skill_id <= 0x7fffffff or not re.fullmatch(r"[0-9a-f]{32}", original_id):
+        raise ClientError("usage", "技能 ID 或原请求 ID 无效。")
+    state = BridgeClient(backend.root, backend.name, backend.instance).snapshot()
+    character = state["character"]
+    if not state["ready"] or character is None or character["id"] <= 0:
+        raise ClientError("character_unavailable", "角色状态不可用。")
+    records = state.get("skill_up_records", [])
+    confirmed = isinstance(records, list) and any(
+        isinstance(record, dict) and record.get("request_id") == original_id
+        and record.get("run_id") == state["run_id"] and record.get("instance_id") == state["instance_id"]
+        and record.get("character_id") == character["id"] and record.get("skill_id") == skill_id
+        and record.get("status") == "confirmed" for record in records)
+    return {"original_request_id": original_id, "skill_id": skill_id,
+            "status": "confirmed" if confirmed else "unresolved",
+            "reason": "native_observed" if confirmed else "native_record_unresolved"}
 
 
 def skill_up(backend: Backend, skill_id: int, points: int, timeout: float = 3.0) -> JsonObject:
@@ -32,7 +52,8 @@ def skill_up(backend: Backend, skill_id: int, points: int, timeout: float = 3.0)
                 beginner = skill_id in beginner_ids
                 level = learned["skills"].get(str(skill_id), {"level": 0})["level"]
                 sp = beginner_sp if beginner else character["skill_points"]
-                request_id = bridge._publish(before, "skill-up", skill_id, [str(remaining)])
+                request_id = bridge._publish(before, "skill-up", skill_id,
+                                             [str(remaining), before["run_id"], str(character["id"])])
             except ClientError as error:
                 raise ClientError(error.code, error.message, {**error.details, "confirmed": results}) from error
             try:
@@ -41,7 +62,8 @@ def skill_up(backend: Backend, skill_id: int, points: int, timeout: float = 3.0)
                 while True:
                     state = bridge.snapshot()
                     current = state["character"]
-                    if (state["instance_id"] != before["instance_id"] or state["run_id"] != before["run_id"]
+                    if (not state["ready"] or state["scene_generation"] != before["scene_generation"]
+                            or state["instance_id"] != before["instance_id"] or state["run_id"] != before["run_id"]
                             or current is None or current["id"] != character["id"]):
                         raise ClientError("bridge_identity_changed", "角色或实例身份发生变化。")
                     observed = cast(CharacterSnapshot, backend.read("character"))
@@ -53,9 +75,21 @@ def skill_up(backend: Backend, skill_id: int, points: int, timeout: float = 3.0)
                     if type(after_sp) is not int:
                         raise ClientError("skills_unavailable", "技能点观察不可用。")
                     after = observed["skills"].get(str(skill_id), {"level": 0})["level"]
-                    if after == level + 1 and after_sp == sp - 1:
+                    records = state.get("skill_up_records", [])
+                    record = next((item for item in records if isinstance(item, dict)
+                                   and item.get("request_id") == request_id
+                                   and item.get("run_id") == before["run_id"]
+                                   and item.get("instance_id") == before["instance_id"]
+                                   and item.get("character_id") == character["id"]
+                                   and item.get("skill_id") == skill_id), None) if isinstance(records, list) else None
+                    if record is not None and record.get("status") == "unresolved":
+                        raise ClientError("skill_record_unresolved", "原生加点记录已失效。")
+                    if (record is not None and record.get("status") == "confirmed"
+                            and record.get("level_before") == level and record.get("sp_before") == sp
+                            and after == level + 1 and after_sp == sp - 1):
                         results.append({"level_before": level, "level_after": after,
-                                        "sp_before": sp, "sp_after": after_sp})
+                                        "sp_before": sp, "sp_after": after_sp,
+                                        "request_id": request_id, "run_id": before["run_id"]})
                         break
                     if time.monotonic() >= deadline:
                         raise ClientError("bridge_timeout", "未观察到技能等级与技能点变化。")
@@ -64,5 +98,6 @@ def skill_up(backend: Backend, skill_id: int, points: int, timeout: float = 3.0)
                 if error.code == "bridge_command_rejected":
                     raise ClientError(error.code, error.message, {**error.details, "confirmed": results}) from error
                 raise ClientError("skill_up_unknown", "加点请求已发布，结果未知；请重新观察，不要重试。",
-                                  {"request_id": request_id, "confirmed": results, "cause": error.code}) from error
+                                  {"request_id": request_id, "run_id": before["run_id"], "skill_id": skill_id,
+                                   "confirmed": results, "cause": error.code}) from error
     return {"skill_id": skill_id, "confirmed_points": len(results), "allocations": results}

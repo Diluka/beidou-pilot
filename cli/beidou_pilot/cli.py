@@ -288,6 +288,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "stop",
         "revive",
         "skill-up",
+        "skill-up-reconcile",
         "auto-ap",
         "batch",
     }:
@@ -499,7 +500,10 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
 
         return BridgeClient(backend.root, backend.name, backend.instance).stop()
     if cmd == "skill-up-reconcile":
-        from .skill_up import reconcile_skill_up
+        if backend.name == "headless":
+            from .headless_skill_up import reconcile_skill_up
+        else:
+            from .skill_up import reconcile_skill_up
 
         return reconcile_skill_up(backend, args.skill_id, args.request_id)
     if cmd == "skill-up":

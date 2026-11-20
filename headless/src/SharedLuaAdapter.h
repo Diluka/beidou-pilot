@@ -78,6 +78,7 @@ private:
     std::string commandId;
     std::string commandStatus = "idle";
     std::string commandReason;
+    nlohmann::json skillUpRecords = nlohmann::json::array();
     std::string lastConsumedId;
     std::string rejectedId;
     std::string rejectedReason;

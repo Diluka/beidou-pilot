@@ -139,6 +139,20 @@ class BridgeMonster(TypedDict):
     hp_source: NotRequired[str | None]
 
 
+class SkillUpRecord(TypedDict):
+    request_id: str
+    run_id: str
+    instance_id: str
+    character_id: int
+    skill_id: int
+    scene_generation: int
+    job: int
+    beginner: bool
+    level_before: int
+    sp_before: int
+    status: Literal["pending", "confirmed", "unresolved"]
+
+
 class BridgeSnapshot(TypedDict):
     protocol: Literal[1]
     instance_id: str
@@ -157,6 +171,7 @@ class BridgeSnapshot(TypedDict):
     input_events: int
     script: NotRequired[BridgeScript | None]
     scripts: NotRequired[list[BridgeScript]]
+    skill_up_records: NotRequired[list[SkillUpRecord]]
     monsters: NotRequired[list[BridgeMonster] | None]
     capabilities: NotRequired[dict[str, bool] | None]
     facing: NotRequired[Literal["Left", "Right"] | None]
@@ -334,6 +349,26 @@ class BridgeClient:
             ids = [script["id"] for script in raw["scripts"]]
             if len(ids) != len(set(ids)):
                 raise ClientError("invalid_bridge_state", "原生桥的脚本会话ID重复。")
+        if "skill_up_records" in raw:
+            records = raw["skill_up_records"]
+            if not isinstance(records, list):
+                raise ClientError("invalid_bridge_state", "原生加点记录列表无效。")
+            ids: set[str] = set()
+            for record in records:
+                if (not isinstance(record, dict)
+                        or not isinstance(record.get("request_id"), str)
+                        or not re.fullmatch(r"[0-9a-fA-F-]{1,64}", record["request_id"])
+                        or record.get("instance_id") != raw["instance_id"]
+                        or record.get("run_id") != raw["run_id"]
+                        or any(type(record.get(field)) is not int for field in
+                               ("character_id", "skill_id", "scene_generation", "job", "level_before", "sp_before"))
+                        or record["character_id"] <= 0 or not 0 < record["skill_id"] <= 0x7fffffff
+                        or any(record[field] < 0 for field in ("scene_generation", "job", "level_before", "sp_before"))
+                        or type(record.get("beginner")) is not bool
+                        or record.get("status") not in ("pending", "confirmed", "unresolved")
+                        or record["request_id"] in ids):
+                    raise ClientError("invalid_bridge_state", "原生加点记录字段或身份无效。")
+                ids.add(record["request_id"])
         if "capabilities" in raw and raw["capabilities"] is not None and (
                 not isinstance(raw["capabilities"], dict)
                 or any(type(value) is not bool for value in raw["capabilities"].values())):

@@ -13,7 +13,12 @@ from beidou_pilot.headless_skill_up import skill_up
 
 
 def state(level_sp=3):
-    return {"instance_id": "i", "run_id": "r", "character": {"id": 1, "skill_points": level_sp}}
+    return {"instance_id": "i", "run_id": "r", "ready": True, "scene_generation": 1,
+            "character": {"id": 1, "skill_points": level_sp},
+            "skill_up_records": [
+                {"request_id": request, "instance_id": "i", "run_id": "r", "character_id": 1,
+                 "skill_id": skill, "level_before": 0, "sp_before": 3, "status": "confirmed"}
+                for request in ("request", "first") for skill in (42, 1000)]}
 
 
 class SkillUpCliTests(unittest.TestCase):
@@ -139,8 +144,31 @@ class SkillUpCliTests(unittest.TestCase):
             bridge._publish.return_value = "request"
             bridge.snapshot.return_value = state(2)
             result = skill_up(backend, 42, 1)
-            bridge._publish.assert_called_once_with(state(), "skill-up", 42, ["1"])
+            bridge._publish.assert_called_once_with(state(), "skill-up", 42, ["1", "r", "1"])
             self.assertEqual(result["confirmed_points"], 1)
+
+    def test_native_unresolved_or_scene_change_never_confirms(self):
+        for failure in ("record", "scene"):
+            with self.subTest(failure=failure):
+                backend = SimpleNamespace(root=None, name="headless", instance="default")
+                backend.read = unittest.mock.Mock(side_effect=[
+                    {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {}},
+                    {"skills_complete": True, "character_id": 1, "beginner_skill_ids": [], "beginner_skill_points": 3, "skills": {"42": {"level": 1}}}])
+                current = state(2)
+                if failure == "record":
+                    current["skill_up_records"][0]["status"] = "unresolved"
+                else:
+                    current["scene_generation"] = 2
+                with patch("beidou_pilot.headless_skill_up.BridgeClient") as cls:
+                    bridge = cls.return_value
+                    bridge._control.return_value = nullcontext()
+                    bridge._ready_state.return_value = state()
+                    bridge._publish.return_value = "request"
+                    bridge.snapshot.return_value = current
+                    with self.assertRaises(ClientError) as error:
+                        skill_up(backend, 42, 1)
+                    self.assertEqual(error.exception.code, "skill_up_unknown")
+                    self.assertEqual(bridge._publish.call_count, 1)
 
     def test_preflight_rejection_stops_without_next_packet(self):
         backend = SimpleNamespace(root=None, name="headless", instance="default")
@@ -155,7 +183,7 @@ class SkillUpCliTests(unittest.TestCase):
                 skill_up(backend, 42, 3)
             self.assertEqual(error.exception.code, "bridge_command_rejected")
             self.assertEqual(error.exception.details["confirmed"], [])
-            bridge._publish.assert_called_once_with(state(), "skill-up", 42, ["3"])
+            bridge._publish.assert_called_once_with(state(), "skill-up", 42, ["3", "r", "1"])
 
     def test_partial_success_then_timeout(self):
         backend = SimpleNamespace(root=None, name="headless", instance="default")
@@ -174,7 +202,7 @@ class SkillUpCliTests(unittest.TestCase):
             self.assertEqual(error.exception.code, "skill_up_unknown")
             self.assertEqual(len(error.exception.details["confirmed"]), 1)
             self.assertEqual(bridge._publish.call_count, 2)
-            self.assertEqual(bridge._publish.call_args.args[3], ["1"])
+            self.assertEqual(bridge._publish.call_args.args[3], ["1", "r", "1"])
 
     def test_second_point_prepublication_failure_preserves_progress(self):
         for failure in ("ready", "read", "publish"):
@@ -234,4 +262,4 @@ class SkillUpCliTests(unittest.TestCase):
             with self.assertRaises(ClientError) as error:
                 skill_up(backend, 42, 2)
             self.assertEqual(error.exception.code, "skill_up_unknown")
-            bridge._publish.assert_called_once_with(state(), "skill-up", 42, ["2"])
+            bridge._publish.assert_called_once_with(state(), "skill-up", 42, ["2", "r", "1"])
