@@ -92,8 +92,10 @@ def preflight_skill_up(backend: Backend, skill_id: int, points: int, *, batch: b
     if not learned["skills_complete"] or learned["character_id"] != character["id"]:
         raise ClientError("skills_unavailable", "技能记录不完整或角色身份不一致。")
     sp = _beginner_points(cast(JsonObject, character), learned) if beginner else character["skill_points"]
-    if type(sp) is not int or sp < points:
-        raise ClientError("insufficient_skill_points", "剩余技能点不足或不可用。")
+    if type(sp) is not int or sp < 0:
+        raise ClientError("skill_points_unavailable", "剩余技能点不可用。")
+    if sp < points:
+        raise ClientError("insufficient_skill_points", "剩余技能点不足。")
     skill = learned["skills"].get(str(skill_id))
     level = skill["level"] if skill is not None else 0
     if type(level) is not int or level < 0:

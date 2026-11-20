@@ -38,16 +38,30 @@ int main() {
     assert(!SupportedSkill(210, 1001005) && !SupportedSkill(211, 2101005));
     assert(Parse("1 instance run " + id + " 7 123 1001005 3 123456789", request));
     Eligibility state{true, 7, 123, 100, 3, 20, 17, 0};
-    assert(BatchEligible(request, state));
-    state.delta = 1; assert(!BatchEligible(request, state));
-    state.delta = 0; state.sp = 2; assert(!BatchEligible(request, state));
-    state.sp = 3; state.scene = 8; assert(!BatchEligible(request, state));
-    state.scene = 7; state.known = false; assert(!BatchEligible(request, state));
+    assert(BatchFailure(request, state) == nullptr);
+    state.delta = 1; assert(std::string(BatchFailure(request, state)) == "skill_up_insufficient_level_capacity");
+    state.delta = 0; state.sp = 2; assert(std::string(BatchFailure(request, state)) == "skill_up_insufficient_sp");
+    state.sp = 3; state.job = 210; assert(std::string(BatchFailure(request, state)) == "skill_up_job_skill_unsupported");
+    state.job = 100; state.scene = 8; assert(std::string(BatchFailure(request, state)) == "skill_up_state_unavailable");
+    state.scene = 7; state.known = false; assert(std::string(BatchFailure(request, state)) == "skill_up_state_unavailable");
+    state.known = true; state.count = 0; assert(std::string(BatchFailure(request, state)) == "skill_up_state_unavailable");
+    state.count = 20; state.base = 1; state.delta = -2;
+    assert(std::string(BatchFailure(request, state)) == "skill_up_state_unavailable");
+    Request beginner = request; beginner.skill = 1000; beginner.remaining = 2;
+    Eligibility beginnerState{true, 7, 123, 100, 4, 3, 2, 0};
+    assert(std::string(BatchFailure(beginner, beginnerState)) == "skill_up_insufficient_level_capacity");
     auto unreadable = [](std::uint32_t, std::array<unsigned char, 16>&) { return false; };
     NativeCalls<decltype(unreadable)> native{unreadable};
     assert(!native.Fingerprints());
     Backend backend;
     const char* reason = nullptr;
+    backend.facts.sp = 2;
+    assert(!Dispatch(request, backend, reason) && backend.calls == 0
+        && std::string(reason) == "skill_up_insufficient_sp");
+    backend.facts.sp = 3; backend.facts.delta = 1;
+    assert(!Dispatch(request, backend, reason) && backend.calls == 0
+        && std::string(reason) == "skill_up_insufficient_level_capacity");
+    backend.facts.delta = 0;
     backend.version = false; assert(!Dispatch(request, backend, reason) && backend.calls == 0);
     backend.version = true; backend.capture = false; assert(!Dispatch(request, backend, reason) && backend.calls == 0);
     backend.capture = true; backend.can = false; assert(!Dispatch(request, backend, reason) && backend.calls == 0);

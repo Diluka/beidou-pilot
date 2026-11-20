@@ -82,6 +82,19 @@ class SkillUpCliTests(unittest.TestCase):
         self.assertEqual(caught.exception.details["confirmed"], [{"level_after": 1}])
         self.assertEqual(once.call_count, 2)
 
+    def test_gui_batch_capacity_rejection_preserves_confirmed(self):
+        args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
+        backend = SimpleNamespace(root=Path("/nonexistent"), instance="default", name="beidou")
+        states = [("i", "r", 1, 3, 0, 1, 2), ("i", "r", 1, 2, 1, 1, 1)]
+        with (patch("beidou_pilot.skill_up.preflight_skill_up", side_effect=states),
+              patch("beidou_pilot.skill_up.skill_up_once", side_effect=[{"level_after": 1},
+                    ClientError("skill_up_insufficient_level_capacity", "等级余量不足")]) as once):
+            with self.assertRaises(ClientError) as caught:
+                dispatch(backend, args)
+        self.assertEqual(caught.exception.code, "skill_up_insufficient_level_capacity")
+        self.assertEqual(caught.exception.details["confirmed"], [{"level_after": 1}])
+        self.assertEqual(once.call_count, 2)
+
     def test_headless_dispatch(self):
         args = parser().parse_args(["skill-up", "2101002", "--points", "2"])
         backend = SimpleNamespace(name="headless")

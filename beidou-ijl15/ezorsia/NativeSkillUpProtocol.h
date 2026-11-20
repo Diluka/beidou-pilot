@@ -35,14 +35,17 @@ struct Eligibility {
 };
 // Only validates the observed batch bounds. Native requirements and object
 // identity must still be verified in the game thread before dispatch.
-inline bool BatchEligible(const Request& request, const Eligibility& state) {
+inline const char* BatchFailure(const Request& request, const Eligibility& state) {
     if (!state.known || state.scene != request.scene || state.character != request.character
-        || !SupportedSkill(state.job, request.skill) || state.count == 0 || state.count > 255
-        || request.remaining > state.sp) return false;
+        || state.count == 0 || state.count > 255 || request.remaining == 0)
+        return "skill_up_state_unavailable";
+    if (!SupportedSkill(state.job, request.skill)) return "skill_up_job_skill_unsupported";
     const std::int64_t raw = state.base == 0 ? 0 : static_cast<std::int64_t>(state.base) + state.delta;
-    if (raw < 0 || raw > INT32_MAX) return false;
+    if (raw < 0 || raw > INT32_MAX) return "skill_up_state_unavailable";
+    if (request.remaining > state.sp) return "skill_up_insufficient_sp";
     const auto level = raw > state.count ? state.count : static_cast<std::uint32_t>(raw);
-    return request.remaining <= state.count - level;
+    if (request.remaining > state.count - level) return "skill_up_insufficient_level_capacity";
+    return nullptr;
 }
 struct PendingFence {
     bool pending = false;
@@ -67,7 +70,7 @@ bool Dispatch(const Request& request, Backend& backend, const char*& reason) {
     if (!backend.VersionSupported()) { reason = "skill_up_unsupported"; return false; }
     Eligibility facts;
     if (!backend.Capture(request, facts)) { reason = "skill_up_state_unavailable"; return false; }
-    if (!BatchEligible(request, facts)) { reason = "skill_up_ineligible"; return false; }
+    if (const auto failure = BatchFailure(request, facts)) { reason = failure; return false; }
     if (!backend.CanRaise()) { reason = "skill_up_requirements_unmet"; return false; }
     if (!backend.Revalidate(request, facts)) { reason = "skill_up_state_changed"; return false; }
     if (!backend.Gate()) { reason = "skill_up_gate_closed"; return false; }

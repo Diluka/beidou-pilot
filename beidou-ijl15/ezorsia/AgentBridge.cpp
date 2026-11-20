@@ -1636,6 +1636,12 @@ void Tick() {
                 auto state = CaptureState(native);
                 Facts::JobSp job{};
                 std::uint32_t context = 0, manager = 0;
+                if (state.ready && state.dead == MapleControl::Fact::False && request.scene == sceneGeneration
+                    && state.characterKnown && state.character.id == request.character && state.character.known[1]
+                    && !SupportedSkill(state.character.values[1], request.skill)) {
+                    reason = "skill_up_job_skill_unsupported";
+                    return false;
+                }
                 if (!state.ready || state.dead != MapleControl::Fact::False || request.scene != sceneGeneration
                     || tickRuntime.Running() || tickInput.HasIntent() || !Facts::CaptureJobSp(state, request, job)
                     || !ReadAt(0x00BE7918, context) || !context || !ReadAt(0x00BE78DC, manager) || !manager
@@ -1674,8 +1680,8 @@ void Tick() {
                 const auto count = Facts::ResourceCount(skill, request.skill);
                 const Eligibility facts{true,   sceneGeneration, job.character, job.job,
                                         job.sp, count,           levels.base,   levels.delta};
-                if (!BatchEligible(request, facts)) {
-                    reason = "skill_up_ineligible";
+                if (const auto failure = BatchFailure(request, facts)) {
+                    reason = failure;
                     return false;
                 }
                 if (!calls.CanRaise(context, skill)) {

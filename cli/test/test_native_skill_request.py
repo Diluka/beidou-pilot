@@ -17,6 +17,23 @@ class NativeSkillRequestTest(unittest.TestCase):
                 preflight_skill_up(backend, skill, 1)
             self.assertEqual(raised.exception.code, 'skill_up_unsupported')
 
+    def test_unknown_normal_sp_is_not_insufficient(self):
+        backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
+        backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7, 'skills': {}})
+        state = {'instance_id': 'i', 'run_id': 'r', 'scene_generation': 8, 'ready': True,
+                 'character': {'id': 7, 'job': 210, 'skill_points': None}}
+        with patch('beidou_pilot.skill_up.BridgeClient') as bridge:
+            bridge.return_value.snapshot.return_value = state
+            for value in (None, True, '3', -1):
+                state['character']['skill_points'] = value
+                with self.subTest(value=value), self.assertRaises(ClientError) as raised:
+                    preflight_skill_up(backend, 2101002, 1)
+                self.assertEqual(raised.exception.code, 'skill_points_unavailable')
+            state['character']['skill_points'] = 0
+            with self.assertRaises(ClientError) as raised:
+                preflight_skill_up(backend, 2101002, 1)
+            self.assertEqual(raised.exception.code, 'insufficient_skill_points')
+
     def test_invalid_beginner_pool_is_unavailable(self):
         backend = SimpleNamespace(root=Path('/unused'), name='beidou', instance='default')
         backend.read = unittest.mock.Mock(return_value={'skills_complete': True, 'character_id': 7,
@@ -102,11 +119,11 @@ class NativeSkillRequestTest(unittest.TestCase):
             backend = SimpleNamespace(paths=SimpleNamespace(bridge=path))
             request_id = 'a' * 32
             (path / ('skill-up-result-' + request_id + '.json')).write_text(json.dumps({'protocol': 1, 'request_id': request_id,
-                                                                   'status': 'rejected', 'reason': 'skill_up_ineligible'}))
+                                                                   'status': 'rejected', 'reason': 'skill_up_insufficient_level_capacity'}))
             with patch('beidou_pilot.skill_up.uuid.uuid4', return_value=SimpleNamespace(hex=request_id)):
                 with self.assertRaises(ClientError) as raised:
                     _native_skill_request(backend, 'i', 'r', 1, 2, 3, 4)
-            self.assertEqual(raised.exception.code, 'skill_up_ineligible')
+            self.assertEqual(raised.exception.code, 'skill_up_insufficient_level_capacity')
 
     def test_existing_request_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
