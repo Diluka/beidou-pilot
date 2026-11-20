@@ -566,7 +566,15 @@ void SharedLuaAdapter::ReadCommand() {
         auto& player = ms::Stage::get().get_player();
         auto& book = player.get_skills();
         const auto skill = static_cast<std::int32_t>(value);
-        const ms::Job job(player.get_stats().get_stat(ms::MapleStat::Id::JOB));
+        const auto jobId = player.get_stats().get_stat(ms::MapleStat::Id::JOB);
+        if (headless::UnsupportedSkillAllocation(skill, jobId)) {
+            commandId = id;
+            scriptCommand = false;
+            commandStatus = "rejected";
+            commandReason = "skill_not_eligible";
+            return;
+        }
+        const ms::Job job(jobId);
         bool eligible = false;
         bool beginner = false;
         for (int level = ms::Job::BEGINNER; level <= job.get_level(); ++level) {
@@ -584,7 +592,7 @@ void SharedLuaAdapter::ReadCommand() {
             const auto& data = ms::SkillData::get(skill);
             auto maximum = book.get_masterlevel(skill);
             const bool visible = !data.is_invisible() || maximum != 0;
-            if (maximum == 0) maximum = data.get_masterlevel();
+            if (maximum == 0 && !headless::ServerFourthJobSkill(skill)) maximum = data.get_masterlevel();
             const auto current = book.get_level(skill);
             const auto sp = beginner ? BeginnerSkillPoints(player) : player.get_stats().get_stat(ms::MapleStat::Id::SP);
             auto requirements = book.collect_required(skill);
