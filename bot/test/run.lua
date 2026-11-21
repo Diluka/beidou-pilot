@@ -76,10 +76,14 @@ assert(type(navigation.candidates) == "table", "fixture candidates are required"
 local candidate_kinds = {}
 local platforms_by_index = {}
 for _, platform in ipairs(navigation.platforms) do
+    assert(platform.index ~= nil and platforms_by_index[platform.index] == nil,
+        "fixture platform indexes must be present and unique")
     platforms_by_index[platform.index] = platform
 end
 local ropes_by_index = {}
 for _, rope in ipairs(navigation.ropes) do
+    assert(rope.index ~= nil and ropes_by_index[rope.index] == nil,
+        "fixture rope indexes must be present and unique")
     ropes_by_index[rope.index] = rope
 end
 local function platform_y_at(platform, x)
@@ -99,6 +103,9 @@ for _, candidate in ipairs(navigation.candidates) do
     assert(source_y ~= nil, candidate.kind .. " candidate start must lie on its source platform")
     assert(destination_y and math.abs(destination_y - candidate.destination.y) < 0.001,
         candidate.kind .. " candidate destination must lie on its target platform")
+    if candidate.kind == "step" or candidate.kind == "jumpup" or candidate.kind == "drop" then
+        assert(candidate.rise ~= nil, candidate.kind .. " candidate must include rise")
+    end
     if candidate.rise ~= nil then
         assert(math.abs(candidate.rise - (source_y - destination_y)) < 0.001,
             candidate.kind .. " candidate rise must match its platform height difference")
