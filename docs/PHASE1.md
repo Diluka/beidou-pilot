@@ -96,7 +96,41 @@ bot/
   README.md
 ```
 
-### 6.2 世界模型
+### 6.2 Fixture schema
+
+`bot/test/fixtures/synthetic.lua` 按 `docs/LUA_TICK_API.md` 的 `terrain.navigation` 提供原生导航数据，字段与元素结构如下：
+
+| 字段 | 契约 |
+| --- | --- |
+| `map_id` | 数字地图 ID。 |
+| `model` | 仅含数值常量 `stand_height`、`wall_margin`、`min_platform_width`、`jump_rise`、`drop_min`、`drop_max`、`rope_grab`。 |
+| `terrain_left` / `terrain_right` | 地形左右边界。 |
+| `platforms` | 平台数组；每项仅含 `index`、`left`、`right`、`open_left`、`open_right`、`segments`。范围为 `left/right`，`segments` 每 4 个数字为 `left,right,y1,y2`，平台高度沿线段线性插值。 |
+| `walls` | 扁平数组，每 3 个数字为 `x,top,bottom`。 |
+| `ropes` | 绳梯数组；每项仅含 `index`、`x`、`y1`、`y2`、`platforms`。`platforms` 每 2 个数字为相交平台的 `platform_index,y`。 |
+| `candidates` | 含 `walk`、`step`、`jumpup`、`drop`、`rope` 五个键的对象；前四类每 5 个数字为 `from,to,x,destination,rise`，`rope` 每 6 个数字追加 `rope_index`。`destination` 是目标平台落点 x 坐标。 |
+| `rise` | `walk/step/jumpup/drop` 为源平台高度减目标高度；`rope` 为目标高度减源高度。 |
+
+平台及绳梯索引从 1 开始，candidate 的 `from/to` 指向平台索引。不得用 `x1/x2` 平台表、结构化 `walls/candidates` 或 `model.name/platforms` 替代上述契约。
+
+### 6.3 Config keys
+
+`bot/defaults.lua` 只提供下列键和值；它们是配置占位，不直接触发游戏行为：
+
+| 键 | 默认值 |
+| --- | --- |
+| `owner_name` | `""` |
+| `owner_character_id` | `0` |
+| `attack_skill_id` | `0` |
+| `hp_item` | `0` |
+| `mp_item` | `0` |
+| `follow_distance` | `80` |
+| `stop_distance` | `40` |
+| `pot_hp` | `60` |
+| `pot_mp` | `30` |
+| `loot_radius` | `150` |
+
+### 6.4 世界模型
 
 ```lua
 world = {
@@ -115,7 +149,7 @@ world = {
 }
 ```
 
-### 6.3 模块签名
+### 6.5 模块签名
 
 ```lua
 -- terrain
@@ -165,7 +199,7 @@ local function main(context) ... end
 
 主流程负责创建唯一 `mover = move.new(graph)`，用 `terrain.platform_at` 填充 `character/owner/mobs/drops.platform`，并把 `mover` 传给 `combat.step`/`loot.step`；模块不各自创建 mover。
 
-### 6.4 文件与命令
+### 6.6 文件与命令
 
 ```text
 /work/bot/queue/<seq>-<id>.cmd     key=value
@@ -202,7 +236,7 @@ local function main(context) ... end
 }
 ```
 
-### 6.5 模式
+### 6.7 模式
 
 | 模式 | 行为 | 退出 |
 | --- | --- | --- |
