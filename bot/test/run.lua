@@ -66,74 +66,170 @@ local main_chunk, main_error = loadfile("bot/main.lua")
 assert(main_chunk, main_error)
 
 local navigation = dofile("bot/test/fixtures/synthetic.lua")
-assert(type(navigation) == "table" and navigation.map_id ~= nil, "fixture map_id is required")
+assert(type(navigation) == "table" and type(navigation.map_id) == "number", "fixture map_id is required")
+
+local model_fields = {
+    "stand_height", "wall_margin", "min_platform_width", "jump_rise",
+    "drop_min", "drop_max", "rope_grab",
+}
 assert(type(navigation.model) == "table", "fixture model is required")
+local allowed_model_fields = {}
+for _, field in ipairs(model_fields) do
+    allowed_model_fields[field] = true
+    assert(type(navigation.model[field]) == "number", "fixture model." .. field .. " must be numeric")
+end
+for field in pairs(navigation.model) do
+    assert(allowed_model_fields[field], "fixture model has unexpected field " .. field)
+end
+assert(type(navigation.terrain_left) == "number" and type(navigation.terrain_right) == "number"
+    and navigation.terrain_left <= navigation.terrain_right, "fixture terrain bounds are invalid")
+
+local platforms_by_index = {}
+local allowed_platform_fields = {
+    index = true, left = true, right = true, open_left = true, open_right = true, segments = true,
+}
 assert(type(navigation.platforms) == "table" and #navigation.platforms > 0,
     "fixture platforms must be non-empty")
-assert(type(navigation.walls) == "table", "fixture walls are required")
-assert(type(navigation.ropes) == "table" and #navigation.ropes > 0, "fixture ropes are required")
-assert(type(navigation.candidates) == "table", "fixture candidates are required")
-local candidate_kinds = {}
-local platforms_by_index = {}
 for _, platform in ipairs(navigation.platforms) do
-    assert(platform.index ~= nil and platforms_by_index[platform.index] == nil,
-        "fixture platform indexes must be present and unique")
+    assert(type(platform.index) == "number" and platform.index >= 1 and platform.index % 1 == 0
+        and platforms_by_index[platform.index] == nil,
+        "fixture platform indexes must be positive integers and unique")
+    assert(type(platform.left) == "number" and type(platform.right) == "number"
+        and platform.left <= platform.right, "fixture platform bounds are invalid")
+    assert(type(platform.open_left) == "boolean" and type(platform.open_right) == "boolean",
+        "fixture platform open-edge flags must be boolean")
+    assert(type(platform.segments) == "table" and #platform.segments > 0 and #platform.segments % 4 == 0,
+        "fixture platform segments must contain left/right/y1/y2 tuples")
+    for field in pairs(platform) do
+        assert(allowed_platform_fields[field], "fixture platform has unexpected field " .. field)
+    end
+    for i = 1, #platform.segments, 4 do
+        local left, right, y1, y2 = platform.segments[i], platform.segments[i + 1],
+            platform.segments[i + 2], platform.segments[i + 3]
+        assert(type(left) == "number" and type(right) == "number"
+            and type(y1) == "number" and type(y2) == "number" and left <= right,
+            "fixture platform segment geometry is invalid")
+    end
     platforms_by_index[platform.index] = platform
 end
+
+local function platform_y_at(platform, x)
+    for i = 1, #platform.segments, 4 do
+        local left, right, y1, y2 = platform.segments[i], platform.segments[i + 1],
+            platform.segments[i + 2], platform.segments[i + 3]
+        if x >= left and x <= right then
+            if left == right then
+                if y1 == y2 then return y1 end
+            else
+                return y1 + (x - left) / (right - left) * (y2 - y1)
+            end
+        end
+    end
+end
+
+assert(type(navigation.walls) == "table" and #navigation.walls % 3 == 0,
+    "fixture walls must contain x/top/bottom tuples")
+for _, value in ipairs(navigation.walls) do
+    assert(type(value) == "number", "fixture wall values must be numeric")
+end
+
 local ropes_by_index = {}
+local allowed_rope_fields = {index = true, x = true, y1 = true, y2 = true, platforms = true}
+assert(type(navigation.ropes) == "table", "fixture ropes are required")
 for _, rope in ipairs(navigation.ropes) do
-    assert(rope.index ~= nil and ropes_by_index[rope.index] == nil,
-        "fixture rope indexes must be present and unique")
+    assert(type(rope.index) == "number" and rope.index >= 1 and rope.index % 1 == 0
+        and ropes_by_index[rope.index] == nil,
+        "fixture rope indexes must be positive integers and unique")
+    assert(type(rope.x) == "number" and type(rope.y1) == "number" and type(rope.y2) == "number",
+        "fixture rope geometry must be numeric")
+    assert(type(rope.platforms) == "table" and #rope.platforms % 2 == 0,
+        "fixture rope platforms must contain platform-index/height pairs")
+    for field in pairs(rope) do
+        assert(allowed_rope_fields[field], "fixture rope has unexpected field " .. field)
+    end
+    for i = 1, #rope.platforms, 2 do
+        local platform_index, y = rope.platforms[i], rope.platforms[i + 1]
+        assert(type(platform_index) == "number" and platforms_by_index[platform_index]
+            and type(y) == "number", "fixture rope platform pair is invalid")
+        local actual_y = platform_y_at(platforms_by_index[platform_index], rope.x)
+        assert(actual_y ~= nil and math.abs(actual_y - y) < 0.001,
+            "fixture rope platform height must match its platform")
+    end
     ropes_by_index[rope.index] = rope
 end
-local function platform_y_at(platform, x)
-    if x < math.min(platform.x1, platform.x2) or x > math.max(platform.x1, platform.x2) then
-        return nil
-    end
-    local ratio = (x - platform.x1) / (platform.x2 - platform.x1)
-    return platform.y1 + ratio * (platform.y2 - platform.y1)
+
+local candidate_specs = {
+    walk = {size = 5, rise_sign = 1},
+    step = {size = 5, rise_sign = 1},
+    jumpup = {size = 5, rise_sign = 1},
+    drop = {size = 5, rise_sign = 1},
+    rope = {size = 6, rise_sign = -1},
+}
+assert(type(navigation.candidates) == "table", "fixture candidates are required")
+for kind in pairs(navigation.candidates) do
+    assert(candidate_specs[kind], "fixture candidates have unexpected kind " .. tostring(kind))
 end
-for _, candidate in ipairs(navigation.candidates) do
-    candidate_kinds[candidate.kind] = true
-    local source = platforms_by_index[candidate.from]
-    local destination = platforms_by_index[candidate.to]
-    assert(source and destination, candidate.kind .. " candidate platforms must exist")
-    local source_y = platform_y_at(source, candidate.x)
-    local destination_y = platform_y_at(destination, candidate.destination.x)
-    assert(source_y ~= nil, candidate.kind .. " candidate start must lie on its source platform")
-    assert(destination_y and math.abs(destination_y - candidate.destination.y) < 0.001,
-        candidate.kind .. " candidate destination must lie on its target platform")
-    if candidate.kind == "step" or candidate.kind == "jumpup" or candidate.kind == "drop" then
-        assert(candidate.rise ~= nil, candidate.kind .. " candidate must include rise")
+for kind, spec in pairs(candidate_specs) do
+    local values = navigation.candidates[kind]
+    assert(type(values) == "table" and #values > 0 and #values % spec.size == 0,
+        "fixture " .. kind .. " candidates must contain complete flat tuples")
+    for i = 1, #values, spec.size do
+        local from, to, x, destination, rise = values[i], values[i + 1], values[i + 2],
+            values[i + 3], values[i + 4]
+        for offset = 0, spec.size - 1 do
+            assert(type(values[i + offset]) == "number",
+                "fixture " .. kind .. " candidate values must be numeric")
+        end
+        local source = platforms_by_index[from]
+        local target = platforms_by_index[to]
+        assert(source and target, kind .. " candidate platforms must exist")
+        local source_y = platform_y_at(source, x)
+        local destination_y = platform_y_at(target, destination)
+        assert(source_y ~= nil, kind .. " candidate start must lie on its source platform")
+        assert(destination_y ~= nil, kind .. " candidate destination must lie on its target platform")
+        assert(math.abs(rise - spec.rise_sign * (source_y - destination_y)) < 0.001,
+            kind .. " candidate rise must match its platform height difference")
+        if kind == "rope" then
+            local rope_index = values[i + 5]
+            local rope = ropes_by_index[rope_index]
+            assert(rope and x == rope.x and destination == rope.x,
+                "rope candidate must reference the matching rope")
+            local source_level, target_level = false, false
+            for j = 1, #rope.platforms, 2 do
+                if rope.platforms[j] == from and math.abs(rope.platforms[j + 1] - source_y) < 0.001 then
+                    source_level = true
+                end
+                if rope.platforms[j] == to and math.abs(rope.platforms[j + 1] - destination_y) < 0.001 then
+                    target_level = true
+                end
+            end
+            assert(source_level and target_level and source_y ~= destination_y,
+                "rope candidate endpoints must match its platform intersections")
+        end
     end
-    if candidate.rise ~= nil then
-        assert(math.abs(candidate.rise - (source_y - destination_y)) < 0.001,
-            candidate.kind .. " candidate rise must match its platform height difference")
-    end
-    if candidate.kind == "rope" then
-        local rope = ropes_by_index[candidate.rope_index]
-        assert(rope and rope.x == candidate.x and candidate.destination.x == rope.x,
-            "rope candidate must reference the matching rope")
-        local source_on_rope = math.abs(source_y - rope.y1) < 0.001
-            or math.abs(source_y - rope.y2) < 0.001
-        local destination_on_rope = math.abs(destination_y - rope.y1) < 0.001
-            or math.abs(destination_y - rope.y2) < 0.001
-        assert(source_on_rope and destination_on_rope and source_y ~= destination_y,
-            "rope endpoints must connect the candidate platforms")
-    end
-end
-for _, kind in ipairs({"walk", "step", "jumpup", "drop", "rope"}) do
-    assert(candidate_kinds[kind], "fixture candidate missing " .. kind)
 end
 
 local defaults = require("defaults")
-assert(defaults.owner == "", "default owner must be empty")
-assert(defaults.follow_distance == 80 and defaults.stop_distance == 40,
-    "follow distance defaults do not match the package contract")
-assert(defaults.pot_hp == 60 and defaults.pot_mp == 30, "potion thresholds do not match the package contract")
-assert(defaults.loot_radius == 150, "loot radius default does not match the package contract")
-assert(defaults.attack_skill == 0 and defaults.pot_hp_item == 0 and defaults.pot_mp_item == 0,
-    "skill and potion item placeholders must be zero")
+local expected_defaults = {
+    owner_name = "",
+    owner_character_id = 0,
+    attack_skill_id = 0,
+    hp_item = 0,
+    mp_item = 0,
+    follow_distance = 80,
+    stop_distance = 40,
+    pot_hp = 60,
+    pot_mp = 30,
+    loot_radius = 150,
+}
+local default_count = 0
+for key, value in pairs(defaults) do
+    default_count = default_count + 1
+    assert(expected_defaults[key] == value, "unexpected or incorrect default " .. tostring(key))
+end
+local expected_default_count = 0
+for _ in pairs(expected_defaults) do expected_default_count = expected_default_count + 1 end
+assert(default_count == expected_default_count, "defaults must contain exactly the documented keys")
 
 local function check_stub(fn, expected_status, ...)
     local status, detail = fn(...)

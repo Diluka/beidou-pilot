@@ -1,28 +1,31 @@
-local platforms = {
-    {index = 1, x1 = 0, x2 = 100, y1 = 100, y2 = 100},
-    {index = 2, x1 = 100, x2 = 180, y1 = 80, y2 = 80},
-    {index = 3, x1 = 180, x2 = 260, y1 = 120, y2 = 120},
-    {index = 4, x1 = 260, x2 = 300, y1 = 160, y2 = 160},
-}
-
 return {
     map_id = 102000000,
     model = {
-        name = "synthetic",
-        platforms = platforms,
+        stand_height = 70,
+        wall_margin = 12,
+        min_platform_width = 16,
+        jump_rise = 75,
+        drop_min = 4,
+        drop_max = 65,
+        rope_grab = 95,
     },
-    platforms = platforms,
-    walls = {
-        {x = 100, y1 = 80, y2 = 100},
+    terrain_left = 0,
+    terrain_right = 300,
+    platforms = {
+        {index = 1, left = 0, right = 100, open_left = true, open_right = false, segments = {0, 100, 100, 100}},
+        {index = 2, left = 100, right = 180, open_left = false, open_right = false, segments = {100, 180, 80, 80}},
+        {index = 3, left = 180, right = 260, open_left = false, open_right = false, segments = {180, 260, 120, 120}},
+        {index = 4, left = 260, right = 300, open_left = false, open_right = true, segments = {260, 300, 160, 160}},
     },
+    walls = {100, 80, 100},
     ropes = {
-        {index = 1, x = 260, y1 = 120, y2 = 160},
+        {index = 1, x = 260, y1 = 120, y2 = 160, platforms = {3, 120, 4, 160}},
     },
     candidates = {
-        {kind = "walk", from = 1, to = 1, x = 50, destination = {x = 60, y = 100}},
-        {kind = "step", from = 1, to = 2, x = 100, destination = {x = 120, y = 80}, rise = 20},
-        {kind = "jumpup", from = 1, to = 2, x = 90, destination = {x = 150, y = 80}, rise = 20},
-        {kind = "drop", from = 2, to = 3, x = 170, destination = {x = 200, y = 120}, rise = -40},
-        {kind = "rope", from = 3, to = 4, x = 260, destination = {x = 260, y = 160}, rope_index = 1},
+        walk = {1, 2, 100, 120, 20},
+        step = {2, 3, 180, 200, -40},
+        jumpup = {1, 2, 90, 150, 20},
+        drop = {2, 3, 170, 200, -40},
+        rope = {3, 4, 260, 260, 40, 1},
     },
 }
