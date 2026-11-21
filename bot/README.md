@@ -18,11 +18,26 @@
 | `lib.state` | `new()`、`apply(state, command)`、`transition(state, mode, reason)` |
 | `lib.world` | `observe(ctx)` |
 
-尚未实现的方法按签名返回 `nil, "not_implemented"`、`false, "not_implemented"` 或 `"failed", "not_implemented"`。具体返回契约由 `bot/test/run.lua` 检查。
+尚未实现的方法按签名返回 `nil, "not_implemented"`、`false, "not_implemented"` 或 `"failed", "not_implemented"`。接口及数据结构契约以 [`docs/PHASE1.md`](../docs/PHASE1.md) 为准，`bot/test/run.lua` 对其进行离线校验。
 
 ## 默认值
 
-`owner` 默认为空；跟随距离 `80`、停止距离 `40`、HP/MP 药水阈值 `60`/`30`、拾取半径 `150`。攻击技能和 HP/MP 药品 ID 占位均为 `0`。这些值只定义配置，不会驱动任何游戏行为。
+默认配置键与值如下（契约来源见 [`docs/PHASE1.md`](../docs/PHASE1.md) 的 config keys 表）：
+
+| 键 | 默认值 |
+| --- | --- |
+| `owner_name` | `""` |
+| `owner_character_id` | `0` |
+| `attack_skill_id` | `0` |
+| `hp_item` | `0` |
+| `mp_item` | `0` |
+| `follow_distance` | `80` |
+| `stop_distance` | `40` |
+| `pot_hp` | `60` |
+| `pot_mp` | `30` |
+| `loot_radius` | `150` |
+
+这些值只定义配置，不会驱动任何游戏行为。
 
 ## 离线测试
 
