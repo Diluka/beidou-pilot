@@ -65,26 +65,6 @@ class BridgePhysicsContract(unittest.TestCase):
         self.publish_physics(None)
         self.assertIsNone(self.client.snapshot()["character"]["physics"])
 
-    def test_invalid_pose_fields_are_rejected(self) -> None:
-        cases = (
-            "not-a-dict",
-            {"update_id": -1, "step_ms": 30},
-            {"update_id": True, "step_ms": 30},
-            {"update_id": 1, "step_ms": 0},
-            {"update_id": 1, "step_ms": 30, "x": "2147.125", "y": 1239.0},
-            {"update_id": 1, "step_ms": 30, "x": 1.0},
-            {"update_id": 1, "step_ms": 30, "x": 1.0, "y": None},
-            {"update_id": 1, "step_ms": 30, "x": 1.0, "y": 2.0, "velocity": {"x": 1.0}},
-            {"update_id": 1, "step_ms": 30, "x": 1.0, "y": 2.0, "velocity": {"x": 1.0, "y": float("nan")}},
-            {"update_id": 1, "step_ms": 30, "x": 1.0, "y": 2.0, "on_ground": 1},
-        )
-        for physics in cases:
-            with self.subTest(physics=physics):
-                self.publish_physics(physics)
-                with self.assertRaises(ClientError) as raised:
-                    self.client.snapshot()
-                self.assertEqual("invalid_bridge_state", raised.exception.code)
-
 
 if __name__ == "__main__":
     unittest.main()

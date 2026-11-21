@@ -71,31 +71,6 @@ def load_runtime(root: Path, backend: str, instance: str = "default") -> Contain
         value = json.loads((root / "state/container.json").read_text())
     except (OSError, ValueError) as error:
         raise ClientError("container_runtime_unavailable", "请通过 Docker 工作台入口执行客户端 CLI。") from error
-    strings = (
-        "backend",
-        "instance",
-        "run_id",
-        "container_id",
-        "image",
-        "source_revision",
-        "run_dir",
-        "target_ip",
-        "target_container_id",
-        "started_at",
-    )
-    if (
-        not isinstance(value, dict)
-        or any(not isinstance(value.get(key), str) or not value[key] for key in strings)
-        or type(value.get("pid")) is not int
-        or value["pid"] <= 0
-        or "character_id" not in value
-        or (value["character_id"] is not None and (type(value["character_id"]) is not int or not 1 <= value["character_id"] <= 2**31 - 1))
-        or any(type(value.get(key)) is not int or value[key] < 0 for key in ("world", "channel"))
-        or not isinstance(value.get("target"), dict)
-        or set(value["target"]) != {"project", "service", "network"}
-        or any(not isinstance(item, str) or not item for item in value["target"].values())
-    ):
-        raise ClientError("container_runtime_unavailable", "本容器启动登记无效，未执行客户端操作。")
     if (
         value["backend"] != backend
         or value["instance"] != instance

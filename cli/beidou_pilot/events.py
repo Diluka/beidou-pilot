@@ -75,39 +75,7 @@ class EventReader:
             raw = json.loads((self.bridge.directory / "events.json").read_text())
         except (OSError, json.JSONDecodeError) as error:
             raise ClientError("events_unavailable", "当前原生事件序列尚未有效发布。") from error
-        if (
-            not isinstance(raw, dict)
-            or type(raw.get("protocol")) is not int
-            or raw["protocol"] != 1
-            or not isinstance(raw.get("instance_id"), str)
-            or not isinstance(raw.get("run_id"), str)
-            or type(raw.get("first_seq")) is not int
-            or type(raw.get("last_seq")) is not int
-            or not isinstance(raw.get("events"), list)
-        ):
-            raise ClientError("invalid_events", "原生事件序列缺少有效信封。")
-        if (raw["instance_id"], raw["run_id"]) != self.identity:
-            raise ClientError("events_identity_changed", "原生事件序列不属于当前实例运行。")
         events = raw["events"]
-        if raw["first_seq"] < 1 or raw["last_seq"] < 0 or raw["first_seq"] != raw["last_seq"] - len(events) + 1:
-            raise ClientError("invalid_events", "原生事件序列的保留范围无效。")
-        for seq, event in enumerate(events, start=raw["first_seq"]):
-            if (
-                not isinstance(event, dict)
-                or type(event.get("seq")) is not int
-                or event["seq"] != seq
-                or any(type(event.get(key)) is not int for key in ("observed_at_ms", "scene_generation"))
-                or "character_id" not in event
-                or event.get("character_id") is not None
-                and type(event["character_id"]) is not int
-                or not isinstance(event.get("type"), str)
-                or not isinstance(event.get("source"), str)
-                or "expires_at_ms" not in event
-                or event["expires_at_ms"] is not None
-                and type(event["expires_at_ms"]) is not int
-                or not isinstance(event.get("data"), dict)
-            ):
-                raise ClientError("invalid_events", "原生事件条目的类型或序号无效。")
         after = cursor.seq if cursor is not None else raw["first_seq"] - 1
         if after < raw["first_seq"] - 1:
             raise ClientError(

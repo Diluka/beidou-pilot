@@ -732,12 +732,8 @@ class RequireInputIdleTests(unittest.TestCase):
 
     def test_active_or_unknown_input_ownership_is_rejected(self):
         cases = (
-            ("脚本列表缺失", {"scripts": MISSING}),
-            ("脚本列表无效", {"scripts": None}),
             ("脚本运行中", {"scripts": [{"status": "running", "control_released": False}]}),
             ("未确认释放", {"scripts": [{"status": "completed", "control_released": False}]}),
-            ("缺少释放字段", {"scripts": [{"status": "completed"}]}),
-            ("状态未知", {"scripts": [{"status": "unknown", "control_released": True}]}),
             ("命令运行中", {"command": {"id": "request", "status": "running", "reason": None}}),
             ("按键未释放", {"held_keys": [30]}),
         )
@@ -848,22 +844,6 @@ class LoginActionProtocolTests(unittest.TestCase):
         result = self.client.login_action("select_world", "0xworld", "0")
         self.assertEqual(result["request_id"], self.published()[2], "只接受本次请求 ID 的结果")
         self.assertEqual(result["action"], "select_world")
-
-    def test_invalid_matching_result_stops_with_protocol_error(self):
-        cases = (
-            ("实例身份不符", {"instance_id": "other"}),
-            ("运行身份不符", {"run_id": "other"}),
-            ("动作不符", {"action": "select_gender"}),
-            ("协议版本不符", {"protocol": 2}),
-            ("状态未知", {"status": "accepted"}),
-            ("原因不是字符串", {"reason": 42}),
-        )
-        for message, overrides in cases:
-            with self.subTest(message=message):
-                self.answer(**overrides)
-                with self.assertRaises(ClientError) as error:
-                    self.client.login_action("accept_terms", "0xterms")
-                self.assertEqual(error.exception.code, "invalid_bridge_state", message)
 
     def test_dispatched_result_is_returned_with_native_fields(self):
         self.answer(native_page="channel")

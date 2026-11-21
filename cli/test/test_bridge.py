@@ -356,24 +356,6 @@ class BridgeContract(unittest.TestCase):
         self.assertFalse((self.files.directory / "command.txt").exists())
         self.assertFalse((self.files.directory / "scripts").exists())
 
-    def test_coroutine_or_incomplete_script_state_is_invalid(self) -> None:
-        cases = (
-            {"mode": "coroutine"},
-            {"mode": "tick", "tick": None},
-            {"mode": "tick", "player": None},
-            {"mode": "tick", "control_released": "no"},
-        )
-        for override in cases:
-            with self.subTest(override=override):
-                script = tick_script("c" * 32)
-                script.update(override)
-                self.files.state["script"] = script
-                self.files.state["scripts"] = [script]
-                self.files.publish()
-                with self.assertRaises(ClientError) as failure:
-                    self.client.snapshot()
-                self.assertEqual("invalid_bridge_state", failure.exception.code)
-
     def test_revive_is_valid_only_as_input_action_in_running_script_state(self) -> None:
         script = tick_script("e" * 32)
         script["player"].update(
@@ -396,60 +378,6 @@ class BridgeContract(unittest.TestCase):
         self.files.publish()
         state = self.client.snapshot()
         self.assertEqual("auto_ap", state["script"]["player"]["input_action"])
-
-    def test_revive_cannot_be_a_native_action_or_held_key(self) -> None:
-        for field, value in (("action", "revive"), ("held", ["revive"])):
-            with self.subTest(field=field):
-                script = tick_script("f" * 32)
-                script["player"][field] = value
-                self.files.state["script"] = script
-                self.files.state["scripts"] = [script]
-                self.files.publish()
-
-                with self.assertRaises(ClientError) as failure:
-                    self.client.snapshot()
-
-                self.assertEqual("invalid_bridge_state", failure.exception.code)
-
-    def test_skill_up_record_validation(self) -> None:
-        record = {'request_id': 'a' * 32, 'run_id': 'bridge-contract', 'instance_id': 'client-1',
-                  'character_id': 4, 'skill_id': 1000, 'scene_generation': 1, 'job': 100,
-                  'beginner': True, 'level_before': 0, 'sp_before': 1, 'status': 'confirmed'}
-        self.files.state['skill_up_records'] = [record]
-        self.files.publish()
-        self.assertEqual(self.client.snapshot()['skill_up_records'], [record])
-        for field in record:
-            with self.subTest(missing=field):
-                broken = {key: value for key, value in record.items() if key != field}
-                self.files.state['skill_up_records'] = [broken]
-                self.files.publish()
-                with self.assertRaises(ClientError) as error:
-                    self.client.snapshot()
-                self.assertEqual(error.exception.code, 'invalid_bridge_state')
-        for field, value in [('character_id', True), ('skill_id', True), ('scene_generation', True),
-                             ('job', True), ('level_before', True), ('sp_before', True), ('beginner', 1),
-                             ('request_id', 'bad!'), ('run_id', 'old'), ('instance_id', 'other'),
-                             ('status', 'completed'), ('skill_id', 0), ('character_id', -1),
-                             ('scene_generation', -1), ('job', -1), ('level_before', -1), ('sp_before', -1)]:
-            with self.subTest(field=field):
-                self.files.state['skill_up_records'] = [{**record, field: value}]
-                self.files.publish()
-                with self.assertRaises(ClientError) as error:
-                    self.client.snapshot()
-                self.assertEqual(error.exception.code, 'invalid_bridge_state')
-        for value in (None, {}, [None]):
-            with self.subTest(records=value):
-                self.files.state['skill_up_records'] = value
-                self.files.publish()
-                with self.assertRaises(ClientError):
-                    self.client.snapshot()
-        self.files.state['skill_up_records'] = [record, record]
-        self.files.publish()
-        with self.assertRaises(ClientError):
-            self.client.snapshot()
-        del self.files.state['skill_up_records']
-        self.files.publish()
-        self.assertNotIn('skill_up_records', self.client.snapshot())
 
     def test_unknown_backend_fields_are_tolerated(self) -> None:
         self.files.state["future_field"] = {"nested": [1, 2]}

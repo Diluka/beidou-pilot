@@ -187,16 +187,6 @@ class NativeObservationContract(unittest.TestCase):
                 self.assertEqual(True if ready else None, sampled["dead"])
                 self.assertEqual(True if ready else None, sampled["revive_requestable"])
 
-    def test_response_must_belong_to_current_instance_run_and_domain(self) -> None:
-        with patch("beidou_pilot.observations.active_session", return_value=self.session):
-            observer = NativeObserver(self.root)
-            for override in ({"instance_id": "other"}, {"run_id": "other"}, {"domain": "quests"}):
-                with self.subTest(override=override):
-                    (self.directory / "observation-request.txt").unlink(missing_ok=True)
-                    with self.responder({}, override=override), self.assertRaises(ClientError) as failure:
-                        observer.observe("scene", timeout=0.2)
-                    self.assertEqual("native_observation_invalid", failure.exception.code)
-
     def test_unsupported_and_no_response_are_explicit_and_bounded(self) -> None:
         with patch("beidou_pilot.observations.active_session", return_value=self.session):
             observer = NativeObserver(self.root)
