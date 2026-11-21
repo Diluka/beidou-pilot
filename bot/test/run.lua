@@ -78,6 +78,10 @@ local platforms_by_index = {}
 for _, platform in ipairs(navigation.platforms) do
     platforms_by_index[platform.index] = platform
 end
+local ropes_by_index = {}
+for _, rope in ipairs(navigation.ropes) do
+    ropes_by_index[rope.index] = rope
+end
 local function platform_y_at(platform, x)
     if x < math.min(platform.x1, platform.x2) or x > math.max(platform.x1, platform.x2) then
         return nil
@@ -89,11 +93,27 @@ for _, candidate in ipairs(navigation.candidates) do
     candidate_kinds[candidate.kind] = true
     local source = platforms_by_index[candidate.from]
     local destination = platforms_by_index[candidate.to]
-    assert(source and platform_y_at(source, candidate.x) ~= nil,
-        candidate.kind .. " candidate start must lie on its source platform")
-    local destination_y = destination and platform_y_at(destination, candidate.destination.x)
+    assert(source and destination, candidate.kind .. " candidate platforms must exist")
+    local source_y = platform_y_at(source, candidate.x)
+    local destination_y = platform_y_at(destination, candidate.destination.x)
+    assert(source_y ~= nil, candidate.kind .. " candidate start must lie on its source platform")
     assert(destination_y and math.abs(destination_y - candidate.destination.y) < 0.001,
         candidate.kind .. " candidate destination must lie on its target platform")
+    if candidate.rise ~= nil then
+        assert(math.abs(candidate.rise - (source_y - destination_y)) < 0.001,
+            candidate.kind .. " candidate rise must match its platform height difference")
+    end
+    if candidate.kind == "rope" then
+        local rope = ropes_by_index[candidate.rope_index]
+        assert(rope and rope.x == candidate.x and candidate.destination.x == rope.x,
+            "rope candidate must reference the matching rope")
+        local source_on_rope = math.abs(source_y - rope.y1) < 0.001
+            or math.abs(source_y - rope.y2) < 0.001
+        local destination_on_rope = math.abs(destination_y - rope.y1) < 0.001
+            or math.abs(destination_y - rope.y2) < 0.001
+        assert(source_on_rope and destination_on_rope and source_y ~= destination_y,
+            "rope endpoints must connect the candidate platforms")
+    end
 end
 for _, kind in ipairs({"walk", "step", "jumpup", "drop", "rope"}) do
     assert(candidate_kinds[kind], "fixture candidate missing " .. kind)
