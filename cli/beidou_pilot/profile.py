@@ -7,6 +7,23 @@ from pathlib import Path
 from typing import Literal
 
 from .errors import ClientError
+from .validation import Integer, Object, String, validate
+
+
+PROFILE_SCHEMA = Object({
+    "username": String(no_control=True),
+    "password": String(no_control=True),
+    "character_id": Integer(minimum=1, maximum=2**31 - 1),
+    "world": Integer(minimum=0, maximum=255, default=0),
+    "channel": Integer(minimum=0, maximum=255, default=0),
+}, allow_extra=True)
+
+ACCOUNT_SCHEMA = Object({
+    "username": String(no_control=True),
+    "password": String(no_control=True),
+    "world": Integer(minimum=0, maximum=255, default=0),
+    "channel": Integer(minimum=0, maximum=255, default=0),
+}, allow_extra=True)
 
 
 @dataclass(frozen=True)
@@ -22,28 +39,13 @@ def load_profile(path: Path) -> LoginProfile:
     try:
         if path.stat().st_mode & 0o777 != 0o600:
             raise ClientError("private_file_permissions", "登录 profile 须为 0600。")
-        value = json.loads(path.read_text())
+        raw = json.loads(path.read_text())
     except (OSError, ValueError) as error:
         raise ClientError("profile_invalid", "登录 profile 无法读取或不是有效 JSON。") from error
-    if (
-        not isinstance(value, dict)
-        or any(
-            not isinstance(value.get(key), str) or not value[key] or any(ord(ch) < 32 for ch in value[key])
-            for key in ("username", "password")
-        )
-        or type(value.get("character_id")) is not int
-        or not 1 <= value["character_id"] <= 2**31 - 1
-        or any(type(value.get(key, 0)) is not int or not 0 <= value.get(key, 0) <= 255 for key in ("world", "channel"))
-    ):
-        raise ClientError(
-            "profile_invalid",
-            "登录 profile 需要 username、password、已有角色 ID（正 int32）及 0 至 255 的整数 world/channel。",
-        )
-    if "max_seconds" in value:
+    value = validate(raw, PROFILE_SCHEMA, code="profile_invalid", label="登录 profile")
+    if "max_seconds" in raw:
         raise ClientError("profile_invalid", "客户端由 Docker 持续运行至关闭；请删除 profile 中的 max_seconds。")
-    return LoginProfile(
-        value["username"], value["password"], value["character_id"], value.get("world", 0), value.get("channel", 0)
-    )
+    return LoginProfile(value["username"], value["password"], value["character_id"], value["world"], value["channel"])
 
 
 @dataclass(frozen=True)
@@ -60,20 +62,11 @@ def load_account_profile(path: Path) -> AccountProfile:
     try:
         if path.stat().st_mode & 0o777 != 0o600:
             raise ClientError("private_file_permissions", "账号 profile 须为 0600。")
-        value = json.loads(path.read_text())
+        raw = json.loads(path.read_text())
     except (OSError, ValueError) as error:
         raise ClientError("profile_invalid", "账号 profile 无法读取或不是有效 JSON。") from error
-    if not isinstance(value, dict) or any(
-        not isinstance(value.get(key), str) or not value[key] or any(ord(ch) < 32 for ch in value[key])
-        for key in ("username", "password")
-    ):
-        raise ClientError("profile_invalid", "账号 profile 需要有效的 username 和 password。")
-    if any(
-        type(value.get(key, 0)) is not int or not 0 <= value.get(key, 0) <= 255
-        for key in ("world", "channel")
-    ):
-        raise ClientError("profile_invalid", "账号 profile 的 world/channel 必须为 0 至 255 的整数。")
-    return AccountProfile(value["username"], value["password"], value.get("world", 0), value.get("channel", 0))
+    value = validate(raw, ACCOUNT_SCHEMA, code="profile_invalid", label="账号 profile")
+    return AccountProfile(value["username"], value["password"], value["world"], value["channel"])
 
 
 @dataclass(frozen=True)

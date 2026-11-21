@@ -9,6 +9,7 @@ from typing import Iterator, cast
 
 from .bridge import BridgeClient
 from .errors import ClientError, JsonObject
+from .validation import Integer, Object, String, validate
 
 
 @dataclass(frozen=True)
@@ -30,17 +31,15 @@ def parse_cursor(text: str | None) -> EventCursor | None:
         raise ClientError(
             "invalid_events_cursor", "事件游标须为包含 instance_id、run_id、seq 的 JSON 对象。"
         ) from error
-    if (
-        not isinstance(raw, dict)
-        or not isinstance(raw.get("instance_id"), str)
-        or not raw["instance_id"]
-        or not isinstance(raw.get("run_id"), str)
-        or not raw["run_id"]
-        or type(raw.get("seq")) is not int
-        or raw["seq"] < 0
-    ):
-        raise ClientError("invalid_events_cursor", "事件游标须提供非空实例与运行身份及非负整数 seq。")
-    return EventCursor(raw["instance_id"], raw["run_id"], raw["seq"])
+    value = validate(raw, CURSOR_SCHEMA, code="invalid_events_cursor", label="事件游标")
+    return EventCursor(value["instance_id"], value["run_id"], value["seq"])
+
+
+CURSOR_SCHEMA = Object({
+    "instance_id": String(),
+    "run_id": String(),
+    "seq": Integer(minimum=0),
+}, allow_extra=True)
 
 
 class EventReader:

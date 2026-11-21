@@ -8,6 +8,7 @@ from typing import TypedDict, cast
 
 from .errors import ClientError
 from .profile import LoginProfile
+from .validation import Object, String, validate
 
 
 class TargetConfig(TypedDict):
@@ -51,19 +52,20 @@ class ContainerRuntime:
                 requested = json.loads(server.read_text())
             except (OSError, ValueError) as error:
                 raise ClientError("server_unreadable", "无法读取服务器配置，保留本容器。") from error
-            if (
-                not isinstance(requested, dict)
-                or not {"project", "service"}.issubset(requested)
-                or requested.keys() - {"project", "service", "network"}
-                or any(not isinstance(value, str) or not value for value in requested.values())
-            ):
-                raise ClientError("server_invalid", "服务器配置须提供 project、service，可选 network。")
+            requested = validate(requested, SERVER_SCHEMA, code="server_invalid", label="服务器配置")
             if (
                 any(requested[key] != self.target[key] for key in ("project", "service"))
                 or "network" in requested
                 and requested["network"] != self.target["network"]
             ):
                 raise ClientError("server_mismatch", "本容器的服务器与请求不同，未切换客户端。")
+
+
+SERVER_SCHEMA = Object({
+    "project": String(),
+    "service": String(),
+    "network": String(required=False),
+})
 
 
 def load_runtime(root: Path, backend: str, instance: str = "default") -> ContainerRuntime:
