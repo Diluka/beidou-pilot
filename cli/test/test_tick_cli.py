@@ -689,4 +689,3 @@ class TickCliContract(unittest.TestCase):
             self.client.run_script(code=TICK_SOURCE, package_root="relative/path")
         self.assertEqual("invalid_bridge_options", invalid.exception.code)
         self.assertFalse((self.files.directory / "scripts").exists())
-

@@ -35,11 +35,14 @@ def parse_cursor(text: str | None) -> EventCursor | None:
     return EventCursor(value["instance_id"], value["run_id"], value["seq"])
 
 
-CURSOR_SCHEMA = Object({
-    "instance_id": String(),
-    "run_id": String(),
-    "seq": Integer(minimum=0),
-}, allow_extra=True)
+CURSOR_SCHEMA = Object(
+    {
+        "instance_id": String(),
+        "run_id": String(),
+        "seq": Integer(minimum=0),
+    },
+    allow_extra=True,
+)
 
 
 class EventReader:
