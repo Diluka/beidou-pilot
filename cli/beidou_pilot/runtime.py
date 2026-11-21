@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 from .errors import ClientError
-from .profile import LoginProfile
 from .validation import Object, String, validate
 
 
@@ -46,7 +45,7 @@ class ContainerRuntime:
             return True
         return True
 
-    def verify_request(self, profile: LoginProfile, server: Path | None = None) -> None:
+    def verify_request(self, server: Path | None = None) -> None:
         if server is not None:
             try:
                 requested = json.loads(server.read_text())

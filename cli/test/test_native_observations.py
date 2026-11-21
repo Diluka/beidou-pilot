@@ -49,7 +49,7 @@ class NativeObservationContract(unittest.TestCase):
         (self.directory / "state.json").write_text(json.dumps(self.state))
 
     @contextmanager
-    def responder(self, data, *, status="ok", override=None):
+    def responder(self, data, *, status="ok"):
         stop = threading.Event()
 
         def respond():
@@ -67,7 +67,6 @@ class NativeObservationContract(unittest.TestCase):
                         "status": status,
                         "data": data,
                         "error": None,
-                        **(override or {}),
                     }
                     temporary = self.directory / "response.tmp"
                     temporary.write_text(json.dumps(response))

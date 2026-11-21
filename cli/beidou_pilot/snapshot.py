@@ -4,7 +4,8 @@ import hashlib
 import json
 from typing import cast
 
-from .backend import Backend, JsonObject, JsonValue
+from .backend import Backend, JsonObject
+from .errors import JsonValue
 from .catalog import Catalog
 from .rules import advancement, job_name
 

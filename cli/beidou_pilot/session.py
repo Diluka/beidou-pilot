@@ -21,7 +21,7 @@ def open_game(backend: Backend, *, profile: LoginProfile,
     if profile.world != 0:
         raise ClientError("unsupported_world", "原版 GUI 自动登录仅支持世界 0。", {"requested": profile.world})
     runtime = backend.runtime
-    runtime.verify_request(profile, server)
+    runtime.verify_request(server)
     if not runtime.running:
         raise ClientError("client_not_running", "本容器客户端已退出，请使用工作台入口重新启动。")
     stage = backend.read("stage")

@@ -1,6 +1,5 @@
 """外部资源配置和不携带运行资产的源码导出合同。"""
 
-import hashlib
 import json
 import os
 from pathlib import Path

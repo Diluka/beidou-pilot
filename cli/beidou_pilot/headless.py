@@ -38,7 +38,7 @@ def open_game(root: Path, *, profile: LoginProfile, server: Path | None = None,
     if not 5 <= timeout <= 180:
         raise ClientError("invalid_open_options", "启动等待期限须为 5 至 180 秒。")
     runtime = load_runtime(root, "headless", instance)
-    runtime.verify_request(profile, server)
+    runtime.verify_request(server)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         observed = status(root, instance)

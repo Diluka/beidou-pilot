@@ -1,21 +1,15 @@
 """GUI 账号登录原生动作状态机的离线合同；不证明真实客户端页面识别或实际登录结果。"""
 
-import base64
 import fcntl
-import json
-import shutil
 import tempfile
-import time
 import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from beidou_pilot.bridge import BridgeClient, require_input_idle
 from beidou_pilot.errors import ClientError
 from beidou_pilot.gui_login import _channel_ready, _page, _window, execute
-from beidou_pilot.instances import InstancePaths
 from beidou_pilot.profile import AccountProfile
 
 INSTANCE = "instance"

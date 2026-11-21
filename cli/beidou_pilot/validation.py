@@ -1,7 +1,6 @@
 """入口参数校验：在边界集中检查并返回已校验的值。"""
 
 from collections.abc import Mapping
-import math
 from typing import Any
 
 from .errors import ClientError
@@ -54,57 +53,6 @@ class Integer(Field):
         if self.maximum is not None and value > self.maximum:
             raise ValidationFailure(path, f"须小于等于 {self.maximum}")
         return value
-
-
-class Number(Field):
-    def __init__(self, *, minimum: float | None = None, maximum: float | None = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.minimum = minimum
-        self.maximum = maximum
-
-    def parse(self, value: Any, path: str) -> float:
-        if type(value) not in (int, float) or not math.isfinite(value):
-            raise ValidationFailure(path, "须为有限数值")
-        if self.minimum is not None and value < self.minimum:
-            raise ValidationFailure(path, f"须大于等于 {self.minimum}")
-        if self.maximum is not None and value > self.maximum:
-            raise ValidationFailure(path, f"须小于等于 {self.maximum}")
-        return value
-
-
-class Boolean(Field):
-    def parse(self, value: Any, path: str) -> bool:
-        if type(value) is not bool:
-            raise ValidationFailure(path, "须为布尔值")
-        return value
-
-
-class Choice(Field):
-    def __init__(self, *choices: Any, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.choices = choices
-
-    def parse(self, value: Any, path: str) -> Any:
-        if value not in self.choices:
-            raise ValidationFailure(path, "须为 " + ", ".join(map(str, self.choices)))
-        return value
-
-
-class ListField(Field):
-    def __init__(self, item: Field, *, minimum: int = 0, maximum: int | None = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.item = item
-        self.minimum = minimum
-        self.maximum = maximum
-
-    def parse(self, value: Any, path: str) -> list[Any]:
-        if not isinstance(value, list):
-            raise ValidationFailure(path, "须为数组")
-        if len(value) < self.minimum:
-            raise ValidationFailure(path, f"至少需要 {self.minimum} 项")
-        if self.maximum is not None and len(value) > self.maximum:
-            raise ValidationFailure(path, f"最多 {self.maximum} 项")
-        return [self.item.parse(item, f"{path}[{index}]") for index, item in enumerate(value)]
 
 
 class Object(Field):
