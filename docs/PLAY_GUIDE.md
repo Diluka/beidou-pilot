@@ -10,7 +10,7 @@
 
 从任务和角色记录确认分区、授权范围及操作者。常驻角色沿 `PLAN.md` 和已确认进度接续；开发角色读 `STATE.md`，核对职业、等级、技能、装备、位置及记录来源。文件存在或账号可登录不等于获准操作。凭据留在私密配置，不写入参数、日志或 Issue。
 
-开发样本需要准备时先确认 `workbenches/workbench server dev status`；需要启服才执行 `server dev up`。在此独立环境可用 `server dev cli` 提供的命令建号、建角或准备条件，再由真实客户端确认。不要从常驻服复制账号、存档或修改常驻数据。操作所选角色前先做只读检查：
+开发样本需要准备时先确认 `workbenches/workbench server dev status`；需要启服才执行 `server dev up`。在此独立环境可用 `server dev cli` 提供的命令建号、建角或准备条件，再由真实客户端确认。开发和样本准备在 `dev` 进行；`live` 按已有计划和授权使用。操作所选角色前先做只读检查：
 
 ```bash
 workbenches/workbench dev/NAME plan
@@ -40,7 +40,7 @@ workbenches/workbench dev/NAME snapshot
 
 ## 观察、选择能力并核对结果
 
-先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`。`capabilities.native_actions` 来自有效在线桥；领域响应中的支持状态、来源与时效分别判断，未知保持未知。无头任务支持正常增量，原始进度串及关联语义按原样保留。
+先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`。`capabilities.native_actions` 来自有效在线桥；按领域响应的支持状态、来源与时效读取字段；只使用已提供的字段。无头任务支持正常增量，原始进度串及关联语义按原样保留。
 
 在已确认安全区域选择一项有界 tick 动作并比较前后事实。仓库示例 [tick-jump-attack.lua](../shared/scripts/examples/tick-jump-attack.lua) 是可复用的有界移动跳砍脚本；仅需短移时写一个设置 `player.move`、在 `context.tick.time` 到达期限后清方向并返回 `done` 的 tick 文件。下面按示例运行，须先核实该方向有足够空间且没有其他脚本控制角色：
 
@@ -74,7 +74,7 @@ GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，与无头端一
 docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop scroll down --ticks 1
 ```
 
-原语直接操作该容器的显示环境，仅用于没有原生入口的界面操作。首次登录与建角走独立命令，由原生桥调用原版客户端内部动作；手工键鼠只在原生入口无法操作时作为兜底，并须先确认账号、身份与选择意图。未知选择按当前记录处理。
+原语直接操作该容器的显示环境，用于没有原生入口的界面操作。首次登录与建角走独立命令，由原生桥调用原版客户端内部动作；手工键鼠用于原生入口不可用的界面，并按当前账号、角色和选择记录操作。
 
 有已有 CID 时用 `open` 入图。要验证首次登录或建角流程，使用开发分区的独立账号和[首次登录入口](CLI.md#首次登录与建角)，并分别核对注册、建角、绑定和实际入图。
 
