@@ -546,52 +546,6 @@ class TickCliContract(unittest.TestCase):
                     self.files.publish()
                     self.assertEqual(identifier, self.client.snapshot()["script"]["player"][field])
 
-    def test_snapshot_rejects_malformed_input_and_action_fields_in_both_script_projections(self) -> None:
-        valid = tick_state("a" * 32)
-        player = valid["player"]
-        cases = [
-            {**player, "phase": "releasing"},
-            {**player, "phase": None},
-            {**player, "busy": 1},
-            {**player, "busy": "unknown"},
-            {**player, "dispatched": 0},
-            {**player, "moving": "sideways"},
-            {**player, "held": "skill"},
-            {**player, "held": ["cast"]},
-            {**player, "held": [None]},
-            {**player, "reason": None},
-            {**player, "effect": True},
-            *[
-                {key: value for key, value in player.items() if key != field}
-                for field in ("input_action", "action", "busy", "dispatched")
-            ],
-            *[
-                {**player, field: value}
-                for field in ("action", "input_action")
-                for value in ("cast", "stop", 1, False, [], {})
-            ],
-            *[
-                {**player, field: value}
-                for field in ("input_skill_id", "input_item_id", "skill_id", "item_id")
-                for value in (True, 0, -1, 0x80000000, 1.0, "1", None)
-            ],
-            # 旧形状不能靠pending_action冒充新的输入意图字段。
-            {key: value for key, value in {**player, "pending_action": None}.items() if not key.startswith("input_")},
-        ]
-        for projection in ("script", "scripts"):
-            for malformed in cases:
-                with self.subTest(projection=projection, player=malformed):
-                    script = dict(valid, player=malformed)
-                    self.files.state.update(
-                        script=script if projection == "script" else None,
-                        scripts=[script] if projection == "scripts" else [],
-                    )
-                    self.files.publish()
-                    with self.assertRaises(ClientError) as invalid:
-                        self.client.snapshot()
-                    self.assertEqual("invalid_bridge_state", invalid.exception.code)
-                    self.assertEqual("原生桥的tick角色操作状态字段无效。", invalid.exception.message)
-
     def package_directory(self, entry: str, modules: dict[str, str] | None = None) -> Path:
         self.package_serial = getattr(self, "package_serial", 0) + 1
         directory = self.files.root / ("policy-" + str(self.package_serial))
@@ -735,32 +689,3 @@ class TickCliContract(unittest.TestCase):
             self.client.run_script(code=TICK_SOURCE, package_root="relative/path")
         self.assertEqual("invalid_bridge_options", invalid.exception.code)
         self.assertFalse((self.files.directory / "scripts").exists())
-
-    def test_snapshot_validates_each_session_and_tick_state_at_the_boundary(self) -> None:
-        valid = tick_state("a" * 32)
-        cases = [
-            [dict(valid, mode="unknown")],
-            [dict(valid, tick=None)],
-            [dict(valid, player=None)],
-            [dict(valid, tick={**valid["tick"], "delta": float("nan")})],
-            [dict(valid, tick={**valid["tick"], "budget_ms": 0})],
-            [dict(valid, tick={**valid["tick"], "scene_generation": True})],
-            [dict(valid, player={**valid["player"], "held": ["fake"]})],
-            [dict(valid, player={**valid["player"], "skill_id": True})],
-            [dict(valid, control_released=1)],
-            [valid, valid],
-            [{key: value for key, value in valid.items() if key != "mode"}],
-            [dict(valid, tick={key: value for key, value in valid["tick"].items() if key != "gear"})],
-            *[[dict(valid, tick={**valid["tick"], "gear": gear})] for gear in (True, 3.0, "3", 0, -1, 5, None)],
-        ]
-        for scripts in cases:
-            with self.subTest(scripts=scripts):
-                self.files.state["scripts"] = deepcopy(scripts)
-                self.files.publish()
-                with self.assertRaises(ClientError) as invalid:
-                    self.client.snapshot()
-                self.assertEqual("invalid_bridge_state", invalid.exception.code)
-
-
-if __name__ == "__main__":
-    unittest.main()

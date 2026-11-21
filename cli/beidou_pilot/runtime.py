@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 from .errors import ClientError
-from .profile import LoginProfile
+from .validation import Object, String, validate
 
 
 class TargetConfig(TypedDict):
@@ -45,21 +45,13 @@ class ContainerRuntime:
             return True
         return True
 
-    def verify_request(self, profile: LoginProfile, server: Path | None = None) -> None:
-        if (profile.character_id, profile.world, profile.channel) != (self.character_id, self.world, self.channel):
-            raise ClientError("character_mismatch", "本容器的角色、世界或频道与账号配置不同，未切换客户端。")
+    def verify_request(self, server: Path | None = None) -> None:
         if server is not None:
             try:
                 requested = json.loads(server.read_text())
             except (OSError, ValueError) as error:
                 raise ClientError("server_unreadable", "无法读取服务器配置，保留本容器。") from error
-            if (
-                not isinstance(requested, dict)
-                or not {"project", "service"}.issubset(requested)
-                or requested.keys() - {"project", "service", "network"}
-                or any(not isinstance(value, str) or not value for value in requested.values())
-            ):
-                raise ClientError("server_invalid", "服务器配置须提供 project、service，可选 network。")
+            requested = validate(requested, SERVER_SCHEMA, code="server_invalid", label="服务器配置")
             if (
                 any(requested[key] != self.target[key] for key in ("project", "service"))
                 or "network" in requested
@@ -68,36 +60,18 @@ class ContainerRuntime:
                 raise ClientError("server_mismatch", "本容器的服务器与请求不同，未切换客户端。")
 
 
+SERVER_SCHEMA = Object({
+    "project": String(),
+    "service": String(),
+    "network": String(required=False),
+})
+
+
 def load_runtime(root: Path, backend: str, instance: str = "default") -> ContainerRuntime:
     try:
         value = json.loads((root / "state/container.json").read_text())
     except (OSError, ValueError) as error:
         raise ClientError("container_runtime_unavailable", "请通过 Docker 工作台入口执行客户端 CLI。") from error
-    strings = (
-        "backend",
-        "instance",
-        "run_id",
-        "container_id",
-        "image",
-        "source_revision",
-        "run_dir",
-        "target_ip",
-        "target_container_id",
-        "started_at",
-    )
-    if (
-        not isinstance(value, dict)
-        or any(not isinstance(value.get(key), str) or not value[key] for key in strings)
-        or type(value.get("pid")) is not int
-        or value["pid"] <= 0
-        or "character_id" not in value
-        or (value["character_id"] is not None and (type(value["character_id"]) is not int or not 1 <= value["character_id"] <= 2**31 - 1))
-        or any(type(value.get(key)) is not int or value[key] < 0 for key in ("world", "channel"))
-        or not isinstance(value.get("target"), dict)
-        or set(value["target"]) != {"project", "service", "network"}
-        or any(not isinstance(item, str) or not item for item in value["target"].values())
-    ):
-        raise ClientError("container_runtime_unavailable", "本容器启动登记无效，未执行客户端操作。")
     if (
         value["backend"] != backend
         or value["instance"] != instance

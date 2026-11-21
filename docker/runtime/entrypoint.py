@@ -9,7 +9,6 @@ from pathlib import Path
 import re
 import sys
 
-from beidou_pilot.binaries import verify_binaries
 from beidou_pilot.errors import ClientError
 from beidou_pilot.instances import InstancePaths
 from beidou_pilot.profile import LoginRequest, load_account_profile, load_profile, validate_login_request
@@ -113,8 +112,6 @@ def main() -> None:
     }
     outputs.append((root / "state/container.json", registration))
     for path, value in outputs:
-        if path.name == "container.json" and backend == "beidou":
-            verify_binaries(root)
         pending = path.with_name(path.name + ".new")
         pending.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
         pending.chmod(0o600)

@@ -10,7 +10,7 @@
 
 从任务和角色记录确认分区、授权范围及操作者。常驻角色沿 `PLAN.md` 和已确认进度接续；开发角色读 `STATE.md`，核对职业、等级、技能、装备、位置及记录来源。文件存在或账号可登录不等于获准操作。凭据留在私密配置，不写入参数、日志或 Issue。
 
-开发样本需要准备时先确认 `workbenches/workbench server dev status`；需要启服才执行 `server dev up`。在此独立环境可用 `server dev cli` 提供的命令建号、建角或准备条件，再由真实客户端确认。不要从常驻服复制账号、存档或修改常驻数据。操作所选角色前先做只读检查：
+开发样本需要准备时先确认 `workbenches/workbench server dev status`；需要启服才执行 `server dev up`。在此独立环境可用 `server dev cli` 提供的命令建号、建角或准备条件，再由真实客户端确认。开发和样本准备在 `dev` 进行；`live` 按已有计划和授权使用。操作所选角色前先做只读检查：
 
 ```bash
 workbenches/workbench dev/NAME plan
@@ -19,7 +19,7 @@ workbenches/workbench dev/NAME status
 
 `plan` 只核对目标，不构建或启动客户端和服务器。确认项目、服务、容器和镜像属于所选分区；配置缺失、身份不符或服务未就绪时在本区处理，不换到另一服。
 
-结合本地认领、其他工作台与外部操作者、服务器在线账号/角色列表判断占用。`status` 只说明当前工作台实例，账号空闲状态以在线列表和认领记录为准。同一目标同一角色只交给一名控制者，GUI 只保留一名明确操作者；发现占用先完成交接。
+结合本地认领、其他工作台与外部操作者、服务器在线账号/角色列表判断占用。`status` 只说明当前工作台实例，账号空闲状态以在线列表和认领记录为准。
 
 ## 用已有角色完成最小上手
 
@@ -36,11 +36,11 @@ workbenches/workbench dev/NAME snapshot
 
 两个后端都从所选角色目录读取 `account.json`（权限 `0600`）：`username/password/character_id`，以及默认各为 0 的 `world/channel`。`character_id` 指已有角色；频道索引从 0 开始，返回实际频道从 1 开始。每个角色有自己的 `default` 客户端容器，角色目录读写挂到 `/work`。启动器将本次账号和分区服务器配置保存到 `runtime/default/RUN_ID`，`CLIENT_ROOT` 指向本次运行根。入图等待由 `workbench.json.timeout` 配置。
 
-入图需同时确认新鲜状态中的 `ready`、角色 ID/名称、频道、地图和位置，原生 `instance_id/run_id` 须属于本次运行。`status` 还提供 `source_revision/image/run_id`，用它说明正在验证哪个版本。容器运行、认证成功和角色选择成功是前置条件，入图以新鲜状态的完整核对为准。启动失败先读 `status` 和工作台 `runtime/default/` 中的运行日志，保留未确认事实，再决定是否重开。
+入图需同时确认新鲜状态中的 `ready`、角色名称、频道、地图和位置，原生 `instance_id/run_id` 须属于本次运行。`status` 还提供 `source_revision/image/run_id`，用它说明正在验证哪个版本。容器运行、认证成功和角色选择成功是前置条件，入图以新鲜状态的完整核对为准。启动失败先读 `status` 和工作台 `runtime/default/` 中的运行日志，保留未确认事实，再决定是否重开。
 
 ## 观察、选择能力并核对结果
 
-先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`。`capabilities.native_actions` 来自有效在线桥；领域响应中的支持状态、来源与时效分别判断，未知保持未知。无头任务支持正常增量，原始进度串及关联语义按原样保留。
+先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`。`capabilities.native_actions` 来自有效在线桥；按领域响应的支持状态、来源与时效读取字段；只使用已提供的字段。无头任务支持正常增量，原始进度串及关联语义按原样保留。
 
 在已确认安全区域选择一项有界 tick 动作并比较前后事实。仓库示例 [tick-jump-attack.lua](../shared/scripts/examples/tick-jump-attack.lua) 是可复用的有界移动跳砍脚本；仅需短移时写一个设置 `player.move`、在 `context.tick.time` 到达期限后清方向并返回 `done` 的 tick 文件。下面按示例运行，须先核实该方向有足够空间且没有其他脚本控制角色：
 
@@ -66,7 +66,7 @@ workbenches/workbench dev/GUI_NAME open
 workbenches/workbench dev/GUI_NAME snapshot
 ```
 
-GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，与无头端一样使用自己的 `default` 实例；账号只支持 `world=0`，按角色ID和频道正常登录。两端共享 CLI，但各自保留能力范围。GUI 的 `--character/--character-index/--channel` 和固定账号/名称文件已退役。
+GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，与无头端一样使用自己的 `default` 实例；账号只支持 `world=0`，按账号配置的角色和频道正常登录。两端共享 CLI，但各自保留能力范围。GUI 的 `--character/--character-index/--channel` 和固定账号/名称文件已退役。
 
 通过当前 `snapshot`、`inspect stage` 和 `screenshot` 定位界面，优先使用新鲜对话正文与引用。根桌面 `click X Y` 必须依据当次截图。需要滚轮原语时，在所属 GUI 容器内执行，例如：
 
@@ -74,7 +74,7 @@ GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，与无头端一
 docker exec --user 1000:1000 CONTAINER python3 -m beidou_pilot.engines.desktop scroll down --ticks 1
 ```
 
-原语直接操作该容器的显示环境，仅用于没有原生入口的界面操作。首次登录与建角走独立命令，由原生桥调用原版客户端内部动作；手工键鼠只在原生入口无法操作时作为兜底，并须先确认账号、身份与选择意图。未知选择按当前记录处理。
+原语直接操作该容器的显示环境，用于没有原生入口的界面操作。首次登录与建角走独立命令，由原生桥调用原版客户端内部动作；手工键鼠用于原生入口不可用的界面，并按当前账号、角色和选择记录操作。
 
 有已有 CID 时用 `open` 入图。要验证首次登录或建角流程，使用开发分区的独立账号和[首次登录入口](CLI.md#首次登录与建角)，并分别核对注册、建角、绑定和实际入图。
 
@@ -101,7 +101,7 @@ workbenches/workbench dev/NAME status
 
 伴游机器人不是客户端内置策略，而是计划跑在 headless 客户端里的常驻 tick 目录脚本包；当前仍在设计与分阶段实施，尚未交付。玩家用 GUI 正常游玩；机器人跟随、协助战斗、组队任务或 BOSS 行为由脚本和内容包决定。
 
-- 机器人代码放该角色 `/work/scripts/bot/`，状态/事件/指令放 `/work/bot/`；一行一个角色，单实例单控制者。
+- 机器人代码放该角色 `/work/scripts/bot/`，状态/事件/指令放 `/work/bot/`；一行一个角色。
 - 玩家私聊控制和大模型自然语言属于后续原生能力；在聊天/队伍能力交付前，用宿主文件邮箱和同图跟随验证闭环。
 - 机器人不接管 GUI 专属对话、商店、换装；这些走“停手 → 维护窗口 → 重启”的流程，不在战斗中间插操作。
 - 第一版设计只做同图跟随/战斗；跨图跟随、NPC 交互、交易和手动 AP 仍是缺口，见[能力边界](CLIENT_LIMITATIONS.md)。

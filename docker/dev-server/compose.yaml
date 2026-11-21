@@ -6,33 +6,32 @@ services:
     labels:
       beidou.workbench.environment: dev
     environment:
-      MYSQL_DATABASE: beidou
-      MYSQL_USER: beidou
-      MYSQL_PASSWORD: ${BEIDOU_DEV_DB_PASSWORD:?missing dev database password}
-      MYSQL_ROOT_PASSWORD: ${BEIDOU_DEV_DB_ROOT_PASSWORD:?missing dev database root password}
-    volumes:
-      - workbench-db:/var/lib/mysql
-    configs:
-      - source: init-user
-        target: /docker-entrypoint-initdb.d/10-dev-user.sql
-    networks: [backend]
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: root
     healthcheck:
-      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -u beidou beidou -Nse "SELECT 1"']
-      interval: 5s
+      test:
+      - CMD
+      - mysqladmin
+      - ping
+      - -h
+      - localhost
+      - -uroot
+      - -proot
+      interval: 10s
       timeout: 5s
-      retries: 30
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
   beidou-server-all:
-    image: ${BEIDOU_SERVER_IMAGE:-ghcr.io/beidoums/beidou-server-all:v1.12}
+    image: ghcr.io/beidoums/beidou-server-all:v1.12
     labels:
       beidou.workbench.environment: dev
     depends_on:
       beidou-db:
         condition: service_healthy
     environment:
-      BEIDOU_DEV_DB_PASSWORD: ${BEIDOU_DEV_DB_PASSWORD:?missing dev database password}
-      BEIDOU_DEV_JWT_SECRET: ${BEIDOU_DEV_JWT_SECRET:?missing dev signing secret}
-      BEIDOU_DEV_ADMIN_PASSWORD: ${BEIDOU_DEV_ADMIN_PASSWORD:?missing dev management password}
+      BEIDOU_DEV_ADMIN_PASSWORD: 123456
       TZ: Asia/Shanghai
     working_dir: /opt/server_backup
     entrypoint: [/bin/sh, /run/beidou-dev/start.sh]
@@ -45,17 +44,12 @@ services:
         bind:
           create_host_path: false
     configs:
+      - source: application
+        target: /run/beidou-dev/application.yml
       - source: start
         target: /run/beidou-dev/start.sh
       - source: cli
         target: /run/beidou-dev/cli.sh
-    tmpfs:
-      - /opt/server
-      - /run/beidou-runtime:mode=0700
-    networks:
-      game:
-        aliases: [beidou-game]
-      backend: {}
     healthcheck:
       # Match listening sockets without opening dummy game sessions.
       test: [CMD, awk, '$$4 == "0A" {split($$2,a,":"); p[a[2]]=1} END {exit !(p["2124"] && p["1D97"] && p["21EE"])}', /proc/net/tcp, /proc/net/tcp6]
@@ -64,18 +58,9 @@ services:
       retries: 36
 
 configs:
-  init-user:
-    file: ./init-user.sql
+  application:
+    file: ./application.yml
   start:
     file: ./start.sh
   cli:
     file: ./cli.sh
-networks:
-  game:
-    internal: true
-  backend:
-    internal: true
-volumes:
-  workbench-db:
-    labels:
-      beidou.workbench.environment: dev

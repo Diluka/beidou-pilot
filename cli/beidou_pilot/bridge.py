@@ -6,7 +6,6 @@ import fcntl
 import json
 import math
 from pathlib import Path
-import re
 import time
 from typing import Iterator, Literal, NotRequired, TypedDict, cast
 import uuid
@@ -184,95 +183,16 @@ def script_by_id(state: BridgeSnapshot, script_id: str) -> BridgeScript | None:
     return next((script for script in state.get("scripts", []) if script["id"] == script_id), None)
 
 
-def _validate_physics_pose(physics: object) -> None:
-    """校验同一原生更新的物理末态记录；未知字段保持 None，不补零或换算。"""
-    if physics is None:
-        return
-    if not isinstance(physics, dict):
-        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态字段无效。")
-    if any(type(physics.get(field)) is not int or physics[field] < 0 for field in ("update_id", "step_ms")):
-        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态更新号或步长无效。")
-    if physics["step_ms"] <= 0:
-        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态步长无效。")
-    for field in ("x", "y"):
-        value = physics.get(field)
-        if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
-            raise ClientError("invalid_bridge_state", "原生桥的角色物理坐标无效。")
-    if ("x" in physics) != ("y" in physics):
-        raise ClientError("invalid_bridge_state", "原生桥的角色物理坐标不成对。")
-    if "x" in physics and (physics["x"] is None) != (physics["y"] is None):
-        raise ClientError("invalid_bridge_state", "原生桥的角色物理坐标不成对。")
-    velocity = physics.get("velocity")
-    if velocity is not None and (
-            not isinstance(velocity, dict)
-            or any(type(velocity.get(field)) not in (int, float) or not math.isfinite(velocity[field])
-                   for field in ("x", "y"))):
-        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态速度无效。")
-    if "on_ground" in physics and physics["on_ground"] is not None and type(physics["on_ground"]) is not bool:
-        raise ClientError("invalid_bridge_state", "原生桥的角色物理末态接地字段无效。")
-
-
-def _validate_script(script: object) -> None:
-    if (not isinstance(script, dict) or not isinstance(script.get("id"), str)
-            or script.get("status") not in ("running", "completed", "cancelled", "rejected")
-            or any(field not in script or (script[field] is not None and not isinstance(script[field], str))
-                   for field in ("reason", "error"))
-            or any(type(script.get(field)) is not int or script[field] < 0
-                   for field in ("resumes", "budget_yields"))
-            or any(type(script.get(field)) not in (int, float) or not math.isfinite(script[field])
-                   or script[field] < 0 for field in ("last_resume_us", "max_resume_us"))
-            or script.get("mode") != "tick"
-            or type(script.get("control_released")) is not bool):
-        raise ClientError("invalid_bridge_state", "原生桥的脚本执行状态字段无效。")
-    tick, player = script.get("tick"), script.get("player")
-    if (not isinstance(tick, dict)
-            or type(tick.get("gear")) is not int or tick["gear"] not in (1, 2, 3, 4)
-            or any(type(tick.get(field)) is not int or tick[field] < 0
-                   for field in ("index", "scene_generation", "overruns"))
-            or any(type(tick.get(field)) not in (int, float) or not math.isfinite(tick[field])
-                   or tick[field] < 0 for field in ("time", "delta", "budget_ms"))
-            or tick["budget_ms"] <= 0 or tick.get("overrun_policy") not in ("abort", "skip")
-            or any(type(tick.get(field)) is not bool for field in ("overrun", "abort_commit"))):
-        raise ClientError("invalid_bridge_state", "原生桥的tick调度字段无效。")
-    if (not isinstance(player, dict) or player.get("phase") not in ("idle", "running", "unknown")
-            or "moving" not in player or player["moving"] not in (None, "left", "right", "up", "down")
-            or "action" not in player or player["action"] not in (None, "jump", "attack", "skill", "use_item", "pickup")
-            or "input_action" not in player
-            or player["input_action"] not in (None, "jump", "attack", "skill", "use_item", "pickup", "revive", "auto_ap")
-            or any(not isinstance(player.get(field), str) for field in ("reason", "effect"))
-            or "busy" not in player or (player["busy"] is not None and type(player["busy"]) is not bool)
-            or type(player.get("dispatched")) is not bool
-            or any(field in player and (type(player[field]) is not int or not 1 <= player[field] <= 0x7FFFFFFF)
-                   for field in ("input_skill_id", "input_item_id", "skill_id", "item_id"))
-            or not isinstance(player.get("held"), list)
-            or any(key not in ("left", "right", "up", "down", "jump", "attack", "skill", "use_item", "pickup")
-                   for key in player["held"])):
-        raise ClientError("invalid_bridge_state", "原生桥的tick角色操作状态字段无效。")
-    if "module_root" in script or "modules" in script:
-        modules = script.get("modules")
-        if (not isinstance(script.get("module_root"), str) or not script["module_root"]
-                or not isinstance(modules, list)
-                or any(not isinstance(module, dict) or not isinstance(module.get("name"), str) or not module["name"]
-                       or not isinstance(module.get("file"), str) or not module["file"] for module in modules)):
-            raise ClientError("invalid_bridge_state", "原生桥的脚本模块来源字段无效。")
-
-
 def require_input_idle(bridge: "BridgeClient", instance_id: str, run_id: str) -> None:
     """仅在同一新鲜实例的全部脚本均已释放输入时允许 GUI 操作。"""
     state = bridge.snapshot()
     if state["instance_id"] != instance_id or state["run_id"] != run_id:
         raise ClientError("bridge_identity_changed", "原生桥实例身份已变化，未发送输入。")
-    scripts = state.get("scripts")
-    if (
-        not isinstance(scripts, list)
-        or any(
-            script.get("status") not in {"completed", "cancelled", "rejected"}
-            or script.get("control_released") is not True
-            for script in scripts
-        )
-        or state["command"]["status"] not in {"idle", "completed", "cancelled", "rejected"}
-        or state["held_keys"] != []
-    ):
+    if any(
+        script["status"] not in {"completed", "cancelled", "rejected"}
+        or script["control_released"] is not True
+        for script in state.get("scripts", [])
+    ) or state["command"]["status"] not in {"idle", "completed", "cancelled", "rejected"} or state["held_keys"]:
         raise ClientError("input_busy", "原生脚本或输入状态不空闲，未发送输入。")
 
 
@@ -301,97 +221,6 @@ class BridgeClient:
         except json.JSONDecodeError as error:
             raise ClientError("invalid_bridge_state", "原生桥不是有效JSON。",
                               {"reason": error.msg}) from error
-        if (not isinstance(raw, dict) or type(raw.get("protocol")) is not int or raw["protocol"] != 1
-                or not isinstance(raw.get("instance_id"), str)
-                or not re.fullmatch(r"[A-Za-z0-9_-]+", raw["instance_id"])
-                or not isinstance(raw.get("run_id"), str)
-                or any(type(raw.get(field)) is not int for field in
-                       ("pid", "seq", "observed_at_ms", "scene_generation", "input_events"))
-                or raw["pid"] <= 0 or min(raw["seq"], raw["scene_generation"], raw["input_events"]) < 0
-                or type(raw.get("ready")) is not bool
-                or "map_id" not in raw or (raw["map_id"] is not None and type(raw["map_id"]) is not int)
-                or "character" not in raw or "position" not in raw
-                or "rejected_command" not in raw
-                or not isinstance(raw.get("held_keys"), list)
-                or any(type(key) is not int or not 1 <= key <= 255 for key in raw["held_keys"])
-                or not isinstance(raw.get("command"), dict)):
-            raise ClientError("invalid_bridge_state", "原生桥的协议、身份或状态字段无效。")
-        if any(raw.get(field) is not None and type(raw[field]) is not bool
-               for field in ("dead", "revive_requestable")):
-            raise ClientError("invalid_bridge_state", "原生死亡观察字段无效。")
-        command = raw["command"]
-        character, position, rejected = raw["character"], raw["position"], raw["rejected_command"]
-        if ("id" not in command or (command["id"] is not None and not isinstance(command["id"], str))
-                or command.get("status") not in ("idle", "running", "completed", "cancelled", "rejected")
-                or "reason" not in command
-                or (command["reason"] is not None and not isinstance(command["reason"], str))
-                or (rejected is not None and (not isinstance(rejected, dict)
-                    or not isinstance(rejected.get("id"), str) or rejected.get("status") != "rejected"
-                    or not isinstance(rejected.get("reason"), str)))
-                or (position is not None and (not isinstance(position, dict)
-                    or any(type(position.get(field)) not in (int, float) or not math.isfinite(position[field])
-                           for field in ("x", "y"))))
-                or (character is not None and (not isinstance(character, dict)
-                    or not isinstance(character.get("name"), str)
-                    or any(type(character.get(field)) is not int for field in
-                           ("id", "level", "job", "hp", "max_hp", "mp", "max_mp", "strength",
-                            "dexterity", "intelligence", "luck", "ability_points", "skill_points", "experience"))))):
-            raise ClientError("invalid_bridge_state", "原生桥的角色、坐标或命令结果字段无效。")
-        if character is not None:
-            _validate_physics_pose(character.get("physics"))
-        if "script" in raw and raw["script"] is not None:
-            _validate_script(raw["script"])
-        if "scripts" in raw:
-            if not isinstance(raw["scripts"], list):
-                raise ClientError("invalid_bridge_state", "原生桥的脚本会话列表无效。")
-            for script in raw["scripts"]:
-                _validate_script(script)
-            ids = [script["id"] for script in raw["scripts"]]
-            if len(ids) != len(set(ids)):
-                raise ClientError("invalid_bridge_state", "原生桥的脚本会话ID重复。")
-        if "skill_up_records" in raw:
-            records = raw["skill_up_records"]
-            if not isinstance(records, list):
-                raise ClientError("invalid_bridge_state", "原生加点记录列表无效。")
-            ids: set[str] = set()
-            for record in records:
-                if (not isinstance(record, dict)
-                        or not isinstance(record.get("request_id"), str)
-                        or not re.fullmatch(r"[0-9a-fA-F-]{1,64}", record["request_id"])
-                        or record.get("instance_id") != raw["instance_id"]
-                        or record.get("run_id") != raw["run_id"]
-                        or any(type(record.get(field)) is not int for field in
-                               ("character_id", "skill_id", "scene_generation", "job", "level_before", "sp_before"))
-                        or record["character_id"] <= 0 or not 0 < record["skill_id"] <= 0x7fffffff
-                        or any(record[field] < 0 for field in ("scene_generation", "job", "level_before", "sp_before"))
-                        or type(record.get("beginner")) is not bool
-                        or record.get("status") not in ("pending", "confirmed", "unresolved")
-                        or record["request_id"] in ids):
-                    raise ClientError("invalid_bridge_state", "原生加点记录字段或身份无效。")
-                ids.add(record["request_id"])
-        if "capabilities" in raw and raw["capabilities"] is not None and (
-                not isinstance(raw["capabilities"], dict)
-                or any(type(value) is not bool for value in raw["capabilities"].values())):
-            raise ClientError("invalid_bridge_state", "原生桥的能力声明字段无效。")
-        if "facing" in raw and raw["facing"] not in ("Left", "Right", None):
-            raise ClientError("invalid_bridge_state", "原生桥的角色朝向字段无效。")
-        if "monsters" in raw and raw["monsters"] is not None:
-            monsters = raw["monsters"]
-            if (not isinstance(monsters, list) or any(not isinstance(monster, dict)
-                    or type(monster.get("object_id")) is not int
-                    or any(type(monster.get(field)) not in (int, float) or not math.isfinite(monster[field])
-                           for field in ("x", "y"))
-                    or "template_id" not in monster
-                    or (monster["template_id"] is not None and type(monster["template_id"]) is not int)
-                    or "name" not in monster or (monster["name"] is not None and not isinstance(monster["name"], str))
-                    or type(monster.get("active")) is not bool for monster in monsters)):
-                raise ClientError("invalid_bridge_state", "原生桥的怪物观察字段无效。")
-        for monster in raw.get("monsters") or []:
-            percent, sequence, source = (monster.get(field) for field in ("hp_percent", "hp_sequence", "hp_source"))
-            if (percent is not None and (type(percent) is not int or not 0 <= percent <= 100)
-                    or sequence is not None and (type(sequence) is not int or sequence < 0)
-                    or source is not None and not isinstance(source, str)):
-                raise ClientError("invalid_bridge_state", "原生桥的目标HP观察字段无效。")
         state = cast(BridgeSnapshot, raw)
         if state["run_id"] != runtime.run_id:
             raise ClientError("bridge_session_mismatch", "原生桥快照不属于当前登记的客户端会话。")
@@ -406,16 +235,12 @@ class BridgeClient:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ClientError("invalid_bridge_options", "原生登录动作等待时间须为正有限数。")
         state = self.snapshot()
-        encoded: list[str] = []
-        for argument in arguments:
-            if isinstance(argument, bytes):
-                encoded.append(base64.b64encode(argument).decode("ascii"))
-            elif isinstance(argument, str):
-                encoded.append(base64.b64encode(argument.encode("cp936")).decode("ascii"))
-            else:
-                raise ClientError("invalid_bridge_request", "原生登录动作参数类型无效。")
-        if len(encoded) > 3:
-            raise ClientError("invalid_bridge_request", "原生登录动作参数过多。")
+        if len(arguments) > 3 or any(not isinstance(argument, (str, bytes)) for argument in arguments):
+            raise ClientError("invalid_bridge_request", "原生登录动作参数无效。")
+        encoded = [
+            base64.b64encode(argument if isinstance(argument, bytes) else argument.encode("cp936")).decode("ascii")
+            for argument in arguments
+        ]
         encoded += ["-"] * (3 - len(encoded))
         request_id = uuid.uuid4().hex
         line = " ".join((str(1), state["instance_id"], request_id, action, *encoded)) + "\n"
@@ -445,14 +270,6 @@ class BridgeClient:
             except (OSError, ValueError):
                 raw = None
             if isinstance(raw, dict) and raw.get("request_id") == request_id:
-                if (type(raw.get("protocol")) is not int or raw["protocol"] != 1
-                        or raw.get("instance_id") != state["instance_id"]
-                        or raw.get("run_id") != state["run_id"]
-                        or raw.get("action") != action
-                        or raw.get("status") not in ("dispatched", "rejected")
-                        or (raw.get("reason") is not None and not isinstance(raw.get("reason"), str))):
-                    raise ClientError("invalid_bridge_state", "原生登录动作结果字段无效。",
-                                      {"request_id": request_id})
                 if raw["status"] == "dispatched":
                     return cast(JsonObject, raw)
                 raise ClientError("gui_native_action_rejected", "原生桥拒绝了登录动作，未重放。",
@@ -674,7 +491,7 @@ class BridgeClient:
     def cancel_script(self, script_id: str, timeout: float = 2.0, *,
                       admission_control: AbstractContextManager[None] | None = None) -> JsonObject:
         """只取消匹配的Lua会话；其他会话持键不影响目标的释放确认。"""
-        if not re.fullmatch(r"[0-9a-fA-F]{32}", script_id) or not math.isfinite(timeout) or timeout <= 0:
+        if not math.isfinite(timeout) or timeout <= 0:
             raise ClientError("invalid_bridge_options", "取消须指定script status中的脚本ID与正数等待期限。")
         with admission_control or nullcontext(), self._control():
             before = self.snapshot()

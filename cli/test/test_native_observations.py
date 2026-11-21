@@ -49,7 +49,7 @@ class NativeObservationContract(unittest.TestCase):
         (self.directory / "state.json").write_text(json.dumps(self.state))
 
     @contextmanager
-    def responder(self, data, *, status="ok", override=None):
+    def responder(self, data, *, status="ok"):
         stop = threading.Event()
 
         def respond():
@@ -67,7 +67,6 @@ class NativeObservationContract(unittest.TestCase):
                         "status": status,
                         "data": data,
                         "error": None,
-                        **(override or {}),
                     }
                     temporary = self.directory / "response.tmp"
                     temporary.write_text(json.dumps(response))
@@ -187,16 +186,6 @@ class NativeObservationContract(unittest.TestCase):
                 self.assertEqual(True if ready else None, sampled["dead"])
                 self.assertEqual(True if ready else None, sampled["revive_requestable"])
 
-    def test_response_must_belong_to_current_instance_run_and_domain(self) -> None:
-        with patch("beidou_pilot.observations.active_session", return_value=self.session):
-            observer = NativeObserver(self.root)
-            for override in ({"instance_id": "other"}, {"run_id": "other"}, {"domain": "quests"}):
-                with self.subTest(override=override):
-                    (self.directory / "observation-request.txt").unlink(missing_ok=True)
-                    with self.responder({}, override=override), self.assertRaises(ClientError) as failure:
-                        observer.observe("scene", timeout=0.2)
-                    self.assertEqual("native_observation_invalid", failure.exception.code)
-
     def test_unsupported_and_no_response_are_explicit_and_bounded(self) -> None:
         with patch("beidou_pilot.observations.active_session", return_value=self.session):
             observer = NativeObserver(self.root)
@@ -299,8 +288,7 @@ class NativeObservationContract(unittest.TestCase):
         self.assertEqual(["1", "native-1", self.requests[0][2], "scene"], self.requests[0])
 
     def test_bootstrap_uses_this_container_before_native_observation_is_ready(self) -> None:
-        with patch("beidou_pilot.observations.verify_binaries", return_value=True):
-            session = active_session(self.root, "beidou")
+        session = active_session(self.root, "beidou")
         self.assertEqual("bridge-contract", session.run_id)
         (session.run_dir / "renderer.log").write_text("OpenGL renderer string: Mesa Intel(R) Graphics (ADL GT2)\n")
         with patch("beidou_pilot.observations.active_session", return_value=None):

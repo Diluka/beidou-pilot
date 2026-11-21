@@ -26,7 +26,7 @@ make -C headless build/libbeidou-img.so
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
 ```
 
-解析库是本地构建产物，新的 worktree 不会继承其他检出的产物；缺少它时，依赖地图、物品等静态资料的测试会返回 `img_parser_unavailable`，不能仅凭这些错误判定客户端逻辑回归。
+解析库是本地构建产物，新的 worktree 不会继承其他检出的产物；缺少它时，依赖地图、物品等静态资料的测试会返回 `img_parser_unavailable`；按该错误区分环境问题与逻辑回归。
 
 在已准备的 `dev/NAME` 角色目录里将 `workbench.json.ref` 设为待测提交，后端选 `headless`。从仓库根运行以下命令，检查该提交的镜像和容器内 CLI（用实际角色名替换 `NAME`）：
 
@@ -63,7 +63,7 @@ CI 的镜像检查覆盖无头镜像；完整 GUI 镜像需按改动在本地构
 
 ## 版本与实例隔离验收
 
-客户端验收使用与需求匹配的真实角色和场景。可在 `dev` 独立准备条件，再用所选提交的 GUI 或 headless 客户端执行并观察结果，作为正式证据。记录分区、版本、场景和实际结果；服务端设置或离线合同不替代游戏内验证。不得为准备样本操作常驻数据。
+客户端验收使用与需求匹配的真实角色和场景。可在 `dev` 独立准备条件，再用所选提交的 GUI 或 headless 客户端执行并观察结果，作为正式证据。记录分区、版本、场景和实际结果；服务端设置或离线合同与游戏内验证分别记录。样本在 `dev` 准备，`live` 按已有计划和授权使用。
 
 涉及两个实例时，在开发服选两个独立角色：A 以提交 X 启动，B 以提交 Y 启动，核对各自的 `source_revision/image/run_id`。A 的观察、最小动作、取消放键和关闭仍使用 X；B 使用 Y，A 关闭不影响 B 或开发服。统一入口路由与容器内真实结果分别记录；两端受影响的路径分别验证。
 

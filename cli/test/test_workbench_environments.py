@@ -22,8 +22,6 @@ if a[0] == 'ps':
             print(name)
 elif a[0] == 'inspect':
     print(json.dumps([s['containers'][key] for key in a[1:]]))
-elif a[:2] == ['network','inspect']:
-    print(json.dumps([s['networks'][a[2]]]))
 elif a[:2] == ['volume','ls']:
     key, pattern = a[a.index('--filter') + 1].split('=', 1)
     if key != 'name' or a[a.index('--format') + 1] != '{{.Name}}':
@@ -46,11 +44,11 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
         self.live = self.private_root / "live/fixture"
         self.live.mkdir(parents=True)
         self.targets = {}
-        self.state = {"calls": [], "containers": {}, "networks": {}, "volumes": {}}
+        self.state = {"calls": [], "containers": {}, "volumes": {}}
         for env, digit in (("live", "1"), ("dev", "2")):
             # 同名角色、不同项目、镜像和网络；结果必须由所选分区决定。
             project = "fixture-" + env
-            network = project + "_game"
+            network = project + "_default"
             image_id = "sha256:" + digit * 64
             server_id = env + "-game"
             labels = {"com.docker.compose.project": project, "com.docker.compose.service": "beidou-server-all"}
@@ -64,14 +62,9 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
                 "HostConfig": {"NetworkMode": network, "PortBindings": {}},
                 "NetworkSettings": {"Networks": {network: {"IPAddress": "192.0.2." + digit}}},
             }
-            self.state["networks"][network] = {
-                "Internal": True,
-                "Labels": {"com.docker.compose.project": project, "com.docker.compose.network": "game"},
-            }
             self.targets[env] = {
                 "project": project,
                 "service": "beidou-server-all",
-                "network": network,
             }
             (self.config / (env + ".server.json")).write_text(json.dumps(self.targets[env]))
         env_file = self.config / "dev-server.env"
@@ -138,7 +131,12 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
                 data = json.loads(result.stdout)["data"]
                 self.assertEqual(env + "-game", data["container_id"])
                 self.assertEqual(self.targets[env]["project"], data["project"])
-                self.assertEqual(self.targets[env]["network"], data["network"])
+                if env == "dev":
+                    self.assertEqual(self.targets[env]["project"] + "_default", data["network"])
+                    self.assertEqual(self.targets[env]["service"], data["host"])
+                else:
+                    self.assertEqual("bridge", data["network"])
+                    self.assertEqual("host.docker.internal", data["host"])
                 self.assertEqual(self.state["containers"][data["container_id"]]["Image"], data["image"])
         self.assertFalse(any(c[0] in ("compose", "image") or "connect" in c for c in self.calls()))
 
@@ -165,15 +163,12 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
         self.state_path.write_text(json.dumps(self.state))
         self.assert_error(self.command("live/fixture", "plan"), "target_invalid")
 
-    def test_dev_requires_its_marked_server_and_internal_project_network(self):
+    def test_dev_requires_its_marked_server_and_a_docker_network(self):
         container = self.state["containers"]["dev-game"]
-        network = self.state["networks"][self.targets["dev"]["network"]]
         for obj, field, wrong in (
             (container["Config"]["Labels"], "beidou.workbench.environment", "live"),
-            (network, "Internal", False),
-            (network["Labels"], "com.docker.compose.project", self.targets["live"]["project"]),
-            (network["Labels"], "com.docker.compose.network", "backend"),
             (container["HostConfig"], "PortBindings", {"8282/tcp": [{}]}),
+            (container["NetworkSettings"], "Networks", {}),
         ):
             with self.subTest(field=field):
                 previous = obj[field]
@@ -182,12 +177,11 @@ class WorkbenchEnvironmentContract(WorkbenchFixture):
                 self.assert_error(self.invoke("plan"), "target_invalid")
                 obj[field] = previous
         self.state_path.write_text(json.dumps(self.state))
-        target = self.targets["dev"].copy()
-        del target["network"]
+        target = {**self.targets["dev"], "network": "fixture-dev_default"}
         (self.config / "dev.server.json").write_text(json.dumps(target))
         self.assert_error(self.invoke("plan"), "server_config_invalid")
 
-    def test_dev_config_cannot_route_to_database_network_or_service(self):
+    def test_dev_config_cannot_route_to_database_service_or_network(self):
         for override in ({"network": "fixture-dev_backend"}, {"service": "beidou-db"}):
             with self.subTest(override=override):
                 target = {**self.targets["dev"], **override}

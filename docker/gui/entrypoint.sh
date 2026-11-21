@@ -1,5 +1,8 @@
 #!/bin/bash
 set -euo pipefail
+target_host="$TARGET_IP"
+target_ip=$(getent ahostsv4 "$target_host" | awk 'NR == 1 {print $1}')
+[ -n "$target_ip" ] || { echo "无法解析目标服务 $target_host。" >&2; exit 2; }
 iptables -F
 iptables -t nat -F
 iptables -P INPUT DROP
@@ -9,9 +12,9 @@ iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A OUTPUT -p tcp -d "$TARGET_IP" -m multiport --dports 8484,7575,7576,7577 -j ACCEPT
-iptables -t nat -A OUTPUT -d 127.0.0.1 -p tcp -m multiport --dports 8484,7575,7576,7577 -j DNAT --to-destination "$TARGET_IP"
-iptables -t nat -A POSTROUTING -d "$TARGET_IP" -p tcp -m multiport --dports 8484,7575,7576,7577 -j MASQUERADE
+iptables -A OUTPUT -p tcp -d "$target_ip" -m multiport --dports 8484,7575,7576,7577 -j ACCEPT
+iptables -t nat -A OUTPUT -d 127.0.0.1 -p tcp -m multiport --dports 8484,7575,7576,7577 -j DNAT --to-destination "$target_ip"
+iptables -t nat -A POSTROUTING -d "$target_ip" -p tcp -m multiport --dports 8484,7575,7576,7577 -j MASQUERADE
 ip6tables -P INPUT DROP
 ip6tables -P FORWARD DROP
 ip6tables -P OUTPUT DROP

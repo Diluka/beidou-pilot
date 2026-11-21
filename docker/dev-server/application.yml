@@ -1,0 +1,45 @@
+server:
+  port: 8686
+app:
+  vue: http://localhost:8787
+jwt:
+  secret: 6f5125f8-2550-461a-90f5-3a9902cb688a
+  duration: 315360000
+mybatis-flex:
+  datasource:
+    mysql:
+      type: com.alibaba.druid.pool.DruidDataSource
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      url: jdbc:mysql://beidou-db:3306/beidou?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+      username: root
+      password: root
+  global-config:
+    print-banner: false
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+spring:
+  flyway:
+    validate-on-migrate: false
+    out-of-order: true
+  servlet:
+    multipart:
+      max-file-size: 1MB
+      max-request-size: 10MB
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+gms:
+  service:
+    language: zh-CN
+    rate-limit:
+      enabled: false
+      limit: 10
+      duration: 1000
+      auto-ban: false
+    wan-host: beidou-server-all
+    lan-host: beidou-server-all
+    localhost: beidou-server-all
+    login-port: 8484

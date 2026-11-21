@@ -14,7 +14,6 @@ import time
 from typing import Iterator, cast
 import uuid
 
-from .binaries import CLIENT_SHA256, verify_binaries
 from .errors import ClientError, JsonObject, JsonValue
 from .instances import InstancePaths, selected_instance
 from .runtime import load_runtime
@@ -47,8 +46,6 @@ def active_session(root: Path, backend: str, instance: str = "default") -> Sessi
     runtime = load_runtime(root, backend, instance)
     if not runtime.running:
         return None
-    if backend == "beidou" and not verify_binaries(root):
-        raise ClientError("native_observation_unsupported", "当前客户端未登记原生观察构建。")
     return Session(runtime.container_id, runtime.run_id, runtime.run_dir, backend, runtime.image)
 
 
@@ -66,15 +63,6 @@ class NativeObserver:
             raw = json.loads((self.directory / "state.json").read_text())
         except (OSError, json.JSONDecodeError) as error:
             raise ClientError("native_observation_not_ready", "原生观察状态尚未发布。") from error
-        if (not isinstance(raw, dict) or raw.get("protocol") != 1
-                or not isinstance(raw.get("instance_id"), str)
-                or not re.fullmatch(r"[A-Za-z0-9_-]+", raw["instance_id"])
-                or raw.get("run_id") != self.session.run_id
-                or any(type(raw.get(field)) is not int for field in ("seq", "observed_at_ms", "scene_generation"))):
-            raise ClientError("native_observation_not_ready", "原生观察状态不属于当前运行会话。")
-        if any(raw.get(field) is not None and type(raw[field]) is not bool
-               for field in ("dead", "revive_requestable")):
-            raise ClientError("native_observation_not_ready", "原生死亡观察字段无效。")
         age = time.time() - raw["observed_at_ms"] / 1000
         if not -.1 <= age <= max_age:
             raise ClientError("native_observation_not_ready", "原生观察状态尚未恢复有效采样。",
@@ -98,8 +86,6 @@ class NativeObserver:
         client: JsonObject = {"container_id": self.session.container_id[:12], "run_id": self.session.run_id,
                               "run_dir": str(self.session.run_dir), "instance_id": state["instance_id"],
                               "runtime_image": self.session.image}
-        if self.backend == "beidou":
-            client["binary_sha256"] = CLIENT_SHA256
         return {"source": "client-native-api", "readonly": True, "backend": self.backend, "instance": self.instance,
                 "observed_at": datetime.fromtimestamp(cast(int, state["observed_at_ms"]) / 1000,
                                                        timezone.utc).isoformat(),
@@ -151,21 +137,11 @@ class NativeObserver:
                 except (OSError, json.JSONDecodeError) as error:
                     raise ClientError("native_observation_invalid", "原生观察响应无法读取或不是有效JSON。") from error
                 if isinstance(result, dict) and result.get("request_id") == request_id:
-                    if (result.get("protocol") != 1 or result.get("instance_id") != before["instance_id"]
-                            or result.get("run_id") != before["run_id"] or result.get("domain") != domain
-                            or any(type(result.get(field)) is not int for field in
-                                   ("seq", "scene_generation", "observed_at_ms"))
-                            or result.get("status") not in {"ok", "unsupported", "unavailable"}):
-                        raise ClientError("native_observation_invalid", "原生观察响应的请求或进程身份无效。")
                     if result["status"] != "ok":
                         code = "unsupported_capability" if result["status"] == "unsupported" else "observation_unavailable"
                         raise ClientError(code, "客户端未能提供该观察领域。",
                                           {"domain": domain, "reason": result.get("error")})
-                    if not isinstance(result.get("data"), dict):
-                        raise ClientError("native_observation_invalid", "原生观察响应缺少领域对象。")
-                    current = self._snapshot(timeout + 1)
-                    if current["instance_id"] != before["instance_id"]:
-                        raise ClientError("observation_identity_changed", "观察期间原生客户端实例已变化。")
+                    self._snapshot(timeout + 1)
                     return cast(JsonObject, result), started
                 if time.monotonic() >= until:
                     raise ClientError("native_observation_timeout", "原生客户端未在期限内返回观察结果。",

@@ -5,7 +5,8 @@ import hashlib
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from .backend import ClientError, JsonObject, JsonValue
+from .backend import ClientError, JsonObject
+from .errors import JsonValue
 from .img_resources import ImgDirectory
 from .resources import load_resources
 

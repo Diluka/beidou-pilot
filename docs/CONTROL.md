@@ -40,13 +40,13 @@ workbenches/workbench dev/NAME script cancel --session SCRIPT_ID
 
 宿主工作台 `open/close` 使用独立生命周期锁，宿主 `close` 可通过 Docker 结束活动 Lua 及整个所属实例；同实例正在启停时返回 `lifecycle_busy`。容器内 `close` 会提示使用宿主生命周期入口。Lua 期限控制整个脚本会话，容器没有进程自退期限；脚本结束、超时或取消时容器继续运行，真实断线和错误会退出并保留原因。
 
-动作结果按层次解释：意图受理、输入派发、输入释放、原生动作收束、游戏效果分别确认。`input_action` 与当前已开始的 `action` 独立，`character.action_idle` 读取本端原生动作锁；GUI 的单次动作索引不代表已经命中，也不能把任意单次动作标成攻击。跳跃输入释放不等于落地，输入清空也不强制打断动画。用药/拾取的输入结束不保证消费、拾取或 buff 成功，未知效果保留 unknown。释放后攻击动画、空中运动和受击惯性仍可能继续；采样失效或身份变化时控制只作用于所属实例，释放未确认时返回 `bridge_release_unconfirmed`。
+动作结果按层次解释：意图受理、输入派发、输入释放、原生动作收束、游戏效果分别确认。`input_action` 与当前已开始的 `action` 独立，`character.action_idle` 读取本端原生动作锁；GUI 的单次动作索引与攻击归因分开读取。跳跃输入释放不等于落地，输入清空也不强制打断动画。用药/拾取的输入结束只表示输入停止；消费、拾取和 buff 结果从背包、掉落和角色状态核对。释放后攻击动画、空中运动和受击惯性仍可能继续；采样失效或身份变化时控制只作用于所属实例，释放未确认时返回 `bridge_release_unconfirmed`。
 
 ## 观察与传输
 
 CLI 通过原生观察 API 消费 `stage/scene/inventory/character/quests/hotkeys/dialog/ui/shop/notifications`。前五域两端共用，其余为原版 UI 观察扩展。原版在游戏线程读取 V17 对象，DLL 内部仍依赖版本布局；无头端读取自己的游戏对象，外部 Python 不读取游戏进程内存。
 
-tick Lua 使用独立只读领域属性：有到期消费者的宿主帧刷新一次共享核心域，其他域按需读取，同一宿主帧内复用；领域不提供阻塞动作或任务控制。领域结果携带本端来源、支持状态和未知说明，`character.world.scene` 之外不新增公开的 `terrain` 查询（静态地形位于 `context.scene`）。
+tick Lua 使用独立只读领域属性：有到期消费者的宿主帧刷新一次共享核心域，其他域按需读取，同一宿主帧内复用；领域不提供阻塞动作或任务控制。领域结果携带本端来源和支持状态，静态地形从 `context.scene` 读取。
 
 只读 `observation-request.txt/observation.json` 与动作/Lua 的 `command.txt/state.json` 使用独立通道。响应核对请求 ID、原生 `instance_id/run_id`、序号和采样年龄；实例名只选择工具会话，进程身份以 `instance_id/run_id` 为准。请求派发不覆盖活动 Lua。
 
@@ -58,7 +58,7 @@ Lua 发布仍使用原有单行 `script` 操作和 UTF-8 源码文件。目录�
 
 `cancel_script` 只停止对应 `script.id` 并确认其输入释放，不全局放键；旧桥不提供 `scripts` 能力时直接返回 `bridge_tick_unsupported`，不回退到其他引擎。
 
-`state.json` 保留 `script`（最新接纳会话）及稳定的旧字段，新增 `scripts` 数组，每项沿用 `id/status/reason/error/resumes/budget_yields/last_resume_us/max_resume_us` 并携带 `mode="tick"` 和会话级 `control_released`。tick 额外有 `tick={index,time,delta,scene_generation,overrun,overruns,budget_ms,overrun_policy,abort_commit}` 与客户端共享 `player` 操作快照；目录脚本包会话另有 `module_root`（本端原生包根）和 `modules`（实际装载模块的 `name/file` 列表），单文件会话没有这两个字段。包会话的模块缺失、编译或运行错误带来源模块与行号，错误保留 Lua traceback。`player` 只区分当前输入槽和已开始的原生动作，不暴露 `input_settled/control_released`；Lua 直接返回 done，由 Runtime 确认停止所属持续输入（持键路径包含真实释放），槽空不表示停止已确认。原始 `command` 只反映最近命令，不代表所有会话；CLI 等待按 `scriptId` 定位自己的会话，不能在其他命令更新 `command.id` 后失联。
+`state.json` 保留 `script`（最新接纳会话）及稳定的旧字段，新增 `scripts` 数组，每项沿用 `id/status/reason/error/resumes/budget_yields/last_resume_us/max_resume_us` 并携带 `mode="tick"` 和会话级 `control_released`。tick 额外有 `tick={index,time,delta,scene_generation,overrun,overruns,budget_ms,overrun_policy,abort_commit}` 与客户端共享 `player` 操作快照；目录脚本包会话另有 `module_root`（本端原生包根）和 `modules`（实际装载模块的 `name/file` 列表），单文件会话没有这两个字段。包会话的模块缺失、编译或运行错误带来源模块与行号，错误保留 Lua traceback。`player` 只区分当前输入槽和已开始的原生动作，不暴露 `input_settled/control_released`；Lua 直接返回 done，由 Runtime 确认停止所属持续输入（持键路径包含真实释放），槽空不表示停止已确认。原始 `command` 只反映最近命令，不代表所有会话；CLI 等待按 `scriptId` 定位自己的会话。
 
 完成或取消的释放判断使用该会话的 `control_released`，不要求全局 `held_keys=[]`；全局仍可能包含其他会话的合法持键。`stop`/`bridge stop` 才要求全部会话停止及全局输入释放。
 
@@ -68,10 +68,10 @@ Lua 发布仍使用原有单行 `script` 操作和 UTF-8 源码文件。目录�
 
 持续事件读者遇到 `stale_bridge_state` 时停留在原游标，等待相同实例恢复新鲜采样；不可用与恢复各输出一次流健康诊断，不向消费者投递失效样本。等待可以超时或取消，游戏侧保持原状态；身份及协议错误仍向外报告。单次读取按当前采样结果返回。
 
-原版 checksum 保留真实校验结果；无头端未执行的校验为 `null`，值是否可用由 `native_values_valid` 表达。无头对话/可见性及未实现领域保持明确未知或不支持。
+原版 checksum 保留真实校验结果；无头端未执行的校验为 `null`，值是否可用由 `native_values_valid` 表达。无头对话和可见性读取本端当前能力。
 
 ## 原版桌面边界
 
-`engines/desktop.py` 只承担登录、鼠标、滚轮、截图和短线性 GUI 操作。GUI 的 NPC 对话、普通商店、背包换装、复活、快捷键绑定和控件激活由原生桥与桌面消费者提供，原生鼠标和键盘脉冲归同一控制权，取消放开与所属拖拽收尾确认后才交接。无头端没有桌面输入入口，控件激活与 NPC 交互按能力声明返回不支持；需要这些操作时使用 GUI 会话。
+`engines/desktop.py` 只承担登录、鼠标、滚轮、截图和短线性 GUI 操作。GUI 的 NPC 对话、普通商店、背包换装、复活、快捷键绑定和控件激活由原生桥与桌面消费者提供，原生鼠标和键盘脉冲归同一控制权，取消放开与所属拖拽收尾确认后才交接。无头端读取 `interaction` 页面和控件引用；激活、NPC 对话和商店操作使用 GUI 会话。
 
-匹配的 `ijl15.dll` 只安装到独立 GUI 运行副本，并登记构建清单；EXE、原代理 DLL 和桥 DLL 的实际指纹由 [binaries.py](../cli/beidou_pilot/binaries.py) 核验。完整客户端素材和 GUI 环境均由外部准备。
+匹配的 `ijl15.dll` 只安装到独立 GUI 运行副本，并登记构建清单；完整客户端素材和 GUI 环境均由外部准备。

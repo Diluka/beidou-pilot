@@ -10,7 +10,7 @@ from typing import cast
 import uuid
 
 from .engines.desktop import DesktopActions
-from .errors import ClientError, JsonObject, JsonValue
+from .errors import ClientError, JsonObject
 from .instances import InstancePaths
 from .runtime import load_runtime
 

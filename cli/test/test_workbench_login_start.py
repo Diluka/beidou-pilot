@@ -19,8 +19,6 @@ if a[0] == 'ps':
 elif a[0] == 'inspect':
     obj = s['server'] if a[1] == 'server' else s['client']
     print(obj['Id'] if '--format' in a else json.dumps([obj]))
-elif a[:2] == ['network', 'inspect']:
-    print(json.dumps([{'Internal': not s.get('bad_network'), 'Labels': {'com.docker.compose.project': 'fixture', 'com.docker.compose.network': 'game'}}]))
 elif a[:2] == ['image', 'inspect']:
     image = s['images'].get(a[2])
     if not image: sys.exit(1)
@@ -64,7 +62,7 @@ else:
 
 class WorkbenchLoginStartContract(WorkbenchFixture):
 
-    def prepare(self, cid=False, bad_network=False):
+    def prepare(self, cid=False):
         data = self.directory / 'data'
         data.mkdir()
         (self.config / 'resources.json').write_text(json.dumps({'game_data': str(data)}))
@@ -76,13 +74,12 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         path.chmod(0o600)
         (self.workbench / 'workbench.json').write_text(json.dumps({'ref': self.revision, 'timeout': 37}))
         image_id = 'sha256:' + '1' * 64
-        (self.config / 'dev.server.json').write_text(json.dumps({'project': 'fixture', 'service': 'beidou-server-all',
-            'network': 'fixture_game'}))
+        (self.config / 'dev.server.json').write_text(json.dumps({'project': 'fixture', 'service': 'beidou-server-all'}))
         state = json.loads(self.state_path.read_text())
         state.update(server={'Id': 'server', 'Image': image_id, 'State': {'Running': True},
             'Config': {'Labels': {'beidou.workbench.environment': 'dev'}},
             'HostConfig': {'NetworkMode': 'fixture_game', 'PortBindings': {}},
-            'NetworkSettings': {'Networks': {'fixture_game': {'IPAddress': '172.20.0.2'}}}}, bad_network=bad_network)
+            'NetworkSettings': {'Networks': {'fixture_game': {'IPAddress': '172.20.0.2'}}}})
         state['images'][f'local/beidou-pilot-headless:{self.revision}'] = {'Id': 'client-image', 'Config': {'Labels': {'org.opencontainers.image.revision': self.revision, 'beidou.backend': 'headless'}}}
         self.state_path.write_text(json.dumps(state))
         docker = self.directory / 'bin/docker'
@@ -217,7 +214,7 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
                 calls = json.loads(self.state_path.read_text())['calls']
                 self.assertFalse(any(c[0] in ('run', 'compose') for c in calls))
 
-    def test_missing_account_and_invalid_network_do_not_start_client(self):
+    def test_missing_account_and_server_without_network_do_not_start_client(self):
         self.prepare()
         (self.workbench / 'account.json').unlink()
         result = self.invoke('login')
@@ -227,7 +224,7 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         self.assertFalse(state.get('client'))
         (self.workbench / 'account.json').write_text('{}')
         (self.workbench / 'account.json').chmod(0o600)
-        state['bad_network'] = True
+        state['server']['NetworkSettings']['Networks'] = {}
         self.state_path.write_text(json.dumps(state))
         result = self.invoke('login')
         self.assertNotEqual(0, result.returncode)

@@ -29,7 +29,7 @@ class GuiAccountContainerTest(unittest.TestCase):
                 return 'revision'
             return original_read(path, *args, **kwargs)
         with patch.dict(os.environ, env, clear=True), patch.object(Path, 'read_text', read_text), \
-             patch.object(entrypoint, 'verify_binaries'), patch.object(os, 'chown'), patch.object(os, 'umask'), \
+             patch.object(os, 'chown'), patch.object(os, 'umask'), \
              patch.object(os, 'execv') as execute:
             entrypoint.main()
             execute.assert_called_once_with('/opt/beidou/entrypoint.sh', ['/opt/beidou/entrypoint.sh'])
