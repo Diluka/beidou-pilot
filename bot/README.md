@@ -40,6 +40,8 @@ bot smoke ok: 9 modules
 
 ## 手工同步
 
+将包内容复制到角色脚本目录；该命令可用于首次同步和更新已有目录，不会额外嵌套一层 `bot/`：
+
 ```bash
-cp -r bot <角色>/scripts/bot
+cp -r bot/. <角色>/scripts/bot/
 ```

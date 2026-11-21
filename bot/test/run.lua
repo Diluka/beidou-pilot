@@ -74,8 +74,26 @@ assert(type(navigation.walls) == "table", "fixture walls are required")
 assert(type(navigation.ropes) == "table" and #navigation.ropes > 0, "fixture ropes are required")
 assert(type(navigation.candidates) == "table", "fixture candidates are required")
 local candidate_kinds = {}
+local platforms_by_index = {}
+for _, platform in ipairs(navigation.platforms) do
+    platforms_by_index[platform.index] = platform
+end
+local function platform_y_at(platform, x)
+    if x < math.min(platform.x1, platform.x2) or x > math.max(platform.x1, platform.x2) then
+        return nil
+    end
+    local ratio = (x - platform.x1) / (platform.x2 - platform.x1)
+    return platform.y1 + ratio * (platform.y2 - platform.y1)
+end
 for _, candidate in ipairs(navigation.candidates) do
     candidate_kinds[candidate.kind] = true
+    local source = platforms_by_index[candidate.from]
+    local destination = platforms_by_index[candidate.to]
+    assert(source and platform_y_at(source, candidate.x) ~= nil,
+        candidate.kind .. " candidate start must lie on its source platform")
+    local destination_y = destination and platform_y_at(destination, candidate.destination.x)
+    assert(destination_y and math.abs(destination_y - candidate.destination.y) < 0.001,
+        candidate.kind .. " candidate destination must lie on its target platform")
 end
 for _, kind in ipairs({"walk", "step", "jumpup", "drop", "rope"}) do
     assert(candidate_kinds[kind], "fixture candidate missing " .. kind)
