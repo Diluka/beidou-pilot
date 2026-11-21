@@ -39,7 +39,7 @@ gms:
       limit: 10
       duration: 1000
       auto-ban: false
-    wan-host: 127.0.0.1
-    lan-host: 127.0.0.1
-    localhost: 127.0.0.1
+    wan-host: beidou-server-all
+    lan-host: beidou-server-all
+    localhost: beidou-server-all
     login-port: 8484

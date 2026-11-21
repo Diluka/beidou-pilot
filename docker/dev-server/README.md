@@ -13,7 +13,7 @@
 - 两个服务使用 Compose 默认网络和 Docker DNS：客户端通过服务名 `beidou-server-all` 访问游戏，数据库通过 `beidou-db` 访问。
 - 不发布宿主端口。游戏镜像不包含管理 CLI；CLI 从本机只读挂载。
 - MySQL 数据在容器内，不使用命名卷。`server dev stop` / `up` 保留现有容器和数据；`docker compose down` 或删除容器会清空开发数据。
-- [application.yml](application.yml) 是开发服固定模板：数据库 root、JWT 和 seed admin 密码写死，仅用于本机隔离环境。[start.sh](start.sh) 解析 `beidou-server-all` 的地址并写入运行配置，再把 `BEIDOU_DEV_ADMIN_PASSWORD` 应用到 seed admin。
+- [application.yml](application.yml) 是开发服固定模板：数据库 root、JWT、seed admin 密码和对外服务名 `beidou-server-all` 写死，仅用于本机隔离环境。[start.sh](start.sh) 把 `BEIDOU_DEV_ADMIN_PASSWORD` 应用到 seed admin。
 
 ## 管理调用
 
