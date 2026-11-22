@@ -1,6 +1,6 @@
 # Bot Lua 包骨架
 
-该目录是可复制到角色 `/work/scripts/bot` 的 tick 脚本包。当前提供包结构、默认值、接口桩和离线 smoke test；`lib.terrain.build` 与 `lib.terrain.platform_at` 实现只读地形平台构图和坐标定位，其余策略仍为接口桩，不包含跟随、移动、战斗、喝药或拾取行为。
+该目录是可复制到角色 `/work/scripts/bot` 的 tick 脚本包。当前提供包结构、默认值、离线 smoke test，以及只读地形构图、坐标定位和 A* 路径规划；跟随、移动执行、战斗、喝药或拾取仍未实现。
 
 `main.lua` 按 tick API 定义唯一的顶层 `local function main(context)`。tick 加载器会在内部编译并包装入口，因此不需要、也不应从用户脚本返回一个模块表。此骨架不会在顶层调用 `game` 或 `player`。
 
@@ -18,7 +18,7 @@
 | `lib.state` | `new()`、`apply(state, command)`、`transition(state, mode, reason)` |
 | `lib.world` | `observe(ctx)` |
 
-尚未实现的方法按签名返回 `nil, "not_implemented"`、`false, "not_implemented"` 或 `"failed", "not_implemented"`。terrain 的数据结构契约以 [`docs/PHASE1.md`](../docs/PHASE1.md) 为准，并由专用离线用例校验；其他接口骨架由 `bot/test/run.lua` 检查。
+尚未实现的方法按签名返回 `nil, "not_implemented"`、`false, "not_implemented"` 或 `"failed", "not_implemented"`；terrain 的 `build`、`platform_at` 和 `plan` 已实现。terrain 的数据结构契约以 [`docs/PHASE1.md`](../docs/PHASE1.md) 为准，并由专用离线用例校验；其他接口骨架由 `bot/test/run.lua` 检查。
 
 ## 地形平台定位
 
@@ -33,7 +33,7 @@ local platform = terrain.platform_at(graph, context.game.character.x, context.ga
 game.log("platform=" .. tostring(platform))
 ```
 
-这些接口只读地形快照，不执行移动或 `player` 动作；A* `plan` 尚未实现。
+`lib.terrain.plan(graph, from_index, to_index, options)` 消费候选边，用 A* 按 `walk`、`step`、`jumpup`、`drop`、`rope` 的策略代价生成连续路径；`options.blocked` 可按 `"from:to"` 禁边，跳跃高度、速度可选调整。无路返回 `nil, "no_path"`，非法平台与模型缺失分别返回 `invalid_platform`、`model_unavailable`。上述 terrain 接口只读地形快照，不执行移动或 `player` 动作。
 
 ## 默认值
 
@@ -65,7 +65,7 @@ bash bot/test/run.sh
 脚本使用仓库固定的 Lua 子模块编译 Lua，并执行接口、默认值、桩返回值、入口与测试辅助脚本语法检查，同时校验合成和真实捕获地图几何 fixture。成功时输出：
 
 ```text
-terrain ok: synthetic locations=8; map=102000000 platforms=125 candidates=1553 character=(2452,1935) platform=125
+terrain ok: synthetic locations=8; map=102000000 platforms=125 candidates=1553 character=(2452,1935) platform=125 path=125->1 edges=4 kinds=jumpup,jumpup,step,jumpup
 bot smoke ok: 9 modules
 ```
 
