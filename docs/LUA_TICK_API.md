@@ -122,7 +122,7 @@ buff 归 `game.character`，不在 `player.status()`。首版两端都没有可�
   - `platforms[]`：被竖直墙切分后的可站立平台，`index` 从 1 开始；`left/right` 为水平范围，`open_left/open_right` 表示能否从该物理边缘走出，`segments` 是扁平数组，每 4 个数为 `left,right,y1,y2`，平台高度按段线性插值。
   - `walls`：合并后的竖直墙扁平数组，每 3 个数为 `x,top,bottom`。
   - `ropes[]`：`index/x/y1/y2` 与 `platforms` 相交层。`platforms` 为扁平数组，每 2 个数为平台 `index` 与该平台在绳 x 处的高度；单层也会列出，是否可攀爬由策略按模型常量决定。
-  - `candidates`：`walk/step/jumpup/drop` 为每 5 个数 `from,to,x,destination,rise` 的扁平数组，`rope` 为每 6 个数追加 `rope_index`。`from/to` 是 `platforms` 的 1 基索引；`x` 为源平台对齐点，`destination` 为目标平台落点。`walk/step/jumpup/drop` 的 `rise` 为源高度减目标高度（地图像素 y 向下为正）；`rope` 的 `rise` 为目标高度减源高度，负值表示沿绳向上。候选只是几何关系，边成本、禁边、适用筛选与执行由策略维护。
+  - `candidates`：`walk/step/jumpup/drop` 为每 5 个数 `from,to,x,destination,rise` 的扁平数组，`rope` 为每 6 个数追加 `rope_index`；五个键始终存在，候选数组可以为空。`from/to` 是 `platforms` 的 1 基索引；`x` 为源平台对齐点，`destination` 为目标平台落点。`walk/step` 的 `rise` 为相邻平台边缘高度的源减目标，虽然 `x/destination` 会向平台内部偏移；`jumpup` 取候选 `x/destination` 的高度差（源减目标）；`drop` 为目标落点高度减源开放边缘高度（向下为正）；`rope` 为目标减源高度，负值表示沿绳向上。候选只是几何关系，边成本、禁边、适用筛选与执行由策略维护。
 - 缺图、坏字段、无法读取等返回 `unavailable`，空自身地形且存在 `info.link` 返回 `unsupported`；`error` 及可用的 `message/details/source` 说明原因。不可用时不带 `footholds/ropes`，不把缺失坐标补零，也不跟链接地图或另一后端拼出地形。有本图完整自身几何时可直接使用，不因额外 `info.link` 拒绝。
 - 同一会话可以继续跨图，`context.state` 和已有 `options/route` 不重建。换图沿现有规则暂停回调并清除旧输入；转场立即使当前静态场景不可用，首次稳定到期帧再读取本图。稳定但资料不可用时仍调用 `main`，由策略决定等待或退出；资料结果在当前场景有效期内共享，不逐 tick 重读；`navigation` 与原始几何由客户端场景快照跨会话共享。相同地图ID的新场景代次也重新读取。
 - `scene` 槽及嵌套数据只读，不能由策略替换。旧表引用仍是带旧身份的历史只读快照，不能当成当前图；需要缓存路径等进度时放入 `context.state`，发现代次变化后自行重规划。

@@ -98,18 +98,19 @@ bot/
 
 ### 6.2 Fixture schema
 
-`bot/test/fixtures/synthetic.lua` 按 `docs/LUA_TICK_API.md` 的 `terrain.navigation` 提供原生导航数据，字段与元素结构如下：
+真实地图夹具 `bot/test/fixtures/map_<id>.lua` 由 `bot/test/capture_terrain.lua` 从当前场景采集，返回 `map_id`、`scene_generation` 与嵌套 `navigation`；`synthetic.lua` 只作为最小 schema 夹具，必须使用同一 `navigation` 结构。
 
 | 字段 | 契约 |
 | --- | --- |
 | `map_id` | 数字地图 ID。 |
-| `model` | 仅含数值常量 `stand_height`、`wall_margin`、`min_platform_width`、`jump_rise`、`drop_min`、`drop_max`、`rope_grab`。 |
-| `terrain_left` / `terrain_right` | 地形左右边界。 |
-| `platforms` | 平台数组；每项仅含 `index`、`left`、`right`、`open_left`、`open_right`、`segments`。范围为 `left/right`，`segments` 每 4 个数字为 `left,right,y1,y2`，平台高度沿线段线性插值。 |
-| `walls` | 扁平数组，每 3 个数字为 `x,top,bottom`。 |
-| `ropes` | 绳梯数组；每项仅含 `index`、`x`、`y1`、`y2`、`platforms`。`platforms` 每 2 个数字为相交平台的 `platform_index,y`。 |
-| `candidates` | 含 `walk`、`step`、`jumpup`、`drop`、`rope` 五个键的对象；前四类每 5 个数字为 `from,to,x,destination,rise`，`rope` 每 6 个数字追加 `rope_index`。`destination` 是目标平台落点 x 坐标。 |
-| `rise` | `walk/step/jumpup/drop` 为源平台高度减目标高度；`rope` 为目标高度减源高度。 |
+| `scene_generation` | 采集时静态场景代次，正整数；只标识采样，不是地图版本。 |
+| `navigation.model` | 仅含数值常量 `stand_height`、`wall_margin`、`min_platform_width`、`jump_rise`、`drop_min`、`drop_max`、`rope_grab`。 |
+| `navigation.terrain_left` / `terrain_right` | 地形左右边界。 |
+| `navigation.platforms` | 平台数组；每项仅含 `index`、`left`、`right`、`open_left`、`open_right`、`segments`。范围为 `left/right`，`segments` 每 4 个数字为 `left,right,y1,y2`，平台高度沿线段线性插值。 |
+| `navigation.walls` | 扁平数组，每 3 个数字为 `x,top,bottom`。 |
+| `navigation.ropes` | 绳梯数组；每项仅含 `index`、`x`、`y1`、`y2`、`platforms`。`platforms` 每 2 个数字为相交平台的 `platform_index,y`。 |
+| `navigation.candidates` | 必含 `walk`、`step`、`jumpup`、`drop`、`rope` 五个键；前四类每 5 个数字为 `from,to,x,destination,rise`，`rope` 每 6 个数字追加 `rope_index`。候选数组可以为空；`destination` 是目标平台落点 x 坐标。 |
+| `rise` | `walk/step` 取源/目标平台相邻边缘高度之差（源减目标）；`jumpup` 取候选 `x/destination` 高度之差（源减目标）；`drop` 取目标落点减源开放边缘高度（向下为正）；`rope` 取目标减源高度（沿绳向上为负）。`walk/step` 的候选起终点会向平台内部偏移，因此斜平台上的 `rise` 不一定等于候选 `x/destination` 两点的高度差。 |
 
 平台及绳梯索引从 1 开始，candidate 的 `from/to` 指向平台索引。不得用 `x1/x2` 平台表、结构化 `walls/candidates` 或 `model.name/platforms` 替代上述契约。
 

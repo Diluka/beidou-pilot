@@ -70,8 +70,8 @@ struct NavigationRope {
 };
 
 // One executable movement relation. x is the alignment point on the source
-// platform, destination the target point on the destination platform, and rise
-// is source height minus destination height (negative for climbing).
+// platform and destination the target point on the destination platform. Rise
+// sign and sampling points are candidate-kind-specific (see Connect()).
 struct NavigationEdge {
     int from = 0; // One-based platform index.
     int to = 0;
