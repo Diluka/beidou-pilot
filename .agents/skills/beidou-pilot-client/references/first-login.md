@@ -25,10 +25,12 @@ beidou-pilot --json inspect stage
 
 ## 缺少账号或角色
 
-`open` 要求真实已有 CID。验证首次登录或建角流程时，在 `dev/NAME` 使用独立账号，账号文件可暂不含 CID；若只需一个已有角色作前置条件，也可通过开发服 CLI 按其支持范围准备，并从客户端确认。新建 `dev` 测试角色时，按验收要求选择参数；与验收无关的姓名、账号性别和外观由执行会话自选。只有确需接受首次声明且已有明确授权时，才在 `login` 加上 `--accept-terms`；交办开发任务本身不包含同意声明。
+`open` 要求真实已有 CID。验证首次登录或建角流程时，在 `dev/NAME` 使用独立账号，账号文件可暂不含 CID；若只需一个已有角色作前置条件，也可通过开发服 CLI 按其支持范围准备，并从客户端确认。新建 `dev` 测试角色时，按验收要求选择参数；与验收无关的姓名、账号性别和外观由执行会话自选。`dev` 测试账号的首次登录声明随开发任务授权接受，`login` 直接加 `--accept-terms`；`live` 账号的声明仍须用户明确授权。
+
+开发库被重建（数据库容器被删除或重建）后，旧账号、角色和 CID 一并失效；`account.json` 中的 CID 只对应当前开发库。此时不要用旧 CID `open`，先用 `login` 按实际页面处理；账号或角色不存在时按新账号或空角色列表流程接受声明、选择性别并建角，仍属开发任务授权范围。
 
 ```bash
-workbenches/workbench dev/NAME login --gender female
+workbenches/workbench dev/NAME login --accept-terms --gender female
 workbenches/workbench dev/NAME login
 workbenches/workbench dev/NAME character create --name NAME --gender female --job JOB --face FACE --hair HAIR --hair-color COLOR --skin SKIN --top TOP --bottom BOTTOM --shoes SHOES --weapon WEAPON
 workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANCE_ID --run-id RUN_ID
@@ -38,7 +40,7 @@ workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANC
 
 保留返回的请求与运行身份：`completed` 给出真实 CID，`rejected` 表示拒绝；`accepted`、`unknown` 不是完成，不重发，使用 `character result` 查询。宿主 `character result` 要求原容器仍运行；原实例退出或身份变化时未终结结果可能无法恢复。容器停止后保留已有结果和身份等证据，人工核验，不保证可通过宿主命令查询。宿主仅在账号文件权限正确、与运行快照一致且 CID 无冲突时绑定；`binding` 失败后依据结果及实际名单人工核对恢复，不重发建角。绑定后账号模式进程不支持同进程选角：先以工作台 `close` 并核对所属容器退出，再 `open` 并确认入图。
 
-已有角色账号若仍未设置性别，安全收紧后不再依据 CID 隐式选择性别；CID 不能代替选择授权。经用户确认后关闭所属实例并核对退出，以宿主 `login --gender male|female` 新启动完成选择并核对名单，再关闭该实例、核对退出，最后用真实已有 CID `open`。此迁移路径尚未真实游戏实测。需要接受声明时也须明确授权。
+已有角色账号若仍未设置性别，安全收紧后不再依据 CID 隐式选择性别；CID 不能代替选择授权。`dev` 测试账号由执行会话按验收需要选择性别；`live` 账号须经用户确认。随后关闭所属实例并核对退出，以宿主 `login --gender male|female` 新启动完成选择并核对名单，再关闭该实例、核对退出，最后用真实已有 CID `open`。此迁移路径尚未真实游戏实测。`live` 账号需要接受声明时仍须用户明确授权；`dev` 测试账号按开发任务授权接受。
 
 常驻 v1.12 已实测登录注册机制：登录前只读确认账号不存在，短 ASCII 用户名登录成功后只读确认账号已创建。另一次 15 字符 ASCII 用户名尝试后，服务日志记录 name 列过长，账号仍不存在；10 字符成功。建议用户名不超过 10 个 ASCII 字符；JAR 迁移中的 `VARCHAR(13)` 不足以证明现网完整上限。注册、建角、CID 绑定和入图分别确认，不借用其他角色 CID。
 
@@ -53,9 +55,9 @@ beidou-pilot --json screenshot
 
 | 实际界面或结果 | 当前可用处理与确认 |
 | --- | --- |
-| 首次声明 | 是否接受沿用用户已明确的选择；GUI 原生动作直接调用协议页确认入口 |
-| 性别选择 | 按已明确的选择发起原生性别请求，再重新观察结果 |
-| 空角色列表 | 可按上述限制显式请求建角；先核对授权、身份与角色参数，结果不明不重发 |
+| 首次声明 | `dev` 测试账号按开发任务授权接受；`live` 账号沿用用户已明确的选择。GUI 原生动作直接调用协议页确认入口 |
+| 性别选择 | `dev` 测试账号按验收需要选择；`live` 账号按用户已明确的选择发起原生性别请求，再重新观察结果 |
+| 空角色列表 | 可按上述限制显式请求建角；先核对身份与角色参数，结果不明不重发。`dev` 测试账号的建角随开发任务授权，`live` 账号另行确认 |
 | `character_not_unique` | 从实际名单核对账号、世界和 CID；角色归属以名单核对结果为准 |
 | GUI 建角成功 | 从新鲜角色列表取得 CID 并核对名称；后续入图再核对角色、频道、地图、位置与原生身份 |
 

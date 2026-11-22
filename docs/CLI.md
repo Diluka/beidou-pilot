@@ -66,7 +66,7 @@ workbenches/workbench dev/NAME close
 
 常驻 v1.12 已实测不存在的短 ASCII 用户名登录后自动注册：登录前只读确认无账号，成功后只读确认账号已创建。15 字符 ASCII 用户名尝试后，服务日志记录 name 列过长且账号仍不存在；10 字符成功。建议用户名不超过 10 个 ASCII 字符；JAR 迁移中的 `VARCHAR(13)` 不足以证明现网完整上限。注册与建角、绑定及入图分别确认。
 
-宿主 `login` 启动所选后端的账号会话并等待角色列表；声明同意和账号性别选择需用户明确授权，只在新启动时提供：
+宿主 `login` 启动所选后端的账号会话并等待角色列表；`live` 账号的声明同意和性别选择需用户明确授权，`dev` 测试账号的声明、性别与外观随开发任务授权选择。只在新启动时提供：
 
 ```bash
 workbenches/workbench dev/NAME login --accept-terms --gender female
@@ -75,7 +75,7 @@ workbenches/workbench dev/NAME character create --name NAME --gender female --jo
 workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANCE_ID --run-id RUN_ID
 ```
 
-角色外观等数值须按实际选择填写；`--hair` 是基础发型，`--hair-color` 是独立必填项，不能省略或并入 `--hair`。建角是独立的一次请求，不自动入图。运行中再次 `login` 只观察，不能重新应用启动选项；容器内 `beidou-pilot login [--timeout N]` 不带授权选项时只观察，不接受宿主启动选项。GUI 容器内可显式传 `--gender male|female` 发起首次登录动作，需要同意声明时另加 `--accept-terms`；GUI 动作必须指定性别，无头容器内不接受这些选项。GUI 的账号提交、声明接受、性别、世界、频道与建角步骤由原生桥在游戏线程调用原版客户端内部入口完成，Python 只核对实例身份与页面、保持一次性去重并投影结果，不使用桌面键鼠坐标。已有角色账号若服务端仍要求设置性别，安全收紧后不再依据 CID 隐式选择性别；CID 不代表授权选择。经用户确认后关闭所属实例并核对退出，以 `login --gender male|female` 新启动完成选择并核对角色列表，再关闭该实例、核对退出，最后按真实已有 CID `open`。此迁移路径尚未真实游戏实测。若同时需要接受声明，须另有明确授权并添加 `--accept-terms`。
+角色外观等数值须按实际选择填写；`--hair` 是基础发型，`--hair-color` 是独立必填项，不能省略或并入 `--hair`。建角是独立的一次请求，不自动入图。运行中再次 `login` 只观察，不能重新应用启动选项；容器内 `beidou-pilot login [--timeout N]` 不带授权选项时只观察，不接受宿主启动选项。GUI 容器内可显式传 `--gender male|female` 发起首次登录动作，需要同意声明时另加 `--accept-terms`；GUI 动作必须指定性别，无头容器内不接受这些选项。GUI 的账号提交、声明接受、性别、世界、频道与建角步骤由原生桥在游戏线程调用原版客户端内部入口完成，Python 只核对实例身份与页面、保持一次性去重并投影结果，不使用桌面键鼠坐标。已有角色账号若服务端仍要求设置性别，安全收紧后不再依据 CID 隐式选择性别；CID 不代表授权选择。`dev` 测试账号由执行会话按验收需要选择性别；`live` 账号须经用户确认。随后关闭所属实例并核对退出，以 `login --gender male|female` 新启动完成选择并核对角色列表，再关闭该实例、核对退出，最后按真实已有 CID `open`。此迁移路径尚未真实游戏实测。`live` 账号若同时需要接受声明，须另有明确授权并添加 `--accept-terms`；`dev` 测试账号直接添加。
 
 `character create` 返回请求与实例身份（GUI 的建角步骤由原生桥调用原版客户端内部动作，结果仍以新鲜角色列表的唯一新增 CID 核验）；`completed` 含真实 CID，`rejected` 为拒绝；`accepted` 或 `unknown` 并非完成，保留身份用 `character result` 查询，不重发。宿主 `character result` 要求原容器仍运行；实例退出或身份变化时未终结结果可能变为 `unknown`，无法保证恢复。容器停止后保留已有结果和身份等证据，人工核验，不保证可通过宿主命令查询。宿主仅在完成且账号文件与运行快照匹配、权限正确、绑定无冲突时写入 CID；`binding` 失败不代表建角失败，应依据结果及实际角色列表人工核对恢复，勿重发。完成绑定后，账号模式进程不支持同进程选角；先以工作台 `close` 并核对所属容器退出，再 `open` 并核对实际入图。GUI 建角同样经原生动作完成：打开建角页、确认类别、姓名核查、外观性别与逐槽外观轮转、最终确认；当前仅支持世界 0、第 1 至 20 频道、空角色列表、职业 `job=1` 与可打印 ASCII 角色名，外观候选须在当前界面实际核验，无法到达时停止。GUI 登录或建角超时、页面不明或原生动作拒绝时保留现场与身份，先观察或查询，不重放。
 
