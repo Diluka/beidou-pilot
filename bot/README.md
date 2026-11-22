@@ -47,11 +47,19 @@
 bash bot/test/run.sh
 ```
 
-脚本使用仓库固定的 Lua 子模块编译 Lua，并执行接口、默认值、桩返回值、入口语法与合成地形 fixture 检查。成功时输出：
+脚本使用仓库固定的 Lua 子模块编译 Lua，并执行接口、默认值、桩返回值、入口与测试辅助脚本语法检查，同时校验合成和真实捕获地图几何 fixture。成功时输出：
 
 ```text
 bot smoke ok: 9 modules
 ```
+
+## 测试辅助脚本
+
+`bot/test/capture_terrain.lua` 只读取当前 GUI 场景的 `context.scene.terrain.navigation`；需在地图 `102000000` 执行，运行前由角色准备步骤创建 `/work/bot/fixtures/` 目录，脚本生成 `/work/bot/fixtures/map_102000000.lua`，供审阅后复制为仓库夹具。夹具只保留地图代次和静态导航几何。
+
+`bot/test/owner_drive.lua` 是 owner 移动试验脚本：向右 2 秒、向左 2 秒、原地跳一下，再循环；不攻击、不拾取、不使用物品。将其复制到 owner 角色的 `/work/scripts` 后，以 CLI 的会话期限运行，例如 `script run owner_drive.lua --seconds 10`。`--seconds` 由 CLI 控制，当前全局默认 30 秒；脚本文件不能单独覆盖该默认值。
+
+这些测试辅助脚本不改变 `bot/main.lua` 的 stub 状态，也不代表跟随、战斗或拾取已经实现。
 
 ## 手工同步
 
