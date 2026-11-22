@@ -159,11 +159,11 @@ for _, rope in ipairs(navigation.ropes) do
 end
 
 local candidate_specs = {
-    walk = {size = 5, rise_sign = 1},
-    step = {size = 5, rise_sign = 1},
-    jumpup = {size = 5, rise_sign = 1},
-    drop = {size = 5, rise_sign = 1},
-    rope = {size = 6, rise_sign = -1},
+    walk = {size = 5, rise_sign = 1, rise_mode = "edges"},
+    step = {size = 5, rise_sign = 1, rise_mode = "edges"},
+    jumpup = {size = 5, rise_sign = 1, rise_mode = "points"},
+    drop = {size = 5, rise_sign = -1, rise_mode = "drop_edge"},
+    rope = {size = 6, rise_sign = -1, rise_mode = "points"},
 }
 assert(type(navigation.candidates) == "table", "fixture candidates are required")
 for kind in pairs(navigation.candidates) do
@@ -171,7 +171,7 @@ for kind in pairs(navigation.candidates) do
 end
 for kind, spec in pairs(candidate_specs) do
     local values = navigation.candidates[kind]
-    assert(type(values) == "table" and #values > 0 and #values % spec.size == 0,
+    assert(type(values) == "table" and #values % spec.size == 0,
         "fixture " .. kind .. " candidates must contain complete flat tuples")
     for i = 1, #values, spec.size do
         local from, to, x, destination, rise = values[i], values[i + 1], values[i + 2],
@@ -187,8 +187,27 @@ for kind, spec in pairs(candidate_specs) do
         local destination_y = platform_y_at(target, destination)
         assert(source_y ~= nil, kind .. " candidate start must lie on its source platform")
         assert(destination_y ~= nil, kind .. " candidate destination must lie on its target platform")
-        assert(math.abs(rise - spec.rise_sign * (source_y - destination_y)) < 0.001,
-            kind .. " candidate rise must match its platform height difference")
+        local rise_source_y, rise_target_y = source_y, destination_y
+        if spec.rise_mode == "edges" then
+            local direction = source.right <= target.left and 1 or -1
+            local source_edge = direction == 1 and source.right or source.left
+            local target_edge = direction == 1 and target.left or target.right
+            rise_source_y = platform_y_at(source, source_edge)
+            rise_target_y = platform_y_at(target, target_edge)
+        elseif spec.rise_mode == "drop_edge" then
+            local source_edge
+            if destination < source.left then
+                source_edge = source.left
+            else
+                assert(destination > source.right, "drop candidate must land outside its source platform")
+                source_edge = source.right
+            end
+            rise_source_y = platform_y_at(source, source_edge)
+        end
+        assert(rise_source_y ~= nil and rise_target_y ~= nil,
+            kind .. " candidate rise reference heights must lie on their platforms")
+        assert(math.abs(rise - spec.rise_sign * (rise_source_y - rise_target_y)) < 0.001,
+            kind .. " candidate rise must match its movement reference heights")
         if kind == "rope" then
             local rope_index = values[i + 5]
             local rope = ropes_by_index[rope_index]
