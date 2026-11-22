@@ -280,7 +280,6 @@ local function check_stub(fn, expected_status, ...)
     assert(status == expected_status and detail == "not_implemented", "stub return contract changed")
 end
 
-check_stub(modules.terrain.plan, nil, {}, 1, 2, {})
 check_stub(modules.move.new, nil, {})
 check_stub(modules.move.set_path, false, {}, {})
 check_stub(modules.move.step, "failed", {}, {}, {})

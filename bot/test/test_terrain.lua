@@ -27,6 +27,85 @@ local function navigation_with_platforms(platforms)
     }
 end
 
+local function graph_for_candidate(kind, values)
+    local navigation = navigation_with_platforms(synthetic.navigation.platforms)
+    navigation.ropes = synthetic.navigation.ropes
+    navigation.candidates[kind] = values
+    return assert(terrain.build(navigation))
+end
+
+local candidate_examples = {
+    walk = {1, 2, 100, 120, 20},
+    step = {1, 2, 100, 120, 20},
+    jumpup = {1, 2, 90, 150, 20},
+    drop = {1, 2, 90, 150, 40},
+    rope = {3, 4, 260, 260, 40, 1},
+}
+for kind, values in pairs(candidate_examples) do
+    local from, to = values[1], values[2]
+    local planned = assert(terrain.plan(graph_for_candidate(kind, values), from, to))
+    assert(#planned == 1 and planned[1].kind == kind, kind .. " candidate must be plannable")
+    assert(planned[1].from == from and planned[1].to == to
+        and planned[1].x == values[3] and planned[1].destination == values[4]
+        and planned[1].rise == values[5], kind .. " edge metadata must be retained")
+    if kind == "rope" then assert(planned[1].rope_index == values[6], "rope index must be retained") end
+end
+
+local plan_graph = assert(terrain.build(synthetic.navigation))
+local planned = assert(terrain.plan(plan_graph, 1, 4, {speed = 125, blocked = {}}))
+assert(#planned == 3, "synthetic path must use three edges")
+assert(planned[1].kind == "walk" and planned[2].kind == "step" and planned[3].kind == "rope",
+    "A* must choose the lowest-cost valid route")
+assert(planned[1].from == 1 and planned[3].to == 4, "path endpoints must match the request")
+for index = 1, #planned - 1 do
+    assert(planned[index].to == planned[index + 1].from, "path edges must be continuous")
+end
+local repeated = assert(terrain.plan(plan_graph, 1, 4, {speed = 125, blocked = {}}))
+assert(#repeated == #planned, "repeated planning must return the same edge count")
+for index, edge in ipairs(planned) do
+    assert(repeated[index].kind == edge.kind and repeated[index].from == edge.from
+        and repeated[index].to == edge.to, "repeated planning must return the same edge sequence")
+end
+local same_platform = assert(terrain.plan(plan_graph, 2, 2))
+assert(#same_platform == 0, "planning from a platform to itself must return an empty path")
+local no_path, no_path_reason = terrain.plan(plan_graph, 1, 4, {blocked = {["1:2"] = true}})
+assert(no_path == nil and no_path_reason == "no_path", "blocking all first-hop edges must report no_path")
+local unreachable_path, unreachable_reason = terrain.plan(graph_for_candidate("walk", {}), 1, 2)
+assert(unreachable_path == nil and unreachable_reason == "no_path", "a disconnected graph must report no_path")
+local out_of_range_candidates = {walk = {999, 2, 0, 0, 0}, step = {}, jumpup = {}, drop = {}, rope = {}}
+local out_of_range_path, out_of_range_reason = terrain.plan({
+    model = synthetic.navigation.model,
+    platforms = synthetic.navigation.platforms,
+    candidates = out_of_range_candidates,
+}, 1, 2)
+assert(out_of_range_path == nil and out_of_range_reason == "no_path",
+    "candidate edges with out-of-range platform indexes must be skipped")
+local invalid_path, invalid_reason = terrain.plan(plan_graph, 0, 2)
+assert(invalid_path == nil and invalid_reason == "invalid_platform", "invalid platform indices must be rejected")
+invalid_path, invalid_reason = terrain.plan(plan_graph, 1, #plan_graph.platforms + 1)
+assert(invalid_path == nil and invalid_reason == "invalid_platform", "out-of-range goal must be rejected")
+local model_path, model_reason = terrain.plan({model = nil}, 1, 1)
+assert(model_path == nil and model_reason == "model_unavailable", "missing model must report model_unavailable")
+
+local filtered_path, filtered_reason = terrain.plan(
+    graph_for_candidate("jumpup", {1, 2, 90, 150, 76}), 1, 2)
+assert(filtered_path == nil and filtered_reason == "no_path", "jumpup above the model limit must be filtered")
+filtered_path, filtered_reason = terrain.plan(
+    graph_for_candidate("jumpup", candidate_examples.jumpup), 1, 2, {max_jump_height = 10})
+assert(filtered_path == nil and filtered_reason == "no_path", "max_jump_height must filter jumpup edges")
+filtered_path, filtered_reason = terrain.plan(
+    graph_for_candidate("drop", {1, 2, 90, 150, 66}), 1, 2)
+assert(filtered_path == nil and filtered_reason == "no_path", "drop above the model limit must be filtered")
+filtered_path, filtered_reason = terrain.plan(
+    graph_for_candidate("drop", {1, 2, 90, 150, 3}), 1, 2)
+assert(filtered_path == nil and filtered_reason == "no_path", "drop below the model limit must be filtered")
+filtered_path, filtered_reason = terrain.plan(
+    graph_for_candidate("rope", {3, 4, 260, 260, 96, 1}), 3, 4)
+assert(filtered_path == nil and filtered_reason == "no_path", "rope above the model limit must be filtered")
+filtered_path, filtered_reason = terrain.plan(
+    graph_for_candidate("rope", {3, 4, 260, 260, -96, 1}), 3, 4)
+assert(filtered_path == nil and filtered_reason == "no_path", "rope below the model limit must be filtered")
+
 local overlap_navigation = navigation_with_platforms({
     {index = 1, left = 0, right = 100, open_left = true, open_right = true, segments = {0, 100, 100, 100}},
     {index = 2, left = 0, right = 100, open_left = true, open_right = true, segments = {0, 100, 90, 90}},
@@ -101,6 +180,21 @@ for kind, values in pairs(real.navigation.candidates) do
     candidate_count = candidate_count + #values / (kind == "rope" and 6 or 5)
 end
 assert(#real_graph.platforms > 0 and candidate_count > 0, "real fixture must contain platforms and candidates")
+local real_candidates = real.navigation.candidates
+local api_edges, api_error = terrain.plan(real_graph, 3, 9, {blocked = {}})
+assert(api_edges, api_error)
+local real_path = assert(terrain.plan(real_graph, character_platform, 1))
+assert(#real_path >= 3, "real fixture must produce a path with at least three edges")
+for index = 1, #real_path - 1 do
+    assert(real_path[index].to == real_path[index + 1].from, "real fixture path must be continuous")
+end
+assert(real_path[1].from == character_platform and real_path[#real_path].to == 1,
+    "real fixture path endpoints must match the request")
+assert(real_graph.navigation == real.navigation and real.navigation.candidates == real_candidates,
+    "planning must not modify the navigation snapshot")
+local real_path_kinds = {}
+for _, edge in ipairs(real_path) do real_path_kinds[#real_path_kinds + 1] = edge.kind end
 
-print(("terrain ok: synthetic locations=8; map=%d platforms=%d candidates=%d character=(%d,%d) platform=%d")
-    :format(real.map_id, #real_graph.platforms, candidate_count, character_x, character_y, character_platform))
+print(("terrain ok: synthetic locations=8; map=%d platforms=%d candidates=%d character=(%d,%d) platform=%d path=%d->1 edges=%d kinds=%s")
+    :format(real.map_id, #real_graph.platforms, candidate_count, character_x, character_y,
+        character_platform, character_platform, #real_path, table.concat(real_path_kinds, ",")))

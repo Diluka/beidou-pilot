@@ -167,7 +167,157 @@ function M.platform_at(graph, x, y, tolerance)
 end
 
 function M.plan(graph, from_index, to_index, options)
-    return nil, "not_implemented"
+    if type(graph) ~= "table" or type(graph.model) ~= "table"
+        or not finite_number(graph.model.jump_rise)
+        or not finite_number(graph.model.drop_min)
+        or not finite_number(graph.model.drop_max)
+        or not finite_number(graph.model.rope_grab) then
+        return nil, "model_unavailable"
+    end
+
+    local platforms, candidates = graph.platforms, graph.candidates
+    if type(platforms) ~= "table" or type(candidates) ~= "table" then
+        return nil, "model_unavailable"
+    end
+    local platform_count = #platforms
+    local function valid_platform(index)
+        return finite_number(index) and index % 1 == 0 and index >= 1 and index <= platform_count
+    end
+    if not valid_platform(from_index) or not valid_platform(to_index) then
+        return nil, "invalid_platform"
+    end
+    if from_index == to_index then return {} end
+
+    options = type(options) == "table" and options or {}
+    local speed = finite_number(options.speed) and options.speed or 100
+    local max_jump_height = finite_number(options.max_jump_height) and options.max_jump_height
+        or graph.model.jump_rise
+    local blocked = type(options.blocked) == "table" and options.blocked or {}
+    local effective_speed = math.max(1, speed)
+    local model = graph.model
+    local platform_x = {}
+    for index, platform in ipairs(platforms) do
+        platform_x[index] = (platform.left + platform.right) / 2
+    end
+
+    local adjacency, edges = {}, {}
+    local edge_kinds = {"walk", "step", "jumpup", "drop", "rope"}
+    local tuple_sizes = {walk = 5, step = 5, jumpup = 5, drop = 5, rope = 6}
+    for _, kind in ipairs(edge_kinds) do
+        local values, tuple_size = candidates[kind], tuple_sizes[kind]
+        if type(values) == "table" then
+            for offset = 1, #values, tuple_size do
+                local from, to = values[offset], values[offset + 1]
+                local x, destination, rise = values[offset + 2], values[offset + 3], values[offset + 4]
+                local rope_index = kind == "rope" and values[offset + 5] or nil
+                local valid = valid_platform(from) and valid_platform(to)
+                    and finite_number(x) and finite_number(destination) and finite_number(rise)
+                    and not blocked[tostring(from) .. ":" .. tostring(to)]
+                if valid then
+                    if kind == "jumpup" then
+                        valid = rise <= math.min(model.jump_rise, max_jump_height)
+                    elseif kind == "drop" then
+                        valid = rise >= model.drop_min and rise <= model.drop_max
+                    elseif kind == "rope" then
+                        valid = math.abs(rise) <= model.rope_grab
+                    end
+                end
+                if valid then
+                    local dx = math.abs(platform_x[to] - platform_x[from])
+                    local cost
+                    if kind == "walk" then
+                        cost = dx / effective_speed
+                    elseif kind == "step" then
+                        cost = 0.05 + dx / effective_speed
+                    elseif kind == "jumpup" then
+                        cost = 0.6 + dx / effective_speed
+                    elseif kind == "drop" then
+                        cost = 0.4 + dx / effective_speed
+                    else
+                        cost = 0.8 + math.abs(rise) / 100
+                    end
+                    local edge = {
+                        kind = kind,
+                        from = from,
+                        to = to,
+                        x = x,
+                        destination = destination,
+                        rise = rise,
+                        cost = cost,
+                    }
+                    if kind == "rope" then edge.rope_index = rope_index end
+                    adjacency[from] = adjacency[from] or {}
+                    adjacency[from][#adjacency[from] + 1] = edge
+                    edges[#edges + 1] = edge
+                end
+            end
+        end
+    end
+
+    for _, outgoing in pairs(adjacency) do
+        table.sort(outgoing, function(left, right)
+            if left.to ~= right.to then return left.to < right.to end
+            return left.kind < right.kind
+        end)
+    end
+
+    local minimum_cost_per_x = math.huge
+    for _, edge in ipairs(edges) do
+        local dx = math.abs(platform_x[edge.to] - platform_x[edge.from])
+        if dx > 0 then minimum_cost_per_x = math.min(minimum_cost_per_x, edge.cost / dx) end
+    end
+    if minimum_cost_per_x == math.huge then minimum_cost_per_x = 0 end
+    local function heuristic(index)
+        return minimum_cost_per_x * math.abs(platform_x[to_index] - platform_x[index])
+    end
+    local function entry_before(left, right)
+        if left.estimate ~= right.estimate then return left.estimate < right.estimate end
+        if left.from ~= right.from then return left.from < right.from end
+        if left.to ~= right.to then return left.to < right.to end
+        if left.kind ~= right.kind then return left.kind < right.kind end
+        return left.index < right.index
+    end
+
+    local distances = {[from_index] = 0}
+    local previous = {}
+    local open = {{index = from_index, from = from_index, to = from_index, kind = "", cost = 0,
+        estimate = heuristic(from_index)}}
+    local closed = {}
+    while #open > 0 do
+        table.sort(open, entry_before)
+        local current = table.remove(open, 1)
+        if not closed[current.index] and current.cost == distances[current.index] then
+            if current.index == to_index then
+                local path, index = {}, to_index
+                while index ~= from_index do
+                    local parent = previous[index]
+                    table.insert(path, 1, parent.edge)
+                    index = parent.from
+                end
+                for _, edge in ipairs(path) do edge.cost = nil end
+                return path
+            end
+            closed[current.index] = true
+            for _, edge in ipairs(adjacency[current.index] or {}) do
+                if not closed[edge.to] then
+                    local distance = current.cost + edge.cost
+                    if distances[edge.to] == nil or distance < distances[edge.to] then
+                        distances[edge.to] = distance
+                        previous[edge.to] = {from = current.index, edge = edge}
+                        open[#open + 1] = {
+                            index = edge.to,
+                            from = edge.from,
+                            to = edge.to,
+                            kind = edge.kind,
+                            cost = distance,
+                            estimate = distance + heuristic(edge.to),
+                        }
+                    end
+                end
+            end
+        end
+    end
+    return nil, "no_path"
 end
 
 return M
