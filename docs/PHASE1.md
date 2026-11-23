@@ -161,10 +161,10 @@ function M.plan(graph, from_index, to_index, options) -> edges | nil, reason
 --         x=, destination=, rise=, rope_index=}
 
 -- move
-function M.new(graph, player) -> mover
+function M.new(graph) -> mover
 function M.set_path(mover, edges) -> true | false, reason
 function M.step(mover, ctx, world) -> "running"|"done"|"failed", reason
-function M.stop(mover) -- player 存在 mover，禁止全局 player
+function M.stop(mover)
 
 -- follow
 function M.update(ctx, world) -> action
