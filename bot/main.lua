@@ -141,8 +141,10 @@ local function main(context)
 
     local terrain_ready = world.ready and terrain_scene and terrain_scene.status == "available"
         and memory.graph and memory.graph_generation == generation
-    if terrain_ready and (bot.mode == "follow" or bot.mode == "hunt") and not memory.mover
-        and memory.mover_attempt_generation ~= generation then
+    local function ensure_mover()
+        if memory.mover then return memory.mover end
+        if memory.mover_attempt_generation == generation then return nil end
+
         memory.mover_attempt_generation = generation
         local mover, mover_error = move.new(memory.graph)
         memory.mover = mover
@@ -150,15 +152,16 @@ local function main(context)
             bot.last_error = mover_error
             io_module.event(context, "error", {reason = mover_error})
         end
+        return memory.mover
     end
 
     local mob, drop
-    if terrain_ready and memory.mover then
+    if terrain_ready then
         local skip_movement = false
         if bot.mode == "follow" then
             local action, follow_error = follow.update(context, world)
             if action and action.kind == "wait" then
-                move.stop(memory.mover)
+                if memory.mover then move.stop(memory.mover) end
                 memory.path_target = nil
                 skip_movement = true
             elseif action and action.kind == "move" then
@@ -167,7 +170,8 @@ local function main(context)
                 if from and to then
                     local path_target = memory.path_target
                     local target_moved = true
-                    if path_target and path_target.platform == to and path_target.scene_generation == generation
+                    if memory.mover and path_target and path_target.platform == to
+                        and path_target.scene_generation == generation
                         and path_target.x ~= nil and path_target.y ~= nil then
                         local dx, dy = action.x - path_target.x, action.y - path_target.y
                         local stop_distance = action.stop_distance or (bot.config or defaults).stop_distance
@@ -183,8 +187,12 @@ local function main(context)
                         local max_jump_height = movement.max_jump_height or model.max_jump_height
                         if speed == nil or max_jump_height == nil then
                             bot.last_error = "movement_unavailable"
-                            move.stop(memory.mover)
+                            if memory.mover then move.stop(memory.mover) end
                             memory.path_target = nil
+                            skip_movement = true
+                        elseif not ensure_mover() then
+                            memory.path_target = nil
+                            skip_movement = true
                         else
                             local edges, plan_error = terrain.plan(memory.graph, from, to, {
                                 speed = speed, max_jump_height = max_jump_height,
@@ -209,7 +217,7 @@ local function main(context)
                         end
                     end
                 else
-                    move.stop(memory.mover)
+                    if memory.mover then move.stop(memory.mover) end
                     memory.path_target = nil
                     skip_movement = true
                 end
@@ -218,10 +226,11 @@ local function main(context)
             end
         elseif bot.mode == "hunt" then
             mob = combat.select(world, bot.config or defaults)
+            if mob then ensure_mover() end
         end
 
         local movement_status
-        if not skip_movement and (bot.mode == "follow" or bot.mode == "hunt") then
+        if not skip_movement and memory.mover and (bot.mode == "follow" or bot.mode == "hunt") then
             local movement_error
             movement_status, movement_error = move.step(memory.mover, context, world)
             if movement_status == "failed" and movement_error and movement_error ~= "not_implemented" then
@@ -231,7 +240,7 @@ local function main(context)
         end
         if movement_status ~= "running" and bot.mode == "hunt" then
             local combat_status, combat_error
-            if mob then
+            if mob and memory.mover then
                 combat_status, combat_error = combat.step(context, world, mob, memory.mover)
                 if combat_status == "failed" and combat_error and combat_error ~= "not_implemented" then
                     bot.last_error = combat_error
@@ -241,10 +250,13 @@ local function main(context)
             if combat_status ~= "running" then
                 if not mob then drop = loot.select(world, bot.config or defaults) end
                 if drop then
-                    local loot_status, loot_error = loot.step(context, world, drop, memory.mover)
-                    if loot_status == "failed" and loot_error and loot_error ~= "not_implemented" then
-                        bot.last_error = loot_error
-                        io_module.event(context, "error", {reason = loot_error})
+                    if not memory.mover then ensure_mover() end
+                    if memory.mover then
+                        local loot_status, loot_error = loot.step(context, world, drop, memory.mover)
+                        if loot_status == "failed" and loot_error and loot_error ~= "not_implemented" then
+                            bot.last_error = loot_error
+                            io_module.event(context, "error", {reason = loot_error})
+                        end
                     end
                 end
             end

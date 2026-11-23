@@ -69,7 +69,7 @@ source=host
 
 follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代次变化，或 owner 的期望位置移动达到 `stop_distance` 时重算路径，同平台内的小幅位置变化继续复用路径。
 
-`/work/bot/state.json` 原子更新，常规间隔约 1 秒；`/work/bot/events.jsonl` 记录命令、模式和错误事件，单文件达到 1 MiB 时滚动到 `events.1.jsonl`。启动进入 `recover`；世界就绪且当前场景有可用地形图时转为 `idle`，不要求 `move.new` 已实现。checkpoint 当前只校验并保留，不重放上次动作或恢复旧模式/目标。
+`/work/bot/state.json` 原子更新，常规间隔约 1 秒；`/work/bot/events.jsonl` 记录命令、模式和错误事件，单文件达到 1 MiB 时滚动到 `events.1.jsonl`。启动进入 `recover`；世界就绪且当前场景有可用地形图时转为 `idle`，不要求 `move.new` 已实现。mover 仅在 follow/hunt 产生实际移动或目标动作时才按场景代次尝试创建。checkpoint 当前只校验并保留，不重放上次动作或恢复旧模式/目标。
 
 `state.json.session_id` 取自只读 `context.tick.script_id`，即当前 Runtime tick 会话 ID。
 

@@ -204,9 +204,11 @@ main_file:close()
 local rewritten_source, replacements = main_source:gsub("local function main%(context%)", "function __test_main(context)", 1)
 assert(replacements == 1, "main entry signature changed")
 local calls, selected_mob, selected_drop = {}, {}, {}
+local created_mover
 local sustain_handled, movement_result = false, "done"
 local combat_result, combat_reason, follow_action = "done", nil, nil
 local target_platform, mover_stopped, pending_commands = 1, false, {}
+local scene_generation = 1
 local fake_modules = {
     ["lib.io"] = {
         event = function() calls[#calls + 1] = "event"; return true end,
@@ -236,7 +238,7 @@ local fake_modules = {
         end,
     },
     ["lib.world"] = {observe = function() calls[#calls + 1] = "observe"; return {
-        ready = true, scene_generation = 1, character = {x = 1, y = 2, hp = 50},
+        ready = true, scene_generation = scene_generation, character = {x = 1, y = 2, hp = 50},
     } end},
     ["lib.terrain"] = {
         build = function() calls[#calls + 1] = "build"; return {} end,
@@ -244,7 +246,11 @@ local fake_modules = {
         plan = function() calls[#calls + 1] = "plan"; return {} end,
     },
     ["lib.move"] = {
-        new = function() calls[#calls + 1] = "new"; return nil, "not_implemented" end,
+        new = function()
+            calls[#calls + 1] = "new"
+            if created_mover then return created_mover end
+            return nil, "not_implemented"
+        end,
         set_path = function()
             calls[#calls + 1] = "set_path"
             mover_stopped = false
@@ -325,14 +331,93 @@ assert(recovery_context.state.bot.mode == "idle")
 assert(table.concat(calls, ",") == "observe,build,event,sustain,publish")
 assert(recovery_context.state.mover == nil, "recovery must not require or create a mover")
 
+follow_action = nil
 recovery_context.state.bot.mode, recovery_context.tick.time, calls = "follow", 20.1, {}
 environment.__test_main(recovery_context)
-assert(table.concat(calls, ",") == "observe,sustain,new,publish")
+assert(table.concat(calls, ",") == "observe,sustain,follow,publish")
+assert(recovery_context.state.mover == nil and recovery_context.state.mover_attempt_generation == nil,
+    "no follow action must not create a mover")
+
+follow_action, recovery_context.tick.time, calls = {kind = "wait", reason = "within_distance"}, 20.2, {}
+environment.__test_main(recovery_context)
+assert(table.concat(calls, ",") == "observe,sustain,follow,publish")
+assert(recovery_context.state.mover_attempt_generation == nil, "wait must not create a mover")
+
+selected_mob, selected_drop = nil, nil
+recovery_context.state.bot.mode, recovery_context.tick.time, calls = "hunt", 20.3, {}
+environment.__test_main(recovery_context)
+assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,publish")
+assert(recovery_context.state.mover_attempt_generation == nil, "no hunt target must not create a mover")
+
+selected_mob, selected_drop = {}, nil
+local hunt_action_context = {
+    tick = {time = 20.35},
+    state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+        last_poll = 20.35, started_at = 1},
+    game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
+    scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
+}
+calls = {}
+environment.__test_main(hunt_action_context)
+assert(table.concat(calls, ",") == "observe,sustain,select,new,publish")
+assert(hunt_action_context.state.mover == nil and hunt_action_context.state.mover_attempt_generation == 1)
+
+follow_action, recovery_context.state.bot.mode, recovery_context.tick.time, calls =
+    {kind = "move", x = 20, y = 2, stop_distance = 40}, "follow", 20.4, {}
+environment.__test_main(recovery_context)
+assert(table.concat(calls, ",") == "observe,sustain,follow,new,publish")
 assert(recovery_context.state.mover == nil and recovery_context.state.mover_attempt_generation == 1)
 
-recovery_context.tick.time, calls = 20.2, {}
+recovery_context.tick.time, calls = 20.45, {}
 environment.__test_main(recovery_context)
-assert(table.concat(calls, ",") == "observe,sustain,publish", "do not retry an unavailable mover each tick")
+assert(table.concat(calls, ",") == "observe,sustain,follow,publish", "do not retry an unavailable mover each tick")
+
+scene_generation, recovery_context.tick.time, calls = 2, 20.49, {}
+environment.__test_main(recovery_context)
+assert(table.concat(calls, ",") == "observe,build,sustain,follow,new,publish")
+assert(recovery_context.state.graph_generation == 2 and recovery_context.state.mover_attempt_generation == 2,
+    "a new scene generation permits one new mover attempt")
+scene_generation = 1
+
+created_mover, follow_action = {}, {kind = "move", x = 20, y = 2, stop_distance = 40}
+local follow_context = {
+    tick = {time = 20.5},
+    state = {bot = {mode = "follow", config = {}}, graph = {}, graph_generation = 1,
+        last_poll = 20.5, started_at = 1},
+    game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
+    scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
+}
+calls = {}
+environment.__test_main(follow_context)
+assert(table.concat(calls, ",") == "observe,sustain,follow,new,plan,set_path,move,publish")
+assert(follow_context.state.mover == created_mover and follow_context.state.path_target.x == 20)
+
+selected_mob, created_mover = {}, {}
+local combat_context = {
+    tick = {time = 20.5},
+    state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+        last_poll = 20.5, started_at = 1},
+    game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
+    scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
+}
+calls = {}
+environment.__test_main(combat_context)
+assert(table.concat(calls, ",") == "observe,sustain,select,new,move,combat,publish")
+assert(combat_context.state.mover == created_mover)
+
+selected_mob, selected_drop, created_mover = nil, {}, {}
+local loot_context = {
+    tick = {time = 20.5},
+    state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+        last_poll = 20.5, started_at = 1},
+    game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
+    scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
+}
+calls = {}
+environment.__test_main(loot_context)
+assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,new,loot_step,publish")
+assert(loot_context.state.mover == created_mover)
+created_mover = nil
 
 local bot_memory = pipeline_context.state
 bot_memory.bot.mode, sustain_handled = "follow", false
