@@ -5,7 +5,7 @@ local state_module = require("lib.state")
 local world_module = require("lib.world")
 local saved_open = io.open
 local saved_execute, saved_rename, saved_remove, saved_time = os.execute, os.rename, os.remove, os.time
-local files, queue_paths, modified_at = {}, {}, {}
+local files, queue_paths, modified_at, failed_writes = {}, {}, {}, {}
 local root = "tmp/bot-io-test"
 
 local function open_fake(path, mode)
@@ -35,6 +35,7 @@ local function open_fake(path, mode)
         return nil
     end
     function handle:write(value)
+        if failed_writes[path] then return nil, "simulated write failure" end
         buffer = buffer .. tostring(value)
         return self
     end
@@ -124,6 +125,18 @@ context.state.pending_receipts = commands
 context.state.force_publish = true
 assert(io_module.publish(context, {character = {}}, 3))
 assert(files[root .. "/queue/rejected/c3"] == "rejected=expired\n" and files[expired_path] == nil)
+
+add_command(6, "c5", "id=c5\nkind=status\nttl=0\nsource=host\n")
+commands = assert(io_module.poll(context, 4))
+assert(#commands == 1 and commands[1]._ok)
+context.state.pending_receipts = commands
+context.state.force_publish = true
+failed_writes[root .. "/queue/done/c5"] = true
+assert(io_module.publish(context, {character = {}}, 4))
+failed_writes[root .. "/queue/done/c5"] = nil
+assert(files[root .. "/queue/done/c5"] == "")
+assert(context.state.bot.last_error == "receipt_write_failed")
+assert(files[root .. "/events.jsonl"]:find("receipt_write_failed", 1, true))
 
 files["/work/bot/config.conf"] = "owner_name=Owner\nowner_character_id=12\nfollow_distance=99\n"
 files["/work/bot/checkpoint.conf"] = "mode=hunt\ntarget=12\nmap_id=7\n"

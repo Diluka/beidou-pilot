@@ -161,8 +161,9 @@ local function receipt(ctx, command)
     local content = command._ok and "ok\n" or "rejected=" .. tostring(command._reason or "rejected") .. "\n"
     local file = io.open(destination, "w")
     if not file then return false, "receipt_write_failed" end
-    file:write(content)
-    file:close()
+    local written = file:write(content)
+    local closed = file:close()
+    if not written or not closed then return false, "receipt_write_failed" end
     return true
 end
 
