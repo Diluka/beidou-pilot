@@ -280,10 +280,7 @@ local function check_stub(fn, expected_status, ...)
     assert(status == expected_status and detail == "not_implemented", "stub return contract changed")
 end
 
-check_stub(modules.move.new, nil, {})
-check_stub(modules.move.set_path, false, {}, {})
-check_stub(modules.move.step, "failed", {}, {}, {})
-check_stub(modules.move.stop, false, {})
+dofile("bot/test/test_move.lua")
 check_stub(modules.follow.update, nil, {}, {})
 check_stub(modules.combat.select, nil, {}, {})
 check_stub(modules.combat.step, "failed", {}, {}, {}, {})
