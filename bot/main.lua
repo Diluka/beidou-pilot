@@ -248,7 +248,7 @@ local function main(context)
                 end
             end
             if combat_status ~= "running" then
-                if not mob then drop = loot.select(world, bot.config or defaults) end
+                drop = loot.select(world, bot.config or defaults)
                 if drop then
                     if not memory.mover then ensure_mover() end
                     if memory.mover then

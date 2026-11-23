@@ -203,7 +203,7 @@ local main_source = main_file:read("*a")
 main_file:close()
 local rewritten_source, replacements = main_source:gsub("local function main%(context%)", "function __test_main(context)", 1)
 assert(replacements == 1, "main entry signature changed")
-local calls, selected_mob, selected_drop = {}, {}, {}
+local calls, selected_mob, selected_drop = {}, {}, nil
 local created_mover
 local sustain_handled, movement_result = false, "done"
 local combat_result, combat_reason, follow_action = "done", nil, nil
@@ -308,11 +308,14 @@ local pipeline_context = {
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
 }
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,move,combat,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,move,combat,loot_select,publish")
 calls, movement_result = {}, "running"
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,select,move,publish")
-calls, movement_result, selected_mob, selected_drop = {}, "done", nil, {}
+calls, movement_result, combat_result = {}, "done", "running"
+environment.__test_main(pipeline_context)
+assert(table.concat(calls, ",") == "observe,sustain,select,move,combat,publish")
+calls, movement_result, combat_result, selected_mob, selected_drop = {}, "done", "done", nil, {}
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,select,move,loot_select,loot_step,publish")
 calls, sustain_handled = {}, true
@@ -359,7 +362,7 @@ local hunt_action_context = {
 }
 calls = {}
 environment.__test_main(hunt_action_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,new,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,new,loot_select,publish")
 assert(hunt_action_context.state.mover == nil and hunt_action_context.state.mover_attempt_generation == 1)
 
 follow_action, recovery_context.state.bot.mode, recovery_context.tick.time, calls =
@@ -392,7 +395,7 @@ environment.__test_main(follow_context)
 assert(table.concat(calls, ",") == "observe,sustain,follow,new,plan,set_path,move,publish")
 assert(follow_context.state.mover == created_mover and follow_context.state.path_target.x == 20)
 
-selected_mob, created_mover = {}, {}
+selected_mob, selected_drop, created_mover, movement_result, combat_result = {}, {}, {}, "done", "done"
 local combat_context = {
     tick = {time = 20.5},
     state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
@@ -402,7 +405,7 @@ local combat_context = {
 }
 calls = {}
 environment.__test_main(combat_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,new,move,combat,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,new,move,combat,loot_select,loot_step,publish")
 assert(combat_context.state.mover == created_mover)
 
 selected_mob, selected_drop, created_mover = nil, {}, {}
