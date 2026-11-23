@@ -1,6 +1,6 @@
 # 伴游机器人 Lua 包
 
-该目录是可复制到角色 `/work/scripts/bot` 的 tick 脚本包。`lib.io`、`lib.state`、`lib.world` 与 `main.lua` 提供指令邮箱、状态/事件发布、基础世界投影和 tick 主流程；地形、移动、跟随、战斗、自保及拾取仍由各自后续任务实现。机器人只读 `/work/bot` 的配置和队列文件。
+该目录是可复制到角色 `/work/scripts/bot` 的 tick 脚本包。`lib.io`、`lib.state`、`lib.world` 与 `main.lua` 提供指令邮箱、状态/事件发布、基础世界投影和 tick 主流程；`lib.terrain` 提供只读地形构图、平台定位与 A* 路径规划。移动执行、跟随、战斗、自保及拾取仍由后续任务实现。机器人只读 `/work/bot` 的配置和队列文件。
 
 `main.lua` 按 tick API 定义唯一的顶层 `local function main(context)`。tick 加载器会在内部编译并包装入口，因此不需要、也不应从用户脚本返回一个模块表。此骨架不会在顶层调用 `game` 或 `player`。
 
@@ -18,7 +18,22 @@
 | `lib.state` | `new()`、`apply(state, command)`、`transition(state, mode, reason)` |
 | `lib.world` | `observe(ctx)` |
 
-未实现的行为模块按签名返回 `nil, "not_implemented"`、`false, "not_implemented"` 或 `"failed", "not_implemented"`。接口及数据结构契约以 [`docs/PHASE1.md`](../docs/PHASE1.md) 为准；离线测试覆盖模块接口和指令/状态/世界基础行为。
+未实现的行为模块按签名返回 `nil, "not_implemented"`、`false, "not_implemented"` 或 `"failed", "not_implemented"`。terrain 的 `build`、`platform_at` 和 `plan` 已实现；接口及数据结构契约以 [`docs/PHASE1.md`](../docs/PHASE1.md) 为准，terrain 与邮箱/状态/世界行为均有离线用例覆盖。
+
+## 地形平台定位
+
+`lib.terrain.build(navigation)` 直接消费 `context.scene.terrain.navigation`，返回引用原始数据的 graph；成功时包含 1 基平台数组以及原样保留的 `walls`、`ropes`、`candidates`、`model` 和地形边界。输入缺失时返回 `nil, "navigation_unavailable"`；必需字段或结构无效时返回 `nil, "navigation_invalid:<field>"`，不会重新从 footholds 派生平台。
+
+`lib.terrain.platform_at(graph, x, y, tolerance)` 按平台 `segments` 线性插值高度，仅在平台与线段范围内且高度差不超过容差时返回平台索引；重叠命中时选高度差最小者，平局选索引较小者，无命中返回 `nil`。坐标使用地图像素，y 向下为正。示例：
+
+```lua
+local terrain = require("lib.terrain")
+local graph = assert(terrain.build(context.scene.terrain.navigation))
+local platform = terrain.platform_at(graph, context.game.character.x, context.game.character.y, 25)
+game.log("platform=" .. tostring(platform))
+```
+
+`lib.terrain.plan(graph, from_index, to_index, options)` 消费候选边，用 A* 按 `walk`、`step`、`jumpup`、`drop`、`rope` 的策略代价生成连续路径；`options.blocked` 可按 `"from:to"` 禁边，跳跃高度、速度可选调整。无路返回 `nil, "no_path"`，非法平台与模型缺失分别返回 `invalid_platform`、`model_unavailable`。上述 terrain 接口只读地形快照，不执行移动或 `player` 动作。
 
 ## 默认值
 
@@ -70,6 +85,7 @@ bash bot/test/run.sh
 
 ```text
 bot io/state/world tests ok
+terrain ok: synthetic locations=8; map=102000000 platforms=125 candidates=1553 character=(2452,1935) platform=125 path=125->1 edges=4 kinds=jumpup,jumpup,step,jumpup
 bot smoke ok: 9 modules
 ```
 
