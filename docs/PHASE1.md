@@ -254,6 +254,7 @@ local function main(context) ... end
 ## 7. 测试与验收
 
 - 离线：`bash bot/test/run.sh`，纯 Lua fixture，不启动客户端。
+- 实现/替换模块桩的包内任务，交付文件必须包含 `bot/test/run.lua`：只允许移除本模块的 `check_stub`、把新测试加入 `loadfile`/`dofile`；不改其他测试逻辑。
 - 真实 headless：开发服 `dev` 两个角色；只验证 headless 预期行为，不打开 GUI 对比。
 - 证据：`state.json`/`events.jsonl`/命令输出/关键时间点；原始证据留角色目录，公开记录只写结论。
 - 差异：如果怀疑 headless 与 GUI 不一致，另开“后端差异审计”任务；不在本期功能任务内处理。
