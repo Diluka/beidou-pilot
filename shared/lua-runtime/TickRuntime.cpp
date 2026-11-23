@@ -1309,7 +1309,8 @@ void TickRuntime::Tick(bool sceneChanged) {
             auto* lua = session.lua;
             lua_rawgeti(lua, LUA_REGISTRYINDEX, session.context);
             const int backing = lua_absindex(lua, -1);
-            PushValue(lua, Value::Object({{"index", session.index},
+            PushValue(lua, Value::Object({{"script_id", session.id},
+                                          {"index", session.index},
                                           {"gear", static_cast<int>(session.config.gear)},
                                           {"time", session.time},
                                           {"delta", session.delta},

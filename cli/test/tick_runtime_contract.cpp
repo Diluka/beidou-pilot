@@ -437,6 +437,11 @@ end
           "Start must freshly sample legal initialization reads, without invoking main or counting a host refresh");
     Step(native, runtime);
     StatusIs(runtime, "initialization", "completed", "script_returned");
+
+    Start(runtime, "tick-context-id",
+          "function main(c) assert(c.tick.script_id == 'tick-context-id'); return 'done' end");
+    Step(native, runtime);
+    StatusIs(runtime, "tick-context-id", "completed", "script_returned");
 }
 
 void CadencePhase() {

@@ -198,7 +198,7 @@ function M.observe(ctx) -> world
 local function main(context) ... end
 ```
 
-主流程负责创建唯一 `mover = move.new(graph)`，用 `terrain.platform_at` 填充 `character/owner/mobs/drops.platform`，并把 `mover` 传给 `combat.step`/`loot.step`；模块不各自创建 mover。
+主流程用 `terrain.platform_at` 填充 `character/owner/mobs/drops.platform`；仅在 `follow`/`hunt` 实际需要动作时尝试创建唯一 `mover = move.new(graph)`，并把可用 mover 传给 `combat.step`/`loot.step`。恢复到 `idle` 不依赖 mover。
 
 ### 6.6 文件与命令
 
@@ -215,6 +215,8 @@ local function main(context) ... end
 /work/bot/config.conf             owner、技能/药品、阈值、安全点
 /work/bot/checkpoint.conf         模式/目标
 ```
+
+启动从 `recover` 开始，不恢复 checkpoint 中的旧模式/目标，也不重放旧动作；世界就绪且本场景地形图可用后进入 `idle`。当前 checkpoint 仅做格式校验并保留。
 
 `state.json` 最小字段：
 
@@ -237,11 +239,13 @@ local function main(context) ... end
 }
 ```
 
+`session_id` 为当前 Runtime tick 会话 ID，由 `context.tick.script_id` 提供；它不是持久化或重启后可复用的 ID。
+
 ### 6.7 模式
 
 | 模式 | 行为 | 退出 |
 | --- | --- | --- |
-| `recover` | 观察、确认身份/位置、等安全 | 安全后按计划/指令 |
+| `recover` | 观察、确认身份/位置、等安全；世界就绪且本场景有可用地形图后进入 `idle`，不依赖移动模块已实现 | 安全后按计划/指令 |
 | `idle` | 停手等待 | 收到指令 |
 | `follow` | 跟随 owner，保持 40～120px | `stay`/`hunt`/危险 |
 | `hunt` | 在当前狩猎点打怪/拾取 | `follow`/`stay`/升级阈值 |
