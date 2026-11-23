@@ -247,7 +247,7 @@ function M.publish(ctx, world, now)
     local character, owner = world.character or {}, world.owner
     local status = {
         schema = 1, ts_ms = os.time() * 1000,
-        session_id = ctx.state and ctx.state.session_id or JSON_NULL,
+        session_id = ctx.tick and ctx.tick.script_id or JSON_NULL,
         version = "bot-0.1.0", mode = bot.mode or "recover",
         map_id = world.map_id or JSON_NULL, scene_generation = world.scene_generation or JSON_NULL,
         x = character.x or JSON_NULL, y = character.y or JSON_NULL,

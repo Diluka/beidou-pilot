@@ -237,11 +237,13 @@ local function main(context) ... end
 }
 ```
 
+`session_id` 为当前 Runtime tick 会话 ID，由 `context.tick.script_id` 提供；它不是持久化或重启后可复用的 ID。
+
 ### 6.7 模式
 
 | 模式 | 行为 | 退出 |
 | --- | --- | --- |
-| `recover` | 观察、确认身份/位置、等安全 | 安全后按计划/指令 |
+| `recover` | 观察、确认身份/位置、等安全；世界就绪且本场景有可用地形图后进入 `idle`，不依赖移动模块已实现 | 安全后按计划/指令 |
 | `idle` | 停手等待 | 收到指令 |
 | `follow` | 跟随 owner，保持 40～120px | `stay`/`hunt`/危险 |
 | `hunt` | 在当前狩猎点打怪/拾取 | `follow`/`stay`/升级阈值 |

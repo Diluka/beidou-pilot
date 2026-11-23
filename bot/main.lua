@@ -94,7 +94,7 @@ local function main(context)
     local generation = world.scene_generation
     if memory.graph_generation ~= generation then
         memory.graph, memory.mover, memory.path_target = nil, nil, nil
-        memory.graph_generation, memory.graph_attempt_generation = nil, nil
+        memory.graph_generation, memory.graph_attempt_generation, memory.mover_attempt_generation = nil, nil, nil
     end
     if generation ~= nil and memory.graph_generation ~= generation
         and memory.graph_attempt_generation ~= generation
@@ -104,14 +104,13 @@ local function main(context)
         if graph then
             memory.graph = graph
             memory.graph_generation = generation
-            memory.mover = move.new(graph)
         elseif graph_error ~= "not_implemented" then
             bot.last_error = graph_error or "terrain_build_failed"
             io_module.event(context, "error", {reason = bot.last_error})
         end
     end
     if bot.mode == "recover" and world.ready and terrain_scene and terrain_scene.status == "available"
-        and memory.graph and memory.graph_generation == generation and memory.mover then
+        and memory.graph and memory.graph_generation == generation then
         local previous = bot.mode
         state_module.transition(bot, "idle", "recovered")
         io_module.event(context, "mode", {from = previous, mode = "idle", reason = "terrain_ready"})
@@ -140,9 +139,21 @@ local function main(context)
         io_module.event(context, "error", {reason = sustain_error})
     end
 
+    local terrain_ready = world.ready and terrain_scene and terrain_scene.status == "available"
+        and memory.graph and memory.graph_generation == generation
+    if terrain_ready and (bot.mode == "follow" or bot.mode == "hunt") and not memory.mover
+        and memory.mover_attempt_generation ~= generation then
+        memory.mover_attempt_generation = generation
+        local mover, mover_error = move.new(memory.graph)
+        memory.mover = mover
+        if not mover and mover_error and mover_error ~= "not_implemented" then
+            bot.last_error = mover_error
+            io_module.event(context, "error", {reason = mover_error})
+        end
+    end
+
     local mob, drop
-    if world.ready and terrain_scene and terrain_scene.status == "available"
-        and memory.graph and memory.graph_generation == generation and memory.mover then
+    if terrain_ready and memory.mover then
         local skip_movement = false
         if bot.mode == "follow" then
             local action, follow_error = follow.update(context, world)
@@ -155,7 +166,15 @@ local function main(context)
                 local to = terrain.platform_at(memory.graph, action.x, action.y, tolerance)
                 if from and to then
                     local path_target = memory.path_target
-                    if not path_target or path_target.platform ~= to or path_target.scene_generation ~= generation then
+                    local target_moved = true
+                    if path_target and path_target.platform == to and path_target.scene_generation == generation
+                        and path_target.x ~= nil and path_target.y ~= nil then
+                        local dx, dy = action.x - path_target.x, action.y - path_target.y
+                        local stop_distance = action.stop_distance or (bot.config or defaults).stop_distance
+                            or defaults.stop_distance
+                        target_moved = dx * dx + dy * dy >= stop_distance * stop_distance
+                    end
+                    if target_moved then
                         local character_data = context.game.character
                         local movement = character_data and character_data.movement or {}
                         local model = type(movement.model) == "table" and movement.model
@@ -174,7 +193,9 @@ local function main(context)
                             if edges then
                                 local set, set_error = move.set_path(memory.mover, edges)
                                 if set then
-                                    memory.path_target = {platform = to, scene_generation = generation}
+                                    memory.path_target = {
+                                        platform = to, scene_generation = generation, x = action.x, y = action.y,
+                                    }
                                 else
                                     bot.last_error = set_error or "set_path_failed"
                                     move.stop(memory.mover)

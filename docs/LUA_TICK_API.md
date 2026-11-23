@@ -80,7 +80,7 @@ end
 
 | 上下文 | 语义 |
 | --- | --- |
-| `context.tick` | 只读；`index` 为实际调用序号而非宿主帧号，`time/delta` 为各次真实调用的单调时间及间隔（秒），`gear` 为本会话有效档位，`scene_generation` 为当前场景代次，`overrun` 表示上次调用超限 |
+| `context.tick` | 只读；`script_id` 为当前 Runtime 会话 ID；`index` 为实际调用序号而非宿主帧号，`time/delta` 为各次真实调用的单调时间及间隔（秒），`gear` 为本会话有效档位，`scene_generation` 为当前场景代次，`overrun` 表示上次调用超限 |
 | `context.state` | 脚本自有可写表，跨 tick 保留，不解释、不序列化、不落盘 |
 | `context.options` | 策略参数及有效默认值；脚本未声明参数时为空表 |
 | `context.scene` | 原生维护的当前只读静态场景；身份和 `terrain` 随地图及场景代次更新，与动态实体领域 `context.game.scene` 分开 |

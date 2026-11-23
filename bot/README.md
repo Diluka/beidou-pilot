@@ -67,11 +67,11 @@ source=host
 
 脚本在约 0.5 秒间隔扫描队列。命令处理后移动到 `queue/done/<id>`（内容 `ok`）或 `queue/rejected/<id>`（内容 `rejected=<reason>`）；重复 ID 不会再次执行，最近 100 个 ID 会留在会话内去重。`ttl=0` 不过期；正 TTL 从命令文件修改时间起计时，过期命令写入拒绝回执。`status` 立即发布状态。
 
-follow 返回 `wait` 时主流程停止现有 mover；路径只在目标平台或场景代次变化时重算，避免每 tick 重置路径。
+follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代次变化，或 owner 的期望位置移动达到 `stop_distance` 时重算路径，同平台内的小幅位置变化继续复用路径。
 
-`/work/bot/state.json` 原子更新，常规间隔约 1 秒；`/work/bot/events.jsonl` 记录命令、模式和错误事件，单文件达到 1 MiB 时滚动到 `events.1.jsonl`。启动进入 `recover`，只有世界就绪且当前地形可用才转为 `idle`；checkpoint 当前只校验并保留，不重放上次动作或恢复旧模式/目标。
+`/work/bot/state.json` 原子更新，常规间隔约 1 秒；`/work/bot/events.jsonl` 记录命令、模式和错误事件，单文件达到 1 MiB 时滚动到 `events.1.jsonl`。启动进入 `recover`；世界就绪且当前场景有可用地形图时转为 `idle`，不要求 `move.new` 已实现。checkpoint 当前只校验并保留，不重放上次动作或恢复旧模式/目标。
 
-当前 Tick API 不提供脚本运行 ID，因此 `state.json.session_id` 保持 `null`；此字段需要宿主/Runtime 提供后才能填入实际 `script-id`。
+`state.json.session_id` 取自只读 `context.tick.script_id`，即当前 Runtime tick 会话 ID。
 
 ## 离线测试
 

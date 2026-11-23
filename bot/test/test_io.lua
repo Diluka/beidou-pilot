@@ -86,7 +86,7 @@ local function add_command(seq, id, body, mtime)
     return path
 end
 
-local context = {state = {bot_root = root, bot = {mode = "recover"}, started_at = 1}}
+local context = {tick = {script_id = "test-session"}, state = {bot_root = root, bot = {mode = "recover"}, started_at = 1}}
 local valid_path = add_command(1, "c1", "id=c1\nkind=status\nttl=0\nsource=host\n")
 local commands = assert(io_module.poll(context, 1))
 assert(#commands == 1 and commands[1].id == "c1" and commands[1].kind == "status")
@@ -96,6 +96,7 @@ context.state.force_publish = true
 assert(io_module.publish(context, {character = {}}, 1))
 assert(files[root .. "/queue/done/c1"] == "ok\n" and files[valid_path] == nil)
 assert(files[root .. "/state.json"]:find('"last_command":null', 1, true))
+assert(files[root .. "/state.json"]:find('"session_id":"test-session"', 1, true))
 
 local duplicate_path = add_command(2, "c1", "id=c1\nkind=stop\nttl=0\nsource=host\n")
 commands = assert(io_module.poll(context, 2))
@@ -229,17 +230,21 @@ local fake_modules = {
             end
             return true
         end,
+        transition = function(state, mode)
+            state.mode = mode
+            return true
+        end,
     },
     ["lib.world"] = {observe = function() calls[#calls + 1] = "observe"; return {
         ready = true, scene_generation = 1, character = {x = 1, y = 2, hp = 50},
     } end},
     ["lib.terrain"] = {
-        build = function() error("unexpected terrain build") end,
+        build = function() calls[#calls + 1] = "build"; return {} end,
         platform_at = function(_, x) return x == 1 and 1 or target_platform end,
         plan = function() calls[#calls + 1] = "plan"; return {} end,
     },
     ["lib.move"] = {
-        new = function() error("unexpected mover creation") end,
+        new = function() calls[#calls + 1] = "new"; return nil, "not_implemented" end,
         set_path = function()
             calls[#calls + 1] = "set_path"
             mover_stopped = false
@@ -308,6 +313,27 @@ calls, sustain_handled = {}, true
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,publish")
 
+calls, sustain_handled = {}, false
+local recovery_context = {
+    tick = {time = 20},
+    state = {bot = {mode = "recover", config = {}}, last_poll = 20, started_at = 1},
+    game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
+    scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
+}
+environment.__test_main(recovery_context)
+assert(recovery_context.state.bot.mode == "idle")
+assert(table.concat(calls, ",") == "observe,build,event,sustain,publish")
+assert(recovery_context.state.mover == nil, "recovery must not require or create a mover")
+
+recovery_context.state.bot.mode, recovery_context.tick.time, calls = "follow", 20.1, {}
+environment.__test_main(recovery_context)
+assert(table.concat(calls, ",") == "observe,sustain,new,publish")
+assert(recovery_context.state.mover == nil and recovery_context.state.mover_attempt_generation == 1)
+
+recovery_context.tick.time, calls = 20.2, {}
+environment.__test_main(recovery_context)
+assert(table.concat(calls, ",") == "observe,sustain,publish", "do not retry an unavailable mover each tick")
+
 local bot_memory = pipeline_context.state
 bot_memory.bot.mode, sustain_handled = "follow", false
 bot_memory.path_target = {platform = 1, scene_generation = 1}
@@ -316,14 +342,26 @@ environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,follow,stop,publish")
 assert(bot_memory.path_target == nil)
 
-follow_action, bot_memory.path_target, calls = {kind = "move", x = 20, y = 2}, {platform = 1, scene_generation = 1}, {}
+follow_action, bot_memory.path_target, calls = {kind = "move", x = 20, y = 2, stop_distance = 40},
+    {platform = 1, scene_generation = 1, x = 20, y = 2}, {}
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,follow,move,publish")
+
+follow_action, calls = {kind = "move", x = 50, y = 2, stop_distance = 40}, {}
+environment.__test_main(pipeline_context)
+assert(table.concat(calls, ",") == "observe,sustain,follow,move,publish")
+assert(bot_memory.path_target.x == 20, "sub-threshold same-platform movement should keep the path anchor")
+
+follow_action, calls = {kind = "move", x = 70, y = 2, stop_distance = 40}, {}
+environment.__test_main(pipeline_context)
+assert(table.concat(calls, ",") == "observe,sustain,follow,plan,set_path,move,publish")
+assert(bot_memory.path_target.x == 70, "same-platform movement beyond stop_distance should replan")
 
 target_platform, calls = 2, {}
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,follow,plan,set_path,move,publish")
-assert(bot_memory.path_target.platform == 2 and bot_memory.path_target.scene_generation == 1)
+assert(bot_memory.path_target.platform == 2 and bot_memory.path_target.scene_generation == 1
+    and bot_memory.path_target.x == 70 and bot_memory.path_target.y == 2)
 calls = {}
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,follow,move,publish")
