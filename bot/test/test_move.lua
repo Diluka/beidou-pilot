@@ -1,8 +1,12 @@
 package.path = "bot/?.lua;" .. package.path
 local move = require("lib.move")
 local direction
-player = {move = function(value) direction = value end}
-local ctx = {tick = {time = 0}}
+player = nil
+game = {player = {
+    move = function(value) assert(value == nil or value == "left" or value == "right"); direction = value end,
+    stop = function() error("mover must not clear the action slot") end,
+}}
+local ctx = {tick = {time = 0}, game = game}
 local world = {character = {x = 0, y = 0, on_ground = true}}
 local mover = move.new({})
 assert(move.set_path(mover, {{kind = "walk", destination = 100}}))

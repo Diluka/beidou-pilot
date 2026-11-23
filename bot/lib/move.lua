@@ -12,7 +12,7 @@ function M.set_path(mover, edges)
 end
 
 function M.stop(mover)
-    player.move(nil)
+    game.player.move(nil)
     mover.status, mover.started = "done", nil
 end
 
@@ -36,7 +36,7 @@ function M.step(mover, ctx, world)
         reason = "character_unavailable"
     end
     if reason then
-        player.move(nil)
+        game.player.move(nil)
         mover.status, mover.reason = "failed", reason
         return "failed", reason
     end
@@ -47,7 +47,7 @@ function M.step(mover, ctx, world)
     end
     if edge.kind == "walk" and math.abs(character.x - edge.destination) <= 12
         or edge.kind == "step" and (character.y - mover.start_y >= 10 or (mover.airborne and character.on_ground)) then
-        player.move(nil)
+        game.player.move(nil)
         mover.index, mover.started, mover.retries = mover.index + 1, nil, 0
         if mover.index > #mover.edges then mover.status = "done"; return "done" end
         return "running"
@@ -60,7 +60,7 @@ function M.step(mover, ctx, world)
         mover.progress_time, mover.progress_x = now, character.x
     end
     if reason then
-        player.move(nil)
+        game.player.move(nil)
         if mover.retries < 1 then
             mover.retries, mover.started = mover.retries + 1, nil
             return "running"
@@ -68,7 +68,7 @@ function M.step(mover, ctx, world)
         mover.status, mover.reason = "failed", reason
         return "failed", reason
     end
-    player.move(character.x < edge.destination and "right" or "left")
+    ctx.game.player.move(character.x < edge.destination and "right" or "left")
     return "running"
 end
 
