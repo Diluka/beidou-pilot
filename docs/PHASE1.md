@@ -198,7 +198,7 @@ function M.observe(ctx) -> world
 local function main(context) ... end
 ```
 
-主流程负责创建唯一 `mover = move.new(graph)`，用 `terrain.platform_at` 填充 `character/owner/mobs/drops.platform`，并把 `mover` 传给 `combat.step`/`loot.step`；模块不各自创建 mover。
+主流程用 `terrain.platform_at` 填充 `character/owner/mobs/drops.platform`；仅在 `follow`/`hunt` 实际需要动作时尝试创建唯一 `mover = move.new(graph)`，并把可用 mover 传给 `combat.step`/`loot.step`。恢复到 `idle` 不依赖 mover。
 
 ### 6.6 文件与命令
 
@@ -215,6 +215,8 @@ local function main(context) ... end
 /work/bot/config.conf             owner、技能/药品、阈值、安全点
 /work/bot/checkpoint.conf         模式/目标
 ```
+
+启动从 `recover` 开始，不恢复 checkpoint 中的旧模式/目标，也不重放旧动作；世界就绪且本场景地形图可用后进入 `idle`。当前 checkpoint 仅做格式校验并保留。
 
 `state.json` 最小字段：
 
