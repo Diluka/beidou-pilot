@@ -64,7 +64,7 @@ end
 
 local main_chunk, main_error = loadfile("bot/main.lua")
 assert(main_chunk, main_error)
-for _, path in ipairs({"bot/test/capture_terrain.lua", "bot/test/owner_drive.lua", "bot/test/test_terrain.lua", "bot/test/test_sustain.lua"}) do
+for _, path in ipairs({"bot/test/capture_terrain.lua", "bot/test/owner_drive.lua", "bot/test/test_terrain.lua", "bot/test/test_move.lua", "bot/test/test_sustain.lua"}) do
     local chunk, load_error = loadfile(path)
     assert(chunk, load_error)
 end
@@ -280,10 +280,7 @@ local function check_stub(fn, expected_status, ...)
     assert(status == expected_status and detail == "not_implemented", "stub return contract changed")
 end
 
-check_stub(modules.move.new, nil, {})
-check_stub(modules.move.set_path, false, {}, {})
-check_stub(modules.move.step, "failed", {}, {}, {})
-check_stub(modules.move.stop, false, {})
+dofile("bot/test/test_move.lua")
 check_stub(modules.follow.update, nil, {}, {})
 check_stub(modules.combat.select, nil, {}, {})
 check_stub(modules.combat.step, "failed", {}, {}, {}, {})
