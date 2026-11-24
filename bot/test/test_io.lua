@@ -244,7 +244,11 @@ local fake_modules = {
     ["lib.terrain"] = {
         build = function() calls[#calls + 1] = "build"; return {} end,
         platform_at = function(_, x) return x == 1 and 1 or target_platform end,
-        plan = function() calls[#calls + 1] = "plan"; return {} end,
+        plan = function(_, from, to)
+            calls[#calls + 1] = "plan"
+            if from == to then return {} end
+            return {{kind = "walk", from = from, to = to, x = 1, destination = 20, rise = 0}}
+        end,
     },
     ["lib.move"] = {
         new = function()

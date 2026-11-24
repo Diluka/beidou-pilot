@@ -93,7 +93,7 @@ local function main(context)
     local terrain_scene = scene and scene.terrain
     local generation = world.scene_generation
     if memory.graph_generation ~= generation then
-        memory.graph, memory.mover, memory.path_target = nil, nil, nil
+        memory.graph, memory.mover, memory.path_target, memory.follow_unreachable = nil, nil, nil, nil
         memory.graph_generation, memory.graph_attempt_generation, memory.mover_attempt_generation = nil, nil, nil
     end
     if generation ~= nil and memory.graph_generation ~= generation
@@ -160,11 +160,7 @@ local function main(context)
         local skip_movement = false
         if bot.mode == "follow" then
             local action, follow_error = follow.update(context, world)
-            if action and action.kind == "wait" then
-                if memory.mover then move.stop(memory.mover) end
-                memory.path_target = nil
-                skip_movement = true
-            elseif action and action.kind == "move" then
+            if action and action.kind == "move" then
                 local from = world.character and world.character.platform
                 local to = terrain.platform_at(memory.graph, action.x, action.y, tolerance)
                 if from and to then
@@ -207,7 +203,10 @@ local function main(context)
                                     }}
                                 end
                             end
-                            if edges then
+                            if from ~= to and (plan_error == "no_path" or (edges and #edges == 0)) then
+                                memory.follow_unreachable = {from = from, to = to}
+                                action = follow.update(context, world)
+                            elseif edges then
                                 local set, set_error = move.set_path(memory.mover, edges)
                                 if set then
                                     memory.path_target = {
@@ -232,6 +231,11 @@ local function main(context)
                 end
             elseif follow_error and follow_error ~= "not_implemented" then
                 bot.last_error = follow_error
+            end
+            if action and action.kind == "wait" then
+                if memory.mover then move.stop(memory.mover) end
+                memory.path_target = nil
+                skip_movement = true
             end
         elseif bot.mode == "hunt" then
             mob = combat.select(world, bot.config or defaults)

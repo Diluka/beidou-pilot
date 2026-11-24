@@ -166,6 +166,57 @@ function M.platform_at(graph, x, y, tolerance)
     return best_index
 end
 
+-- Height envelope of the segments that intersect a possible launch/landing strip.
+local function height_range(platform, left, right, require_floor)
+    if right < platform.left or platform.right < left then return nil end
+    local low, high, covered = nil, nil, left
+    local segments = platform.segments -- native segments are ordered left to right
+    for i = 1, #segments, 4 do
+        local a, b, y, end_y = segments[i], segments[i + 1], segments[i + 2], segments[i + 3]
+        if a <= right and b >= left and (a < b or y == end_y) then
+            if require_floor and a > covered then return nil end
+            covered = math.max(covered, b)
+            local slope = a < b and (end_y - y) / (b - a) or 0
+            local y1 = y + (math.max(left, a) - a) * slope
+            local y2 = y + (math.min(right, b) - a) * slope
+            low, high = math.min(low or y1, y1, y2), math.max(high or y1, y1, y2)
+        end
+    end
+    if require_floor and covered < right then return nil end
+    return low, high
+end
+
+local function vertical_launch(platforms, from, to, probe, max_rise, apex)
+    local source, target = platforms[from], platforms[to]
+    -- move aligns to within 8px. Check the whole strip, not just its midpoint.
+    local tolerance = 8
+    local left = math.max(source.left, target.left) + tolerance
+    local right = math.min(source.right, target.right) - tolerance
+    if left > right then return nil end
+    for _, x in ipairs({probe, left, right}) do
+        if left <= x and x <= right then
+            local lo, hi = x - tolerance, x + tolerance
+            local top, bottom = height_range(source, lo, hi, true)
+            local target_top, target_bottom = height_range(target, lo, hi, true)
+            if top and target_top and bottom - target_top <= max_rise and target_bottom < top then
+                local clear = true
+                for i, p in ipairs(platforms) do
+                    if i ~= from and i ~= to then
+                        local near, far = height_range(p, lo, hi)
+                        if near and near <= target_bottom and far >= top - apex then
+                            clear = false
+                            break
+                        end
+                    end
+                end
+                if clear then
+                    return x, height_range(source, x, x) - height_range(target, x, x)
+                end
+            end
+        end
+    end
+end
+
 function M.plan(graph, from_index, to_index, options)
     if type(graph) ~= "table" or type(graph.model) ~= "table"
         or not finite_number(graph.model.jump_rise)
@@ -215,7 +266,12 @@ function M.plan(graph, from_index, to_index, options)
                     and not blocked[tostring(from) .. ":" .. tostring(to)]
                 if valid then
                     if kind == "jumpup" then
-                        valid = rise <= math.min(model.jump_rise, max_jump_height)
+                        local max_rise = math.min(model.jump_rise, max_jump_height)
+                        valid = rise <= max_rise
+                        if valid and x == destination then
+                            x, rise = vertical_launch(platforms, from, to, x, max_rise, max_jump_height)
+                            valid, destination = x ~= nil, x
+                        end
                     elseif kind == "drop" then
                         valid = rise >= model.drop_min and rise <= model.drop_max
                     elseif kind == "rope" then
