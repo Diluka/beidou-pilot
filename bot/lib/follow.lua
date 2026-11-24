@@ -56,6 +56,21 @@ function M.update(ctx, world)
         return wait("owner_absent")
     end
 
+    local unreachable = ctx.state.follow_unreachable
+    if unreachable then
+        if unreachable.from == character.platform and unreachable.to == owner.platform then
+            local now = ctx.tick.time
+            local last_event = ctx.state.follow_unreachable_event_at
+            if last_event == nil or now - last_event >= EVENT_INTERVAL then
+                require("lib.io").event(ctx, "follow/wait", {reason = "owner_platform_unreachable",
+                    from = unreachable.from, to = unreachable.to, scene_generation = world.scene_generation})
+                ctx.state.follow_unreachable_event_at = now
+            end
+            return wait("owner_platform_unreachable")
+        end
+        ctx.state.follow_unreachable = nil
+    end
+
     local distance = math.abs(matched_owner.x - character.x)
     if distance < STOP_DISTANCE then return wait("close_enough") end
     if distance <= FOLLOW_DISTANCE then return wait("deadband") end

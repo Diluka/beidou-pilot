@@ -121,5 +121,59 @@ absent_context.tick.time = 92
 follow.update(absent_context, absent_world)
 assert(#events == 3, "a new absence episode must eventually emit its event")
 
+-- Exercise the real follow -> plan -> mover pipeline with disconnected platforms.
+local terrain = require("lib.terrain")
+local raw_plan, raw_poll, raw_publish, raw_game = terrain.plan, io_module.poll, io_module.publish, game
+local plans, inputs = 0, {}
+terrain.plan = function(...)
+    plans = plans + 1
+    return raw_plan(...)
+end
+io_module.poll = function() return {} end
+io_module.publish = function() return true end
+local owner = {character_id = 12, x = 275, y = 160}
+local navigation = dofile("bot/test/fixtures/synthetic.lua").navigation
+ctx = context({owner})
+ctx.state.bot = {mode = "follow", target = "12"}
+ctx.scene = {terrain = {status = "available", navigation = navigation}}
+-- Start on the wide platform 1, remove outgoing edges, and place the owner on 4.
+navigation.candidates = {walk = {}, step = {}, jumpup = {}, drop = {}, rope = {}}
+ctx.game.character = {x = 1, y = 100, hp = 50, max_hp = 50, mp = 10, max_mp = 10,
+    movement = {max_speed = 100, max_jump_height = 50}}
+ctx.game.world = {ready = true, map_id = 102000000, scene_generation = 1}
+ctx.game.inventory = {items = {}}
+ctx.game.player = {move = function(dir) if dir then inputs[#inputs + 1] = dir end; return true end,
+    skill = function(id) assert(id == nil); return true end}
+game = ctx.game
+local main_file = assert(io.open("bot/main.lua"))
+local tick = assert(load(main_file:read("*a") .. "\nreturn main", "bot/main.lua"))()
+main_file:close()
+events = {}
+for now = 0, 31 do
+    ctx.tick.time = now
+    owner.x = now % 2 == 0 and 275 or 290
+    tick(ctx)
+    assert(ctx.state.bot.mode == "follow" and ctx.state.bot.last_error == nil,
+        "no path to the owner is a wait, not a follow error")
+    assert(#inputs == 0 and plans == 1, "do not move or replan for the same unreachable platform")
+    if now == 0 then
+        assert(#events == 1 and events[1].data.reason == "owner_platform_unreachable")
+    end
+end
+assert(#events == 2 and events[2].data.reason == "owner_platform_unreachable", "throttle the wait event")
+ctx.game.world.scene_generation = 2
+tick(ctx)
+assert(plans == 2 and #inputs == 0, "a new scene generation must recheck the same platform pair")
+owner.x, owner.y = 98, 100
+tick(ctx)
+assert(plans == 3 and inputs[1] == "right", "follow must resume walking when the owner returns to platform 1")
+assert(ctx.state.bot.mode == "follow" and ctx.state.bot.last_error == nil)
+-- An empty cross-platform result must also stop the old walk, not signal arrival.
+terrain.plan = function() plans = plans + 1; return {} end
+owner.x, owner.y, ctx.tick.time = 275, 160, 62
+tick(ctx)
+assert(plans == 4 and #inputs == 1 and ctx.state.mover.status == "done" and ctx.state.path_target == nil)
+assert(events[#events].data.reason == "owner_platform_unreachable" and ctx.state.bot.last_error == nil)
+terrain.plan, io_module.poll, io_module.publish, game = raw_plan, raw_poll, raw_publish, raw_game
 io_module.event = saved_event
 print("follow tests ok")
