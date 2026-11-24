@@ -41,16 +41,6 @@ assert(direction == nil)
 assert(move.set_path(mover, {{kind = "walk"}}))
 status, reason = step(mover, ctx, world)
 assert(status == "failed" and reason == "invalid_edge" and direction == nil)
-world.character.on_ground = nil
-assert(move.set_path(mover, {{kind = "step", destination = 100}}))
-assert(step(mover, ctx, world) == "running")
-world.character.on_ground = true
-assert(step(mover, ctx, world) == "running")
-world.character.on_ground = false
-ctx.tick.time = 5
-assert(step(mover, ctx, world) == "running")
-world.character.on_ground = true
-assert(step(mover, ctx, world) == "done" and direction == nil)
 assert(move.set_path(mover, {{kind = "walk", destination = 1000}}))
 for attempt = 1, 2 do
     for i = 0, 10 do
@@ -318,4 +308,41 @@ step(mover,ctx,world)
 world.character.y=-80; world.character.on_ground=false
 status,reason=step(mover,ctx,world)
 assert(status=="failed" and reason=="landing_mismatch")
+-- Use real platform lookup: a step can pass near a platform while airborne.
+local step_edge = {kind="step", from=1, to=2, destination=30}
+mover = move.new({platforms={
+    {left=0,right=20,segments={0,20,0,12}},
+    {left=25,right=40,segments={25,40,24,24}},
+    {left=0,right=50,segments={0,50,100,100}},
+}})
+local action_released
+game.player.skill = function(value) assert(value == nil); action_released = true; return true end
+for _, landing in ipairs({{30,24,"done"}, {30,100,"failed"}, {20,12,"failed"}}) do
+    action_released = false
+    begin(step_edge)
+    assert(step(mover,ctx,world)=="running")
+    world.character.x, world.character.y, world.character.on_ground = 30,24,false
+    assert(step(mover,ctx,world)=="running" and mover.index==1, "airborne near target is not a landing")
+    world.character.x, world.character.y, world.character.on_ground = landing[1],landing[2],true
+    status,reason=step(mover,ctx,world)
+    assert(status==landing[3] and direction==nil)
+    if status=="failed" then assert(reason=="landing_mismatch" and mover.index==1 and action_released) end
+end
+begin(step_edge)
+assert(step(mover,ctx,world)=="running")
+world.character.x, world.character.y = 20,12
+assert(step(mover,ctx,world)=="running", "descending a source slope is not arrival")
+world.character.x, world.character.y = 30,24
+world.character.on_ground = nil
+assert(step(mover,ctx,world)=="running", "an unknown ground state cannot confirm arrival")
+world.character.on_ground = true
+assert(step(mover,ctx,world)=="done", "a grounded crossing needs no airborne sample")
+begin(step_edge)
+assert(step(mover,ctx,world)=="running")
+world.character.x, world.character.y = 30,100
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="landing_mismatch", "a missed airborne sample cannot hide the wrong platform")
+assert(move.set_path(mover, {{kind="step", destination=30}}))
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="invalid_edge", "a step needs a target platform")
 print("move tests ok")
