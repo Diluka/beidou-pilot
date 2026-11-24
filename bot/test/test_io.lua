@@ -208,6 +208,7 @@ local created_mover
 local sustain_handled, movement_result = false, "done"
 local combat_result, combat_reason, follow_action = "done", nil, nil
 local target_platform, mover_stopped, pending_commands = 1, false, {}
+local last_set_path_edges
 local scene_generation = 1
 local fake_modules = {
     ["lib.io"] = {
@@ -251,8 +252,9 @@ local fake_modules = {
             if created_mover then return created_mover end
             return nil, "not_implemented"
         end,
-        set_path = function()
+        set_path = function(_, edges)
             calls[#calls + 1] = "set_path"
+            last_set_path_edges = edges
             mover_stopped = false
             return true
         end,
@@ -394,6 +396,10 @@ calls = {}
 environment.__test_main(follow_context)
 assert(table.concat(calls, ",") == "observe,sustain,follow,new,plan,set_path,move,publish")
 assert(follow_context.state.mover == created_mover and follow_context.state.path_target.x == 20)
+assert(last_set_path_edges and #last_set_path_edges == 1
+    and last_set_path_edges[1].kind == "walk"
+    and last_set_path_edges[1].destination == 20,
+    "same-platform follow with an empty A* path must fall back to a direct walk edge")
 
 selected_mob, selected_drop, created_mover, movement_result, combat_result = {}, {}, {}, "done", "done"
 local combat_context = {
