@@ -64,7 +64,7 @@ end
 
 local main_chunk, main_error = loadfile("bot/main.lua")
 assert(main_chunk, main_error)
-for _, path in ipairs({"bot/test/capture_terrain.lua", "bot/test/owner_drive.lua", "bot/test/test_terrain.lua", "bot/test/test_move.lua", "bot/test/test_sustain.lua", "bot/test/test_combat.lua"}) do
+for _, path in ipairs({"bot/test/capture_terrain.lua", "bot/test/owner_drive.lua", "bot/test/test_terrain.lua", "bot/test/test_move.lua", "bot/test/test_sustain.lua", "bot/test/test_follow.lua", "bot/test/test_combat.lua"}) do
     local chunk, load_error = loadfile(path)
     assert(chunk, load_error)
 end
@@ -281,12 +281,12 @@ local function check_stub(fn, expected_status, ...)
 end
 
 dofile("bot/test/test_move.lua")
-check_stub(modules.follow.update, nil, {}, {})
 check_stub(modules.loot.select, nil, {}, {})
 check_stub(modules.loot.step, "failed", {}, {}, {}, {})
 dofile("bot/test/test_io.lua")
 
 dofile("bot/test/test_terrain.lua")
 dofile("bot/test/test_sustain.lua")
+dofile("bot/test/test_follow.lua")
 dofile("bot/test/test_combat.lua")
 print("bot smoke ok: 9 modules")
