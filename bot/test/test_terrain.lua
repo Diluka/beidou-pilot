@@ -116,6 +116,28 @@ assert(terrain.platform_at(overlap_graph, 50, 91, 10) == 2,
 assert(terrain.platform_at(overlap_graph, 50, 95, 10) == 1,
     "equidistant overlapping platforms must choose the lower index")
 
+-- A stationary vertical jump first touches the highest reachable surface on descent,
+-- not necessarily the pair used to generate the native candidate.
+local stacked = navigation_with_platforms({
+    {index=1, left=0, right=100, open_left=true, open_right=true, segments={0,100,100,100}},
+    {index=2, left=0, right=100, open_left=true, open_right=true, segments={0,100,60,60}},
+    {index=3, left=0, right=100, open_left=true, open_right=true, segments={0,100,35,35}},
+})
+stacked.candidates.jumpup = {1,2,50,50,40}
+local stacked_graph = assert(terrain.build(stacked))
+local shadowed, why = terrain.plan(stacked_graph,1,2)
+assert(not shadowed and why == "no_path", "a higher landing surface intercepts this candidate across its entire width")
+assert(terrain.plan(stacked_graph,1,2,{max_jump_height=55}), "a platform above the apex does not intercept")
+stacked.platforms[3].left = 47
+stacked.platforms[3].segments = {47,100,35,35}
+local clear = assert(terrain.plan(stacked_graph,1,2))[1]
+assert(clear.kind=="jumpup" and clear.x==clear.destination and clear.x+8<47 and clear.to==2,
+    "use an unobstructed column of the same pair, including approach tolerance")
+assert(stacked.candidates.jumpup[3]==50, "alternate launch columns must not modify the native snapshot")
+stacked.platforms[2].segments = {0,5,60,60, 45,48,60,60, 52,55,60,60, 95,100,60,60}
+shadowed, why = terrain.plan(stacked_graph,1,2,{max_jump_height=55})
+assert(not shadowed and why=="no_path", "a platform's bounding box alone cannot support a landing strip")
+
 local sloped_navigation = navigation_with_platforms({
     {index = 1, left = 0, right = 100, open_left = true, open_right = true, segments = {0, 100, 100, 50}},
 })
@@ -171,6 +193,14 @@ assert(bad_graph == nil and bad_reason == "navigation_invalid:ropes", "sparse ro
 
 assert(real.map_id == 102000000 and real.scene_generation == 3, "character sample must match the captured map fixture")
 local real_graph = assert(terrain.build(real.navigation))
+-- The captured p87 starts at x=1200 and intercepts the old p125->86 column.
+-- There is a clear overlap to its left; p85->87 still has a direct jump too.
+local movement = {speed=125, max_jump_height=77.01}
+local first = assert(terrain.plan(real_graph,125,86,movement))[1]
+assert(first.kind=="jumpup" and first.to==86 and first.x==first.destination
+    and first.x-8>=real_graph.platforms[86].left and first.x+8<real_graph.platforms[87].left)
+first = assert(terrain.plan(real_graph,85,87,movement))[1]
+assert(first.kind=="jumpup" and first.to==87)
 -- Observed in the existing dev/observer record for map 102000000, scene generation 3.
 local character_x, character_y = 2452, 1935
 local character_platform = terrain.platform_at(real_graph, character_x, character_y, 25)

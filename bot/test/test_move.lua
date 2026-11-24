@@ -260,6 +260,7 @@ for _, mode in ipairs({"character", "edge"}) do
     assert(committed_action=="jump")
 end
 terrain.platform_at = platform_at
+game.character = {physics={velocity={x=0}}}
 game.player.move = function(value) direction = value; return true end
 game.player.jump = function() return true end
 game.player.skill = function() return true end
@@ -318,4 +319,51 @@ step(mover,ctx,world)
 world.character.y=-80; world.character.on_ground=false
 status,reason=step(mover,ctx,world)
 assert(status=="failed" and reason=="landing_mismatch")
+-- Captured overlap: p125 approaches x=1220.5 from the right at full walk
+-- speed. Accepting the position alone launches a moving jump onto p85.
+local real = assert(terrain.build(dofile("bot/test/fixtures/map_102000000.lua").navigation))
+local edge = {kind="jumpup", from=125, to=86, x=1220.5, destination=1220.5, rise=54.5}
+for _, landing in ipairs({{1188,1824,86}, {1162,1852,85}, {1216,1800,87}}) do
+    mover = move.new(real)
+    local launch = landing[3]==86 and 1183 or 1220.5
+    begin({kind="jumpup", from=125, to=86, x=launch, destination=launch})
+    game.character = {physics={velocity={x=-125}}}
+    game.player.jump = function() action = "jump"; return true end
+    game.player.skill = function() action = nil; return true end
+    action = nil
+    world.character.x, world.character.y = 1237,1875
+    assert(step(mover,ctx,world)=="running" and direction=="left")
+    world.character.x = math.floor(launch + 6)
+    assert(step(mover,ctx,world)=="running" and not direction and not action,
+        "release the approach direction and brake on the source platform before jumping")
+    assert(step(mover,ctx,world)=="running" and not direction and not action,
+        "another Lua tick is not proof that the approach velocity has dissipated")
+    world.character.x, game.character.physics.velocity.x = math.floor(launch + 5),0
+    assert(step(mover,ctx,world)=="running" and action=="jump" and direction==nil,
+        "a vertical overlap jump must not steer toward a fractional probe coordinate")
+    world.character.y, world.character.on_ground = 1858,false
+    assert(step(mover,ctx,world)=="running" and not action)
+    world.character.x, world.character.y, world.character.on_ground = landing[1],landing[2],true
+    assert(terrain.platform_at(real,landing[1],landing[2],20)==landing[3])
+    status,reason=step(mover,ctx,world)
+    if landing[3]==edge.to then assert(status=="done")
+    else assert(status=="failed" and reason=="landing_mismatch") end
+    assert(direction==nil and action==nil)
+end
+-- Unknown speed is not proof of rest; a never-settling approach remains bounded.
+for _, physics in ipairs({{}, {velocity={x=-125}}}) do
+    mover = move.new(real)
+    begin(edge)
+    game.character = {physics=physics}
+    world.character.x, world.character.y = 1220,1875
+    status,reason=step(mover,ctx,world)
+    if physics.velocity then
+        assert(status=="running" and not direction and not action)
+        ctx.tick.time=10
+        status,reason=step(mover,ctx,world)
+        assert(reason=="timeout")
+    else assert(reason=="character_unavailable") end
+    assert(status=="failed" and not direction and not action)
+end
+game.character=nil
 print("move tests ok")
