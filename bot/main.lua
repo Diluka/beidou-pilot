@@ -198,6 +198,15 @@ local function main(context)
                                 speed = speed, max_jump_height = max_jump_height,
                                 blocked = memory.blocked or {},
                             })
+                            if edges and #edges == 0 and from == to and type(action.x) == "number" then
+                                local character = world.character or {}
+                                if type(character.x) == "number" then
+                                    edges = {{
+                                        kind = "walk", from = from, to = to,
+                                        x = character.x, destination = action.x, rise = 0,
+                                    }}
+                                end
+                            end
                             if edges then
                                 local set, set_error = move.set_path(memory.mover, edges)
                                 if set then
