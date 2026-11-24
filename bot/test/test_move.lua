@@ -41,16 +41,6 @@ assert(direction == nil)
 assert(move.set_path(mover, {{kind = "walk"}}))
 status, reason = step(mover, ctx, world)
 assert(status == "failed" and reason == "invalid_edge" and direction == nil)
-world.character.on_ground = nil
-assert(move.set_path(mover, {{kind = "step", destination = 100}}))
-assert(step(mover, ctx, world) == "running")
-world.character.on_ground = true
-assert(step(mover, ctx, world) == "running")
-world.character.on_ground = false
-ctx.tick.time = 5
-assert(step(mover, ctx, world) == "running")
-world.character.on_ground = true
-assert(step(mover, ctx, world) == "done" and direction == nil)
 assert(move.set_path(mover, {{kind = "walk", destination = 1000}}))
 for attempt = 1, 2 do
     for i = 0, 10 do
@@ -260,6 +250,7 @@ for _, mode in ipairs({"character", "edge"}) do
     assert(committed_action=="jump")
 end
 terrain.platform_at = platform_at
+game.character = {physics={velocity={x=0}}}
 game.player.move = function(value) direction = value; return true end
 game.player.jump = function() return true end
 game.player.skill = function() return true end
@@ -318,4 +309,88 @@ step(mover,ctx,world)
 world.character.y=-80; world.character.on_ground=false
 status,reason=step(mover,ctx,world)
 assert(status=="failed" and reason=="landing_mismatch")
+-- Use real platform lookup: a step can pass near a platform while airborne.
+local step_edge = {kind="step", from=1, to=2, destination=30}
+mover = move.new({platforms={
+    {left=0,right=20,segments={0,20,0,12}},
+    {left=25,right=40,segments={25,40,24,24}},
+    {left=0,right=50,segments={0,50,100,100}},
+}})
+local action_released
+game.player.skill = function(value) assert(value == nil); action_released = true; return true end
+for _, landing in ipairs({{30,24,"done"}, {30,100,"failed"}, {20,12,"failed"}}) do
+    action_released = false
+    begin(step_edge)
+    assert(step(mover,ctx,world)=="running")
+    world.character.x, world.character.y, world.character.on_ground = 30,24,false
+    assert(step(mover,ctx,world)=="running" and mover.index==1, "airborne near target is not a landing")
+    world.character.x, world.character.y, world.character.on_ground = landing[1],landing[2],true
+    status,reason=step(mover,ctx,world)
+    assert(status==landing[3] and direction==nil)
+    if status=="failed" then assert(reason=="landing_mismatch" and mover.index==1 and action_released) end
+end
+begin(step_edge)
+assert(step(mover,ctx,world)=="running")
+world.character.x, world.character.y = 20,12
+assert(step(mover,ctx,world)=="running", "descending a source slope is not arrival")
+world.character.x, world.character.y = 30,24
+world.character.on_ground = nil
+assert(step(mover,ctx,world)=="running", "an unknown ground state cannot confirm arrival")
+world.character.on_ground = true
+assert(step(mover,ctx,world)=="done", "a grounded crossing needs no airborne sample")
+begin(step_edge)
+assert(step(mover,ctx,world)=="running")
+world.character.x, world.character.y = 30,100
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="landing_mismatch", "a missed airborne sample cannot hide the wrong platform")
+assert(move.set_path(mover, {{kind="step", destination=30}}))
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="invalid_edge", "a step needs a target platform")
+-- Captured overlap: p125 approaches x=1220.5 from the right at full walk
+-- speed. Accepting the position alone launches a moving jump onto p85.
+local real = assert(terrain.build(dofile("bot/test/fixtures/map_102000000.lua").navigation))
+local edge = {kind="jumpup", from=125, to=86, x=1220.5, destination=1220.5, rise=54.5}
+for _, landing in ipairs({{1188,1824,86}, {1162,1852,85}, {1216,1800,87}}) do
+    mover = move.new(real)
+    local launch = landing[3]==86 and 1183 or 1220.5
+    begin({kind="jumpup", from=125, to=86, x=launch, destination=launch})
+    game.character = {physics={velocity={x=-125}}}
+    game.player.jump = function() action = "jump"; return true end
+    game.player.skill = function() action = nil; return true end
+    action = nil
+    world.character.x, world.character.y = 1237,1875
+    assert(step(mover,ctx,world)=="running" and direction=="left")
+    world.character.x = math.floor(launch + 6)
+    assert(step(mover,ctx,world)=="running" and not direction and not action,
+        "release the approach direction and brake on the source platform before jumping")
+    assert(step(mover,ctx,world)=="running" and not direction and not action,
+        "another Lua tick is not proof that the approach velocity has dissipated")
+    world.character.x, game.character.physics.velocity.x = math.floor(launch + 5),0
+    assert(step(mover,ctx,world)=="running" and action=="jump" and direction==nil,
+        "a vertical overlap jump must not steer toward a fractional probe coordinate")
+    world.character.y, world.character.on_ground = 1858,false
+    assert(step(mover,ctx,world)=="running" and not action)
+    world.character.x, world.character.y, world.character.on_ground = landing[1],landing[2],true
+    assert(terrain.platform_at(real,landing[1],landing[2],20)==landing[3])
+    status,reason=step(mover,ctx,world)
+    if landing[3]==edge.to then assert(status=="done")
+    else assert(status=="failed" and reason=="landing_mismatch") end
+    assert(direction==nil and action==nil)
+end
+-- Unknown speed is not proof of rest; a never-settling approach remains bounded.
+for _, physics in ipairs({{}, {velocity={x=-125}}}) do
+    mover = move.new(real)
+    begin(edge)
+    game.character = {physics=physics}
+    world.character.x, world.character.y = 1220,1875
+    status,reason=step(mover,ctx,world)
+    if physics.velocity then
+        assert(status=="running" and not direction and not action)
+        ctx.tick.time=10
+        status,reason=step(mover,ctx,world)
+        assert(reason=="timeout")
+    else assert(reason=="character_unavailable") end
+    assert(status=="failed" and not direction and not action)
+end
+game.character=nil
 print("move tests ok")
