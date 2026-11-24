@@ -322,8 +322,8 @@ inline void Connect(const std::vector<NavigationWall>& walls, double terrainLeft
                 if (!CrossesWall(walls, ax, bx, std::min(fromY, toY) - kBodyHeight, std::max(fromY, toY)))
                     add(navigation.walk, i + 1, j + 1, fromX, toX, rise);
             }
-            if (gap == 0 && rise > 6 && rise <= kJumpRise
-                && a.right - a.left >= kMinPlatformWidth && b.right - b.left >= kMinPlatformWidth) {
+            if (gap == 0 && rise > 6 && rise <= kJumpRise && a.right - a.left >= kMinPlatformWidth
+                && b.right - b.left >= kMinPlatformWidth) {
                 const double fromX = ax - direction * 6;
                 const double toX = bx + direction * 10;
                 const double fromY = height(a, fromX), toY = height(b, toX);
@@ -333,11 +333,12 @@ inline void Connect(const std::vector<NavigationWall>& walls, double terrainLeft
                     if (wall.x == ax && wall.bottom >= height(a, ax) && wall.top <= height(b, bx)) {
                         sharedWall = true;
                         if (wall.top < height(b, bx)) blocked = true;
-                    } else if (wall.x > std::min(fromX, toX) && wall.x < std::max(fromX, toX)
-                               && wall.top <= fromY && wall.bottom >= toY - kBodyHeight) {
+                    } else if (wall.x > std::min(fromX, toX) && wall.x < std::max(fromX, toX) && wall.top <= fromY
+                               && wall.bottom >= toY - kBodyHeight) {
                         blocked = true;
                     }
-                    if (wall.x != ax && std::abs(wall.x - toX) < kWallMargin && WallBlocks(wall, b, toX)) blocked = true;
+                    if (wall.x != ax && std::abs(wall.x - toX) < kWallMargin && WallBlocks(wall, b, toX))
+                        blocked = true;
                 }
                 for (int k = 0; k < static_cast<int>(platforms.size()); ++k) {
                     if (k == i || k == j) continue;
