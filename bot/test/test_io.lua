@@ -323,7 +323,7 @@ environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,select,move,combat,publish")
 calls, movement_result, combat_result, selected_mob, selected_drop = {}, "done", "done", nil, {}
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,move,loot_select,loot_step,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,move,loot_step,publish")
 calls, sustain_handled = {}, true
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,publish")
@@ -355,7 +355,7 @@ assert(recovery_context.state.mover_attempt_generation == nil, "wait must not cr
 selected_mob, selected_drop = nil, nil
 recovery_context.state.bot.mode, recovery_context.tick.time, calls = "hunt", 20.3, {}
 environment.__test_main(recovery_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,event,publish")
 assert(recovery_context.state.mover_attempt_generation == nil, "no hunt target must not create a mover")
 
 selected_mob, selected_drop = {}, nil
@@ -469,7 +469,7 @@ bot_memory.path_target, bot_memory.last_poll = {platform = 2, scene_generation =
 pending_commands, calls, mover_stopped = {{id = "switch-hunt", kind = "hunt", _ok = true, source = "host"}}, {}, false
 selected_mob, selected_drop, movement_result = nil, nil, "running"
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,poll,stop,event,event,sustain,select,move,loot_select,publish")
+assert(table.concat(calls, ",") == "observe,poll,stop,event,event,sustain,select,loot_select,stop,event,publish")
 assert(bot_memory.bot.mode == "hunt" and bot_memory.bot.target == nil)
 assert(bot_memory.path_target == nil and mover_stopped)
 
