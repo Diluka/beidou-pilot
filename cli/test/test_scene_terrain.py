@@ -169,6 +169,47 @@ class SceneTerrainContract(unittest.TestCase):
             self.assertEqual([ROPE], result["data"]["ropes"])
             self.assertNotIn("terrain", result["data"])
 
+    def test_wall_adjacent_upward_jumps(self) -> None:
+        # Observed map 10000 wall and floor endpoints, simplified to merged segments.
+        rows = [
+            (1, 225, 366, 485, 485), (2, 366, 456, 425, 425),
+            (3, 456, 495, 365, 365), (4, 366, 366, 425, 485),
+            (5, 456, 456, 365, 425),
+        ]
+        properties = {"info": {}, "foothold": {"1": {"0": {
+            str(i): {"x1": x1, "x2": x2, "y1": y1, "y2": y2, "prev": 0, "next": 0}
+            for i, x1, x2, y1, y2 in rows
+        }}}}
+        for backend, result in zip(self.executables, self.query(properties)):
+            with self.subTest(backend=backend):
+                edges = result["data"]["navigation"]["candidates"]["jumpup"]
+                tuples = [edges[i:i + 5] for i in range(0, len(edges), 5)]
+                self.assertIn([1, 2, 360, 376, 60], tuples)
+                self.assertIn([2, 3, 450, 466, 60], tuples)
+
+    def test_wall_jump_rejects_unsafe_geometry(self) -> None:
+        base = [(1, 225, 366, 485, 485), (2, 366, 456, 425, 425),
+                (3, 366, 366, 425, 485)]
+        cases = {
+            "wall_too_high": [base[0], base[1], (3, 366, 366, 420, 485)],
+            "rise_too_high": [base[0], (2, 366, 456, 409, 409), (3, 366, 366, 409, 485)],
+            "no_landing": [base[0], (2, 366, 366, 425, 425), base[2]],
+            "not_standable": [*base, (4, 366, 456, 375, 375)],
+            "narrow_target": [base[0], (2, 366, 374, 425, 425), base[2]],
+            "landing_blocked": [*base, (4, 376, 376, 400, 450)],
+            "middle_wall": [*base, (4, 370, 370, 395, 410)],
+            "middle_ceiling": [*base, (4, 360, 368, 390, 390)],
+        }
+        for name, rows in cases.items():
+            with self.subTest(case=name):
+                properties = {"info": {}, "foothold": {"1": {"0": {
+                    str(i): {"x1": x1, "x2": x2, "y1": y1, "y2": y2, "prev": 0, "next": 0}
+                    for i, x1, x2, y1, y2 in rows
+                }}}}
+                for result in self.query(properties):
+                    edges = result["data"]["navigation"]["candidates"]["jumpup"]
+                    self.assertNotIn((1, 2), [(edges[i], edges[i + 1]) for i in range(0, len(edges), 5)])
+
     def test_static_navigation_topology_exposes_platforms_walls_ropes_and_candidates(self) -> None:
         for result in self.query(navigation_properties(), 123456789):
             self.assertEqual("ok", result["status"], result)

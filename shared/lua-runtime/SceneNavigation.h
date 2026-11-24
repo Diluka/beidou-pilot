@@ -322,6 +322,34 @@ inline void Connect(const std::vector<NavigationWall>& walls, double terrainLeft
                 if (!CrossesWall(walls, ax, bx, std::min(fromY, toY) - kBodyHeight, std::max(fromY, toY)))
                     add(navigation.walk, i + 1, j + 1, fromX, toX, rise);
             }
+            if (gap == 0 && rise > 6 && rise <= kJumpRise
+                && a.right - a.left >= kMinPlatformWidth && b.right - b.left >= kMinPlatformWidth) {
+                const double fromX = ax - direction * 6;
+                const double toX = bx + direction * 10;
+                const double fromY = height(a, fromX), toY = height(b, toX);
+                const double actualRise = fromY - toY;
+                bool sharedWall = false, blocked = actualRise <= 6 || actualRise > kJumpRise;
+                for (const auto& wall : walls) {
+                    if (wall.x == ax && wall.bottom >= height(a, ax) && wall.top <= height(b, bx)) {
+                        sharedWall = true;
+                        if (wall.top < height(b, bx)) blocked = true;
+                    } else if (wall.x > std::min(fromX, toX) && wall.x < std::max(fromX, toX)
+                               && wall.top <= fromY && wall.bottom >= toY - kBodyHeight) {
+                        blocked = true;
+                    }
+                    if (wall.x != ax && std::abs(wall.x - toX) < kWallMargin && WallBlocks(wall, b, toX)) blocked = true;
+                }
+                for (int k = 0; k < static_cast<int>(platforms.size()); ++k) {
+                    if (k == i || k == j) continue;
+                    const auto& ceiling = platforms[static_cast<std::size_t>(k)];
+                    const double left = std::max(ceiling.left, std::min(fromX, toX));
+                    const double right = std::min(ceiling.right, std::max(fromX, toX));
+                    if (left > right) continue;
+                    const double y1 = height(ceiling, left), y2 = height(ceiling, right);
+                    if (std::min(y1, y2) < fromY && std::max(y1, y2) > toY - kBodyHeight) blocked = true;
+                }
+                if (sharedWall && !blocked) add(navigation.jumpup, i + 1, j + 1, fromX, toX, actualRise);
+            }
             if (gap > 2 && gap <= 40 && rise > 6 && rise <= kJumpRise) {
                 const double fromX = inside(a, ax - direction * 6);
                 const double toX = inside(b, bx + direction * 10);
