@@ -47,7 +47,7 @@ function M.step(mover, ctx, world)
         reason = "invalid_edge"
     elseif edge.kind ~= "walk" and edge.kind ~= "step" and edge.kind ~= "jumpup" and edge.kind ~= "drop" and edge.kind ~= "rope" then
         reason = "unsupported_edge"
-    elseif type(edge.destination) ~= "number" then
+    elseif type(edge.destination) ~= "number" or (edge.kind == "step" and type(edge.to) ~= "number") then
         reason = "invalid_edge"
     end
     local character = world and world.character
@@ -154,16 +154,28 @@ function M.step(mover, ctx, world)
     end
     if not mover.started then
         mover.started, mover.progress_time, mover.progress_x = now, now, character.x
-        mover.start_y, mover.airborne = character.y, character.on_ground == false
+        mover.airborne = false
     end
-    if edge.kind == "walk" and math.abs(character.x - edge.destination) <= 12
-        or edge.kind == "step" and (character.y - mover.start_y >= 10 or (mover.airborne and character.on_ground)) then
+    local arrived = edge.kind == "walk" and math.abs(character.x - edge.destination) <= 12
+    if edge.kind == "step" then
+        if character.on_ground == true then
+            local platform = require("lib.terrain").platform_at(mover.graph, character.x, character.y, 20)
+            arrived = platform == edge.to
+            if not arrived and (mover.airborne or (platform and edge.from and platform ~= edge.from)) then
+                M.stop(mover)
+                mover.status, mover.reason = "failed", "landing_mismatch"
+                return mover.status, mover.reason
+            end
+        elseif character.on_ground == false then
+            mover.airborne = true
+        end
+    end
+    if arrived then
         game.player.move(nil)
         mover.index, mover.started, mover.retries = mover.index + 1, nil, 0
         if mover.index > #mover.edges then mover.status = "done"; return "done" end
         return "running"
     end
-    if character.on_ground == false then mover.airborne = true end
     if now - mover.started >= 10 then
         reason = "timeout"
     elseif now - mover.progress_time >= 2 then
