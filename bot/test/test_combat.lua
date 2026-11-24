@@ -193,6 +193,60 @@ assert(status == "failed" and reason == "no_path" and calls[#calls] == "skill_ni
     "a mover that cannot set the same-platform edge must fail cleanly")
 can_set_path = true
 
+world = make_world()
+world.map_id = 30
+world.owner = {present = true, x = 0, y = 0}
+local locked_a, closer_b = entity(30, 40, 1), entity(31, 10, 1)
+world.mobs = {locked_a}
+ctx, path_mover = player_context(), mover()
+assert(combat.select(world, {}) == locked_a)
+combat.step(ctx, world, locked_a, path_mover)
+world.mobs = {closer_b, locked_a}
+assert(combat.select(world, {}) == locked_a,
+    "a valid locked object_id must not be displaced by a closer target")
+world.mobs = {closer_b}
+assert(combat.select(world, {}) == closer_b, "a disappeared lock must release and select the next target")
+
+world = make_world()
+world.map_id = 31
+world.owner = {present = true, x = 0, y = 0}
+locked_a, closer_b = entity(32, 40, 1), entity(33, 520, 1)
+world.mobs = {locked_a}
+ctx, path_mover = player_context(), mover()
+assert(combat.select(world, {}) == locked_a)
+combat.step(ctx, world, locked_a, path_mover)
+world.mobs = {locked_a, closer_b}
+world.owner.x = 500
+assert(combat.select(world, {}) == closer_b, "a lock beyond the owner leash must be released")
+
+world = make_world()
+world.map_id = 32
+world.owner = {present = true, x = 0, y = 0}
+locked_a, closer_b = entity(34, 40, 1), entity(35, 10, 1)
+world.mobs = {locked_a}
+ctx, path_mover = player_context(), mover()
+assert(combat.select(world, {}) == locked_a)
+combat.step(ctx, world, locked_a, path_mover)
+world.mobs = {locked_a, closer_b}
+locked_a.active = false
+status, reason = combat.step(ctx, world, locked_a, path_mover)
+assert(status == "done" and reason == "killed" and combat.select(world, {}) == closer_b,
+    "step completion must clear the lock before selecting another target")
+
+world = make_world()
+world.map_id = 33
+world.owner = {present = true, x = 0, y = 0}
+locked_a, closer_b = entity(36, 40, 1), entity(37, 10, 1)
+world.mobs = {locked_a}
+ctx, path_mover = player_context(), mover()
+assert(combat.select(world, {}) == locked_a)
+combat.step(ctx, world, locked_a, path_mover)
+world.mobs = {locked_a, closer_b}
+locked_a.platform = 2
+status, reason = combat.step(ctx, world, locked_a, path_mover)
+assert(status == "failed" and reason == "target_platform_unreachable" and combat.select(world, {}) == closer_b,
+    "step failure must clear the lock before selecting another target")
+
 movement.set_path, movement.step, movement.stop = original_set_path, original_step, original_stop
 combat_io.event = original_event
 print("combat tests passed")

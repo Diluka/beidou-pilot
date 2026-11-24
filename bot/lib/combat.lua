@@ -60,12 +60,31 @@ function M.select(world, options)
         origin, limit = character, 200
     end
 
+    if active_target ~= nil then
+        local locked
+        for _, mob in ipairs(world.mobs or {}) do
+            if target_key(mob) == active_target then locked = mob; break end
+        end
+        local leash_origin = owner and owner.present ~= false and owner or character
+        if locked and locked.active == true and locked.template_id ~= nil and locked.template_id ~= ""
+            and locked.platform == character.platform and not is_excluded(options.exclude, locked.object_id)
+            and not abandoned[active_target] and type(locked.x) == "number" and type(locked.y) == "number"
+            and not (locked.hp_percent ~= nil and locked.hp_percent <= 0)
+            and not (locked.hp ~= nil and locked.hp <= 0)
+            and distance(leash_origin, locked) <= 400 then
+            return locked
+        end
+        release_active()
+    end
+
     local candidates = {}
     for _, mob in ipairs(world.mobs or {}) do
         local key = target_key(mob)
         if mob.active == true and mob.template_id ~= nil and mob.template_id ~= ""
             and mob.platform == character.platform and not is_excluded(options.exclude, mob.object_id)
-            and not abandoned[key] and type(mob.x) == "number" and type(mob.y) == "number" then
+            and not abandoned[key] and type(mob.x) == "number" and type(mob.y) == "number"
+            and not (mob.hp_percent ~= nil and mob.hp_percent <= 0)
+            and not (mob.hp ~= nil and mob.hp <= 0) then
             local range = distance(origin, mob)
             if range <= limit then
                 candidates[#candidates + 1] = {mob = mob, distance = range}
