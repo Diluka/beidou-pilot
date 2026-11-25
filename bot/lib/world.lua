@@ -66,7 +66,7 @@ function M.observe(ctx)
         local character_id = settings.owner_character_id ~= 0 and settings.owner_character_id or nil
         local name = settings.owner_name ~= "" and settings.owner_name or nil
         local target = ctx.state and ctx.state.bot and ctx.state.bot.target
-        if target then
+        if target and not require("lib.target").selector(target) then
             local target_id = tonumber(target)
             if target_id then
                 character_id, name = target_id, nil
