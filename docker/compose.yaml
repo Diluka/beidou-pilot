@@ -45,8 +45,7 @@ services:
       beidou.world: ${WORLD_ID:?需要角色大区索引}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      - target
+    network_mode: ${TARGET_NETWORK:?需要工作台解析出的目标网络模式}
     volumes:
       - type: bind
         source: ${BEIDOU_CLIENT_DIR:?需要原客户端目录}
@@ -70,8 +69,3 @@ services:
         target: /cache
         bind:
           create_host_path: false
-
-networks:
-  target:
-    external: true
-    name: ${TARGET_NETWORK:?需要已核验的隔离网络}

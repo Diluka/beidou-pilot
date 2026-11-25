@@ -39,7 +39,7 @@ elif a[0] == 'run' and '-d' in a:
     s['client'] = {'Id':'client', 'Image':a[-1], 'State':{'Running':True}, 'Config':{'User':'1000:1000', 'Env':env, 'Labels':labels}, 'HostConfig':{'Privileged':False, 'NetworkMode':'fixture_game', 'PortBindings':{}}}
     p.write_text(json.dumps(s))
 elif a[0] == 'compose':
-    keys = ['CLIENT_ROOT', 'CLIENT_RUNTIME_ROOT', 'WORKBENCH_ROOT', 'CLIENT_IMAGE_ID', 'TARGET_CONTAINER_ID', 'MAPLE_LOGIN_MODE', 'CHARACTER_ID', 'WORLD_ID', 'MAPLE_INSTANCE']
+    keys = ['CLIENT_ROOT', 'CLIENT_RUNTIME_ROOT', 'WORKBENCH_ROOT', 'CLIENT_IMAGE_ID', 'TARGET_CONTAINER_ID', 'TARGET_NETWORK', 'TARGET_IP', 'MAPLE_LOGIN_MODE', 'CHARACTER_ID', 'WORLD_ID', 'MAPLE_INSTANCE']
     values = {key: os.environ[key] for key in keys}
     s['compose_env'] = values
     root = Path(values['CLIENT_ROOT'])
@@ -62,7 +62,11 @@ else:
 
 class WorkbenchLoginStartContract(WorkbenchFixture):
 
-    def prepare(self, cid=False):
+    def prepare(self, cid=False, env='dev'):
+        if env != 'dev':
+            self.role = env + '/fixture'
+            self.workbench = self.private_root / self.role
+            self.workbench.mkdir(parents=True)
         data = self.directory / 'data'
         data.mkdir()
         (self.config / 'resources.json').write_text(json.dumps({'game_data': str(data)}))
@@ -74,12 +78,15 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         path.chmod(0o600)
         (self.workbench / 'workbench.json').write_text(json.dumps({'ref': self.revision, 'timeout': 37}))
         image_id = 'sha256:' + '1' * 64
-        (self.config / 'dev.server.json').write_text(json.dumps({'project': 'fixture', 'service': 'beidou-server-all'}))
+        project = 'fixture-' + env
+        (self.config / (env + '.server.json')).write_text(json.dumps({'project': project, 'service': 'beidou-server-all'}))
+        labels = {'beidou.workbench.environment': 'dev'} if env == 'dev' else {}
+        network = project + '_default' if env == 'dev' else 'bridge'
         state = json.loads(self.state_path.read_text())
         state.update(server={'Id': 'server', 'Image': image_id, 'State': {'Running': True},
-            'Config': {'Labels': {'beidou.workbench.environment': 'dev'}},
-            'HostConfig': {'NetworkMode': 'fixture_game', 'PortBindings': {}},
-            'NetworkSettings': {'Networks': {'fixture_game': {'IPAddress': '172.20.0.2'}}}})
+            'Config': {'Labels': labels},
+            'HostConfig': {'NetworkMode': network, 'PortBindings': {}},
+            'NetworkSettings': {'Networks': {network: {'IPAddress': '172.20.0.2'}}}})
         state['images'][f'local/beidou-pilot-headless:{self.revision}'] = {'Id': 'client-image', 'Config': {'Labels': {'org.opencontainers.image.revision': self.revision, 'beidou.backend': 'headless'}}}
         self.state_path.write_text(json.dumps(state))
         docker = self.directory / 'bin/docker'
@@ -87,8 +94,8 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         docker.chmod(0o700)
         self.environment['WB'] = str(self.workbench)
 
-    def prepare_gui(self, cid=False):
-        self.prepare(cid=cid)
+    def prepare_gui(self, cid=False, env='dev'):
+        self.prepare(cid=cid, env=env)
         # 仅夹具中替换宿主设备边界；不影响生产脚本的设备检查。
         self.entry.write_text(self.entry.read_text().replace('[ -c /dev/dri/renderD128 ]', 'true')
                               .replace('$(stat -c %g /dev/dri/renderD128)', '1000'))
@@ -149,6 +156,8 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         self.assertEqual(str(self.repository / 'docker/compose.yaml'), command[command.index('-f') + 1])
         self.assertIn('--no-build', command)
         self.assertEqual('account', state['compose_env']['MAPLE_LOGIN_MODE'])
+        self.assertEqual('fixture-dev_default', state['compose_env']['TARGET_NETWORK'])
+        self.assertEqual('beidou-server-all', state['compose_env']['TARGET_IP'])
         self.assertEqual('', state['compose_env']['CHARACTER_ID'])
         self.assertEqual('client', json.loads((self.workbench / 'runtime/default/host.json').read_text())['container_id'])
         execution = [c for c in state['calls'] if c[0] == 'exec']
@@ -165,6 +174,19 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         execution = [c for c in calls if c[0] == 'exec']
         self.assertEqual(1, len(execution))
         self.assertEqual(['beidou-pilot', '--json', 'login', '--timeout', '37'], execution[0][execution[0].index('beidou-pilot'):])
+
+    def test_live_gui_uses_host_gateway_and_does_not_require_game_network(self):
+        self.prepare_gui(env='live')
+        result = self.command('live/fixture', 'login')
+        self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual('bridge', state['compose_env']['TARGET_NETWORK'])
+        self.assertEqual('host.docker.internal', state['compose_env']['TARGET_IP'])
+        target = json.loads((self.workbench / 'runtime/default/host.json').read_text())['target']
+        self.assertEqual('bridge', target['network'])
+        compose = (Path(__file__).resolve().parents[2] / 'docker/compose.yaml').read_text()
+        self.assertIn('network_mode: ${TARGET_NETWORK:', compose)
+        self.assertNotIn('external: true', compose)
 
     def test_gui_start_without_options_only_observes(self):
         self.prepare_gui()
