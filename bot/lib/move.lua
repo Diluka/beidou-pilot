@@ -7,7 +7,7 @@ end
 function M.set_path(mover, edges)
     if type(edges) ~= "table" then return false, "invalid_edge" end
     mover.edges, mover.index, mover.status = edges, 1, "running"
-    mover.started, mover.retries, mover.reason = nil, 0, nil
+    mover.started, mover.retries, mover.reason, mover.downjump_preheld = nil, 0, nil, nil
     return true
 end
 
@@ -15,7 +15,7 @@ function M.stop(mover)
     game.player.move(nil)
     game.player.skill(nil)
     mover.stop_pending = mover.stop_pending or mover.jump_held or nil
-    mover.status, mover.started, mover.jump_held = "done", nil, nil
+    mover.status, mover.started, mover.jump_held, mover.downjump_preheld = "done", nil, nil, nil
 end
 
 function M.step(mover, ctx, world)
@@ -45,13 +45,13 @@ function M.step(mover, ctx, world)
     local reason
     if type(edge) ~= "table" or type(edge.kind) ~= "string" then
         reason = "invalid_edge"
-    elseif edge.kind ~= "walk" and edge.kind ~= "step" and edge.kind ~= "jumpup" and edge.kind ~= "drop" and edge.kind ~= "rope" then
+    elseif edge.kind ~= "walk" and edge.kind ~= "step" and edge.kind ~= "jumpup" and edge.kind ~= "downjump" and edge.kind ~= "drop" and edge.kind ~= "rope" then
         reason = "unsupported_edge"
     elseif type(edge.destination) ~= "number" or (edge.kind == "step" and type(edge.to) ~= "number") then
         reason = "invalid_edge"
     end
     local character = world and world.character
-    if not reason and (not character or type(character.x) ~= "number" or type(character.y) ~= "number" or ((edge.kind == "jumpup" or edge.kind == "drop" or edge.kind == "rope") and type(character.on_ground) ~= "boolean")) then
+    if not reason and (not character or type(character.x) ~= "number" or type(character.y) ~= "number" or ((edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop" or edge.kind == "rope") and type(character.on_ground) ~= "boolean")) then
         reason = "character_unavailable"
     end
     if reason then
@@ -61,7 +61,7 @@ function M.step(mover, ctx, world)
         return "failed", reason
     end
     local now = (ctx.tick and ctx.tick.time) or world.now
-    if edge.kind == "jumpup" or edge.kind == "drop" or edge.kind == "rope" then
+    if edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop" or edge.kind == "rope" then
         local p = ctx.game.player
         local terrain = require("lib.terrain")
         if type(edge.to) ~= "number" or (edge.kind ~= "drop" and type(edge.x) ~= "number") or (edge.kind == "rope" and (type(edge.rise) ~= "number" or edge.rise == 0)) then
@@ -71,7 +71,7 @@ function M.step(mover, ctx, world)
         end
         if mover.active_edges ~= mover.edges or mover.active_index ~= mover.index then
             mover.active_edges, mover.active_index, mover.edge_started = mover.edges, mover.index, now
-            mover.airborne = nil
+            mover.airborne, mover.downjump_preheld = nil, nil
         end
         if not mover.started then
             if mover.retries == 0 then mover.edge_started = now; mover.airborne = nil end
@@ -81,11 +81,11 @@ function M.step(mover, ctx, world)
             end
         end
         local failure
-        if (edge.kind == "jumpup" or edge.kind == "drop") and mover.phase ~= "align" and character.on_ground == false then mover.airborne = true end
+        if (edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop") and mover.phase ~= "align" and character.on_ground == false then mover.airborne = true end
         if now - mover.edge_started >= 10 then failure = "timeout" end
         if not failure and mover.phase == "align" then
             local tolerance = edge.kind == "rope" and 4 or 8
-            local vertical = edge.kind == "jumpup" and edge.x == edge.destination
+            local vertical = (edge.kind == "jumpup" and edge.x == edge.destination) or edge.kind == "downjump"
             local physics = vertical and ctx.game.character and ctx.game.character.physics
             local align_x = (physics and physics.x) or character.x
             if edge.kind ~= "drop" and math.abs(align_x - edge.x) > tolerance then
@@ -107,6 +107,27 @@ function M.step(mover, ctx, world)
                 local ok = moved and p.jump()
                 if not ok then failure = "unsupported_edge" else
                     mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
+                end
+            elseif edge.kind == "downjump" then
+                if not character.on_ground then return "running" end
+                -- A prior edge can carry momentum; treat speeds below 1px/s as settled.
+                if not physics or not physics.velocity or physics.velocity.x == nil then
+                    failure = "character_unavailable"
+                elseif math.abs(physics.velocity.x) >= 1 then
+                    if not p.move(nil) then failure = "unsupported_edge" else
+                        mover.downjump_preheld = nil
+                        return "running"
+                    end
+                elseif not mover.downjump_preheld then
+                    if not p.move("down") then failure = "unsupported_edge" else
+                        mover.downjump_preheld = true
+                        return "running"
+                    end
+                else
+                    local ok = p.move("down") and p.jump()
+                    if not ok then failure = "unsupported_edge" else
+                        mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
+                    end
                 end
             elseif edge.kind == "drop" then
                 if not p.move(character.x < edge.destination and "right" or "left") then failure = "unsupported_edge" end
@@ -173,6 +194,7 @@ function M.step(mover, ctx, world)
         end
         if failure then
             p.move(nil)
+            mover.downjump_preheld = nil
             if mover.jump_held then p.skill(nil); mover.jump_held = nil; mover.release_tick = ctx.tick.index end
             if failure ~= "timeout" and failure ~= "landing_mismatch" and mover.retries < 1 then mover.retries, mover.started, mover.airborne = mover.retries + 1, nil, nil; return "running" end
             mover.status, mover.reason = "failed", failure; return "failed", failure

@@ -138,6 +138,25 @@ stacked.platforms[2].segments = {0,5,60,60, 45,48,60,60, 52,55,60,60, 95,100,60,
 shadowed, why = terrain.plan(stacked_graph,1,2,{max_jump_height=55})
 assert(not shadowed and why=="no_path", "a platform's bounding box alone cannot support a landing strip")
 
+local down_navigation = navigation_with_platforms({
+    {index=1, left=0, right=100, open_left=true, open_right=true, segments={0,100,100,100}},
+    {index=2, left=0, right=100, open_left=true, open_right=true, segments={0,100,160,160}},
+})
+local down_graph = assert(terrain.build(down_navigation))
+local down = assert(terrain.plan(down_graph, 1, 2))[1]
+assert(down.kind == "downjump" and down.x == down.destination, "overlapping lower floor supports downjump")
+down_navigation.walls = {50, 0, 200}
+assert(not terrain.plan(assert(terrain.build(down_navigation)), 1, 2), "wall blocks downjump")
+down_navigation.walls = {}
+down_navigation.platforms[3] = {index=3, left=0, right=100, open_left=true, open_right=true, segments={0,100,70,70}}
+assert(not terrain.plan(assert(terrain.build(down_navigation)), 1, 2, {blocked={["1:3"]=true}}), "ceiling blocks downjump")
+down_navigation.platforms[3] = nil
+down_navigation.platforms[2].segments = {0,40,160,160, 60,100,160,160}
+assert(not terrain.plan(assert(terrain.build(down_navigation)), 1, 2), "unsupported landing strip blocks downjump")
+down_navigation.platforms[2].left, down_navigation.platforms[2].right = 200, 300
+down_navigation.platforms[2].segments = {200,300,160,160}
+assert(not terrain.plan(assert(terrain.build(down_navigation)), 1, 2), "no overlapping landing rejects downjump")
+
 local sloped_navigation = navigation_with_platforms({
     {index = 1, left = 0, right = 100, open_left = true, open_right = true, segments = {0, 100, 100, 50}},
 })
