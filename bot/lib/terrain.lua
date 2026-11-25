@@ -310,6 +310,52 @@ function M.plan(graph, from_index, to_index, options)
         end
     end
 
+    -- Derive vertical platform-through relations without changing the native snapshot.
+    for from, source in ipairs(platforms) do
+        for to, target in ipairs(platforms) do
+            if from ~= to and not blocked[tostring(from) .. ":" .. tostring(to)] then
+                local left = math.max(source.left, target.left) + 8
+                local right = math.min(source.right, target.right) - 8
+                if left <= right and target.right - target.left >= model.min_platform_width then
+                    local x = (left + right) / 2
+                    local lo, hi = x - 8, x + 8
+                    local source_top, source_bottom = height_range(source, lo, hi, true)
+                    local target_top, target_bottom = height_range(target, lo, hi, true)
+                    local clear = source_top and target_top and target_top > source_bottom
+                    if clear then
+                        for i, platform in ipairs(platforms) do
+                            if i ~= from and i ~= to then
+                                local top, bottom = height_range(platform, lo, hi)
+                                if top and top <= target_bottom and bottom >= source_top - model.stand_height then
+                                    clear = false
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    if clear then
+                        for i = 1, #graph.walls, 3 do
+                            local wx, top, bottom = graph.walls[i], graph.walls[i+1], graph.walls[i+2]
+                            if wx >= lo - model.wall_margin and wx <= hi + model.wall_margin
+                                and top <= target_bottom and bottom >= source_top - model.stand_height then
+                                clear = false
+                                break
+                            end
+                        end
+                    end
+                    if clear then
+                        local edge = {kind="downjump", from=from, to=to, x=x, destination=x,
+                            rise=height_range(target, x, x) - height_range(source, x, x),
+                            cost=0.6 + math.abs(platform_x[to] - platform_x[from]) / effective_speed}
+                        adjacency[from] = adjacency[from] or {}
+                        adjacency[from][#adjacency[from] + 1] = edge
+                        edges[#edges + 1] = edge
+                    end
+                end
+            end
+        end
+    end
+
     for _, outgoing in pairs(adjacency) do
         table.sort(outgoing, function(left, right)
             if left.to ~= right.to then return left.to < right.to end

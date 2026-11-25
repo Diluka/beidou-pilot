@@ -67,7 +67,25 @@ ctx.tick.time = 0.1; world.character.y = -11; world.character.on_ground = false
 assert(step(mover, ctx, world) == "running" and direction == nil and action == nil)
 world.character.x = 30; world.character.on_ground = true
 assert(step(mover, ctx, world) == "done")
+begin({kind = "downjump", x = 0, destination = 0})
+assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump")
+ctx.tick.time = 0.4; world.character.on_ground = false; world.character.y = 11
+assert(step(mover, ctx, world) == "running" and direction == nil and action == nil)
+world.character.on_ground = true
+assert(step(mover, ctx, world) == "done")
+begin({kind = "downjump", x = 0, destination = 0, to = 2})
+assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump")
+ctx.tick.time = 0.4; world.character.on_ground = false; world.character.y = 11
+assert(step(mover, ctx, world) == "running" and direction == nil and action == nil)
+world.character.on_ground = true
+status, reason = step(mover, ctx, world)
+assert(status == "failed" and reason == "landing_mismatch" and direction == nil and action == nil)
+begin({kind = "downjump", x = 0, destination = 0})
+assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump")
+move.stop(mover)
+assert(direction == nil and action == nil)
 begin({kind = "drop", destination = 100})
+assert(step(mover, ctx, world) == "running")
 assert(step(mover, ctx, world) == "running" and direction == "right")
 ctx.tick.time = 0.4; world.character.on_ground = false
 assert(step(mover, ctx, world) == "running" and direction == nil)

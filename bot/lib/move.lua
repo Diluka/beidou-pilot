@@ -45,13 +45,13 @@ function M.step(mover, ctx, world)
     local reason
     if type(edge) ~= "table" or type(edge.kind) ~= "string" then
         reason = "invalid_edge"
-    elseif edge.kind ~= "walk" and edge.kind ~= "step" and edge.kind ~= "jumpup" and edge.kind ~= "drop" and edge.kind ~= "rope" then
+    elseif edge.kind ~= "walk" and edge.kind ~= "step" and edge.kind ~= "jumpup" and edge.kind ~= "downjump" and edge.kind ~= "drop" and edge.kind ~= "rope" then
         reason = "unsupported_edge"
     elseif type(edge.destination) ~= "number" or (edge.kind == "step" and type(edge.to) ~= "number") then
         reason = "invalid_edge"
     end
     local character = world and world.character
-    if not reason and (not character or type(character.x) ~= "number" or type(character.y) ~= "number" or ((edge.kind == "jumpup" or edge.kind == "drop" or edge.kind == "rope") and type(character.on_ground) ~= "boolean")) then
+    if not reason and (not character or type(character.x) ~= "number" or type(character.y) ~= "number" or ((edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop" or edge.kind == "rope") and type(character.on_ground) ~= "boolean")) then
         reason = "character_unavailable"
     end
     if reason then
@@ -61,7 +61,7 @@ function M.step(mover, ctx, world)
         return "failed", reason
     end
     local now = (ctx.tick and ctx.tick.time) or world.now
-    if edge.kind == "jumpup" or edge.kind == "drop" or edge.kind == "rope" then
+    if edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop" or edge.kind == "rope" then
         local p = ctx.game.player
         local terrain = require("lib.terrain")
         if type(edge.to) ~= "number" or (edge.kind ~= "drop" and type(edge.x) ~= "number") or (edge.kind == "rope" and (type(edge.rise) ~= "number" or edge.rise == 0)) then
@@ -78,7 +78,7 @@ function M.step(mover, ctx, world)
             mover.started, mover.phase, mover.start_y = now, "align", character.y
         end
         local failure
-        if (edge.kind == "jumpup" or edge.kind == "drop") and mover.phase ~= "align" and character.on_ground == false then mover.airborne = true end
+        if (edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop") and mover.phase ~= "align" and character.on_ground == false then mover.airborne = true end
         if now - mover.edge_started >= 10 then failure = "timeout" end
         if not failure and mover.phase == "align" then
             local tolerance = edge.kind == "rope" and 4 or 8
@@ -102,6 +102,12 @@ function M.step(mover, ctx, world)
                     if not character.on_ground or physics.velocity.x ~= 0 then return "running" end
                 end
                 local ok = moved and p.jump()
+                if not ok then failure = "unsupported_edge" else
+                    mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
+                end
+            elseif edge.kind == "downjump" then
+                if not character.on_ground then return "running" end
+                local ok = p.move("down") and p.jump()
                 if not ok then failure = "unsupported_edge" else
                     mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
                 end
