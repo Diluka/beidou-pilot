@@ -557,6 +557,97 @@ class TickCliContract(unittest.TestCase):
             path.write_text(source, encoding="utf-8")
         return directory
 
+    def test_script_return_failure_is_visible_and_not_reported_as_cancelled(self) -> None:
+        def peer() -> list[str]:
+            request = self.files.command()
+            failed = tick_state(request[6], stopped=True)
+            failed.update(
+                status="failed",
+                reason="script_failed",
+                error="navigation_failed",
+                return_value="failed",
+                return_reason="navigation_failed",
+                log_tail=["game.log diagnostic"],
+            )
+            self.files.state.update(
+                script=failed,
+                scripts=[failed],
+                held_keys=[],
+                command={"id": request[3], "status": "failed", "reason": "script_failed"},
+            )
+            self.files.publish()
+            return request
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            native = pool.submit(peer)
+            code, report = self.cli("script", "run", str(self.script_path), "--seconds", ".3")
+            request = native.result(2)
+        self.assertEqual(2, code)
+        failure = report["error"]
+        self.assertEqual("bridge_script_error", failure["code"])
+        detail = failure["details"]
+        self.assertEqual(("failed", "script_failed", "navigation_failed"),
+                         (detail["status"], detail["script"]["reason"], detail["script"]["return_reason"]))
+        self.assertEqual(["game.log diagnostic"], detail["script"]["log_tail"])
+        status_code, status_report = self.cli("script", "status", "--session", request[6])
+        self.assertEqual(0, status_code, status_report)
+        self.assertEqual(
+            ("failed", "failed", "navigation_failed", ["game.log diagnostic"]),
+            (
+                status_report["data"]["script"]["status"],
+                status_report["data"]["script"]["return_value"],
+                status_report["data"]["script"]["return_reason"],
+                status_report["data"]["script"]["log_tail"],
+            ),
+        )
+
+    def test_script_file_auto_detects_lib_root_and_cli_budget_override(self) -> None:
+        directory = self.files.root / "temporary-package"
+        library = directory / "lib"
+        library.mkdir(parents=True)
+        (library / "terrain.lua").write_text("return {}\n", encoding="utf-8")
+        script = directory / "probe.lua"
+        script.write_text(
+            "-- @tick.budget_ms 100\nlocal terrain = require('lib.terrain')\n"
+            "function main(context)\nend\n",
+            encoding="utf-8",
+        )
+
+        def peer() -> list[str]:
+            request = self.files.command()
+            script_state_value = tick_state(request[6], stopped=True)
+            script_state_value.update(status="completed", reason="script_returned", module_root=str(directory.resolve()))
+            script_state_value["tick"]["budget_ms"] = 250
+            self.files.state.update(
+                script=script_state_value,
+                scripts=[script_state_value],
+                held_keys=[],
+                command={"id": request[3], "status": "completed", "reason": "script_returned"},
+            )
+            self.files.publish()
+            return request
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            native = pool.submit(peer)
+            code, report = self.cli("script", "run", str(script), "--budget-ms", "250", "--seconds", ".3")
+            request = native.result(2)
+        self.assertEqual(0, code, report)
+        package = self.files.directory / "scripts" / (request[6] + ".package")
+        source = (self.files.directory / "scripts" / (request[6] + ".lua")).read_text(encoding="utf-8")
+        self.assertEqual(str(directory.resolve()) + "\n", package.read_text(encoding="utf-8"))
+        self.assertIn("-- @tick.budget_ms 250", source)
+        self.assertNotIn("-- @tick.budget_ms 100", source)
+        self.assertEqual(250, report["data"]["script"]["tick"]["budget_ms"])
+
+    def test_missing_lib_root_reports_actionable_package_error_before_publication(self) -> None:
+        source = self.files.root / "tmp-script.lua"
+        source.write_text("local lib = require('lib.terrain')\nfunction main(context)\nend\n", encoding="utf-8")
+        code, report = self.cli("script", "run", str(source))
+        self.assertEqual(2, code)
+        self.assertEqual("script_package_root_missing", report["error"]["code"])
+        self.assertIn("--package-root", report["error"]["message"])
+        self.assertFalse((self.files.directory / "command.txt").exists())
+
     def test_directory_package_publishes_require_root_and_projects_loaded_modules(self) -> None:
         directory = self.package_directory(
             ""
@@ -680,7 +771,8 @@ class TickCliContract(unittest.TestCase):
         self.assertNotIn("mode", data)
         self.assertEqual(
             data["usage"],
-            "beidou-pilot script run/start " + str(directory) + " [--ticks <int>] [--seconds N|--continuous]",
+            "beidou-pilot script run/start " + str(directory)
+            + " [--ticks <int>] [--package-root DIR] [--budget-ms N] [--seconds N|--continuous]",
         )
         self.assertEqual([option["name"] for option in data["options"]], ["ticks"])
 

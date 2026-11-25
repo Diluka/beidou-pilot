@@ -158,6 +158,9 @@ end
     def test_directory_package_modules_load_with_sources_and_line_attribution(self) -> None:
         self.run_contract("packages")
 
+    def test_script_returns_logs_and_input_block_reason_are_projected(self) -> None:
+        self.run_contract("results-input-block")
+
     def test_motion_facts_and_reference_capabilities_are_fresh_read_only_and_unknown_when_missing(self) -> None:
         self.run_contract("motion")
 

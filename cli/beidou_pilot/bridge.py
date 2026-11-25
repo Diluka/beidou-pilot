@@ -10,7 +10,7 @@ import time
 from typing import Iterator, Literal, NotRequired, TypedDict, cast
 import uuid
 
-from .errors import ClientError, JsonObject
+from .errors import ClientError, JsonObject, JsonValue
 from .runtime import load_runtime
 from .strategies import TickGear, parse_script_execution
 
@@ -61,7 +61,7 @@ class BridgePosition(TypedDict):
 
 class BridgeCommand(TypedDict):
     id: str | None
-    status: Literal["idle", "running", "completed", "cancelled", "rejected"]
+    status: Literal["idle", "running", "completed", "cancelled", "failed", "rejected"]
     reason: str | None
 
 
@@ -94,6 +94,7 @@ class BridgePlayer(TypedDict):
     action: BridgePlayerAction | None
     phase: Literal["idle", "running", "unknown"]
     busy: bool | None
+    blocked_reason: NotRequired[str | None]
     held: list[Literal["left", "right", "up", "down", "jump", "attack", "skill", "use_item", "pickup"]]
     reason: str
     effect: str
@@ -111,9 +112,12 @@ class BridgeModule(TypedDict):
 
 class BridgeScript(TypedDict):
     id: str
-    status: Literal["running", "completed", "cancelled", "rejected"]
+    status: Literal["running", "completed", "cancelled", "failed", "rejected"]
     reason: str | None
     error: str | None
+    return_value: NotRequired[JsonValue]
+    return_reason: NotRequired[JsonValue]
+    log_tail: NotRequired[list[str]]
     resumes: int
     budget_yields: int
     last_resume_us: float
@@ -189,10 +193,10 @@ def require_input_idle(bridge: "BridgeClient", instance_id: str, run_id: str) ->
     if state["instance_id"] != instance_id or state["run_id"] != run_id:
         raise ClientError("bridge_identity_changed", "原生桥实例身份已变化，未发送输入。")
     if any(
-        script["status"] not in {"completed", "cancelled", "rejected"}
+        script["status"] not in {"completed", "cancelled", "failed", "rejected"}
         or script["control_released"] is not True
         for script in state.get("scripts", [])
-    ) or state["command"]["status"] not in {"idle", "completed", "cancelled", "rejected"} or state["held_keys"]:
+    ) or state["command"]["status"] not in {"idle", "completed", "cancelled", "failed", "rejected"} or state["held_keys"]:
         raise ClientError("input_busy", "原生脚本或输入状态不空闲，未发送输入。")
 
 
@@ -342,7 +346,7 @@ class BridgeClient:
                     if script is not None and (script["status"] != "running" or wait_for_start):
                         return state
                 elif (command["id"] == request_id
-                      and (command["status"] in ("completed", "cancelled")
+                      and (command["status"] in ("completed", "cancelled", "failed")
                            or wait_for_start and command["status"] == "running")):
                     return state
             if cancel_file is not None and cancel_file.exists():
@@ -471,7 +475,7 @@ class BridgeClient:
             "elapsed_seconds": round(time.monotonic() - started, 4),
             "script": cast(JsonObject | None, script), "last_state": cast(JsonObject, state),
         }
-        if script is not None and script["error"] is not None:
+        if script is not None and (script["error"] is not None or script["status"] == "failed"):
             message = ("已受理Lua会话报告错误，尚在结束收尾；请按script_id观察终态及输入释放。"
                        if script["status"] == "running" else "原生Lua脚本执行失败，脚本已停止并释放所属输入。")
             raise ClientError("bridge_script_error", message, report)

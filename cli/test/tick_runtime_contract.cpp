@@ -102,6 +102,7 @@ public:
             return {
                 "ok", Value::Object({{"npcs", Value::Array({Value::Object({{"id", 99}, {"name", "guide"}})})}}), {}};
         }
+        if (domain == "dialog") return {"ok", Value::Object({{"dialog_open", dialogOpen}}), {}};
         if (domain == "inventory")
             return {"ok",
                     Value::Object({{"items", Value::Array({Value::Object({{"item_id", 2000000}, {"quantity", 2}})})}}),
@@ -115,6 +116,7 @@ public:
     bool SupportsSkill() const override { return supportsSkills; }
 
     bool rejectAutoAp = false;
+    bool dialogOpen = false;
 
     bool SetActionIntent(const Action& requested, std::string& error) override {
         ++intentCalls;
@@ -2024,6 +2026,40 @@ void JumpAttackExample(const std::string& path, const std::string& direction) {
     }
 }
 
+void ResultsAndInputBlock() {
+    NativeBoundary native;
+    native.dialogOpen = true;
+    TickRuntime runtime(native);
+    std::string error;
+    const auto source = Source(R"lua(
+function main(c)
+    local status = c.game.player.status()
+    assert(status.blocked_reason == "dialog_open")
+    game.log("visible diagnostic")
+    return "failed", "script requested failure"
+end
+)lua");
+    Check(runtime.Start("return-failure", source, 0, error), "failure sample starts: " + error);
+    Step(native, runtime);
+    StatusIs(runtime, "return-failure", "failed", "script_failed");
+    const auto status = runtime.CurrentStatus("return-failure");
+    Check(Field(status, "return_value").Text() == "failed"
+              && Field(status, "return_reason").Text() == "script requested failure",
+          "script return values and failure reason stay visible in terminal status: " + status.Dump());
+    const auto logTail = Field(status, "log_tail");
+    Check(logTail.Type() == Value::Kind::Array && logTail.Elements().size() == 1
+              && logTail.Elements()[0].Text() == "visible diagnostic",
+          "game.log tail stays available in script status: " + status.Dump());
+    Check(runtime.Start("table-return", Source("function main() return {done=true, label='table-result'} end"), 0,
+                        error),
+          "table result sample starts: " + error);
+    Step(native, runtime);
+    StatusIs(runtime, "table-return", "completed", "script_returned");
+    const auto tableResult = Field(runtime.CurrentStatus("table-return"), "return_value");
+    Check(Field(tableResult, "done").Boolean() && Field(tableResult, "label").Text() == "table-result",
+          "simple Lua table results are serialized for CLI status: " + tableResult.Dump());
+}
+
 // Directory package loading: the entry stays CLI-provided source while require()
 // resolves modules from the package root in the client's own filesystem form.
 void Packages() {
@@ -2038,14 +2074,14 @@ void Packages() {
         stream << source;
         Check(static_cast<bool>(stream), "write " + path.string());
     };
-    write("layers/chain.lua", "local value = require(\"layers.value\")\nreturn {base = value.base + 1}\n");
-    write("layers/value.lua", "return {base = 41}\n");
+    write("lib/chain.lua", "local value = require(\"lib.value\")\nreturn {base = value.base + 1}\n");
+    write("lib/value.lua", "return {base = 41}\n");
     {
         NativeBoundary native;
         TickRuntime runtime(native);
         std::string error;
-        const auto entry = Source("local chain = require(\"layers.chain\")\n"
-                                  "local again = require(\"layers.chain\")\n"
+        const auto entry = Source("local chain = require(\"lib.chain\")\n"
+                                  "local again = require(\"lib.chain\")\n"
                                   "assert(again == chain, \"require_cache\")\n"
                                   "function main(context)\n"
                                   "    game.log(\"package_base=\" .. tostring(chain.base))\n"
@@ -2059,11 +2095,11 @@ void Packages() {
         const auto modules = Field(status, "modules");
         Check(modules.Type() == Value::Kind::Array && modules.Elements().size() == 2,
               "each cached module is reported once with its source: " + status.Dump());
-        Check(Field(modules.Elements()[0], "name").Text() == "layers.chain"
-                  && Field(modules.Elements()[0], "file").Text() == (root / "layers/chain.lua").string(),
+        Check(Field(modules.Elements()[0], "name").Text() == "lib.chain"
+                  && Field(modules.Elements()[0], "file").Text() == (root / "lib/chain.lua").string(),
               "entry require must report the resolved module file: " + status.Dump());
-        Check(Field(modules.Elements()[1], "name").Text() == "layers.value"
-                  && Field(modules.Elements()[1], "file").Text() == (root / "layers/value.lua").string(),
+        Check(Field(modules.Elements()[1], "name").Text() == "lib.value"
+                  && Field(modules.Elements()[1], "file").Text() == (root / "lib/value.lua").string(),
               "nested require must be tracked too: " + status.Dump());
         Step(native, runtime);
         StatusIs(runtime, "package-session", "completed", "script_returned");
@@ -2183,6 +2219,8 @@ int main(int argc, char** argv) {
         Profiling();
     else if (scenario == "packages")
         Packages();
+    else if (scenario == "results-input-block")
+        ResultsAndInputBlock();
     else if (scenario == "motion")
         MotionObservations();
     else if (scenario == "calibration-example") {
