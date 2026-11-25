@@ -69,12 +69,17 @@ world.character.x = 30; world.character.on_ground = true
 assert(step(mover, ctx, world) == "done")
 game.character = {physics = {x = 0, velocity = {x = 0}}}
 begin({kind = "downjump", x = 0, destination = 0})
-assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump")
+assert(step(mover, ctx, world) == "running" and direction == "down" and action == nil,
+    "hold Down for one tick before submitting Jump")
+assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump",
+    "submit Jump only after Down is already held")
 ctx.tick.time = 0.4; world.character.on_ground = false; world.character.y = 11
 assert(step(mover, ctx, world) == "running" and direction == nil and action == nil)
 world.character.on_ground = true
 assert(step(mover, ctx, world) == "done")
 begin({kind = "downjump", x = 0, destination = 0, to = 2})
+assert(step(mover, ctx, world) == "running" and direction == "down" and action == nil,
+    "hold Down for one tick before a mismatched landing")
 assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump")
 ctx.tick.time = 0.4; world.character.on_ground = false; world.character.y = 11
 assert(step(mover, ctx, world) == "running" and direction == nil and action == nil)
@@ -82,6 +87,7 @@ world.character.on_ground = true
 status, reason = step(mover, ctx, world)
 assert(status == "failed" and reason == "landing_mismatch" and direction == nil and action == nil)
 begin({kind = "downjump", x = 0, destination = 0})
+assert(step(mover, ctx, world) == "running" and direction == "down" and action == nil)
 assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump")
 move.stop(mover)
 assert(direction == nil and action == nil)
@@ -504,8 +510,11 @@ assert(step(mover,ctx,world)=="running" and direction==nil and action==nil,
     "continued drift must not consume the downjump action")
 ctx.tick.time=0.3
 world.character.x,game.character.physics.x,game.character.physics.velocity.x = 630.4,630.4,0.25
+assert(step(mover,ctx,world)=="running" and direction=="down" and action==nil,
+    "commit Down for a tick after horizontal velocity settles")
+ctx.tick.time=0.333
 assert(step(mover,ctx,world)=="running" and direction=="down" and action=="jump",
-    "issue Down+Jump when residual horizontal velocity is below 1px/s")
+    "issue Jump on a later tick while Down is already held")
 ctx.tick.time=0.7
 world.character.y,world.character.on_ground = 373,false
 assert(step(mover,ctx,world)=="running" and direction==nil and action==nil)
