@@ -67,6 +67,7 @@ ctx.tick.time = 0.1; world.character.y = -11; world.character.on_ground = false
 assert(step(mover, ctx, world) == "running" and direction == nil and action == nil)
 world.character.x = 30; world.character.on_ground = true
 assert(step(mover, ctx, world) == "done")
+game.character = {physics = {x = 0, velocity = {x = 0}}}
 begin({kind = "downjump", x = 0, destination = 0})
 assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump")
 ctx.tick.time = 0.4; world.character.on_ground = false; world.character.y = 11
@@ -480,6 +481,48 @@ ctx.tick.time = 4.2
 status, reason = step(mover,ctx,world)
 assert(status=="failed" and reason=="no_progress" and direction==nil,
     "a drop that cannot leave the edge reports no_progress")
+
+-- A downjump must wait for horizontal approach momentum to settle before Down+Jump.
+local downjump_graph = {platforms={
+    {left=534,right=765,segments={534,765,365,365}},
+    {left=546,right=714,segments={546,714,425,425}},
+}}
+mover = move.new(downjump_graph)
+begin({kind="downjump",from=1,to=2,x=630,destination=630,rise=60})
+world.character.x,world.character.y = 495,365
+world.character.on_ground = true
+game.character.physics = {x=495,velocity={x=87}}
+direction,action = nil,nil
+assert(step(mover,ctx,world)=="running" and direction=="right" and action==nil)
+ctx.tick.time=0.1
+world.character.x,game.character.physics.x,game.character.physics.velocity.x = 624,624,125
+assert(step(mover,ctx,world)=="running" and direction==nil and action==nil,
+    "release horizontal input but do not launch while the actor is still moving")
+ctx.tick.time=0.2
+world.character.x,game.character.physics.x,game.character.physics.velocity.x = 632,632,68
+assert(step(mover,ctx,world)=="running" and direction==nil and action==nil,
+    "continued drift must not consume the downjump action")
+ctx.tick.time=0.3
+world.character.x,game.character.physics.x,game.character.physics.velocity.x = 630,630,0
+assert(step(mover,ctx,world)=="running" and direction=="down" and action=="jump",
+    "issue Down+Jump only after horizontal velocity settles")
+ctx.tick.time=0.7
+world.character.y,world.character.on_ground = 373,false
+assert(step(mover,ctx,world)=="running" and direction==nil and action==nil)
+ctx.tick.time=0.8
+world.character.x,world.character.y,world.character.on_ground = 630,425,true
+assert(terrain.platform_at(downjump_graph,world.character.x,world.character.y,20)==2)
+assert(step(mover,ctx,world)=="done" and direction==nil and action==nil,
+    "a grounded landing on p13 completes the downjump")
+
+mover=move.new(downjump_graph)
+begin({kind="downjump",from=1,to=2,x=630,destination=630,rise=60})
+world.character.x,world.character.y = 630,365
+game.character=nil
+assert(step(mover,ctx,world)=="running" and direction==nil and action==nil)
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="character_unavailable" and direction==nil and action==nil,
+    "downjump must fail closed when horizontal velocity is unavailable")
 
 game.character=nil
 print("move tests ok")

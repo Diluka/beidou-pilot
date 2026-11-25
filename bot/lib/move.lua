@@ -85,7 +85,7 @@ function M.step(mover, ctx, world)
         if now - mover.edge_started >= 10 then failure = "timeout" end
         if not failure and mover.phase == "align" then
             local tolerance = edge.kind == "rope" and 4 or 8
-            local vertical = edge.kind == "jumpup" and edge.x == edge.destination
+            local vertical = (edge.kind == "jumpup" and edge.x == edge.destination) or edge.kind == "downjump"
             local physics = vertical and ctx.game.character and ctx.game.character.physics
             local align_x = (physics and physics.x) or character.x
             if edge.kind ~= "drop" and math.abs(align_x - edge.x) > tolerance then
@@ -110,9 +110,16 @@ function M.step(mover, ctx, world)
                 end
             elseif edge.kind == "downjump" then
                 if not character.on_ground then return "running" end
-                local ok = p.move("down") and p.jump()
-                if not ok then failure = "unsupported_edge" else
-                    mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
+                -- A prior edge can carry horizontal momentum past the lower platform.
+                if not physics or not physics.velocity or physics.velocity.x == nil then
+                    failure = "character_unavailable"
+                elseif physics.velocity.x ~= 0 then
+                    if not p.move(nil) then failure = "unsupported_edge" else return "running" end
+                else
+                    local ok = p.move("down") and p.jump()
+                    if not ok then failure = "unsupported_edge" else
+                        mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
+                    end
                 end
             elseif edge.kind == "drop" then
                 if not p.move(character.x < edge.destination and "right" or "left") then failure = "unsupported_edge" end
