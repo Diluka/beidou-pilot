@@ -110,10 +110,10 @@ function M.step(mover, ctx, world)
                 end
             elseif edge.kind == "downjump" then
                 if not character.on_ground then return "running" end
-                -- A prior edge can carry horizontal momentum past the lower platform.
+                -- A prior edge can carry momentum; treat speeds below 1px/s as settled.
                 if not physics or not physics.velocity or physics.velocity.x == nil then
                     failure = "character_unavailable"
-                elseif physics.velocity.x ~= 0 then
+                elseif math.abs(physics.velocity.x) >= 1 then
                     if not p.move(nil) then failure = "unsupported_edge" else return "running" end
                 else
                     local ok = p.move("down") and p.jump()

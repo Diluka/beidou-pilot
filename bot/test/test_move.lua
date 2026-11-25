@@ -503,9 +503,9 @@ world.character.x,game.character.physics.x,game.character.physics.velocity.x = 6
 assert(step(mover,ctx,world)=="running" and direction==nil and action==nil,
     "continued drift must not consume the downjump action")
 ctx.tick.time=0.3
-world.character.x,game.character.physics.x,game.character.physics.velocity.x = 630,630,0
+world.character.x,game.character.physics.x,game.character.physics.velocity.x = 630.4,630.4,0.25
 assert(step(mover,ctx,world)=="running" and direction=="down" and action=="jump",
-    "issue Down+Jump only after horizontal velocity settles")
+    "issue Down+Jump when residual horizontal velocity is below 1px/s")
 ctx.tick.time=0.7
 world.character.y,world.character.on_ground = 373,false
 assert(step(mover,ctx,world)=="running" and direction==nil and action==nil)
