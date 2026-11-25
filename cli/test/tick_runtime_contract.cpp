@@ -2050,9 +2050,9 @@ end
     Check(logTail.Type() == Value::Kind::Array && logTail.Elements().size() == 1
               && logTail.Elements()[0].Text() == "visible diagnostic",
           "game.log tail stays available in script status: " + status.Dump());
-    Check(runtime.Start("table-return", Source("function main() return {done=true, label='table-result'} end"), 0,
-                        error),
-          "table result sample starts: " + error);
+    Check(
+        runtime.Start("table-return", Source("function main() return {done=true, label='table-result'} end"), 0, error),
+        "table result sample starts: " + error);
     Step(native, runtime);
     StatusIs(runtime, "table-return", "completed", "script_returned");
     const auto tableResult = Field(runtime.CurrentStatus("table-return"), "return_value");

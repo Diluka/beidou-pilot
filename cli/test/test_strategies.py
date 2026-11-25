@@ -351,9 +351,7 @@ class LuaStrategyContract(unittest.TestCase):
 
     def test_explicit_package_root_is_forwarded_for_single_file_scripts(self) -> None:
         source = self.files.root / "standalone.lua"
-        source.write_text(
-            'local terrain = require("lib.terrain")\nfunction main(context)\nend\n', encoding="utf-8"
-        )
+        source.write_text('local terrain = require("lib.terrain")\nfunction main(context)\nend\n', encoding="utf-8")
         package_root = self.files.root / "modules"
         package_root.mkdir()
         with (
@@ -395,7 +393,9 @@ class LuaStrategyContract(unittest.TestCase):
     def test_cli_budget_override_replaces_only_the_budget_declaration(self) -> None:
         source = "-- @tick.gear 2\n-- @tick.budget_ms 100\n" + POLICY
         overridden = override_tick_budget(source, "750")
-        self.assertEqual((750, 2), (parse_script_execution(overridden).budget_ms, parse_script_execution(overridden).gear))
+        self.assertEqual(
+            (750, 2), (parse_script_execution(overridden).budget_ms, parse_script_execution(overridden).gear)
+        )
         self.assertEqual(source.count("@tick.budget_ms"), 1)
         tiny = override_tick_budget(POLICY, "0.00000001")
         self.assertEqual(0.00000001, parse_script_execution(tiny).budget_ms)

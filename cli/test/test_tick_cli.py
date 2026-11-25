@@ -586,8 +586,10 @@ class TickCliContract(unittest.TestCase):
         failure = report["error"]
         self.assertEqual("bridge_script_error", failure["code"])
         detail = failure["details"]
-        self.assertEqual(("failed", "script_failed", "navigation_failed"),
-                         (detail["status"], detail["script"]["reason"], detail["script"]["return_reason"]))
+        self.assertEqual(
+            ("failed", "script_failed", "navigation_failed"),
+            (detail["status"], detail["script"]["reason"], detail["script"]["return_reason"]),
+        )
         self.assertEqual(["game.log diagnostic"], detail["script"]["log_tail"])
         status_code, status_report = self.cli("script", "status", "--session", request[6])
         self.assertEqual(0, status_code, status_report)
@@ -608,15 +610,16 @@ class TickCliContract(unittest.TestCase):
         (library / "terrain.lua").write_text("return {}\n", encoding="utf-8")
         script = directory / "probe.lua"
         script.write_text(
-            "-- @tick.budget_ms 100\nlocal terrain = require('lib.terrain')\n"
-            "function main(context)\nend\n",
+            "-- @tick.budget_ms 100\nlocal terrain = require('lib.terrain')\nfunction main(context)\nend\n",
             encoding="utf-8",
         )
 
         def peer() -> list[str]:
             request = self.files.command()
             script_state_value = tick_state(request[6], stopped=True)
-            script_state_value.update(status="completed", reason="script_returned", module_root=str(directory.resolve()))
+            script_state_value.update(
+                status="completed", reason="script_returned", module_root=str(directory.resolve())
+            )
             script_state_value["tick"]["budget_ms"] = 250
             self.files.state.update(
                 script=script_state_value,
@@ -771,7 +774,8 @@ class TickCliContract(unittest.TestCase):
         self.assertNotIn("mode", data)
         self.assertEqual(
             data["usage"],
-            "beidou-pilot script run/start " + str(directory)
+            "beidou-pilot script run/start "
+            + str(directory)
             + " [--ticks <int>] [--package-root DIR] [--budget-ms N] [--seconds N|--continuous]",
         )
         self.assertEqual([option["name"] for option in data["options"]], ["ticks"])

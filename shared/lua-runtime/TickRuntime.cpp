@@ -1444,9 +1444,8 @@ void TickRuntime::Tick(bool sceneChanged) {
                     done = value != nullptr && length == 4 && std::memcmp(value, "done", 4) == 0;
                     returnedFailure = value != nullptr && length == 6 && std::memcmp(value, "failed", 6) == 0;
                     if (returnedFailure)
-                        session.error = session.returnReason.Type() == Value::Kind::String
-                                            ? session.returnReason.Text()
-                                            : "script returned failed";
+                        session.error = session.returnReason.Type() == Value::Kind::String ? session.returnReason.Text()
+                                                                                           : "script returned failed";
                 } else if (lua_istable(lua, -2)) {
                     lua_getfield(lua, -2, "done");
                     done = lua_toboolean(lua, -1) != 0;
