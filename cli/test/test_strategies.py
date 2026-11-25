@@ -19,6 +19,7 @@ from beidou_pilot.strategies import (
     parse_script_execution,
     parse_strategy,
     read_strategy_file,
+    override_tick_budget,
 )
 from beidou_pilot.strategy_scene import scene_context
 from .test_bridge import BridgeFiles
@@ -272,9 +273,10 @@ class LuaStrategyContract(unittest.TestCase):
         self.assertIn('["continuity"]=true', run.call_args.kwargs["code"])
 
     def test_cli_reserved_flags_are_rejected_in_metadata(self) -> None:
-        with self.assertRaises(ClientError) as raised:
-            parse_strategy("-- @option[type=string] help 覆盖帮助参数\nlocal function main(context)\nend\n")
-        self.assertEqual("invalid_strategy_metadata", raised.exception.code)
+        for name in ("help", "budget_ms", "package_root"):
+            with self.subTest(name=name), self.assertRaises(ClientError) as raised:
+                parse_strategy(f"-- @option[type=string] {name} 覆盖 CLI 参数\nlocal function main(context)\nend\n")
+            self.assertEqual("invalid_strategy_metadata", raised.exception.code)
 
     def test_multiple_main_entries_are_rejected_as_ambiguous_metadata(self) -> None:
         with self.assertRaises(ClientError) as raised:
@@ -347,6 +349,33 @@ class LuaStrategyContract(unittest.TestCase):
             backend.assert_not_called()
             run.assert_not_called()
 
+    def test_explicit_package_root_is_forwarded_for_single_file_scripts(self) -> None:
+        source = self.files.root / "standalone.lua"
+        source.write_text('local terrain = require("lib.terrain")\nfunction main(context)\nend\n', encoding="utf-8")
+        package_root = self.files.root / "modules"
+        package_root.mkdir()
+        with (
+            patch.object(BridgeClient, "snapshot", return_value=self.files.state),
+            patch("beidou_pilot.strategy_scene.scene_context", return_value=self.scene),
+            patch.object(BridgeClient, "run_script", return_value={"status": "running"}) as run,
+        ):
+            code, output = self.cli("script", "start", str(source), "--package-root", str(package_root))
+        self.assertEqual(0, code, output)
+        self.assertEqual(str(package_root.resolve()), run.call_args.kwargs["package_root"])
+
+    def test_invalid_budget_override_is_rejected_before_backend_access(self) -> None:
+        for value in ("0", "NaN", "1e3", "-1"):
+            with (
+                self.subTest(value=value),
+                patch("beidou_pilot.cli.Backend") as backend,
+                patch.object(BridgeClient, "run_script") as run,
+            ):
+                code, output = self.cli("script", "run", str(self.path), "--budget-ms", value)
+            self.assertEqual(2, code)
+            self.assertEqual("invalid_bridge_options", json.loads(output)["error"]["code"])
+            backend.assert_not_called()
+            run.assert_not_called()
+
     def test_default_and_explicit_tick_metadata_are_visible_without_a_client(self) -> None:
         self.assertEqual(100, parse_script_execution(POLICY).budget_ms)
         self.assertEqual(1, parse_script_execution("-- @tick.gear 1\n" + POLICY).gear)
@@ -360,6 +389,16 @@ class LuaStrategyContract(unittest.TestCase):
             with self.subTest(budget=budget):
                 execution = parse_script_execution("--@tick.budget_ms " + budget + "\n")
                 self.assertEqual(expected, execution.budget_ms)
+
+    def test_cli_budget_override_replaces_only_the_budget_declaration(self) -> None:
+        source = "-- @tick.gear 2\n-- @tick.budget_ms 100\n" + POLICY
+        overridden = override_tick_budget(source, "750")
+        self.assertEqual(
+            (750, 2), (parse_script_execution(overridden).budget_ms, parse_script_execution(overridden).gear)
+        )
+        self.assertEqual(source.count("@tick.budget_ms"), 1)
+        tiny = override_tick_budget(POLICY, "0.00000001")
+        self.assertEqual(0.00000001, parse_script_execution(tiny).budget_ms)
 
     def test_compile_returns_entry_and_context_without_old_state_or_calling_main(self) -> None:
         header = (

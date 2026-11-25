@@ -23,7 +23,7 @@ from .test_bridge import BridgeFiles, tick_script
 TICK_SOURCE = "local function main(context)\n    context.state.calls = 0\nend\n"
 
 
-def script_state(script_id: str, status: Literal["running", "completed", "cancelled", "rejected"],
+def script_state(script_id: str, status: Literal["running", "completed", "cancelled", "failed", "rejected"],
                  reason: str | None = None, error: str | None = None) -> dict:
     script = tick_script(script_id, status=status, control_released=status != "running", reason=reason, error=error)
     script.update(resumes=3, budget_yields=1, last_resume_us=12.5, max_resume_us=18.25)
@@ -77,6 +77,7 @@ class NativeScriptContract(unittest.TestCase):
             self.assertIsNone(process.poll(), "脚本运行不代表受理等待结束")
             self.files.state["command"]["status"] = "completed"
             script = script_state(script_id, "completed")
+            script.update(return_value="done", return_reason=None, log_tail=["completed tick"])
             self.files.state.update(script=script, scripts=[script], held_keys=[])
             self.files.publish()
             output, errors = process.communicate(timeout=2)
@@ -85,6 +86,8 @@ class NativeScriptContract(unittest.TestCase):
             self.assertEqual(report["request_id"], command[3])
             self.assertEqual(report["script"]["id"], script_id)
             self.assertEqual(report["script"]["max_resume_us"], 18.25)
+            self.assertEqual(report["script"]["return_value"], "done")
+            self.assertEqual(report["script"]["log_tail"], ["completed tick"])
             self.assertEqual(report["last_state"]["held_keys"], [])
         finally:
             if process.poll() is None:

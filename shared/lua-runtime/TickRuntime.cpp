@@ -287,6 +287,7 @@ struct TickRuntime::Impl {
         std::vector<std::pair<std::string, std::string>> modules;
         std::string status = "rejected", reason, error;
         std::string finalStatus;
+        Value returnValue, returnReason;
         TickConfig config;
         std::string instanceId;
         std::uint32_t actorId = 0;
@@ -301,6 +302,8 @@ struct TickRuntime::Impl {
         std::uint64_t generation = 0;
         std::vector<std::string> logs;
         std::size_t logBytes = 0;
+        std::vector<std::string> logTail;
+        std::size_t logTailBytes = 0;
 
         bool Active() const { return status == "running" && finalStatus.empty(); }
 
@@ -612,10 +615,99 @@ struct TickRuntime::Impl {
         return value;
     }
 
+    void AddBlockedReason(Value& status) {
+        if (current == nullptr) return;
+        const auto dialog = Domain("dialog");
+        for (const auto& field : dialog.Members())
+            if (field.first == "input_blocked_reason" && field.second.Type() == Value::Kind::String
+                && !field.second.Text().empty()) {
+                status["blocked_reason"] = field.second;
+                return;
+            }
+        for (const auto& field : dialog.Members())
+            if (field.first == "input_blocked" && field.second.Type() == Value::Kind::Boolean
+                && field.second.Boolean()) {
+                status["blocked_reason"] = "input_blocked";
+                return;
+            }
+        for (const auto& field : dialog.Members())
+            if ((field.first == "dialog_open" || field.first == "script_dialog_open"
+                 || field.first == "focused_talk_dialog_open" || field.first == "registered_talk_dialog_open")
+                && field.second.Type() == Value::Kind::Boolean && field.second.Boolean()) {
+                status["blocked_reason"] = "dialog_open";
+                return;
+            }
+        status["blocked_reason"] = Value{};
+    }
+
     static int PlayerStatus(lua_State* lua) {
-        PushValue(lua, Self(lua).runtime.Player());
+        auto& runtime = Self(lua).runtime;
+        auto status = runtime.Player();
+        runtime.AddBlockedReason(status);
+        PushValue(lua, status);
         Protect(lua);
         return 1;
+    }
+
+    static Value LuaResult(lua_State* lua, int index, unsigned depth, std::set<const void*>& visiting,
+                           std::size_t& remaining) {
+        if (remaining == 0) return Value("[truncated]");
+        --remaining;
+        switch (lua_type(lua, index)) {
+        case LUA_TNIL:
+            return {};
+        case LUA_TBOOLEAN:
+            return Value(lua_toboolean(lua, index) != 0);
+        case LUA_TNUMBER:
+            return Value(static_cast<double>(lua_tonumber(lua, index)));
+        case LUA_TSTRING: {
+            std::size_t length = 0;
+            const auto* text = lua_tolstring(lua, index, &length);
+            std::string result(text, (std::min)(length, std::size_t{4096}));
+            if (length > 4096) result += "...[truncated]";
+            return Value(result);
+        }
+        case LUA_TTABLE: {
+            if (depth >= 6) return Value("[depth limit]");
+            const auto* identity = lua_topointer(lua, index);
+            if (!visiting.insert(identity).second) return Value("[cycle]");
+            const int table = lua_absindex(lua, index);
+            auto value = Value::Object();
+            lua_pushnil(lua);
+            while (lua_next(lua, table) != 0) {
+                if (remaining == 0) {
+                    lua_pop(lua, 2);
+                    value["__truncated"] = true;
+                    break;
+                }
+                std::string key;
+                bool keyKnown = true;
+                if (lua_type(lua, -2) == LUA_TSTRING) {
+                    std::size_t length = 0;
+                    const auto* text = lua_tolstring(lua, -2, &length);
+                    key.assign(text, length);
+                } else if (lua_type(lua, -2) == LUA_TNUMBER) {
+                    key = std::to_string(lua_tonumber(lua, -2));
+                } else
+                    keyKnown = false;
+                if (keyKnown)
+                    value[key] = LuaResult(lua, -1, depth + 1, visiting, remaining);
+                else
+                    --remaining;
+                lua_pop(lua, 1);
+            }
+            visiting.erase(identity);
+            return value;
+        }
+        default:
+            return Value(lua_typename(lua, lua_type(lua, index)));
+        }
+    }
+
+    static Value ReturnValue(lua_State* lua, int index) {
+        std::set<const void*> visiting;
+        std::size_t remaining = 100;
+        return LuaResult(lua, index, 0, visiting, remaining);
     }
 
     static int Log(lua_State* lua) {
@@ -627,6 +719,12 @@ struct TickRuntime::Impl {
             return luaL_error(lua, "script log limit exceeded for this tick");
         session.logs.emplace_back(text, length);
         session.logBytes += length;
+        session.logTail.emplace_back(text, length);
+        session.logTailBytes += length;
+        while (session.logTail.size() > 20 || session.logTailBytes > 8192) {
+            session.logTailBytes -= session.logTail.front().size();
+            session.logTail.erase(session.logTail.begin());
+        }
         return 0;
     }
 
@@ -1086,11 +1184,16 @@ struct TickRuntime::Impl {
     Value StatusValue(const Session& session) const {
         const bool owned =
             actionOwner == &session || movementOwner == &session || session.directionFence || session.actionFence;
+        auto logTail = Value::Array();
+        for (const auto& line : session.logTail) logTail.Add(line);
         auto status =
             Value::Object({{"id", session.id},
                            {"status", session.status},
                            {"reason", session.reason.empty() ? Value{} : Value(session.reason)},
                            {"error", session.error.empty() ? Value{} : Value(session.error)},
+                           {"return_value", session.returnValue},
+                           {"return_reason", session.returnReason},
+                           {"log_tail", std::move(logTail)},
                            {"mode", "tick"},
                            {"resumes", session.index},
                            {"budget_yields", session.overruns},
@@ -1325,18 +1428,26 @@ void TickRuntime::Tick(bool sceneChanged) {
             runtime.current = &session;
             session.overran = false;
             session.started = Clock::now();
-            const int called = lua_pcall(lua, 1, 1, msgh);
+            const int called = lua_pcall(lua, 1, 2, msgh);
             session.lastUs = std::chrono::duration<double, std::micro>(Clock::now() - session.started).count();
             runtime.luaTiming.Record(session.lastUs);
             session.maxUs = (std::max)(session.maxUs, session.lastUs);
             session.overran = session.overran || session.lastUs >= session.config.budgetMs * 1000;
             runtime.current = nullptr;
-            bool done = false;
+            bool done = false, returnedFailure = false;
             if (called == LUA_OK) {
-                if (lua_type(lua, -1) == LUA_TSTRING)
-                    done = std::string(lua_tostring(lua, -1)) == "done";
-                else if (lua_istable(lua, -1)) {
-                    lua_getfield(lua, -1, "done");
+                session.returnValue = Impl::ReturnValue(lua, -2);
+                session.returnReason = Impl::ReturnValue(lua, -1);
+                if (lua_type(lua, -2) == LUA_TSTRING) {
+                    std::size_t length = 0;
+                    const auto* value = lua_tolstring(lua, -2, &length);
+                    done = value != nullptr && length == 4 && std::memcmp(value, "done", 4) == 0;
+                    returnedFailure = value != nullptr && length == 6 && std::memcmp(value, "failed", 6) == 0;
+                    if (returnedFailure)
+                        session.error = session.returnReason.Type() == Value::Kind::String ? session.returnReason.Text()
+                                                                                           : "script returned failed";
+                } else if (lua_istable(lua, -2)) {
+                    lua_getfield(lua, -2, "done");
                     done = lua_toboolean(lua, -1) != 0;
                     lua_pop(lua, 1);
                 }
@@ -1353,7 +1464,9 @@ void TickRuntime::Tick(bool sceneChanged) {
                     session.error = "tick execution budget exceeded";
                     endings.push_back({&session, "cancelled", "tick_overrun"});
                 }
-            } else if (done && called == LUA_OK)
+            } else if (returnedFailure && called == LUA_OK)
+                endings.push_back({&session, "failed", "script_failed"});
+            else if (done && called == LUA_OK)
                 endings.push_back({&session, "completed", "script_returned"});
             session.previousOverrun = session.overran;
             lua_settop(lua, 0);

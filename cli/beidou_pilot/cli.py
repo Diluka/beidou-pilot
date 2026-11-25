@@ -21,6 +21,8 @@ from .strategies import (
     compile_strategy,
     describe_strategy,
     parse_options,
+    override_tick_budget,
+    parse_script_execution,
     read_strategy_entry,
     read_strategy_file,
 )
@@ -49,6 +51,23 @@ def script_path(text: str) -> Path:
     if not text:
         raise argparse.ArgumentTypeError("须指定 tick Lua 文件或目录脚本包。")
     return WORKBENCH_SCRIPTS / text
+
+
+def find_script_package_root(path: Path) -> Path | None:
+    """Find the nearest Lua module package containing lib/ around a script file."""
+    resolved = path.resolve()
+    if resolved.is_dir():
+        return resolved
+    for parent in (resolved.parent, *resolved.parent.parents):
+        if parent == Path(parent.anchor):
+            break
+        library = parent / "lib"
+        inside_scripts = parent == WORKBENCH_SCRIPTS or WORKBENCH_SCRIPTS in parent.parents
+        if library.is_dir() and (inside_scripts or any(library.rglob("*.lua"))):
+            return parent
+        if parent == WORKBENCH_SCRIPTS:
+            break
+    return None
 
 
 def parser() -> Parser:
@@ -108,6 +127,8 @@ def parser() -> Parser:
         nargs="?",
         help="含 main(context) 的 tick Lua 文件或含 main.lua 的包目录；相对路径从 /work/scripts 解析，也接受容器绝对路径",
     )
+    q.add_argument("--package-root", type=script_path, help="显式指定 require 模块搜索根目录")
+    q.add_argument("--budget-ms", help="覆盖脚本的单次 tick 执行预算（正有限十进制毫秒数）")
     duration = q.add_mutually_exclusive_group()
     duration.add_argument("--seconds", type=float, default=30, help="客户端内脚本时限，默认30秒")
     duration.add_argument(
@@ -437,15 +458,35 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
         consumer_file = args.file
         package = args.script_package
-        package_root = str(cast(Path, package).resolve()) if package is not None else None
+        if args.package_root is not None:
+            if not args.package_root.is_dir():
+                raise ClientError(
+                    "script_package_root_invalid",
+                    "显式 --package-root 必须是容器内可读的现存目录。",
+                    {"path": str(args.package_root)},
+                )
+            package_root = args.package_root.resolve()
+        else:
+            package_root = find_script_package_root(cast(Path, consumer_file))
+        if package is not None and args.package_root is None:
+            package_root = package.resolve()
+        source = cast(str, args.strategy_source)
+        if package_root is None and re.search(r"\brequire\s*(?:\(\s*)?['\"]lib[./]", source):
+            raise ClientError(
+                "script_package_root_missing",
+                "无法从脚本目录或父级识别包含 lib/ 的包根；请放入带 Lua 模块的 lib/，或显式传入 --package-root。",
+                {"script_file": str(consumer_file)},
+            )
+        if args.budget_ms is not None:
+            source = override_tick_budget(source, args.budget_ms)
         entry_file = cast(Path, package) / "main.lua" if package is not None else consumer_file
         scene = scene_context(bridge.snapshot())
-        code = compile_strategy(cast(str, args.strategy_source), args.strategy_options, scene)
+        code = compile_strategy(source, args.strategy_options, scene)
         report = bridge.run_script(
             None,
             seconds=None if args.continuous else args.seconds,
             code=code,
-            package_root=package_root,
+            package_root=str(package_root) if package_root is not None else None,
             wait_for_start=args.action == "start",
             admission_control=control(backend, "script " + args.action),
         )
@@ -738,6 +779,14 @@ def main(argv: list[str] | None = None) -> int:
         args.strategy_source = None
         args.strategy_options = {}
         args.script_package = None
+        if args.command == "script":
+            if args.budget_ms is not None:
+                try:
+                    parse_script_execution("-- @tick.budget_ms " + args.budget_ms)
+                except ClientError as error:
+                    raise ClientError("invalid_bridge_options", "--budget-ms 须为正有限十进制毫秒数。") from error
+            if args.action not in {"run", "start"} and (args.budget_ms is not None or args.package_root is not None):
+                raise ClientError("usage", "--budget-ms 与 --package-root 仅用于script run/start。")
         if args.command == "script" and args.action in {"run", "start", "describe"} and args.file is not None:
             if args.file.is_dir():
                 args.script_package = args.file

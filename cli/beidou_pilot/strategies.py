@@ -31,6 +31,8 @@ _RESERVED_FLAGS = {
     "--session",
     "--seconds",
     "--continuous",
+    "--budget-ms",
+    "--package-root",
 }
 
 
@@ -126,6 +128,22 @@ def parse_script_execution(source: str) -> ScriptExecution:
     if gear not in _TICK_GEARS:
         raise _invalid_metadata("@tick.gear 只接受 1、2、3 或 4。")
     return ScriptExecution(budget_ms, overrun, abort_commit == "true", _TICK_GEARS[gear])
+
+
+def override_tick_budget(source: str, budget_ms: str) -> str:
+    """Apply the already validated explicit CLI budget to the leading comments."""
+    parse_script_execution(source)
+    header, body = split_script_header(source)
+    directive = f"-- @tick.budget_ms {budget_ms}"
+    lines = header.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if re.match(r"^\s*--+\s*@tick\.budget_ms\b", line):
+            newline = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+            lines[index] = directive + newline
+            break
+    else:
+        lines.append(("" if not header or header.endswith(("\n", "\r")) else "\n") + directive + "\n")
+    return "".join(lines) + body
 
 
 def _invalid_metadata(message: str, line: int | None = None) -> ClientError:
@@ -353,7 +371,7 @@ def describe_strategy(path: Path, metadata: StrategyMetadata, package_root: Path
             if option.optional:
                 part = f"[{part}]"
         usage += " " + part
-    usage += " [--seconds N|--continuous]"
+    usage += " [--package-root DIR] [--budget-ms N] [--seconds N|--continuous]"
     result: JsonObject = {
         "file": str(target),
         "entry": "main(context)",
