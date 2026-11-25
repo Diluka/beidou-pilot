@@ -45,13 +45,13 @@ function M.step(mover, ctx, world)
     local reason
     if type(edge) ~= "table" or type(edge.kind) ~= "string" then
         reason = "invalid_edge"
-    elseif edge.kind ~= "walk" and edge.kind ~= "step" and edge.kind ~= "jumpup" and edge.kind ~= "downjump" and edge.kind ~= "drop" and edge.kind ~= "rope" then
+    elseif edge.kind ~= "walk" and edge.kind ~= "step" and edge.kind ~= "jumpup" and edge.kind ~= "horizontal_jump" and edge.kind ~= "downjump" and edge.kind ~= "drop" and edge.kind ~= "rope" then
         reason = "unsupported_edge"
     elseif type(edge.destination) ~= "number" or (edge.kind == "step" and type(edge.to) ~= "number") then
         reason = "invalid_edge"
     end
     local character = world and world.character
-    if not reason and (not character or type(character.x) ~= "number" or type(character.y) ~= "number" or ((edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop" or edge.kind == "rope") and type(character.on_ground) ~= "boolean")) then
+    if not reason and (not character or type(character.x) ~= "number" or type(character.y) ~= "number" or ((edge.kind == "jumpup" or edge.kind == "horizontal_jump" or edge.kind == "downjump" or edge.kind == "drop" or edge.kind == "rope") and type(character.on_ground) ~= "boolean")) then
         reason = "character_unavailable"
     end
     if reason then
@@ -61,6 +61,83 @@ function M.step(mover, ctx, world)
         return "failed", reason
     end
     local now = (ctx.tick and ctx.tick.time) or world.now
+    if edge.kind == "horizontal_jump" then
+        local p, terrain = ctx.game.player, require("lib.terrain")
+        if type(edge.from) ~= "number" or type(edge.to) ~= "number" or type(edge.x) ~= "number" then
+            p.move(nil)
+            mover.status, mover.reason = "failed", "invalid_edge"
+            return "failed", mover.reason
+        end
+        if mover.active_edges ~= mover.edges or mover.active_index ~= mover.index then
+            mover.active_edges, mover.active_index, mover.edge_started = mover.edges, mover.index, now
+            mover.airborne = nil
+        end
+        if not mover.started then
+            mover.started, mover.phase, mover.start_y = now, "align", character.y
+            mover.progress_time, mover.progress_x = now, character.x
+        end
+        local failure
+        if now - mover.edge_started >= 10 then failure = "timeout" end
+        if not failure and mover.phase == "align" and character.on_ground == true then
+            local platform = terrain.platform_at(mover.graph, character.x, character.y, 20)
+            if platform ~= edge.from then
+                failure = "landing_mismatch"
+            elseif math.abs(character.x - edge.x) > 8 then
+                local direction = character.x < edge.x and "right" or "left"
+                if not p.move(direction) then failure = "unsupported_edge" end
+            else
+                local jump_direction = character.x < edge.destination and "right" or "left"
+                if not p.move(jump_direction) or not p.jump() then failure = "unsupported_edge"
+                else
+                    mover.phase, mover.phase_time, mover.airborne, mover.jump_held = "flight", now, false, true
+                end
+            end
+        elseif not failure and mover.phase == "flight" then
+            if character.on_ground == false then mover.airborne = true end
+            if mover.airborne and character.on_ground == true then
+                p.move(nil)
+                if mover.jump_held then p.skill(nil); mover.jump_held = nil end
+                local platform = terrain.platform_at(mover.graph, character.x, character.y, 20)
+                if platform ~= edge.to or math.abs(character.x - edge.destination) > 20 then
+                    failure = "landing_mismatch"
+                else
+                    mover.phase = "complete"
+                end
+            else
+                local direction = character.x < edge.destination and "right" or "left"
+                if (direction == "right" and character.x >= edge.destination - 8)
+                    or (direction == "left" and character.x <= edge.destination + 8) then
+                    if not p.move(nil) then failure = "unsupported_edge" end
+                elseif not p.move(direction) then
+                    failure = "unsupported_edge"
+                end
+                if mover.jump_held and now - mover.phase_time >= 0.3 then
+                    p.skill(nil)
+                    mover.jump_held = nil
+                end
+                if not failure and now - mover.progress_time >= 2 then
+                    if math.abs(character.x - mover.progress_x) < 5 then failure = "no_progress" end
+                    mover.progress_time, mover.progress_x = now, character.x
+                end
+            end
+        end
+        if failure then
+            p.move(nil)
+            if mover.jump_held then p.skill(nil); mover.jump_held = nil end
+            if failure ~= "timeout" and failure ~= "landing_mismatch" and mover.retries < 1 then
+                mover.retries, mover.started, mover.airborne = mover.retries + 1, nil, nil
+                return "running"
+            end
+            mover.status, mover.reason = "failed", failure
+            return "failed", failure
+        end
+        if mover.phase == "complete" then
+            p.move(nil)
+            mover.index, mover.started, mover.retries, mover.airborne = mover.index + 1, nil, 0, nil
+            if mover.index > #mover.edges then mover.status = "done"; return "done" end
+        end
+        return "running"
+    end
     if edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop" or edge.kind == "rope" then
         local p = ctx.game.player
         local terrain = require("lib.terrain")

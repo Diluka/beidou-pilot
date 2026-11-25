@@ -76,9 +76,11 @@ end
 local fixtures = {
     dofile("bot/test/fixtures/synthetic.lua"),
     dofile("bot/test/fixtures/map_102000000.lua"),
+    dofile("bot/test/fixtures/map_10000.lua"),
 }
 for _, fixture in ipairs(fixtures) do
-    assert(type(fixture) == "table" and fixture.map_id == 102000000, "fixture map_id must match the test map")
+    assert(type(fixture) == "table" and type(fixture.map_id) == "number"
+        and fixture.map_id > 0 and fixture.map_id % 1 == 0, "fixture map_id must be a positive integer")
     assert(type(fixture.scene_generation) == "number" and fixture.scene_generation > 0
         and fixture.scene_generation % 1 == 0, "fixture scene_generation must be a positive integer")
     assert(type(fixture.navigation) == "table", "fixture navigation is required")
