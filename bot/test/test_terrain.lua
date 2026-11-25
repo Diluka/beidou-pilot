@@ -51,6 +51,27 @@ for kind, values in pairs(candidate_examples) do
     if kind == "rope" then assert(planned[1].rope_index == values[6], "rope index must be retained") end
 end
 
+local horizontal_navigation = navigation_with_platforms({
+    {index=1,left=0,right=40,open_left=true,open_right=true,segments={0,40,100,100}},
+    {index=2,left=64,right=104,open_left=true,open_right=true,segments={64,104,100,100}},
+})
+horizontal_navigation.walls = {}
+local horizontal_graph = assert(terrain.build(horizontal_navigation))
+local horizontal_path = assert(terrain.plan(horizontal_graph, 1, 2))
+assert(#horizontal_path == 1 and horizontal_path[1].kind == "horizontal_jump"
+    and horizontal_path[1].from == 1 and horizontal_path[1].to == 2
+    and horizontal_path[1].destination > horizontal_graph.platforms[2].left,
+    "a clear 24px horizontal gap must create a supported jump edge")
+local ceiling_navigation = navigation_with_platforms({
+    {index=1,left=0,right=40,open_left=true,open_right=true,segments={0,40,100,100}},
+    {index=2,left=64,right=104,open_left=true,open_right=true,segments={64,104,100,100}},
+    {index=3,left=40,right=64,open_left=true,open_right=true,segments={40,64,50,50}},
+})
+ceiling_navigation.walls = {}
+local ceiling_path, ceiling_reason = terrain.plan(assert(terrain.build(ceiling_navigation)), 1, 2)
+assert(ceiling_path == nil and ceiling_reason == "no_path",
+    "a platform intruding into the jump clearance envelope must prevent the edge")
+
 local plan_graph = assert(terrain.build(synthetic.navigation))
 local planned = assert(terrain.plan(plan_graph, 1, 4, {speed = 125, blocked = {}}))
 assert(#planned == 3, "synthetic path must use three edges")
@@ -153,8 +174,8 @@ assert(not terrain.plan(assert(terrain.build(down_navigation)), 1, 2, {blocked={
 down_navigation.platforms[3] = nil
 down_navigation.platforms[2].segments = {0,40,160,160, 60,100,160,160}
 assert(not terrain.plan(assert(terrain.build(down_navigation)), 1, 2), "unsupported landing strip blocks downjump")
-down_navigation.platforms[2].left, down_navigation.platforms[2].right = 200, 300
-down_navigation.platforms[2].segments = {200,300,160,160}
+down_navigation.platforms[2].left, down_navigation.platforms[2].right = 300, 400
+down_navigation.platforms[2].segments = {300,400,160,160}
 assert(not terrain.plan(assert(terrain.build(down_navigation)), 1, 2), "no overlapping landing rejects downjump")
 
 local sloped_navigation = navigation_with_platforms({
@@ -243,6 +264,21 @@ assert(real_graph.navigation == real.navigation and real.navigation.candidates =
     "planning must not modify the navigation snapshot")
 local real_path_kinds = {}
 for _, edge in ipairs(real_path) do real_path_kinds[#real_path_kinds + 1] = edge.kind end
+
+local map10000 = dofile("bot/test/fixtures/map_10000.lua")
+assert(map10000.map_id == 10000, "tutorial fixture must retain the captured map identity")
+local tutorial_graph = assert(terrain.build(map10000.navigation))
+local tutorial_jump = assert(terrain.plan(tutorial_graph, 4, 10, {speed = 125}))
+assert(#tutorial_jump == 1 and tutorial_jump[1].kind == "horizontal_jump"
+    and tutorial_jump[1].from == 4 and tutorial_jump[1].to == 10
+    and tutorial_jump[1].destination > tutorial_graph.platforms[10].left
+    and tutorial_jump[1].destination < tutorial_graph.platforms[10].right,
+    "the supported p4-to-p10 gap must plan a horizontal jump onto the target platform")
+for _, pair in ipairs({{3, 4}, {9, 10}, {7, 8}, {7, 9}}) do
+    local no_route, no_route_reason = terrain.plan(tutorial_graph, pair[1], pair[2], {speed = 125})
+    assert(no_route == nil and no_route_reason == "no_path",
+        ("blocked or unreachable tutorial route %d->%d must remain no_path"):format(pair[1], pair[2]))
+end
 
 print(("terrain ok: synthetic locations=8; map=%d platforms=%d candidates=%d character=(%d,%d) platform=%d path=%d->1 edges=%d kinds=%s")
     :format(real.map_id, #real_graph.platforms, candidate_count, character_x, character_y,

@@ -217,6 +217,49 @@ local function vertical_launch(platforms, from, to, probe, max_rise, apex)
     end
 end
 
+local function horizontal_launch(source, target, from, to, platforms, walls, model, max_rise)
+    local rightward = source.right < target.left
+    local leftward = target.right < source.left
+    if not rightward and not leftward then return nil end
+    local source_width = source.right - source.left
+    local target_width = target.right - target.left
+    local margin = math.min(8, source_width / 4, target_width / 4)
+    local launch = rightward and source.right - margin or source.left + margin
+    local destination = rightward and target.left + margin or target.right - margin
+    -- Bound the horizontal span by the jump envelope plus the actor's height.
+    if math.abs(destination - launch) > max_rise + model.stand_height then return nil end
+
+    local source_edge = rightward and source.right or source.left
+    local target_edge = rightward and target.left or target.right
+    if not height_range(source, math.min(launch, source_edge), math.max(launch, source_edge), true)
+        or not height_range(target, math.min(destination, target_edge), math.max(destination, target_edge), true) then
+        return nil
+    end
+    local source_y = height_range(source, launch, launch)
+    local target_y = height_range(target, destination, destination)
+    if not source_y or not target_y then return nil end
+    local rise = source_y - target_y
+    if rise > max_rise or rise < -(model.drop_max + max_rise) then return nil end
+
+    local apex_y = source_y - max_rise
+    local left, right = math.min(launch, destination), math.max(launch, destination)
+    for index, platform in ipairs(platforms) do
+        if index ~= from and index ~= to then
+            local near, far = height_range(platform, left, right)
+            if near and near <= target_y and far >= apex_y then return nil end
+        end
+    end
+    for index = 1, #walls, 3 do
+        local x, top, bottom = walls[index], walls[index + 1], walls[index + 2]
+        if x > left and x < right then
+            local can_clear_above = math.max(0, source_y - top) <= max_rise
+            local can_pass_below = math.min(source_y, target_y) - model.stand_height >= bottom
+            if not can_clear_above and not can_pass_below then return nil end
+        end
+    end
+    return launch, destination, rise
+end
+
 function M.plan(graph, from_index, to_index, options)
     if type(graph) ~= "table" or type(graph.model) ~= "table"
         or not finite_number(graph.model.jump_rise)
@@ -302,6 +345,24 @@ function M.plan(graph, from_index, to_index, options)
                         cost = cost,
                     }
                     if kind == "rope" then edge.rope_index = rope_index end
+                    adjacency[from] = adjacency[from] or {}
+                    adjacency[from][#adjacency[from] + 1] = edge
+                    edges[#edges + 1] = edge
+                end
+            end
+        end
+    end
+
+    -- Derive horizontal jumps from supported platform strips; reject ceilings and walls.
+    local walls = type(graph.walls) == "table" and graph.walls or {}
+    for from, source in ipairs(platforms) do
+        for to, target in ipairs(platforms) do
+            if from ~= to and not blocked[tostring(from) .. ":" .. tostring(to)] then
+                local x, destination, rise = horizontal_launch(source, target, from, to, platforms, walls,
+                    model, math.min(model.jump_rise, max_jump_height))
+                if x then
+                    local edge = {kind="horizontal_jump", from=from, to=to, x=x, destination=destination,
+                        rise=rise, cost=0.8 + math.abs(destination - x) / effective_speed}
                     adjacency[from] = adjacency[from] or {}
                     adjacency[from][#adjacency[from] + 1] = edge
                     edges[#edges + 1] = edge

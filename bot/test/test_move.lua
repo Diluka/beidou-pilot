@@ -534,4 +534,43 @@ assert(status=="failed" and reason=="character_unavailable" and direction==nil a
     "downjump must fail closed when horizontal velocity is unavailable")
 
 game.character=nil
+
+local map10000 = assert(terrain.build(dofile("bot/test/fixtures/map_10000.lua").navigation))
+local horizontal_edge = assert(terrain.plan(map10000, 4, 10, {speed=125}))[1]
+mover = move.new(map10000)
+begin(horizontal_edge)
+world.character = {x=horizontal_edge.x,y=365,on_ground=true}
+ctx.tick.time=0; direction,action=nil,nil
+game.player.move = function(value) direction=value; return true end
+game.player.jump = function() action="jump"; return true end
+game.player.skill = function(value) assert(value==nil); action=nil; return true end
+assert(step(mover,ctx,world)=="running" and direction=="right" and action=="jump",
+    "a horizontal jump launches toward its destination")
+ctx.tick.time=0.1; world.character.x,world.character.y,world.character.on_ground = horizontal_edge.x+14,320,false
+assert(step(mover,ctx,world)=="running" and direction=="right")
+ctx.tick.time=0.4; world.character.x=horizontal_edge.destination-4
+assert(step(mover,ctx,world)=="running" and direction==nil and action==nil,
+    "release horizontal input at the landing strip and release Jump after launch")
+world.character.x,world.character.y,world.character.on_ground = horizontal_edge.destination,485,true
+assert(terrain.platform_at(map10000,world.character.x,world.character.y,20)==horizontal_edge.to)
+assert(step(mover,ctx,world)=="done" and direction==nil,
+    "complete a horizontal jump only after landing on its target platform")
+
+local wrong_landing_graph = {platforms={
+    {left=0,right=20,segments={0,20,100,100}},
+    {left=40,right=70,segments={40,70,90,90}},
+    {left=40,right=70,segments={40,70,100,100}},
+}}
+mover = move.new(wrong_landing_graph)
+begin({kind="horizontal_jump",from=1,to=2,x=12,destination=50})
+world.character = {x=12,y=100,on_ground=true}
+ctx.tick.time=0
+assert(step(mover,ctx,world)=="running")
+world.character.x,world.character.y,world.character.on_ground = 30,50,false
+assert(step(mover,ctx,world)=="running")
+world.character.x,world.character.y,world.character.on_ground = 50,100,true
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="landing_mismatch" and direction==nil,
+    "a horizontal jump landing on a different platform must fail explicitly")
+
 print("move tests ok")
