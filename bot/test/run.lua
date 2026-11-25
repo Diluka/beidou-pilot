@@ -15,6 +15,10 @@ local expected = {
     follow = {
         update = 2,
     },
+    target = {
+        selector = 1,
+        step = 6,
+    },
     combat = {
         select = 2,
         step = 4,
@@ -282,10 +286,11 @@ end
 
 dofile("bot/test/test_move.lua")
 dofile("bot/test/test_io.lua")
+dofile("bot/test/test_target.lua")
 
 dofile("bot/test/test_terrain.lua")
 dofile("bot/test/test_sustain.lua")
 dofile("bot/test/test_follow.lua")
 dofile("bot/test/test_loot.lua")
 dofile("bot/test/test_combat.lua")
-print("bot smoke ok: 9 modules")
+print("bot smoke ok: 10 modules")

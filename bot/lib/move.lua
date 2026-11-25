@@ -76,6 +76,9 @@ function M.step(mover, ctx, world)
         if not mover.started then
             if mover.retries == 0 then mover.edge_started = now; mover.airborne = nil end
             mover.started, mover.phase, mover.start_y = now, "align", character.y
+            if edge.kind == "drop" then
+                mover.progress_time, mover.progress_x, mover.progress_y = now, character.x, character.y
+            end
         end
         local failure
         if (edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop") and mover.phase ~= "align" and character.on_ground == false then mover.airborne = true end
@@ -120,7 +123,23 @@ function M.step(mover, ctx, world)
                 if not p.move(edge.rise < 0 and "up" or "down") then failure = "unsupported_edge" end
             end
         elseif not failure and mover.phase == "launch" then
-            if now - mover.phase_time >= 0.3 or (edge.kind == "jumpup" and character.y < mover.start_y - 10) then
+            if edge.kind == "drop" then
+                if character.on_ground == false or character.y - mover.start_y >= 10 then
+                    p.move(nil)
+                    mover.phase = "wait"
+                else
+                    local direction = character.x < edge.destination and "right" or "left"
+                    if not p.move(direction) then failure = "unsupported_edge"
+                    elseif now - mover.progress_time >= 2 then
+                        if math.abs(character.x - mover.progress_x) < 5
+                            and math.abs(character.y - mover.progress_y) < 5 then
+                            failure = "no_progress"
+                        else
+                            mover.progress_time, mover.progress_x, mover.progress_y = now, character.x, character.y
+                        end
+                    end
+                end
+            elseif now - mover.phase_time >= 0.3 or (edge.kind == "jumpup" and character.y < mover.start_y - 10) then
                 p.move(nil)
                 if mover.jump_held then p.skill(nil); mover.jump_held = nil; mover.release_tick = ctx.tick.index end
                 mover.phase = "wait"
@@ -142,8 +161,20 @@ function M.step(mover, ctx, world)
         elseif not failure and mover.phase == "wait" then
             if character.on_ground == false then mover.airborne = true end
             if character.on_ground == true and mover.airborne then
-                if terrain.platform_at(mover.graph, character.x, character.y, 20) ~= edge.to then failure = "landing_mismatch"
-                elseif edge.kind == "jumpup" or character.y - mover.start_y >= 10 then mover.phase = "complete" end
+                local platform = terrain.platform_at(mover.graph, character.x, character.y, 20)
+                if platform ~= edge.to or (edge.kind == "drop" and math.abs(character.x - edge.destination) > 20) then
+                    failure = "landing_mismatch"
+                elseif edge.kind == "jumpup" or character.y - mover.start_y >= 10 then
+                    mover.phase = "complete"
+                end
+            end
+            if not failure and mover.phase == "wait" and edge.kind == "drop" and now - mover.progress_time >= 2 then
+                if math.abs(character.x - mover.progress_x) < 5
+                    and math.abs(character.y - mover.progress_y) < 5 then
+                    failure = "no_progress"
+                else
+                    mover.progress_time, mover.progress_x, mover.progress_y = now, character.x, character.y
+                end
             end
         end
         if failure then

@@ -4,6 +4,7 @@ local world_module = require("lib.world")
 local terrain = require("lib.terrain")
 local move = require("lib.move")
 local follow = require("lib.follow")
+local navigate = require("lib.target")
 local combat = require("lib.combat")
 local sustain = require("lib.sustain")
 local loot = require("lib.loot")
@@ -56,7 +57,7 @@ local function main(context)
                 if command._ok and (command.kind == "stop" or command.kind == "stay"
                     or bot.mode ~= previous_mode or bot.target ~= previous_target) then
                     if memory.mover then move.stop(memory.mover) end
-                    memory.path_target = nil
+                    memory.path_target, memory.navigation, memory.hunt_retry_at = nil, nil, nil
                 end
                 local event_ok, event_error = io_module.event(context, "command/" .. tostring(command.kind or "invalid"), {
                     id = command.id, kind = command.kind, target = command.target,
@@ -93,8 +94,10 @@ local function main(context)
     local terrain_scene = scene and scene.terrain
     local generation = world.scene_generation
     if memory.graph_generation ~= generation then
+        if memory.navigation and memory.mover then move.stop(memory.mover) end
         memory.graph, memory.mover, memory.path_target, memory.follow_unreachable = nil, nil, nil, nil
         memory.graph_generation, memory.graph_attempt_generation, memory.mover_attempt_generation = nil, nil, nil
+        memory.hunt_retry_at = nil
     end
     if generation ~= nil and memory.graph_generation ~= generation
         and memory.graph_attempt_generation ~= generation
@@ -130,11 +133,13 @@ local function main(context)
         for _, drop in ipairs(world.drops or {}) do set_platform(drop) end
     end
 
+    local kind, name
+    if bot.mode == "follow" then kind, name = navigate.selector(bot.target) end
     local handled, sustain_error = sustain.step(context, world)
-    if handled then
+    if handled and not kind then
         io_module.publish(context, world, now)
         return
-    elseif sustain_error and sustain_error ~= "not_implemented" then
+    elseif not handled and sustain_error and sustain_error ~= "not_implemented" then
         bot.last_error = sustain_error
         io_module.event(context, "error", {reason = sustain_error})
     end
@@ -155,6 +160,42 @@ local function main(context)
         return memory.mover
     end
 
+    if kind then
+        memory.navigation = memory.navigation or {generation = generation, map_id = world.map_id,
+            instance_id = scene and scene.instance_id, started = now}
+        local nav = memory.navigation
+        local status, reason = "wait", "terrain_unavailable"
+        if handled then
+            reason = sustain_error
+        elseif terrain_ready then
+            status, reason = navigate.step(context, world, nav, kind, name, ensure_mover)
+        end
+        if status ~= "moving" then
+            if memory.mover then
+                if handled and (reason == "hp_potion" or reason == "mp_potion") then
+                    context.game.player.move(nil) -- sustain now owns the action slot
+                    memory.mover, memory.mover_attempt_generation = nil, nil
+                else
+                    move.stop(memory.mover)
+                end
+            end
+            state_module.transition(bot, "idle", reason)
+            io_module.event(context, "target/" .. status, {target = bot.target, reason = reason,
+                map_id = world.map_id, scene_generation = generation, elapsed = now - nav.started,
+                x = character.x, y = character.y, from = character.platform, to = nav.goal_platform,
+                target_x = nav.goal_x, target_y = nav.goal_y, object_id = nav.object_id,
+                vx = context.game.character and context.game.character.velocity and context.game.character.velocity.x})
+            io_module.event(context, "mode", {from = "follow", mode = "idle", reason = reason})
+            memory.navigation, memory.force_publish = nil, true
+        end
+        io_module.publish(context, world, now)
+        return
+    end
+
+    if bot.mode == "hunt" and memory.hunt_retry_at and now < memory.hunt_retry_at then
+        io_module.publish(context, world, now)
+        return
+    end
     local mob, drop
     if terrain_ready then
         local skip_movement = false
@@ -239,7 +280,22 @@ local function main(context)
             end
         elseif bot.mode == "hunt" then
             mob = combat.select(world, bot.config or defaults)
-            if mob then ensure_mover() end
+            if mob then
+                ensure_mover()
+            else
+                drop = loot.select(world, bot.config or defaults)
+                if not drop then
+                    if not memory.hunt_retry_at then
+                        if memory.mover then move.stop(memory.mover) end
+                        io_module.event(context, "hunt/wait", {reason = "no_target", map_id = world.map_id,
+                            scene_generation = generation, x = character.x, y = character.y})
+                    end
+                    memory.hunt_retry_at = now + 1
+                    io_module.publish(context, world, now)
+                    return
+                end
+            end
+            memory.hunt_retry_at = nil
         end
 
         local movement_status
@@ -261,7 +317,7 @@ local function main(context)
                 end
             end
             if combat_status ~= "running" then
-                drop = loot.select(world, bot.config or defaults)
+                if mob then drop = loot.select(world, bot.config or defaults) end
                 if drop then
                     if not memory.mover then ensure_mover() end
                     if memory.mover then

@@ -87,9 +87,9 @@ assert(direction == nil and action == nil)
 begin({kind = "drop", destination = 100})
 assert(step(mover, ctx, world) == "running")
 assert(step(mover, ctx, world) == "running" and direction == "right")
-ctx.tick.time = 0.4; world.character.on_ground = false
+ctx.tick.time = 0.4; world.character.x = 40; world.character.on_ground = false
 assert(step(mover, ctx, world) == "running" and direction == nil)
-world.character.y = 11; world.character.on_ground = true
+world.character.x, world.character.y, world.character.on_ground = 100, 11, true
 assert(step(mover, ctx, world) == "done")
 begin({kind = "rope", x = 0, destination = 0, rise = -100})
 assert(step(mover, ctx, world) == "running" and direction == "up")
@@ -410,5 +410,76 @@ for _, physics in ipairs({{}, {velocity={x=-125}}}) do
     else assert(reason=="character_unavailable") end
     assert(status=="failed" and not direction and not action)
 end
+local drop_platforms = {}
+for index = 1, 7 do
+    drop_platforms[index] = {left=500,right=500,segments={500,500,0,0}}
+end
+drop_platforms[5] = {left=-200,right=-130,segments={-200,-130,485,485}}
+drop_platforms[7] = {left=-133,right=0,segments={-133,0,469,469}}
+local drop_graph = {platforms=drop_platforms}
+local natural_drop = {kind="drop",from=7,to=5,x=-133,destination=-175.5,rise=16}
+mover = move.new(drop_graph)
+begin(natural_drop)
+world.character = {x=-93,y=469,on_ground=true}
+ctx.tick.time = 0
+assert(step(mover,ctx,world)=="running" and direction=="left")
+ctx.tick.time = 0.4; world.character.x = -135
+assert(step(mover,ctx,world)=="running" and direction=="left",
+    "a drop keeps moving past the source edge while still grounded")
+ctx.tick.time = 0.8; world.character.x = -150
+assert(step(mover,ctx,world)=="running" and direction=="left",
+    "a drop does not stop merely for reaching the edge coordinate")
+ctx.tick.time = 1; world.character.y = 480
+assert(step(mover,ctx,world)=="running" and direction==nil and mover.phase=="wait",
+    "release movement after the ten-pixel descent signal")
+assert(step(mover,ctx,world)=="running" and not mover.airborne,
+    "a grounded height change alone cannot confirm a landing")
+ctx.tick.time = 1.1; world.character.on_ground = false
+assert(step(mover,ctx,world)=="running" and mover.airborne)
+ctx.tick.time = 1.2
+world.character.x, world.character.y, world.character.on_ground = -160, 485, true
+assert(terrain.platform_at(drop_graph,world.character.x,world.character.y,20)==5)
+assert(step(mover,ctx,world)=="done" and direction==nil,
+    "a grounded landing on platform 5 within 20px of destination completes the drop")
+
+mover = move.new(drop_graph)
+begin(natural_drop)
+world.character = {x=-93,y=469,on_ground=true}
+ctx.tick.time = 0; step(mover,ctx,world)
+ctx.tick.time = 0.4; world.character.x = -135; world.character.on_ground = false
+assert(step(mover,ctx,world)=="running" and direction==nil)
+ctx.tick.time = 0.8
+world.character.x, world.character.y, world.character.on_ground = -140, 485, true
+assert(terrain.platform_at(drop_graph,world.character.x,world.character.y,20)==5)
+status, reason = step(mover,ctx,world)
+assert(status=="failed" and reason=="landing_mismatch" and direction==nil,
+    "a landing more than 20px from the target point is rejected")
+
+mover = move.new(drop_graph)
+begin(natural_drop)
+world.character = {x=-93,y=469,on_ground=true}
+ctx.tick.time = 0; step(mover,ctx,world)
+ctx.tick.time = 0.4; world.character.x = -135; world.character.on_ground = false
+step(mover,ctx,world)
+ctx.tick.time = 0.8
+world.character.x, world.character.y, world.character.on_ground = -90, 469, true
+status, reason = step(mover,ctx,world)
+assert(status=="failed" and reason=="landing_mismatch" and direction==nil,
+    "landing on the source platform is rejected")
+
+mover = move.new(drop_graph)
+begin(natural_drop)
+world.character = {x=-93,y=469,on_ground=true}
+ctx.tick.time = 0; step(mover,ctx,world)
+ctx.tick.time = 2
+assert(step(mover,ctx,world)=="running" and mover.retries==1 and direction==nil,
+    "a stalled edge retries once after clearing direction")
+ctx.tick.time = 2.1
+assert(step(mover,ctx,world)=="running" and direction=="left")
+ctx.tick.time = 4.2
+status, reason = step(mover,ctx,world)
+assert(status=="failed" and reason=="no_progress" and direction==nil,
+    "a drop that cannot leave the edge reports no_progress")
+
 game.character=nil
 print("move tests ok")
