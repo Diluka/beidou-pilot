@@ -212,6 +212,7 @@ local last_set_path_edges
 local scene_generation = 1
 local fake_modules = {
     ["lib.io"] = {
+        platform_error = nil,
         event = function() calls[#calls + 1] = "event"; return true end,
         poll = function()
             calls[#calls + 1] = "poll"
@@ -313,6 +314,12 @@ local pipeline_context = {
     game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
 }
+fake_modules["lib.io"].platform_error = "unsupported_platform: bot_package_requires_posix"
+environment.__test_main(pipeline_context)
+assert(table.concat(calls, ",") == "event" and pipeline_context.state.bot_platform_error_reported,
+    "unsupported platforms must report once and stop before observing or polling")
+fake_modules["lib.io"].platform_error = nil
+calls = {}
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,select,move,combat,loot_select,publish")
 calls, movement_result = {}, "running"
