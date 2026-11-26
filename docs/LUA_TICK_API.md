@@ -106,7 +106,7 @@ end
 | `game.scene` | `players/monsters/npcs/projectiles/drops` 的实体列表按本端支持范围提供，各行共享可移动物体的位置与向量契约；怪物项可带 `controlled`（本端是否持有该怪物控制权）：无头端按本地控制标记给出 true/false，GUI 端保持未知；集合或字段不可读保留未知，不把不支持的集合写成空列表；完整性按本端实际能力声明 |
 | `game.inventory`、`game.quests` | 本端原生背包/装备和任务领域；任务动态性仍遵循本端来源声明 |
 | `game.chat` | 按本端可读能力；不支持时明确 `status="unsupported"`，不是空聊天记录 |
-| `game.dialog/shop/ui/hotkeys/interaction/notifications` | 按需只读观察；支持范围与原生领域一致，不增加窗口动作 API |
+| `game.dialog/shop/ui/hotkeys/interaction/notifications` | 按需只读观察；支持范围与原生领域一致，不增加窗口动作 API。headless 的交互引用激活目前仅由 CLI 提供，tick Lua 暂无入口 |
 
 buff 归 `game.character`，不在 `player.status()`。首版两端都没有可靠的完整 buff 效果及剩余时间来源，返回 `buffs=nil`（JSON `null`）、`buffs_status="unsupported"` 和 `buffs_unavailable="native_buff_details_unavailable"`；不把未知列表伪造成 `{}`，不通过服务端查询补齐。
 

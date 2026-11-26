@@ -291,7 +291,7 @@ AP 已为 0 时返回 `status=unchanged`；确认同角色 AP 已归零且属性
 
 ## 无头控件交互
 
-无头端保留只读观察，不提供桌面输入入口：`snapshot` 与 `inspect` 返回当前 `interaction.page`、控件 `role/text/enabled/ref` 和场景 NPC 引用；`click`、`ui`、`equip`、`hotkeys`、`bind`、`talk`、`dialog`、`shop`、`notifications` 等 GUI 命令在无头端统一返回 `unsupported_capability`。需要激活页面控件或 NPC 时使用原版 GUI 会话；无头端的任务接交等交互能力当前不提供，缺口见[能力边界](CLIENT_LIMITATIONS.md)。
+无头端通过原生引用操作 NPC 和对话，不模拟桌面坐标：`talk 希娜` 按当前场景名称选择 NPC，`dialog read` 返回正文、选项、按钮及引用，`dialog select 选项文字`、`dialog next`、`dialog confirm`、`dialog yes/no/end` 激活当前页面控件，`click @ui-...` 直接激活引用。本地任务页中的接受、交付按钮也可通过引用激活；可用性未知时保守拒绝。请求派发不代表服务端结果已确认，应重新读取页面或任务记录；结果未知时不要重放。引用只在当前实例、角色、场景及页面有效。运行中的脚本占用输入时返回 `input_busy`。`dialog advance`、桌面坐标及商店操作尚不支持，其他限制见[能力边界](CLIENT_LIMITATIONS.md)。
 
 ```bash
 workbenches/workbench dev/NAME snapshot
@@ -323,7 +323,7 @@ GUI 容器在自身网络命名空间启用回环游戏端口 NAT，连接已核
 | 命令组 | 用途 |
 | --- | --- |
 | `talk TARGET`、`dialog` | 原版 NPC 对话与桌面消费者 |
-| `click REF` | 激活当前控件引用或桌面坐标；无头端返回 `unsupported_capability` |
+| `click REF` | GUI 激活引用或桌面坐标；无头端仅激活原生交互引用 |
 | `ui read` | 读取已识别窗口；窗口开关与焦点命令不再提供 |
 | `equip ITEM` | 普通唯一槽位走原版背包点击换装；无头端返回 `unsupported_capability` |
 | `hotkeys`、`bind` | 读取当前键位、拖放绑定物品或技能 |

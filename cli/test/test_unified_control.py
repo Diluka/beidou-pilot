@@ -43,9 +43,6 @@ REMOVED_COMMANDS = (
 )
 
 GUI_ONLY_COMMANDS = (
-    ("click", "@ref"),
-    ("talk", "npc"),
-    ("dialog", "select", "1"),
     ("ui", "read"),
     ("equip", "1002001"),
     ("bind", "item", "2000000", "shift"),
