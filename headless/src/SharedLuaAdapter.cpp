@@ -538,6 +538,10 @@ void SharedLuaAdapter::ReadCommand() {
             valid = valid && generation == state.sceneGeneration && value <= 0xffffffffULL && state.ready;
         else
             valid = valid && value == 0;
+    } else if (operation == "interact") {
+        stream >> extra;
+        valid = valid && generation == state.sceneGeneration && state.ready && value == 0
+                && !extra.empty() && extra.size() <= 256 && !(stream >> scriptId);
     } else if (operation == "skill-up") {
         valid = valid && generation == state.sceneGeneration && state.ready && value > 0 && value <= 0x7fffffffULL
                 && static_cast<bool>(stream >> points >> requestRun >> requestCharacter)
@@ -554,6 +558,21 @@ void SharedLuaAdapter::ReadCommand() {
     if (operation == "cancel_script" && ScriptState(scriptId).is_null()) {
         rejectedId = id;
         rejectedReason = "script_session_changed";
+        return;
+    }
+    if (operation == "interact") {
+        std::string error;
+        const bool accepted = !Running() && !scriptCommand && tickAdapter.Released()
+                              && interaction.Activate(extra, {state.instanceId, state.character.id, state.sceneGeneration}, error);
+        if (!accepted) {
+            rejectedId = id;
+            rejectedReason = error.empty() ? "input_busy" : error;
+            return;
+        }
+        commandId = id;
+        scriptCommand = false;
+        commandStatus = "completed";
+        commandReason = "dispatched";
         return;
     }
     if (operation == "skill-up") {
