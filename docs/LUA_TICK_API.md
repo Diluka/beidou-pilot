@@ -213,7 +213,7 @@ python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.
 | `player.move("left"/"right"/"up"/"down")` | 保持方向，重复设置幂等，改向覆盖；`up`可用于门户 |
 | `player.move(nil)` | 只清移动意图 |
 | `player.jump()`、`player.attack()`、`player.pickup()` | 将跳跃、普攻、拾取放入持续动作输入槽，直到替换或撤下 |
-| `player.skill(skill_id)`、`player.use_item(item_id)` | 正int32 ID，保持该技能或普通恢复品意图；实际准入由本端原生决定 |
+| `player.skill(skill_id)`、`player.use_item(item_id)` | 正int32 ID，**保持**该技能或普通恢复品意图；实际准入由本端原生决定。注意这是持续输入而非一次性动作：不撤下时原生会按自身节奏重复使用，满血/满蓝也可能继续消耗恢复品（live 实测单次提交后未撤下消耗 6 瓶红药）；恢复品应“提交一次→下一 tick 或短延时后 `player.skill(nil)` 撤下”，再按 HP/MP 变化核对 |
 | `player.revive()` | 无参数；仅在当前角色 HP 已知为 0 时提交一次普通复活请求。同一 tick Lua 会话内重复调用返回 `true,"already_requested"` 且不重发；请求派发不代表角色已恢复 |
 | `player.skill(nil)` | 撤下整个持续动作输入槽，包含此前的跳跃、普攻、技能、用药或拾取；方向保持，不取消或改写已开始的原生动作 |
 | `player.stop()` | 清方向和持续动作意图；持键路径发起真实释放。已派发的一次性 `revive` 请求不可由停止撤回，槽空不等于停止已确认 |
