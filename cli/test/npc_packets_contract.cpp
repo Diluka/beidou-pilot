@@ -64,6 +64,20 @@ int main() {
               && host.dialogue.scene_generation == 9 && !host.dialogue.previous && host.dialogue.next
               && host.dialogue.text == "一",
           "native_text_page_or_network_encoding_lost");
+    host.dialogue.observe_actions_enabled();
+    host.dialogue.begin_response();
+    Check(host.dialogue.response_pending, "enable_actions_must_not_end_a_next_page");
+    ReadPage(0, "Final", false, false);
+    host.dialogue.observe_actions_enabled();
+    host.dialogue.begin_response();
+    Check(!host.dialogue.open && !host.dialogue.response_pending
+              && host.dialogue.closed_by == "enable_actions_after_page",
+          "early_enable_actions_should_close_final_page_after_response");
+    ReadPage(0, "Waiting", false, false);
+    host.dialogue.begin_response();
+    Check(host.dialogue.response_pending, "final_page_without_confirmation_must_remain_pending");
+    host.dialogue.observe_actions_enabled();
+    Check(!host.dialogue.response_pending, "late_enable_actions_should_close_response");
     const auto first = host.dialogue.revision;
     host.dialogue.response_pending = true;
     ReadPage(4, "#L7#Pick#l#L12#Keep#l");
