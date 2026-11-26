@@ -1148,6 +1148,7 @@ Json SharedLuaAdapter::StateDocument() const {
           {"attack", true},
           {"pickup", true},
           {"use_item", true},
+          {"interaction", true},
           {"stop", true},
           {"skill", true}}}};
     document["character"] = nullptr;

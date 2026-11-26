@@ -49,6 +49,17 @@ class HeadlessDialogContract(unittest.TestCase):
                 headless_dialog.activate(self.backend, "@ui-old-1")
         self.assertEqual(caught.exception.code, "stale_interaction_reference")
 
+    def test_native_control_availability_errors_are_preserved(self):
+        for reason in ("control_disabled", "control_availability_unknown", "input_busy"):
+            with self.subTest(reason=reason):
+                bridge = MagicMock()
+                bridge._ready_state.return_value = {"scripts": []}
+                bridge._wait.side_effect = ClientError("bridge_command_rejected", "rejected", {"reason": reason})
+                with patch.object(headless_dialog, "BridgeClient", return_value=bridge):
+                    with self.assertRaises(ClientError) as caught:
+                        headless_dialog.activate(self.backend, "@ui-test-1")
+                self.assertEqual(caught.exception.code, reason)
+
     def test_talk_resolves_scene_npc(self):
         self.backend.read.return_value = {"npcs": [{"name": "希娜", "object_id": 1, "template_id": 2, "ref": "@ui-test-3"}]}
         with patch.object(headless_dialog, "activate", return_value={}) as activate:
