@@ -440,6 +440,7 @@ environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,follow,stop,publish")
 assert(bot_memory.path_target == nil)
 
+bot_memory.mover.status = "running"
 follow_action, bot_memory.path_target, calls = {kind = "move", x = 20, y = 2, stop_distance = 40},
     {platform = 1, scene_generation = 1, x = 20, y = 2}, {}
 environment.__test_main(pipeline_context)
