@@ -169,6 +169,79 @@ class SceneTerrainContract(unittest.TestCase):
             self.assertEqual([ROPE], result["data"]["ropes"])
             self.assertNotIn("terrain", result["data"])
 
+    def test_navigation_uses_foothold_links_for_walls_and_cliff_edges(self) -> None:
+        # get_wall follows prev/next (and their neighbours), not arbitrary
+        # vertical geometry crossing a floor. A missing link marks a cliff.
+        cases = {
+            "continuous_floor_with_unlinked_vertical": (
+                [(1, 0, 100, 300, 300, 0, 2), (2, 100, 200, 300, 300, 1, 0), (3, 50, 50, 200, 320, 0, 0)],
+                [(0, 200, True, True)],
+            ),
+            "cliff_above_lower_floor": (
+                [(1, 0, 100, 300, 300, 0, 0), (2, 110, 250, 400, 400, 0, 0)],
+                [(0, 100, True, True), (110, 250, True, True)],
+            ),
+            "dead_end_wall": (
+                [(1, 0, 100, 300, 300, 0, 2), (2, 100, 100, 200, 300, 1, 0)],
+                [(0, 100, True, False)],
+            ),
+        }
+        for name, (rows, expected) in cases.items():
+            with self.subTest(case=name):
+                properties = {
+                    "foothold": {
+                        "1": {
+                            "0": {
+                                str(i): {"x1": x1, "x2": x2, "y1": y1, "y2": y2, "prev": prev, "next": next_}
+                                for i, x1, x2, y1, y2, prev, next_ in rows
+                            }
+                        }
+                    }
+                }
+                for result in self.query(properties):
+                    platforms = result["data"]["navigation"]["platforms"]
+                    self.assertEqual(
+                        expected, [(p["left"], p["right"], p["open_left"], p["open_right"]) for p in platforms]
+                    )
+                    if name == "cliff_above_lower_floor":
+                        drop = result["data"]["navigation"]["candidates"]["drop"]
+                        self.assertIn((1, 2), [(drop[i], drop[i + 1]) for i in range(0, len(drop), 5)])
+
+    def test_map_102000000_linked_wall_steps_have_descending_candidates(self) -> None:
+        # Real IMG footholds around the 485 -> 545 -> 605 descent. Vertical
+        # links comprise two segments at each ledge, not a free-standing wall.
+        rows = [
+            (56, 636, 636, 570, 545, 75, 57),
+            (57, 636, 714, 545, 545, 56, 58),
+            (58, 714, 726, 545, 545, 57, 60),
+            (60, 726, 726, 545, 510, 58, 63),
+            (63, 726, 726, 510, 485, 60, 64),
+            (64, 726, 765, 485, 485, 63, 61),
+            (61, 765, 804, 485, 485, 64, 65),
+            (65, 804, 855, 485, 485, 61, 62),
+            (73, 405, 495, 605, 605, 72, 76),
+            (76, 495, 585, 605, 605, 73, 74),
+            (74, 585, 636, 605, 605, 76, 75),
+            (75, 636, 636, 605, 570, 74, 56),
+        ]
+        properties = {
+            "foothold": {
+                "1": {
+                    "0": {
+                        str(i): {"x1": x1, "x2": x2, "y1": y1, "y2": y2, "prev": prev, "next": next_}
+                        for i, x1, x2, y1, y2, prev, next_ in rows
+                    }
+                }
+            }
+        }
+        for result in self.query(properties):
+            navigation = result["data"]["navigation"]
+            by_height = {p["segments"][2]: p["index"] for p in navigation["platforms"]}
+            edges = navigation["candidates"]["drop"]
+            pairs = [(edges[i], edges[i + 1]) for i in range(0, len(edges), 5)]
+            self.assertIn((by_height[485], by_height[545]), pairs)
+            self.assertIn((by_height[545], by_height[605]), pairs)
+
     def test_wall_adjacent_upward_jumps(self) -> None:
         # Observed map 10000 wall and floor endpoints, simplified to merged segments.
         rows = [
@@ -243,83 +316,74 @@ class SceneTerrainContract(unittest.TestCase):
             )
             self.assertEqual([-200, 560], [navigation["terrain_left"], navigation["terrain_right"]])
             self.assertEqual([100, 250, 320], navigation["walls"])
+            platforms = navigation["platforms"]
             self.assertEqual(
-                [
-                    {"index": 1, "left": -200, "right": 88, "open_left": True, "open_right": False},
-                    {"index": 2, "left": 112, "right": 200, "open_left": False, "open_right": True},
-                    {"index": 3, "left": 240, "right": 400, "open_left": True, "open_right": True},
-                    {"index": 4, "left": 402, "right": 560, "open_left": True, "open_right": True},
-                    {"index": 5, "left": 250, "right": 350, "open_left": True, "open_right": True},
-                    {"index": 6, "left": 230, "right": 320, "open_left": True, "open_right": True},
-                    {"index": 7, "left": 100, "right": 200, "open_left": True, "open_right": True},
-                ],
-                [
-                    {key: platform[key] for key in ("index", "left", "right", "open_left", "open_right")}
-                    for platform in navigation["platforms"]
-                ],
+                [(-200, 200), (240, 400), (402, 560), (250, 350), (230, 320), (100, 200)],
+                [(p["left"], p["right"]) for p in platforms],
             )
-            self.assertEqual([-200, 0, 300, 300, 0, 88, 300, 300], navigation["platforms"][0]["segments"])
-            self.assertEqual([112, 200, 300, 300], navigation["platforms"][1]["segments"])
-            self.assertEqual([100, 200, 200, 200], navigation["platforms"][6]["segments"])
+            self.assertEqual([-200, 0, 300, 300, 0, 200, 300, 300], platforms[0]["segments"])
+            self.assertTrue(platforms[0]["open_left"])
+            self.assertTrue(platforms[0]["open_right"])
             self.assertEqual(
-                [{"index": 2, "x": 140, "y1": 100, "y2": 320, "platforms": [7, 200, 2, 300]}],
+                [{"index": 2, "x": 140, "y1": 100, "y2": 320, "platforms": [6, 200, 1, 300]}],
                 navigation["ropes"],
             )
-            candidates = navigation["candidates"]
-            self.assertEqual([3, 4, 392, 416, 0, 4, 3, 410, 386, 0], candidates["walk"])
-            self.assertEqual([2, 3, 194, 250, 50, 3, 7, 246, 190, 50], candidates["step"])
-            self.assertEqual([5, 3, 300, 300, 50], candidates["jumpup"])
             self.assertEqual(
-                [
-                    2,
-                    6,
-                    192,
-                    247.5,
-                    100,
-                    3,
-                    2,
-                    248,
-                    187.5,
-                    50,
-                    3,
-                    6,
-                    248,
-                    233,
-                    150,
-                    4,
-                    5,
-                    410,
-                    343.5,
-                    50,
-                    5,
-                    6,
-                    258,
-                    238,
-                    100,
-                    7,
-                    1,
-                    108,
-                    61.5,
-                    100,
-                    7,
-                    3,
-                    192,
-                    252.5,
-                    50,
-                    7,
-                    5,
-                    192,
-                    257.5,
-                    100,
-                    7,
-                    6,
-                    192,
-                    247.5,
-                    200,
-                ],
-                candidates["drop"],
+                {
+                    "walk": [2, 3, 392, 416, 0, 3, 2, 410, 386, 0],
+                    "step": [1, 2, 194, 250, 50, 2, 6, 246, 190, 50],
+                    "jumpup": [4, 2, 300, 300, 50],
+                    "drop": [
+                        1,
+                        5,
+                        192,
+                        247.5,
+                        100,
+                        2,
+                        1,
+                        248,
+                        187.5,
+                        50,
+                        2,
+                        5,
+                        248,
+                        233,
+                        150,
+                        3,
+                        4,
+                        410,
+                        343.5,
+                        50,
+                        4,
+                        5,
+                        258,
+                        238,
+                        100,
+                        6,
+                        1,
+                        108,
+                        65.5,
+                        100,
+                        6,
+                        2,
+                        192,
+                        252.5,
+                        50,
+                        6,
+                        4,
+                        192,
+                        257.5,
+                        100,
+                        6,
+                        5,
+                        192,
+                        247.5,
+                        200,
+                    ],
+                    "rope": [6, 1, 140, 140, 100, 2, 1, 6, 140, 140, -100, 2],
+                },
+                navigation["candidates"],
             )
-            self.assertEqual([7, 2, 140, 140, 100, 2, 2, 7, 140, 140, -100, 2], candidates["rope"])
 
     def test_empty_rope_is_available_and_minimal_rope_fields_are_sufficient(self) -> None:
         properties = map_properties()
