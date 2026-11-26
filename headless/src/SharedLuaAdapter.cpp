@@ -540,8 +540,8 @@ void SharedLuaAdapter::ReadCommand() {
             valid = valid && value == 0;
     } else if (operation == "interact") {
         stream >> extra;
-        valid = valid && generation == state.sceneGeneration && state.ready && value == 0
-                && !extra.empty() && extra.size() <= 256 && !(stream >> scriptId);
+        valid = valid && generation == state.sceneGeneration && state.ready && value == 0 && !extra.empty()
+                && extra.size() <= 256 && !(stream >> scriptId);
     } else if (operation == "skill-up") {
         valid = valid && generation == state.sceneGeneration && state.ready && value > 0 && value <= 0x7fffffffULL
                 && static_cast<bool>(stream >> points >> requestRun >> requestCharacter)
@@ -562,8 +562,9 @@ void SharedLuaAdapter::ReadCommand() {
     }
     if (operation == "interact") {
         std::string error;
-        const bool accepted = !Running() && !scriptCommand && tickAdapter.Released()
-                              && interaction.Activate(extra, {state.instanceId, state.character.id, state.sceneGeneration}, error);
+        const bool accepted =
+            !Running() && !scriptCommand && tickAdapter.Released()
+            && interaction.Activate(extra, {state.instanceId, state.character.id, state.sceneGeneration}, error);
         if (!accepted) {
             rejectedId = id;
             rejectedReason = error.empty() ? "input_busy" : error;
