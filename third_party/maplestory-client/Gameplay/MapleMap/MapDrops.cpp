@@ -104,6 +104,7 @@ namespace ms
 	void MapDrops::clear()
 	{
 		drops.clear();
+		spawns = {};
 	}
 
 	const MapObjects& MapDrops::get_drops() const

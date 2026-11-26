@@ -47,6 +47,8 @@ SOURCES = {
         "cli/test/test_catalog_resources.py",
         "cli/test/test_img_resources.py",
         "cli/test/test_scene_terrain.py",
+        "cli/test/test_scene_residue.py",
+        "cli/test/test_mob_controller_contract.py",
         "cli/test/test_gui_scene_terrain.py",
     ),
     "clang-format": (
