@@ -174,8 +174,7 @@ class SceneTerrainContract(unittest.TestCase):
         # vertical geometry crossing a floor. A missing link marks a cliff.
         cases = {
             "continuous_floor_with_unlinked_vertical": (
-                [(1, 0, 100, 300, 300, 0, 2), (2, 100, 200, 300, 300, 1, 0),
-                 (3, 50, 50, 200, 320, 0, 0)],
+                [(1, 0, 100, 300, 300, 0, 2), (2, 100, 200, 300, 300, 1, 0), (3, 50, 50, 200, 320, 0, 0)],
                 [(0, 200, True, True)],
             ),
             "cliff_above_lower_floor": (
@@ -189,16 +188,21 @@ class SceneTerrainContract(unittest.TestCase):
         }
         for name, (rows, expected) in cases.items():
             with self.subTest(case=name):
-                properties = {"foothold": {"1": {"0": {
-                    str(i): {"x1": x1, "x2": x2, "y1": y1, "y2": y2, "prev": prev, "next": next_}
-                    for i, x1, x2, y1, y2, prev, next_ in rows
-                }}}}
+                properties = {
+                    "foothold": {
+                        "1": {
+                            "0": {
+                                str(i): {"x1": x1, "x2": x2, "y1": y1, "y2": y2, "prev": prev, "next": next_}
+                                for i, x1, x2, y1, y2, prev, next_ in rows
+                            }
+                        }
+                    }
+                }
                 for result in self.query(properties):
                     platforms = result["data"]["navigation"]["platforms"]
-                    self.assertEqual(expected, [
-                        (p["left"], p["right"], p["open_left"], p["open_right"])
-                        for p in platforms
-                    ])
+                    self.assertEqual(
+                        expected, [(p["left"], p["right"], p["open_left"], p["open_right"]) for p in platforms]
+                    )
                     if name == "cliff_above_lower_floor":
                         drop = result["data"]["navigation"]["candidates"]["drop"]
                         self.assertIn((1, 2), [(drop[i], drop[i + 1]) for i in range(0, len(drop), 5)])
@@ -207,17 +211,29 @@ class SceneTerrainContract(unittest.TestCase):
         # Real IMG footholds around the 485 -> 545 -> 605 descent. Vertical
         # links comprise two segments at each ledge, not a free-standing wall.
         rows = [
-            (56, 636, 636, 570, 545, 75, 57), (57, 636, 714, 545, 545, 56, 58),
-            (58, 714, 726, 545, 545, 57, 60), (60, 726, 726, 545, 510, 58, 63),
-            (63, 726, 726, 510, 485, 60, 64), (64, 726, 765, 485, 485, 63, 61),
-            (61, 765, 804, 485, 485, 64, 65), (65, 804, 855, 485, 485, 61, 62),
-            (73, 405, 495, 605, 605, 72, 76), (76, 495, 585, 605, 605, 73, 74),
-            (74, 585, 636, 605, 605, 76, 75), (75, 636, 636, 605, 570, 74, 56),
+            (56, 636, 636, 570, 545, 75, 57),
+            (57, 636, 714, 545, 545, 56, 58),
+            (58, 714, 726, 545, 545, 57, 60),
+            (60, 726, 726, 545, 510, 58, 63),
+            (63, 726, 726, 510, 485, 60, 64),
+            (64, 726, 765, 485, 485, 63, 61),
+            (61, 765, 804, 485, 485, 64, 65),
+            (65, 804, 855, 485, 485, 61, 62),
+            (73, 405, 495, 605, 605, 72, 76),
+            (76, 495, 585, 605, 605, 73, 74),
+            (74, 585, 636, 605, 605, 76, 75),
+            (75, 636, 636, 605, 570, 74, 56),
         ]
-        properties = {"foothold": {"1": {"0": {
-            str(i): {"x1": x1, "x2": x2, "y1": y1, "y2": y2, "prev": prev, "next": next_}
-            for i, x1, x2, y1, y2, prev, next_ in rows
-        }}}}
+        properties = {
+            "foothold": {
+                "1": {
+                    "0": {
+                        str(i): {"x1": x1, "x2": x2, "y1": y1, "y2": y2, "prev": prev, "next": next_}
+                        for i, x1, x2, y1, y2, prev, next_ in rows
+                    }
+                }
+            }
+        }
         for result in self.query(properties):
             navigation = result["data"]["navigation"]
             by_height = {p["segments"][2]: p["index"] for p in navigation["platforms"]}
@@ -312,17 +328,62 @@ class SceneTerrainContract(unittest.TestCase):
                 [{"index": 2, "x": 140, "y1": 100, "y2": 320, "platforms": [6, 200, 1, 300]}],
                 navigation["ropes"],
             )
-            self.assertEqual({
-                "walk": [2, 3, 392, 416, 0, 3, 2, 410, 386, 0],
-                "step": [1, 2, 194, 250, 50, 2, 6, 246, 190, 50],
-                "jumpup": [4, 2, 300, 300, 50],
-                "drop": [1, 5, 192, 247.5, 100, 2, 1, 248, 187.5, 50,
-                         2, 5, 248, 233, 150, 3, 4, 410, 343.5, 50,
-                         4, 5, 258, 238, 100, 6, 1, 108, 65.5, 100,
-                         6, 2, 192, 252.5, 50, 6, 4, 192, 257.5, 100,
-                         6, 5, 192, 247.5, 200],
-                "rope": [6, 1, 140, 140, 100, 2, 1, 6, 140, 140, -100, 2],
-            }, navigation["candidates"])
+            self.assertEqual(
+                {
+                    "walk": [2, 3, 392, 416, 0, 3, 2, 410, 386, 0],
+                    "step": [1, 2, 194, 250, 50, 2, 6, 246, 190, 50],
+                    "jumpup": [4, 2, 300, 300, 50],
+                    "drop": [
+                        1,
+                        5,
+                        192,
+                        247.5,
+                        100,
+                        2,
+                        1,
+                        248,
+                        187.5,
+                        50,
+                        2,
+                        5,
+                        248,
+                        233,
+                        150,
+                        3,
+                        4,
+                        410,
+                        343.5,
+                        50,
+                        4,
+                        5,
+                        258,
+                        238,
+                        100,
+                        6,
+                        1,
+                        108,
+                        65.5,
+                        100,
+                        6,
+                        2,
+                        192,
+                        252.5,
+                        50,
+                        6,
+                        4,
+                        192,
+                        257.5,
+                        100,
+                        6,
+                        5,
+                        192,
+                        247.5,
+                        200,
+                    ],
+                    "rope": [6, 1, 140, 140, 100, 2, 1, 6, 140, 140, -100, 2],
+                },
+                navigation["candidates"],
+            )
 
     def test_empty_rope_is_available_and_minimal_rope_fields_are_sufficient(self) -> None:
         properties = map_properties()
