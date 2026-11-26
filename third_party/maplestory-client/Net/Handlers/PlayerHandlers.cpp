@@ -50,12 +50,8 @@ namespace ms
 #ifdef HEADLESS
 		// Normal NPC disposal sends this empty enabled-stat packet. A new page clears the pending flag first.
 		auto& dialogue = headless_state().dialogue;
-		if (enable_actions && updatemask == 0 && dialogue.response_pending)
-		{
-			dialogue.response_pending = false;
-			dialogue.closed_by = "enable_actions_after_request";
-			++dialogue.revision;
-		}
+		if (enable_actions && updatemask == 0)
+			dialogue.observe_actions_enabled();
 #endif
 
 		bool recalculate = false;

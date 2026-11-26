@@ -54,6 +54,7 @@ namespace ms
 		page.scene_generation = host.map_generation;
 		page.open = true;
 		page.response_pending = false;
+		page.actions_enabled_after_page = false;
 		page.npc_id = npcid;
 		if (page.requested_npc_id != npcid) page.object_id.reset();
 		page.type = msgtype;

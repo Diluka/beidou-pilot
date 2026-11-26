@@ -461,10 +461,7 @@ bool SharedLuaAdapter::RespondNpc(std::uint64_t revision, std::int8_t response, 
         return false;
     }
     const auto type = dialogue.type;
-    dialogue.open = false;
-    dialogue.response_pending = true;
-    dialogue.closed_by = "local_response";
-    ++dialogue.revision;
+    dialogue.begin_response();
     if (selection)
         ms::NpcTalkMorePacket(*selection).dispatch();
     else
