@@ -21,7 +21,7 @@
 - **同图其他玩家**：`game.scene.players` 提供引用、角色 ID、名字、等级、位置、速度和朝向；引用对当前场景代次有效。用这些字段跟随同图玩家。
 - **怪物 HP**：headless 提供 `hp_percent`；GUI 不提供该字段。需要伤害进展时优先用 headless 脚本，或从怪物消失、经验变化核对。
 - **聊天与队伍**：当前 `game.chat` 为 `unsupported`，没有消息读取/发送，也没有队伍成员、队员 HP、队友地图领域。玩家私聊指令、机器人回复和组队观察需要新增原生能力。
-- **交互**：`game.dialog/shop/ui/interaction/notifications` 提供只读观察。GUI 的对话、商店、背包换装和通知响应由 CLI/GUI 原生路径执行；headless CLI 可激活当前 NPC 和对话/任务页引用，tick Lua 暂无激活入口。活动 Lua 期间交互输入返回 `input_busy`。
+- **交互**：`game.dialog/shop/ui/interaction/notifications` 提供只读观察。GUI 的对话、商店、背包换装和通知响应由 CLI/GUI 原生路径执行；headless CLI 可激活当前 NPC 和对话/任务页引用，tick Lua 暂无激活入口；开发服实测终页确认后可能持续等待关闭确认，后续交互会被阻塞。活动 Lua 期间交互输入返回 `input_busy`。
 - **静态资料**：名称、物品恢复属性、NPC 范围和地图地形来自配置的原版 IMG，经共享解析库读取。静态资料用于查询和规划；现场对象与结果从当前客户端观察。
 
 ## 导航与跨图

@@ -291,7 +291,7 @@ AP 已为 0 时返回 `status=unchanged`；确认同角色 AP 已归零且属性
 
 ## 无头控件交互
 
-无头端通过原生引用操作 NPC 和对话，不模拟桌面坐标：`talk 希娜` 按当前场景名称选择 NPC，`dialog read` 返回正文、选项、按钮及引用，`dialog select 选项文字`、`dialog next`、`dialog confirm`、`dialog yes/no/end` 激活当前页面控件，`click @ui-...` 直接激活引用。本地任务页中的接受、交付按钮也可通过引用激活；可用性未知时保守拒绝。请求派发不代表服务端结果已确认，应重新读取页面或任务记录；结果未知时不要重放。引用只在当前实例、角色、场景及页面有效。运行中的脚本占用输入时返回 `input_busy`。`dialog advance`、桌面坐标及商店操作尚不支持，其他限制见[能力边界](CLIENT_LIMITATIONS.md)。
+无头端通过原生引用操作 NPC 和对话，不模拟桌面坐标：`talk 希娜` 按当前场景名称选择 NPC，`dialog read` 返回正文、选项、按钮及引用，`dialog select 选项文字`、`dialog next`、`dialog confirm`、`dialog yes/no/end` 激活当前页面控件，`click @ui-...` 直接激活引用。本地任务页中的接受、交付按钮也可通过引用激活；可用性未知时保守拒绝。请求派发不代表服务端结果已确认，应重新读取页面或任务记录；结果未知时不要重放。开发服实测终页确认后可能一直停在控件未知的等待页，无法确认关闭或开始下一次交互；不要把该状态当作成功结束。引用只在当前实例、角色、场景及页面有效。运行中的脚本占用输入时返回 `input_busy`。`dialog advance`、桌面坐标及商店操作尚不支持，其他限制见[能力边界](CLIENT_LIMITATIONS.md)。
 
 ```bash
 workbenches/workbench dev/NAME snapshot
