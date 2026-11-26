@@ -108,6 +108,26 @@ tools/botctl stop dev/NAME
 - 脚本已结束或状态输出无法确认放键：按 status 检查终态；未确认 control_released 时将其视为停止未验收，不要关闭/重启客户端来掩盖现场。
 - NAME 格式错误：必须提供 `dev/角色名` 或 `live/角色名`。
 
+## 按任务条件打怪
+
+读取原版 Quest.wz 的任务目标（击杀怪物模板/数量、NPC），再驱动 headless 客户端执行：
+
+```bash
+# 看已开始任务的击杀目标
+python3 tools/bot_quest.py objectives dev/NAME
+
+# 按任务目标打怪（达到 count 或超时停止）
+python3 tools/bot_quest.py hunt dev/NAME 1037 --count 10 --heal-item 2000000 --seconds 240
+
+# 查任务进度
+python3 tools/bot_quest.py progress dev/NAME 1037
+```
+
+- `tools/quest_data.py` 用共享 `libbeidou-img.so` 只读原版 `Data/Quest`（QuestInfo/Check/Act）；
+- `bot/quest_hunt.lua` 平台感知接近目标怪并普攻，进度从 `game.quests` 读取，达到目标数停止；
+- 任务完成后由外部（CLI/GUI）找 NPC 交付；交付自动化尚未提供。
+- 已知限制：platform 规划失败时退化为水平走位（见 #392）；复杂地形/掉层恢复未覆盖。
+
 ## 离线测试
 
 从仓库根目录运行：
