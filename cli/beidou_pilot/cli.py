@@ -762,7 +762,7 @@ def concise(result: JsonObject) -> JsonObject:
     if isinstance(stage, dict):
         result["stage"] = stage["stage"]
     dialog = result.get("dialog")
-    if isinstance(dialog, dict) and "dialog_open" in dialog:
+    if isinstance(dialog, dict) and "dialog_type" in dialog:
         result["dialog"] = {
             "open": dialog["dialog_open"],
             "npc_id": dialog["npc_id"],

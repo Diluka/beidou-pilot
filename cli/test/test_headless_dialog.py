@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 from beidou_pilot import headless_dialog
+from beidou_pilot.cli import concise
 from beidou_pilot.errors import ClientError
 
 
@@ -20,6 +21,7 @@ class HeadlessDialogContract(unittest.TestCase):
         self.assertEqual(result["choices"][0]["ref"], "@ui-test-1")
         self.assertEqual(result["buttons"][0]["ref"], "@ui-test-2")
         self.backend.desktop.assert_not_called()
+        self.assertEqual(concise({"dialog": result})["dialog"], result)
 
     def test_select_and_next_choose_native_reference(self):
         with patch.object(headless_dialog, "activate", return_value={}) as activate:
