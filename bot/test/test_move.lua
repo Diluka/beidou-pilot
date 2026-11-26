@@ -101,10 +101,19 @@ assert(step(mover, ctx, world) == "done")
 begin({kind = "rope", x = 0, destination = 0, rise = -100})
 assert(step(mover, ctx, world) == "running" and direction == "up")
 world.character.y = -80; world.character.on_ground = false
-assert(step(mover, ctx, world) == "running" and direction == nil)
+assert(step(mover, ctx, world) == "running" and direction == "up")
 ctx.tick.time = 0.4
-assert(step(mover, ctx, world) == "done")
-for _, edge in ipairs({{kind="jumpup",x=0,destination=100,rise=50}, {kind="drop",destination=100}, {kind="rope",x=0,destination=0,rise=-100}}) do
+assert(step(mover, ctx, world) == "running" and direction == "up")
+world.character.y = -100; world.character.on_ground = true
+assert(step(mover, ctx, world) == "done" and direction == nil)
+begin({kind = "rope", x = 0, destination = 0, rise = -100, to = 2, from = 1})
+for attempt = 1, 2 do
+    step(mover, ctx, world)
+    ctx.tick.time = ctx.tick.time + 2
+    status, reason = step(mover, ctx, world)
+end
+assert(status == "failed" and reason == "no_progress" and direction == nil)
+for _, edge in ipairs({{kind="jumpup",x=0,destination=100,rise=50}, {kind="drop",destination=100}}) do
     begin(edge)
     step(mover, ctx, world)
     ctx.tick.time = 10
@@ -131,13 +140,11 @@ supported = false
 step(mover, ctx, world)
 status, reason = step(mover, ctx, world)
 assert(status == "failed" and reason == "unsupported_edge" and direction == nil)
-begin({kind="rope",x=0,destination=0,rise=-100})
-for attempt = 1, 2 do
-    step(mover, ctx, world)
-    ctx.tick.time = ctx.tick.time + 2
-    status, reason = step(mover, ctx, world)
-end
-assert(status == "failed" and reason == "no_progress" and direction == nil)
+begin({kind="rope",x=0,destination=0,rise=-100,to=2,from=1})
+step(mover, ctx, world)
+ctx.tick.time = 10
+status, reason = step(mover, ctx, world)
+assert(status == "failed" and reason == "timeout" and direction == nil)
 begin({kind="drop",destination=100})
 step(mover, ctx, world)
 ctx.tick.time = 0.4; world.character.y = 20; world.character.on_ground = false
@@ -323,17 +330,19 @@ step(mover,ctx,world)
 world.character.on_ground=true
 status,reason=step(mover,ctx,world)
 assert(status=="failed" and reason=="landing_mismatch")
-begin({kind="rope",x=0,destination=0,rise=-100,to=2})
+begin({kind="rope",x=0,destination=0,rise=-100,to=2,from=1})
+step(mover,ctx,world)
+world.character.y=-80; world.character.on_ground=false
+assert(step(mover,ctx,world)=="running" and direction=="up")
+world.character.y=-100; world.character.on_ground=true
+assert(step(mover,ctx,world)=="done" and direction==nil)
+begin({kind="rope",x=0,destination=0,rise=-100,to=3,from=1})
 step(mover,ctx,world)
 world.character.y=-80; world.character.on_ground=false
 assert(step(mover,ctx,world)=="running")
-ctx.tick.time=0.4
-assert(step(mover,ctx,world)=="done")
-begin({kind="rope",x=0,destination=0,rise=-100,to=1})
-step(mover,ctx,world)
-world.character.y=-80; world.character.on_ground=false
+world.character.y=-100; world.character.on_ground=true
 status,reason=step(mover,ctx,world)
-assert(status=="failed" and reason=="landing_mismatch")
+assert(status=="failed" and reason=="landing_mismatch" and direction==nil)
 -- Use real platform lookup: a step can pass near a platform while airborne.
 local step_edge = {kind="step", from=1, to=2, destination=30}
 mover = move.new({platforms={

@@ -122,10 +122,10 @@ filtered_path, filtered_reason = terrain.plan(
 assert(filtered_path == nil and filtered_reason == "no_path", "drop below the model limit must be filtered")
 filtered_path, filtered_reason = terrain.plan(
     graph_for_candidate("rope", {3, 4, 260, 260, 96, 1}), 3, 4)
-assert(filtered_path == nil and filtered_reason == "no_path", "rope above the model limit must be filtered")
+assert(filtered_path and filtered_path[1].kind == "rope" and filtered_path[1].rise == 96, "long rope climbs must not be filtered by grab tolerance")
 filtered_path, filtered_reason = terrain.plan(
     graph_for_candidate("rope", {3, 4, 260, 260, -96, 1}), 3, 4)
-assert(filtered_path == nil and filtered_reason == "no_path", "rope below the model limit must be filtered")
+assert(filtered_path and filtered_path[1].kind == "rope" and filtered_path[1].rise == -96, "long descending rope climbs must not be filtered by grab tolerance")
 
 local overlap_navigation = navigation_with_platforms({
     {index = 1, left = 0, right = 100, open_left = true, open_right = true, segments = {0, 100, 100, 100}},
@@ -268,6 +268,10 @@ for _, edge in ipairs(real_path) do real_path_kinds[#real_path_kinds + 1] = edge
 local map10000 = dofile("bot/test/fixtures/map_10000.lua")
 assert(map10000.map_id == 10000, "tutorial fixture must retain the captured map identity")
 local tutorial_graph = assert(terrain.build(map10000.navigation))
+local rope_path = assert(terrain.plan(tutorial_graph, 4, 1))
+assert(rope_path[1].kind == "rope" and rope_path[1].from == 4 and rope_path[1].to == 1
+    and rope_path[1].rise == -240 and rope_path[1].rope_index,
+    "map 10000 p4-to-p1 must retain its long rope edge")
 local tutorial_jump = assert(terrain.plan(tutorial_graph, 4, 10, {speed = 125}))
 assert(#tutorial_jump == 1 and tutorial_jump[1].kind == "horizontal_jump"
     and tutorial_jump[1].from == 4 and tutorial_jump[1].to == 10
