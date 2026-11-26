@@ -234,9 +234,8 @@ inline void MergePlatforms(const std::vector<SceneFoothold>& footholds, std::vec
             const auto& neighbor = *found->second;
             const double x = left ? segment.left : segment.right;
             const double y = left ? segment.y1 : segment.y2;
-            return neighbor.x1 == neighbor.x2 && neighbor.x1 == x
-                && std::min(neighbor.y1, neighbor.y2) < y
-                && std::max(neighbor.y1, neighbor.y2) > y - kBodyHeight;
+            return neighbor.x1 == neighbor.x2 && neighbor.x1 == x && std::min(neighbor.y1, neighbor.y2) < y
+                   && std::max(neighbor.y1, neighbor.y2) > y - kBodyHeight;
         };
         platform.openLeft = !blockedEnd(segments[parts.front()], true);
         platform.openRight = !blockedEnd(segments[parts.back()], false);
@@ -343,8 +342,9 @@ inline void Connect(const std::vector<NavigationWall>& walls, double terrainLeft
                 for (const auto& wall : walls)
                     if ((!b.openLeft && wall.x == b.left) || (!b.openRight && wall.x == b.right))
                         landingWalls.push_back(wall);
-                if (CrossesWall(landingWalls, edgeX, landingX,
-                                std::min(edgeY, landingY) - kBodyHeight, std::max(edgeY, landingY))) continue;
+                if (CrossesWall(landingWalls, edgeX, landingX, std::min(edgeY, landingY) - kBodyHeight,
+                                std::max(edgeY, landingY)))
+                    continue;
                 add(navigation.drop, i + 1, j + 1, inside(a, edgeX - direction * 8), landingX, landingY - edgeY);
             }
         }
@@ -361,8 +361,8 @@ inline void Connect(const std::vector<NavigationWall>& walls, double terrainLeft
             for (const auto& wall : walls)
                 if (((!a.openLeft && wall.x == a.left) || (!a.openRight && wall.x == a.right)
                      || (!b.openLeft && wall.x == b.left) || (!b.openRight && wall.x == b.right))
-                    && wall.x > probe - kWallMargin && wall.x < probe + kWallMargin
-                    && wall.top <= height(b, probe) && wall.bottom >= height(a, probe) - kBodyHeight) {
+                    && wall.x > probe - kWallMargin && wall.x < probe + kWallMargin && wall.top <= height(b, probe)
+                    && wall.bottom >= height(a, probe) - kBodyHeight) {
                     blocked = true;
                     break;
                 }
