@@ -21,6 +21,11 @@
 #include "Helpers/MovementParser.h"
 
 #include "../../Gameplay/Stage.h"
+#ifdef HEADLESS
+#include "../../Gameplay/MapleMap/Mob.h"
+#include "HeadlessState.h"
+#include <iostream>
+#endif
 #include <bit>
 
 namespace ms
@@ -261,9 +266,22 @@ namespace ms
 		auto oid = recv.read_int();
 		if (mode == 0)
 			Stage::get().get_mobs().set_control(oid, false);
+#ifdef HEADLESS
+		else if (!recv.available())
+			return; // OID-only visibility updates remain unsupported.
+		else if (Optional<Mob> mob = Stage::get().get_mobs().get_mobs()->get(oid))
+			mob->set_control(mode);
+		else
+		{
+			auto count = ++headless_state().unknown_mob_controllers;
+			if ((count & (count - 1)) == 0)
+				std::cerr << "[scene-diag] unknown mob controller count=" << count << '\n';
+		}
+#else
 		else if (recv.available())
 			Stage::get().get_mobs().spawn(parse_mob_spawn(recv, oid, mode));
 		// The existing client does not yet implement Ariant's OID-only visibility update.
+#endif
 	}
 
 	void MobMovedHandler::handle(InPacket& recv) const
