@@ -59,6 +59,7 @@ namespace ms
 	void MapChars::clear()
 	{
 		chars.clear();
+		spawns = {};
 	}
 
 	MapObjects * MapChars::get_chars()

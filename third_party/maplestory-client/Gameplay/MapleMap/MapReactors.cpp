@@ -62,6 +62,7 @@ namespace ms
 	void MapReactors::clear()
 	{
 		reactors.clear();
+		spawns = {};
 	}
 
 	MapObjects* MapReactors::get_reactors()

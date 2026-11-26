@@ -60,6 +60,7 @@ namespace ms
 	void MapNpcs::clear()
 	{
 		npcs.clear();
+		spawns = {};
 	}
 
 	MapObjects * MapNpcs::get_npcs()

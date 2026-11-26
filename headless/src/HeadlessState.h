@@ -60,6 +60,8 @@ namespace ms
 		bool in_game = false;
 		uint64_t map_generation = 0;
 		uint64_t player_parse_errors_at_map_entry = 0;
+		// Process-lifetime diagnostic: nonzero controller packets for absent mob OIDs.
+		uint64_t unknown_mob_controllers = 0;
 		NpcDialogue dialogue;
 	};
 
