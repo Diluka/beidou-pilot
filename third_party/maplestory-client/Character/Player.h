@@ -104,6 +104,7 @@ namespace ms
 		void teleport_to(double x, double y);
 		// Respawn the player at the given position
 		void respawn(Point<int16_t> position, bool underwater);
+		void sync_field_position();
 		// Sends a Keyaction to the player's state, to apply forces, change the state and other behavior.
 		void send_action(KeyAction::Id action, bool pressed);
 		// Recalculates the total stats from base stats, inventories and skills.

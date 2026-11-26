@@ -43,6 +43,7 @@ namespace ms
 		stage.clear();
 		stage.load(mapid, portalid);
 		stage.transfer_player();
+		stage.get_player().sync_field_position();
 		auto& session = headless_state();
 		session.in_game = true;
 		++session.map_generation;
@@ -78,10 +79,11 @@ namespace ms
 		Constants::Constants::get().set_viewheight(Setting<Height>::get().load());
 
 		int32_t channel = recv.read_int();
-		int8_t mode1 = recv.read_byte();
+		uint8_t fieldKey = static_cast<uint8_t>(recv.read_byte());
 		int8_t mode2 = recv.read_byte();
+		Stage::get().set_field_key(fieldKey);
 
-		if (mode1 == 0 && mode2 == 0)
+		if (mode2 == 0)
 			change_map(recv, channel);
 		else
 			set_field(recv);

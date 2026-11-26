@@ -46,7 +46,9 @@ namespace ms
 			{
 				const uint16_t step = replay.StepMs();
 				replayAccumulator = static_cast<uint16_t>(replayAccumulator - step);
-				replay.Advance(step);
+				const auto before = replay.LastSample();
+				const auto after = replay.Advance(step);
+				replayMotion = { after.x, after.y, true, after.x - before.x, after.y - before.y, step };
 			}
 
 			if (replay.Empty())
@@ -64,10 +66,10 @@ namespace ms
 			if (!attacking)
 				set_state(sample.state);
 		}
-		else if (!attacking)
+		else
 		{
-			uint8_t laststate = lastmove.newstate;
-			set_state(laststate);
+			if (replayMotion.known) replayMotion.delta_x = replayMotion.delta_y = 0;
+			if (!attacking) set_state(lastmove.newstate);
 		}
 
 		physics.get_fht().update_fh(phobj);
@@ -78,6 +80,15 @@ namespace ms
 			attacking = false;
 
 		return get_layer();
+	}
+
+	MotionSample OtherChar::get_motion() const
+	{
+		if (!replayMotion.known) return phobj.get_motion();
+		MotionSample result = replayMotion;
+		result.x = phobj.crnt_x();
+		result.y = phobj.crnt_y();
+		return result;
 	}
 
 	void OtherChar::send_movement(const std::vector<Movement>& newmoves)

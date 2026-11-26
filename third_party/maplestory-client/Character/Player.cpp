@@ -31,6 +31,7 @@
 #include "../Net/Packets/InventoryPackets.h"
 #include "../Gameplay/Physics/V17ClimbMotion.h"
 #include "../Gameplay/MapleMap/MapInfo.h"
+#include "../Gameplay/Stage.h"
 
 namespace ms
 {
@@ -116,6 +117,16 @@ namespace ms
 		attacking = false;
 		ladder = nullptr;
 		nullstate.update_state(*this);
+	}
+
+	void Player::sync_field_position()
+	{
+		Movement initial(phobj, facing_right ? State::STAND : State::STAND + 1);
+		initial.lastx = initial.lasty = 0;
+		movementPath.Append(30, initial, 0);
+		MovePlayerPacket(movementPath, Stage::get().get_field_key()).dispatch();
+		movementPath.Reset(Point<int16_t>(initial.xpos, initial.ypos));
+		lastmove = Movement(phobj, initial.newstate);
 	}
 
 	void Player::send_action(KeyAction::Id action, bool down)
@@ -411,7 +422,7 @@ namespace ms
 		const uint8_t stancebyte = facing_right ? state : state + 1;
 		const Movement newmove(phobj, stancebyte);
 
-		if (!lastmove.hasmoved(newmove))
+		if (!lastmove.hasmoved(newmove) && movementPath.Fragments().empty())
 			return;
 
 		// The two words headless exposed as lastx/lasty are the original fragment's
@@ -456,11 +467,12 @@ namespace ms
 		movementPath.Append(stepMs, encoded, direction);
 		lastmove = newmove;
 
-		if (!movementPath.ShouldSend())
+		const bool stopped = state == State::STAND && encoded.lastx == 0 && encoded.lasty == 0;
+		if (!movementPath.ShouldSend() && !stopped)
 			return;
 
 		const Point<int16_t> nextStart = movementPath.LastEndpoint();
-		MovePlayerPacket(movementPath).dispatch();
+		MovePlayerPacket(movementPath, Stage::get().get_field_key()).dispatch();
 		movementPath.Reset(nextStart);
 	}
 

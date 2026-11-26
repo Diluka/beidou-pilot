@@ -519,11 +519,45 @@ void Packets(SharedLuaAdapter& host) {
     if (player.is_climbing()) player.set_state(ms::Char::State::STAND);
     player.get_phobj().onground = true;
     packets.clear();
+    ms::Stage::get().set_field_key(37);
+    player.respawn(player.get_position(), false);
+    player.sync_field_position();
+    auto initial = PacketsOf(ms::OutPacket::MOVE_PLAYER);
+    Check(initial.size() == 1 && static_cast<uint8_t>(initial[0][2]) == 37, "field_entry_sends_current_field_key");
+    Check(initial[0].size() > 25 && initial[0][11] == 1 && initial[0][12] == 0
+              && std::equal(initial[0].begin() + 7, initial[0].begin() + 11, initial[0].begin() + 13)
+              && initial[0][17] == 0 && initial[0][18] == 0 && initial[0][19] == 0 && initial[0][20] == 0
+              && (initial[0][23] == 4 || initial[0][23] == 5) && initial[0][24] == 30 && initial[0][25] == 0,
+          "field_entry_sends_one_stationary_absolute_fragment");
+    packets.clear();
     // V17 batches MOVE_PLAYER behind the 500ms path gate; an idle player must not
     // emit a packet. The path layout/merge rules are covered by the pure
     // MovePlayerPath contract, and real-client batching is validated separately.
     for (int tick = 0; tick < 4; ++tick) ms::Stage::get().update();
     Check(PacketsOf(ms::OutPacket::MOVE_PLAYER).empty(), "idle_path_stays_behind_batch_gate");
+
+    const auto position = player.get_position();
+    player.reset_motion(position, true);
+    player.set_state(ms::Char::State::STAND);
+    player.movementPath.Reset(position);
+    player.movementPath.Append(30, ms::Movement(position.x(), position.y(), 125, 0, ms::Char::State::WALK, 30), 4);
+    player.send_movement_if_changed();
+    auto stopped = PacketsOf(ms::OutPacket::MOVE_PLAYER);
+    Check(stopped.size() == 1 && static_cast<uint8_t>(stopped[0][2]) == 37 && stopped[0][11] == 2,
+          "stationary_path_flushes_with_current_field_key");
+    const auto& end = stopped[0];
+    Check(end[26] == 0 && end[31] == 0 && end[32] == 0 && end[33] == 0 && end[34] == 0
+              && (end[37] == 4 || end[37] == 5),
+          "stationary_path_ends_with_zero_velocity_and_stand");
+
+    ms::OtherChar remote(2, ms::CharLook(), 1, 0, "remote", ms::Char::State::STAND, {0, 0});
+    ms::Movement segment(30, 0, 0, 0, ms::Char::State::WALK, 240);
+    remote.send_movement({segment});
+    ms::Physics physics;
+    for (int i = 0; i < 4; ++i) remote.sampled_update(physics);
+    const auto sample = remote.get_motion();
+    Check(sample.known && sample.interval_ms == 30 && sample.delta_x > 0,
+          "remote_velocity_uses_replay_step_displacement_and_time");
 }
 
 void MotionInput(SharedLuaAdapter& host) {

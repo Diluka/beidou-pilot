@@ -68,11 +68,11 @@ namespace ms
 	{
 	public:
 		// Updates the player's position with the server. Leading 1+4 bytes are the
-		// unknown original context fields (0), followed by path start, fragment count,
+		// field key and an unknown context word, followed by path start, fragment count,
 		// fragments, direction-record count/nibbles and the endpoint bounding box.
-		MovePlayerPacket(const MovePlayerPath& path) : MovementPacket(OutPacket::Opcode::MOVE_PLAYER)
+		MovePlayerPacket(const MovePlayerPath& path, uint8_t fieldKey) : MovementPacket(OutPacket::Opcode::MOVE_PLAYER)
 		{
-			write_byte(0);
+			write_byte(fieldKey);
 			write_int(0);
 			write_point(path.StartPoint());
 
