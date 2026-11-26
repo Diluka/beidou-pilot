@@ -155,6 +155,9 @@ class HeadlessHeldInputContract(unittest.TestCase):
     def test_move_player_packets_follow_commits_without_wire_changes(self) -> None:
         self.run_contract("packets")
 
+    def test_movement_packet_timing_tracks_real_commits(self) -> None:
+        self.run_contract("timing")
+
     def test_real_stage_ground_walk_brake_jump_use_30ms_commits(self) -> None:
         self.run_contract("ground")
 

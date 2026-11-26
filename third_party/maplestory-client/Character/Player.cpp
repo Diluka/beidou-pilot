@@ -258,7 +258,6 @@ namespace ms
 		}
 
 		climb_cooldown.update();
-		send_movement_if_changed();
 	}
 
 	LocalMotionCommit Player::advance_local_motion(const Physics& physics, uint32_t worldMs)
@@ -302,7 +301,7 @@ namespace ms
 				phobj.end_motion_sample();
 				++motionCommitId;
 				lastMotionStepMs = 30;
-				send_movement_if_changed();
+				send_movement_if_changed(lastMotionStepMs);
 				motionRemainderMs -= 30;
 				commit.motionCommitted = true;
 				commit.normalStep = true;
@@ -369,7 +368,7 @@ namespace ms
 				phobj.end_motion_sample();
 				++motionCommitId;
 				lastMotionStepMs = 30;
-				send_movement_if_changed();
+				send_movement_if_changed(lastMotionStepMs);
 				motionRemainderMs -= 30;
 				commit.motionCommitted = true;
 				commit.normalStep = false;
@@ -386,7 +385,7 @@ namespace ms
 				phobj.end_motion_sample();
 				++motionCommitId;
 				lastMotionStepMs = ms::Constants::TIMESTEP;
-				send_movement_if_changed();
+				send_movement_if_changed(lastMotionStepMs);
 				motionRemainderMs -= ms::Constants::TIMESTEP;
 				commit.motionCommitted = true;
 				commit.normalStep = false;
@@ -398,6 +397,7 @@ namespace ms
 				if (motionRemainderMs < 30)
 					break;
 
+				send_movement_if_changed(30);
 				motionRemainderMs -= 30;
 			}
 		}
@@ -417,7 +417,7 @@ namespace ms
 		pst->update_state(*this);
 	}
 
-	void Player::send_movement_if_changed()
+	void Player::send_movement_if_changed(uint32_t stepMs)
 	{
 		const uint8_t stancebyte = facing_right ? state : state + 1;
 		const Movement newmove(phobj, stancebyte);
@@ -463,7 +463,6 @@ namespace ms
 		                                                | (held(KeyAction::UP) ? 2 : 0)
 		                                                | (held(KeyAction::DOWN) ? 1 : 0));
 
-		const uint32_t stepMs = lastMotionStepMs != 0 ? lastMotionStepMs : ms::Constants::TIMESTEP;
 		movementPath.Append(stepMs, encoded, direction);
 		lastmove = newmove;
 

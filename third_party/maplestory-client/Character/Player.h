@@ -222,7 +222,7 @@ namespace ms
 		void sync_motion_ownership();
 		V17MotionInput capture_motion_input() const;
 		void legacy_update_8ms(const Physics& physics);
-		void send_movement_if_changed();
+		void send_movement_if_changed(uint32_t stepMs);
 
 		CharStats stats;
 		Inventory inventory;
