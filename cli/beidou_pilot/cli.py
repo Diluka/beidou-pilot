@@ -312,6 +312,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "skill-up-reconcile",
         "auto-ap",
         "batch",
+        "talk",
+        "dialog",
+        "click",
     }:
         raise ClientError("unsupported_capability", "无头端尚未提供这个窗口、原始按键或GUI输入接口。", {"command": cmd})
     if (
@@ -625,6 +628,20 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         if args.id is not None and kind == "quests":
             values += ["--quest-id", str(args.id)]
         return backend.read(engine, *values)
+    if backend.name == "headless" and cmd in {"talk", "dialog", "click"}:
+        from . import headless_dialog
+
+        if cmd == "talk":
+            return headless_dialog.talk(backend, args.target)
+        if cmd == "click":
+            if args.y is not None or args.double:
+                raise ClientError("unsupported_capability", "无头端不支持坐标点击。")
+            return headless_dialog.activate(backend, args.target)
+        if args.action == "read":
+            return headless_dialog.read(backend)
+        if args.action == "advance":
+            raise ClientError("unsupported_capability", "无头端暂不支持自动推进对话。")
+        return headless_dialog.act(backend, args.action, args.selector)
     if cmd == "talk":
         return dialogs.talk(backend, args.target)
     if cmd == "dialog":
