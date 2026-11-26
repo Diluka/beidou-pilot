@@ -237,16 +237,27 @@ function M.step(mover, ctx, world)
                 mover.phase = "wait"
             end
         elseif not failure and mover.phase == "climb" then
-            local target = mover.start_y + edge.rise
+            -- 爬升中持续按住方向；只有落到目标平台才完成，落到别的平台报 landing_mismatch。
             if math.abs(character.x - edge.x) > 4 then
                 failure = "rope_mismatch"
-            elseif (edge.rise < 0 and character.y <= target + 20) or (edge.rise > 0 and character.y >= target - 20) then
-                p.move(nil)
-                if terrain.platform_at(mover.graph, edge.destination, target, 20) ~= edge.to then failure = "landing_mismatch"
-                else mover.phase, mover.phase_time = "settle", now end
-            elseif now - mover.progress_time >= 2 then
-                if math.abs(character.y - mover.progress_y) < 5 then failure = "no_progress" end
-                mover.progress_time, mover.progress_y = now, character.y
+            else
+                local platform = character.on_ground == true
+                    and terrain.platform_at(mover.graph, character.x, character.y, 20) or nil
+                if character.on_ground == true and platform == edge.to then
+                    p.move(nil)
+                    mover.phase = "complete"
+                else
+                    if character.on_ground == true and platform ~= nil and platform ~= edge.from then
+                        failure = "landing_mismatch"
+                    end
+                    if not failure then
+                        if not p.move(edge.rise < 0 and "up" or "down") then failure = "unsupported_edge"
+                        elseif now - mover.progress_time >= 2 then
+                            if math.abs(character.y - mover.progress_y) < 5 then failure = "no_progress" end
+                            mover.progress_time, mover.progress_y = now, character.y
+                        end
+                    end
+                end
             end
         elseif not failure and mover.phase == "settle" then
             if character.on_ground == true or now - mover.phase_time >= 0.3 then mover.phase = "complete" end

@@ -318,7 +318,7 @@ function M.plan(graph, from_index, to_index, options)
                     elseif kind == "drop" then
                         valid = rise >= model.drop_min and rise <= model.drop_max
                     elseif kind == "rope" then
-                        valid = math.abs(rise) <= model.rope_grab
+                        valid = rise ~= 0
                     end
                 end
                 if valid then
