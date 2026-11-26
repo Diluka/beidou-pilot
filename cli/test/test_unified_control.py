@@ -216,6 +216,14 @@ class UnifiedControlContract(unittest.TestCase):
         self.assertEqual("input_busy", report["error"]["code"])
         run.assert_not_called()
 
+    def test_headless_capabilities_include_native_interaction(self) -> None:
+        state = {**self.native.state, "capabilities": {"interaction": True}}
+        with patch.object(BridgeClient, "snapshot", return_value=state):
+            code, report = self.cli("headless", "capabilities")
+        self.assertEqual(0, code, report)
+        self.assertIn("interaction", report["data"]["observation_domains"])
+        self.assertTrue(report["data"]["native_actions"]["interaction"])
+
     def test_gui_only_commands_are_unsupported_on_headless(self) -> None:
         for command in GUI_ONLY_COMMANDS:
             with (
