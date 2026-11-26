@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Install and control the companion bot through the workbench CLI."""
+
+import argparse
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+WORKTREE = Path(__file__).resolve().parent.parent
+COMMON_GIT = Path(
+    subprocess.check_output(
+        ["git", "-C", str(WORKTREE), "rev-parse", "--path-format=absolute", "--git-common-dir"], text=True
+    ).strip()
+)
+ROOT = COMMON_GIT.parent
+
+
+def read_response(text):
+    try:
+        response = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError("workbench 返回了无效 JSON") from error
+    if not isinstance(response, dict) or response.get("ok") is not True:
+        error = response.get("error", {}) if isinstance(response, dict) else {}
+        raise ValueError(error.get("message", "workbench 请求失败"))
+    data = response.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("workbench 响应缺少 data 对象")
+    return data
+
+
+def get_scripts(data):
+    scripts = data.get("scripts")
+    if scripts is None and isinstance(data.get("script"), dict):
+        scripts = [data["script"]]
+    if not isinstance(scripts, list) or any(not isinstance(item, dict) for item in scripts):
+        raise ValueError("workbench 状态缺少有效 scripts 列表")
+    return scripts
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Manage a bot using workbench script lifecycle")
+    sub = parser.add_subparsers(dest="command", required=True)
+    for command in ("install", "start", "status", "stop", "logs"):
+        item = sub.add_parser(command)
+        item.add_argument("name")
+        if command == "logs":
+            item.add_argument("--lines", type=int, default=50)
+    args = parser.parse_args(argv)
+    if (
+        not (args.name.startswith("live/") or args.name.startswith("dev/"))
+        or len(args.name.split("/")) != 2
+        or not args.name.split("/")[1]
+    ):
+        parser.error("NAME 必须是 live/NAME 或 dev/NAME")
+    role = ROOT / "private/workbenches" / args.name
+    if args.command == "install":
+        source = ROOT / "bot"
+        target = role / "scripts/bot"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            for child in source.iterdir():
+                dest = target / child.name
+                if child.is_dir():
+                    shutil.copytree(child, dest, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(child, dest)
+        else:
+            shutil.copytree(source, target)
+        return 0
+    if args.command == "logs":
+        if args.lines < 0:
+            parser.error("--lines 必须不小于 0")
+        path = role / "bot/events.jsonl"
+        if path.exists():
+            return subprocess.run(["tail", "-n", str(args.lines), str(path)]).returncode
+        print(f"事件日志不存在：{path}", file=sys.stderr)
+        return 1
+    workbench = ROOT / "workbenches/workbench"
+
+    def call(*params):
+        return subprocess.run([str(workbench), args.name, "script", *params], text=True, capture_output=True)
+
+    if args.command == "start":
+        result = call("start", "bot", "--continuous")
+        sys.stdout.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        return result.returncode
+    status = call("status")
+    if status.returncode:
+        sys.stderr.write(status.stderr)
+        return status.returncode
+    try:
+        data = read_response(status.stdout)
+        scripts = get_scripts(data)
+    except ValueError as error:
+        print(f"无法读取 workbench script status：{error}", file=sys.stderr)
+        return 1
+    if args.command == "status":
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        state = role / "bot/state.json"
+        if state.exists():
+            print(state.read_text())
+        return 0
+    command = data.get("command")
+    command = command if isinstance(command, dict) else {}
+    active = [script for script in scripts if script.get("status") == "running"]
+    command_session = command.get("script_id") if command.get("status") == "running" else None
+    if command_session:
+        session = command_session
+    elif len(active) == 1:
+        session = active[0].get("id")
+    else:
+        session = None
+    if not session:
+        print("无法唯一确定运行中的 script.id；未执行取消", file=sys.stderr)
+        return 1
+    cancelled = call("cancel", "--session", str(session))
+    sys.stdout.write(cancelled.stdout)
+    sys.stderr.write(cancelled.stderr)
+    if cancelled.returncode:
+        return cancelled.returncode
+    verify = call("status")
+    sys.stdout.write(verify.stdout)
+    sys.stderr.write(verify.stderr)
+    if verify.returncode:
+        return verify.returncode
+    try:
+        final = read_response(verify.stdout)
+        all_scripts = get_scripts(final)
+        matching = [script for script in all_scripts if script.get("id") == session]
+        if len(matching) != 1:
+            raise ValueError("取消后未找到唯一的脚本终态")
+        script = matching[0]
+        final_command = final.get("command")
+        if script.get("status") == "running" or (
+            isinstance(final_command, dict) and final_command.get("status") == "running"
+        ):
+            raise ValueError("脚本仍在运行")
+        if script.get("control_released") is not True:
+            raise ValueError("control_released 未确认为 true")
+        if final.get("held_keys"):
+            raise ValueError("仍有按键处于按下状态")
+    except ValueError as error:
+        print(f"停止状态未核实：{error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

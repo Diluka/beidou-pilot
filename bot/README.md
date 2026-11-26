@@ -87,6 +87,27 @@ follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代�
 
 `state.json.session_id` 取自只读 `context.tick.script_id`，即当前 Runtime tick 会话 ID。
 
+## 宿主运行手册
+
+前置条件：宿主具备 Python 3、`workbenches/workbench`，并已准备对应分区的工作台角色；`dev` 服已就绪。角色只能写成 `live/NAME` 或 `dev/NAME`。仓库根目录执行：
+
+```bash
+tools/botctl install dev/NAME
+tools/botctl start dev/NAME
+tools/botctl status dev/NAME
+tools/botctl logs dev/NAME --lines 50
+tools/botctl stop dev/NAME
+```
+
+`install` 覆盖 `scripts/bot` 中的机器人代码但保留 `state.json`、事件日志等角色状态；`start` 仅经 workbench 发布连续 tick 脚本，不启动客户端；`status` 同时显示 workbench 脚本状态和 `state.json`；`stop` 根据当前 `script.id` 发起取消，并检查脚本终止与 control_released；`logs` 默认显示最近 50 行。客户端关闭仍由 workbench 单独管理。
+
+配置键及状态/事件字段见上方“默认值”“指令、状态与事件”。常见故障：
+
+- “没有运行中的 bot script”：先运行 status；脚本已结束时无需 stop，也不要重复 start。
+- `/work/bot` 写入失败：检查角色目录挂载权限与空间，勿用宿主绕过 workbench 写客户端状态。
+- 脚本已结束或状态输出无法确认放键：按 status 检查终态；未确认 control_released 时将其视为停止未验收，不要关闭/重启客户端来掩盖现场。
+- NAME 格式错误：必须提供 `dev/角色名` 或 `live/角色名`。
+
 ## 离线测试
 
 从仓库根目录运行：
