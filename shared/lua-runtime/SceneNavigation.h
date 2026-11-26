@@ -201,6 +201,8 @@ inline void MergePlatforms(const std::vector<SceneFoothold>& footholds, std::vec
     }
     std::map<std::int64_t, std::size_t> byId;
     for (std::size_t index = 0; index < segments.size(); ++index) byId[segments[index].id] = index;
+    std::map<std::int64_t, const SceneFoothold*> footholdById;
+    for (const auto& foothold : footholds) footholdById[foothold.id] = &foothold;
     std::vector<bool> assigned(segments.size(), false);
     for (std::size_t seed = 0; seed < segments.size(); ++seed) {
         if (assigned[seed]) continue;
@@ -224,74 +226,25 @@ inline void MergePlatforms(const std::vector<SceneFoothold>& footholds, std::vec
         NavigationPlatform platform;
         platform.left = segments[parts.front()].left;
         platform.right = segments[parts.back()].right;
+        const auto blockedEnd = [&](const MergedSegment& segment, bool left) {
+            const auto& source = *footholdById.at(segment.id);
+            const auto neighborId = left ? source.prev : source.next;
+            const auto found = footholdById.find(neighborId);
+            if (found == footholdById.end()) return false;
+            const auto& neighbor = *found->second;
+            const double x = left ? segment.left : segment.right;
+            const double y = left ? segment.y1 : segment.y2;
+            return neighbor.x1 == neighbor.x2 && neighbor.x1 == x
+                && std::min(neighbor.y1, neighbor.y2) < y
+                && std::max(neighbor.y1, neighbor.y2) > y - kBodyHeight;
+        };
+        platform.openLeft = !blockedEnd(segments[parts.front()], true);
+        platform.openRight = !blockedEnd(segments[parts.back()], false);
         for (const auto index : parts) {
             const auto& segment = segments[index];
             platform.segments.push_back({segment.left, segment.right, segment.y1, segment.y2});
         }
         platforms.push_back(std::move(platform));
-    }
-}
-
-inline void SplitPlatforms(const std::vector<NavigationWall>& walls, std::vector<NavigationPlatform>& platforms) {
-    std::vector<NavigationPlatform> split;
-    for (const auto& platform : platforms) {
-        std::vector<double> cuts;
-        for (const auto& wall : walls)
-            if (wall.x > platform.left + kWallMargin && wall.x < platform.right - kWallMargin
-                && WallBlocks(wall, platform, wall.x))
-                cuts.push_back(wall.x);
-        std::sort(cuts.begin(), cuts.end());
-        if (cuts.empty()) {
-            auto sliced = Slice(platform, platform.left, platform.right);
-            if (!sliced.empty()) {
-                NavigationPlatform result;
-                result.left = platform.left;
-                result.right = platform.right;
-                result.openLeft = true;
-                result.openRight = true;
-                result.segments = std::move(sliced);
-                split.push_back(std::move(result));
-            }
-            continue;
-        }
-        std::vector<double> bounds;
-        double cursor = platform.left;
-        for (const auto x : cuts) {
-            if (x - kWallMargin >= cursor) {
-                bounds.push_back(cursor);
-                bounds.push_back(x - kWallMargin);
-                cursor = x + kWallMargin;
-            }
-        }
-        bounds.push_back(cursor);
-        bounds.push_back(platform.right);
-        for (std::size_t index = 0; index + 1 < bounds.size(); index += 2) {
-            const auto left = bounds[index], right = bounds[index + 1];
-            if (right - left < kMinPlatformWidth) continue;
-            auto sliced = Slice(platform, left, right);
-            if (sliced.empty()) continue;
-            NavigationPlatform result;
-            result.left = left;
-            result.right = right;
-            result.openLeft = left <= platform.left;
-            result.openRight = right >= platform.right;
-            result.segments = std::move(sliced);
-            split.push_back(std::move(result));
-        }
-    }
-    platforms = std::move(split);
-}
-
-inline void CloseOpenEdges(const std::vector<NavigationWall>& walls, std::vector<NavigationPlatform>& platforms) {
-    for (auto& platform : platforms) {
-        for (const auto& wall : walls) {
-            if (platform.openLeft && wall.x >= platform.left - kDropMin && wall.x <= platform.left + 3
-                && WallBlocks(wall, platform, std::max(platform.left, wall.x)))
-                platform.openLeft = false;
-            if (platform.openRight && wall.x <= platform.right + kDropMin && wall.x >= platform.right - 3
-                && WallBlocks(wall, platform, std::min(platform.right, wall.x)))
-                platform.openRight = false;
-        }
     }
 }
 
@@ -310,16 +263,24 @@ inline void Connect(const std::vector<NavigationWall>& walls, double terrainLeft
         for (int j = 0; j < static_cast<int>(platforms.size()); ++j) {
             if (j == i) continue;
             const auto& b = platforms[static_cast<std::size_t>(j)];
+            std::vector<NavigationWall> relevantWalls;
+            for (const auto& wall : walls) {
+                if ((!a.openLeft && wall.x == a.left) || (!a.openRight && wall.x == a.right)
+                    || (!b.openLeft && wall.x == b.left) || (!b.openRight && wall.x == b.right))
+                    relevantWalls.push_back(wall);
+            }
             const double direction = a.right <= b.left ? 1 : -1;
             const double ax = direction == 1 ? a.right : a.left;
             const double bx = direction == 1 ? b.left : b.right;
             const double gap = (bx - ax) * direction;
             const double rise = height(a, ax) - height(b, bx);
-            if (gap >= 0 && gap <= 2 && std::abs(rise) <= 6) {
+            const bool sourceOpen = direction == 1 ? a.openRight : a.openLeft;
+            const bool targetOpen = direction == 1 ? b.openLeft : b.openRight;
+            if (gap >= 0 && gap <= 2 && std::abs(rise) <= 6 && sourceOpen && targetOpen) {
                 const double fromX = inside(a, ax - direction * 8);
                 const double toX = inside(b, bx + direction * 14);
                 const double fromY = height(a, fromX), toY = height(b, toX);
-                if (!CrossesWall(walls, ax, bx, std::min(fromY, toY) - kBodyHeight, std::max(fromY, toY)))
+                if (!CrossesWall(relevantWalls, ax, bx, std::min(fromY, toY) - kBodyHeight, std::max(fromY, toY)))
                     add(navigation.walk, i + 1, j + 1, fromX, toX, rise);
             }
             if (gap == 0 && rise > 6 && rise <= kJumpRise && a.right - a.left >= kMinPlatformWidth
@@ -355,7 +316,7 @@ inline void Connect(const std::vector<NavigationWall>& walls, double terrainLeft
                 const double fromX = inside(a, ax - direction * 6);
                 const double toX = inside(b, bx + direction * 10);
                 const double fromY = height(a, fromX), toY = height(b, toX);
-                if (!CrossesWall(walls, ax, bx, std::min(fromY, toY) - kBodyHeight, std::max(fromY, toY)))
+                if (!CrossesWall(relevantWalls, ax, bx, std::min(fromY, toY) - kBodyHeight, std::max(fromY, toY)))
                     add(navigation.step, i + 1, j + 1, fromX, toX, rise);
             }
         }
@@ -378,7 +339,12 @@ inline void Connect(const std::vector<NavigationWall>& walls, double terrainLeft
                 const double landingX = (overlapLeft + overlapRight) / 2;
                 const double landingY = height(b, landingX);
                 if (landingY <= edgeY + 6) continue;
-                if (CrossesWall(walls, edgeX, landingX, landingY - kBodyHeight, edgeY)) continue;
+                std::vector<NavigationWall> landingWalls;
+                for (const auto& wall : walls)
+                    if ((!b.openLeft && wall.x == b.left) || (!b.openRight && wall.x == b.right))
+                        landingWalls.push_back(wall);
+                if (CrossesWall(landingWalls, edgeX, landingX,
+                                std::min(edgeY, landingY) - kBodyHeight, std::max(edgeY, landingY))) continue;
                 add(navigation.drop, i + 1, j + 1, inside(a, edgeX - direction * 8), landingX, landingY - edgeY);
             }
         }
@@ -393,7 +359,9 @@ inline void Connect(const std::vector<NavigationWall>& walls, double terrainLeft
             if (rise <= 6 || rise > kJumpRise) continue;
             bool blocked = false;
             for (const auto& wall : walls)
-                if (wall.x > overlapLeft - kWallMargin && wall.x < overlapRight + kWallMargin
+                if (((!a.openLeft && wall.x == a.left) || (!a.openRight && wall.x == a.right)
+                     || (!b.openLeft && wall.x == b.left) || (!b.openRight && wall.x == b.right))
+                    && wall.x > probe - kWallMargin && wall.x < probe + kWallMargin
                     && wall.top <= height(b, probe) && wall.bottom >= height(a, probe) - kBodyHeight) {
                     blocked = true;
                     break;
@@ -461,8 +429,6 @@ inline SceneNavigation BuildSceneNavigation(const std::vector<SceneFoothold>& fo
     }
     sn::MergeWalls(footholds, navigation.walls);
     sn::MergePlatforms(footholds, navigation.platforms);
-    sn::SplitPlatforms(navigation.walls, navigation.platforms);
-    sn::CloseOpenEdges(navigation.walls, navigation.platforms);
     if (!navigation.platforms.empty())
         sn::Connect(navigation.walls, navigation.terrainLeft, navigation.terrainRight, navigation);
     return navigation;
