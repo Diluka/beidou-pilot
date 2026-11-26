@@ -12,7 +12,7 @@ local follow = require("lib.follow")
 local function context(players)
     return {
         tick = {time = 0},
-        state = {},
+        state = {bot = {config = {}}},
         game = {
             scene = {players = players},
             player = setmetatable({}, {__index = function() error("follow must not access player") end}),
@@ -58,7 +58,7 @@ action = follow.update(ctx, world(121, 12, "Owner"))
 assert(action.kind == "move" and action.x == 221,
     "when either ID is unavailable, matching must fall back to the exact name")
 
-ctx = context({{character_id = 12, name = "Owner", x = 139, y = 999}})
+ctx = context({{character_id = 12, name = "Owner", x = 139, y = 200}})
 action = follow.update(ctx, world(39, 12, "Owner"))
 assert_wait(action, "close_enough")
 

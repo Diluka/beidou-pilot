@@ -1,5 +1,7 @@
 local M = {}
 local EVENT_LIMIT = 1024 * 1024
+
+M.platform_error = package.config:sub(1, 1) == "\\" and "unsupported_platform: bot_package_requires_posix" or nil
 local JSON_NULL = {}
 local recent_ids, recent_order = {}, {}
 local ready_roots, last_publish = {}, nil

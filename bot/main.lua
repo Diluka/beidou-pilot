@@ -12,6 +12,13 @@ local defaults = require("defaults")
 
 local function main(context)
     local memory = context.state
+    if io_module.platform_error then
+        if not memory.bot_platform_error_reported then
+            io_module.event(context, "error", {reason = io_module.platform_error})
+            memory.bot_platform_error_reported = true
+        end
+        return
+    end
     if not memory.bot then
         memory.bot = state_module.new()
         memory.bot.player = context.game.player
@@ -207,7 +214,7 @@ local function main(context)
                 if from and to then
                     local path_target = memory.path_target
                     local target_moved = true
-                    if memory.mover and path_target and path_target.platform == to
+                    if memory.mover and memory.mover.status == "running" and path_target and path_target.platform == to
                         and path_target.scene_generation == generation
                         and path_target.x ~= nil and path_target.y ~= nil then
                         local dx, dy = action.x - path_target.x, action.y - path_target.y
@@ -265,7 +272,7 @@ local function main(context)
                             end
                         end
                     end
-                else
+                elseif not (memory.mover and memory.mover.status == "running" and memory.path_target) then
                     if memory.mover then move.stop(memory.mover) end
                     memory.path_target = nil
                     skip_movement = true

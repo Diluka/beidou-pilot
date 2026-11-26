@@ -71,14 +71,18 @@ function M.update(ctx, world)
         ctx.state.follow_unreachable = nil
     end
 
-    local distance = math.abs(matched_owner.x - character.x)
-    if distance < STOP_DISTANCE then return wait("close_enough") end
-    if distance <= FOLLOW_DISTANCE then return wait("deadband") end
+    local config = ctx.state.bot and ctx.state.bot.config or {}
+    local follow_distance = config.follow_distance or FOLLOW_DISTANCE
+    local stop_distance = config.stop_distance or STOP_DISTANCE
+    local dx, dy = matched_owner.x - character.x, matched_owner.y - character.y
+    local distance = math.sqrt(dx * dx + dy * dy)
+    if distance < stop_distance then return wait("close_enough") end
+    if distance <= follow_distance then return wait("deadband") end
     return {
         kind = "move",
         x = matched_owner.x,
         y = matched_owner.y,
-        stop_distance = STOP_DISTANCE,
+        stop_distance = stop_distance,
     }
 end
 
