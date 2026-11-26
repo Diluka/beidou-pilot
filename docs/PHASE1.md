@@ -257,6 +257,7 @@ local function main(context) ... end
 - 实现/替换模块桩的包内任务，交付文件必须包含 `bot/test/run.lua`：只允许移除本模块的 `check_stub`、把新测试加入 `loadfile`/`dofile`；不改其他测试逻辑。
 - 真实 headless：开发服 `dev` 两个角色；只验证 headless 预期行为，不打开 GUI 对比。
 - 证据：`state.json`/`events.jsonl`/命令输出/关键时间点；原始证据留角色目录，公开记录只写结论。
+- 跨客户端观察（动作/移动类任务）：用 [`tools/observer/observe_clients.py`](../tools/observer/observe_clients.py) 在同一 host 时钟下同时采样 headless 与 GUI 两端，各作为观察端核对另一端：入图位置差 ≤2px、移动中无单帧 >10px 跳变、停止后 1s 内观察端速度归零/动画站立。已交付的移动类任务按该合同回归复验。
 - 差异：如果怀疑 headless 与 GUI 不一致，另开“后端差异审计”任务；不在本期功能任务内处理。
 
 ## 8. 未纳入本期
