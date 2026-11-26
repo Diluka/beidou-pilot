@@ -96,6 +96,8 @@ namespace ms
 
 		// Notify the server that the player has moved maps
 		void transfer_player();
+		void set_field_key(uint8_t key) { fieldKey = key; }
+		uint8_t get_field_key() const { return fieldKey; }
 
 	private:
 		void load_map(int32_t mapid);
@@ -119,6 +121,7 @@ namespace ms
 		Optional<Playable> playable;
 		State state;
 		int32_t mapid;
+		uint8_t fieldKey = 0;
 
 		MapInfo mapinfo;
 		MapTilesObjs tilesobjs;

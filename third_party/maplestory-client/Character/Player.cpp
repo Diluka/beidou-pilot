@@ -31,6 +31,7 @@
 #include "../Net/Packets/InventoryPackets.h"
 #include "../Gameplay/Physics/V17ClimbMotion.h"
 #include "../Gameplay/MapleMap/MapInfo.h"
+#include "../Gameplay/Stage.h"
 
 namespace ms
 {
@@ -116,6 +117,16 @@ namespace ms
 		attacking = false;
 		ladder = nullptr;
 		nullstate.update_state(*this);
+	}
+
+	void Player::sync_field_position()
+	{
+		Movement initial(phobj, facing_right ? State::STAND : State::STAND + 1);
+		initial.lastx = initial.lasty = 0;
+		movementPath.Append(30, initial, 0);
+		MovePlayerPacket(movementPath, Stage::get().get_field_key()).dispatch();
+		movementPath.Reset(Point<int16_t>(initial.xpos, initial.ypos));
+		lastmove = Movement(phobj, initial.newstate);
 	}
 
 	void Player::send_action(KeyAction::Id action, bool down)
@@ -247,7 +258,6 @@ namespace ms
 		}
 
 		climb_cooldown.update();
-		send_movement_if_changed();
 	}
 
 	LocalMotionCommit Player::advance_local_motion(const Physics& physics, uint32_t worldMs)
@@ -291,7 +301,7 @@ namespace ms
 				phobj.end_motion_sample();
 				++motionCommitId;
 				lastMotionStepMs = 30;
-				send_movement_if_changed();
+				send_movement_if_changed(lastMotionStepMs);
 				motionRemainderMs -= 30;
 				commit.motionCommitted = true;
 				commit.normalStep = true;
@@ -358,7 +368,7 @@ namespace ms
 				phobj.end_motion_sample();
 				++motionCommitId;
 				lastMotionStepMs = 30;
-				send_movement_if_changed();
+				send_movement_if_changed(lastMotionStepMs);
 				motionRemainderMs -= 30;
 				commit.motionCommitted = true;
 				commit.normalStep = false;
@@ -375,7 +385,7 @@ namespace ms
 				phobj.end_motion_sample();
 				++motionCommitId;
 				lastMotionStepMs = ms::Constants::TIMESTEP;
-				send_movement_if_changed();
+				send_movement_if_changed(lastMotionStepMs);
 				motionRemainderMs -= ms::Constants::TIMESTEP;
 				commit.motionCommitted = true;
 				commit.normalStep = false;
@@ -387,6 +397,7 @@ namespace ms
 				if (motionRemainderMs < 30)
 					break;
 
+				send_movement_if_changed(30);
 				motionRemainderMs -= 30;
 			}
 		}
@@ -406,12 +417,12 @@ namespace ms
 		pst->update_state(*this);
 	}
 
-	void Player::send_movement_if_changed()
+	void Player::send_movement_if_changed(uint32_t stepMs)
 	{
 		const uint8_t stancebyte = facing_right ? state : state + 1;
 		const Movement newmove(phobj, stancebyte);
 
-		if (!lastmove.hasmoved(newmove))
+		if (!lastmove.hasmoved(newmove) && movementPath.Fragments().empty())
 			return;
 
 		// The two words headless exposed as lastx/lasty are the original fragment's
@@ -452,15 +463,15 @@ namespace ms
 		                                                | (held(KeyAction::UP) ? 2 : 0)
 		                                                | (held(KeyAction::DOWN) ? 1 : 0));
 
-		const uint32_t stepMs = lastMotionStepMs != 0 ? lastMotionStepMs : ms::Constants::TIMESTEP;
 		movementPath.Append(stepMs, encoded, direction);
 		lastmove = newmove;
 
-		if (!movementPath.ShouldSend())
+		const bool stopped = state == State::STAND && encoded.lastx == 0 && encoded.lasty == 0;
+		if (!movementPath.ShouldSend() && !stopped)
 			return;
 
 		const Point<int16_t> nextStart = movementPath.LastEndpoint();
-		MovePlayerPacket(movementPath).dispatch();
+		MovePlayerPacket(movementPath, Stage::get().get_field_key()).dispatch();
 		movementPath.Reset(nextStart);
 	}
 

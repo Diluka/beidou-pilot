@@ -37,6 +37,7 @@ namespace ms
 
 		// Update the character
 		int8_t update(const Physics& physics) override;
+		MotionSample get_motion() const override;
 		// Add the movements which this character will go through next
 		void send_movement(const std::vector<Movement>& movements);
 
@@ -60,6 +61,7 @@ namespace ms
 		MovementReplay replay;
 		uint16_t replayAccumulator = 0;
 		bool replayActive = false;
+		MotionSample replayMotion{};
 		Movement lastmove;
 
 		std::unordered_map<int32_t, uint8_t> skilllevels;

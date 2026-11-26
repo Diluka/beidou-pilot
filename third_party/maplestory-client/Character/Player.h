@@ -104,6 +104,7 @@ namespace ms
 		void teleport_to(double x, double y);
 		// Respawn the player at the given position
 		void respawn(Point<int16_t> position, bool underwater);
+		void sync_field_position();
 		// Sends a Keyaction to the player's state, to apply forces, change the state and other behavior.
 		void send_action(KeyAction::Id action, bool pressed);
 		// Recalculates the total stats from base stats, inventories and skills.
@@ -221,7 +222,7 @@ namespace ms
 		void sync_motion_ownership();
 		V17MotionInput capture_motion_input() const;
 		void legacy_update_8ms(const Physics& physics);
-		void send_movement_if_changed();
+		void send_movement_if_changed(uint32_t stepMs);
 
 		CharStats stats;
 		Inventory inventory;

@@ -456,6 +456,49 @@ void Ground(SharedLuaAdapter& host, const char* mapDirectory) {
     Check(std::abs(player.get_phobj().crnt_y() - 1000.0) < 1e-9, "landing_commits_the_ground_contact");
 }
 
+void MovementTiming(SharedLuaAdapter& host, const char* mapDirectory) {
+    auto map = load_img_directory(mapDirectory);
+    auto& stage = ms::Stage::get();
+    stage.physics = ms::Physics(map.root()["Test.img"]["foothold"]);
+    auto& player = stage.get_player();
+    player.respawn({0, 1000}, false);
+    packets.clear();
+    std::string error;
+    Check(host.tickAdapter.SetHeldKeys({"right"}, error), error);
+    std::size_t seen = 0;
+    int previousMs = 0;
+    bool finalStand = false;
+    for (int tick = 1; tick <= 450; ++tick) {
+        if (tick == 376) Check(host.tickAdapter.SetHeldKeys({}, error), error);
+        Consume(host, tick);
+        auto moves = PacketsOf(ms::OutPacket::MOVE_PLAYER);
+        while (seen < moves.size()) {
+            const auto& bytes = moves[seen++];
+            const int fragments = static_cast<uint8_t>(bytes[11]);
+            int duration = 0;
+            for (int i = 0; i < fragments; ++i) {
+                const auto offset = 12 + i * 14;
+                Check(bytes.size() > static_cast<std::size_t>(offset + 13) && bytes[offset] == 0,
+                      "timing_requires_absolute_fragments");
+                duration += static_cast<uint8_t>(bytes[offset + 12]) | (static_cast<uint8_t>(bytes[offset + 13]) << 8);
+            }
+            const int now = tick * 8;
+            const int last = 12 + (fragments - 1) * 14;
+            const int stance = static_cast<uint8_t>(bytes[last + 11]);
+            const bool zeroVelocity =
+                bytes[last + 5] == 0 && bytes[last + 6] == 0 && bytes[last + 7] == 0 && bytes[last + 8] == 0;
+            std::cout << "movement packet at_ms=" << now << " interval_ms=" << now - previousMs
+                      << " fragments=" << fragments << " duration_ms=" << duration << " stance=" << stance
+                      << " zero_velocity=" << zeroVelocity << '\n';
+            Check(duration <= now - previousMs + 30, "packet_duration_tracks_elapsed_motion_time");
+            if (tick >= 376 && (stance == 4 || stance == 5) && zeroVelocity) finalStand = true;
+            previousMs = now;
+        }
+    }
+    Check(seen >= 3, "timing_sends_multiple_packets");
+    Check(finalStand, "timing_stop_sends_standing_zero_velocity");
+}
+
 void Schedule(SharedLuaAdapter& host) {
     auto& player = ms::Stage::get().get_player();
     player.get_phobj().onground = true;
@@ -519,11 +562,45 @@ void Packets(SharedLuaAdapter& host) {
     if (player.is_climbing()) player.set_state(ms::Char::State::STAND);
     player.get_phobj().onground = true;
     packets.clear();
+    ms::Stage::get().set_field_key(37);
+    player.respawn(player.get_position(), false);
+    player.sync_field_position();
+    auto initial = PacketsOf(ms::OutPacket::MOVE_PLAYER);
+    Check(initial.size() == 1 && static_cast<uint8_t>(initial[0][2]) == 37, "field_entry_sends_current_field_key");
+    Check(initial[0].size() > 25 && initial[0][11] == 1 && initial[0][12] == 0
+              && std::equal(initial[0].begin() + 7, initial[0].begin() + 11, initial[0].begin() + 13)
+              && initial[0][17] == 0 && initial[0][18] == 0 && initial[0][19] == 0 && initial[0][20] == 0
+              && (initial[0][23] == 4 || initial[0][23] == 5) && initial[0][24] == 30 && initial[0][25] == 0,
+          "field_entry_sends_one_stationary_absolute_fragment");
+    packets.clear();
     // V17 batches MOVE_PLAYER behind the 500ms path gate; an idle player must not
     // emit a packet. The path layout/merge rules are covered by the pure
     // MovePlayerPath contract, and real-client batching is validated separately.
     for (int tick = 0; tick < 4; ++tick) ms::Stage::get().update();
     Check(PacketsOf(ms::OutPacket::MOVE_PLAYER).empty(), "idle_path_stays_behind_batch_gate");
+
+    const auto position = player.get_position();
+    player.reset_motion(position, true);
+    player.set_state(ms::Char::State::STAND);
+    player.movementPath.Reset(position);
+    player.movementPath.Append(30, ms::Movement(position.x(), position.y(), 125, 0, ms::Char::State::WALK, 30), 4);
+    player.send_movement_if_changed(30);
+    auto stopped = PacketsOf(ms::OutPacket::MOVE_PLAYER);
+    Check(stopped.size() == 1 && static_cast<uint8_t>(stopped[0][2]) == 37 && stopped[0][11] == 2,
+          "stationary_path_flushes_with_current_field_key");
+    const auto& end = stopped[0];
+    Check(end[26] == 0 && end[31] == 0 && end[32] == 0 && end[33] == 0 && end[34] == 0
+              && (end[37] == 4 || end[37] == 5),
+          "stationary_path_ends_with_zero_velocity_and_stand");
+
+    ms::OtherChar remote(2, ms::CharLook(), 1, 0, "remote", ms::Char::State::STAND, {0, 0});
+    ms::Movement segment(30, 0, 0, 0, ms::Char::State::WALK, 240);
+    remote.send_movement({segment});
+    ms::Physics physics;
+    for (int i = 0; i < 4; ++i) remote.sampled_update(physics);
+    const auto sample = remote.get_motion();
+    Check(sample.known && sample.interval_ms == 30 && sample.delta_x > 0,
+          "remote_velocity_uses_replay_step_displacement_and_time");
 }
 
 void MotionInput(SharedLuaAdapter& host) {
@@ -634,6 +711,8 @@ int main(int argc, char** argv) {
         Physics(host);
     else if (scenario == "ground")
         Ground(host, argv[3]);
+    else if (scenario == "timing")
+        MovementTiming(host, argv[3]);
     else if (scenario == "schedule")
         Schedule(host);
     else if (scenario == "packets")
