@@ -12,6 +12,7 @@ SOURCES = {
     "ruff": (
         "tools/format.py",
         "cli/test/test_botctl.py",
+        "cli/test/test_shop.py",
         "cli/beidou_pilot/cli.py",
         "cli/beidou_pilot/recovery.py",
         "cli/beidou_pilot/strategies.py",

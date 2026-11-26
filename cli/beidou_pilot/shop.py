@@ -24,11 +24,11 @@ def read_shop(backend: Backend) -> JsonObject:
 def close_shop(backend: Backend) -> JsonObject:
     snapshot = cast(ShopSnapshot, backend.read("shop"))
     if snapshot["unavailable"]:
-        raise ClientError("shop_unavailable", "当前商店状态不可用于确认关闭。",
-                          {"unavailable": snapshot["unavailable"]})
+        raise ClientError(
+            "shop_unavailable", "当前商店状态不可用于确认关闭。", {"unavailable": snapshot["unavailable"]}
+        )
     if not snapshot["open"]:
-        return {"closed": True, "already_closed": True, "changed": False,
-                "quantity_cancelled": False}
+        return {"closed": True, "already_closed": True, "changed": False, "quantity_cancelled": False}
     window = snapshot["window"]
     if window is None:
         raise ClientError("shop_window_unavailable", "当前商店窗口不能唯一确认。")
@@ -43,8 +43,9 @@ def close_shop(backend: Backend) -> JsonObject:
             time.sleep(0.1)
             snapshot = cast(ShopSnapshot, backend.read("shop"))
         if snapshot["unavailable"]:
-            raise ClientError("shop_unavailable", "取消数量框后商店状态不可用。",
-                              {"unavailable": snapshot["unavailable"]})
+            raise ClientError(
+                "shop_unavailable", "取消数量框后商店状态不可用。", {"unavailable": snapshot["unavailable"]}
+            )
     if snapshot["open"]:
         current = snapshot["window"]
         if current is None or current["address"] != window["address"]:
@@ -58,10 +59,10 @@ def close_shop(backend: Backend) -> JsonObject:
             time.sleep(0.1)
             snapshot = cast(ShopSnapshot, backend.read("shop"))
     if snapshot["unavailable"]:
-        raise ClientError("shop_unavailable", "退出商店后读数不可用，未确认关闭。",
-                          {"unavailable": snapshot["unavailable"]})
-    return {"closed": True, "already_closed": False, "changed": True,
-            "quantity_cancelled": prompt is not None}
+        raise ClientError(
+            "shop_unavailable", "退出商店后读数不可用，未确认关闭。", {"unavailable": snapshot["unavailable"]}
+        )
+    return {"closed": True, "already_closed": False, "changed": True, "quantity_cancelled": prompt is not None}
 
 
 def buy(backend: Backend, item_id: int, count: int = 1) -> JsonObject:
@@ -72,8 +73,9 @@ def sell(backend: Backend, item_id: int, count: int = 1, slot: int | None = None
     return _trade(backend, "sell", item_id, count, slot)
 
 
-def _trade(backend: Backend, direction: Literal["buy", "sell"], item_id: int, count: int,
-           slot: int | None = None) -> JsonObject:
+def _trade(
+    backend: Backend, direction: Literal["buy", "sell"], item_id: int, count: int, slot: int | None = None
+) -> JsonObject:
     if not 1 <= count <= 1000:
         raise ClientError("invalid_count", "单次交易数量须为 1 至 1000。")
     snapshot = cast(ShopSnapshot, backend.read("shop"))
@@ -81,8 +83,7 @@ def _trade(backend: Backend, direction: Literal["buy", "sell"], item_id: int, co
     if not snapshot["open"] or window is None:
         raise ClientError("shop_closed", "请先正常打开普通 NPC 商店。")
     if snapshot["unavailable"] or window["vtables"][0] != "0xafe110":
-        raise ClientError("shop_unavailable", "当前商店读数不可用于交易。",
-                          {"unavailable": snapshot["unavailable"]})
+        raise ClientError("shop_unavailable", "当前商店读数不可用于交易。", {"unavailable": snapshot["unavailable"]})
     if snapshot["busy"] or snapshot["quantity_dialog"] is not None:
         raise ClientError("shop_transaction_pending", "当前商店已有待处理的交易。")
     inventory_type = item_id // 1000000
@@ -93,16 +94,25 @@ def _trade(backend: Backend, direction: Literal["buy", "sell"], item_id: int, co
         if tab is None:
             raise ClientError("shop_tab_unavailable", "当前商店没有可确认的目标库存页签。")
         click_window(backend, window, 235 + (tab["left"] + tab["right"]) // 2, 105)
+        deadline = time.monotonic() + 1.2
         snapshot = cast(ShopSnapshot, backend.read("shop"))
-        if snapshot["sell_tab_index"] != inventory_type - 1:
-            raise ClientError("shop_tab_not_confirmed", "商店卖出页签切换未确认。")
+        while snapshot["sell_tab_index"] != inventory_type - 1:
+            if time.monotonic() >= deadline:
+                raise ClientError("shop_tab_not_confirmed", "商店卖出页签切换未确认。")
+            time.sleep(0.1)
+            snapshot = cast(ShopSnapshot, backend.read("shop"))
     side = "buy_items" if direction == "buy" else "sell_items"
-    matches = [item for item in snapshot[side] if item["item_id"] == item_id
-               and (slot is None or item["inventory_slot"] == slot)]
+    matches = [
+        item
+        for item in snapshot[side]
+        if item["item_id"] == item_id and (slot is None or item["inventory_slot"] == slot)
+    ]
     if len(matches) != 1:
-        raise ClientError("shop_item_ambiguous" if matches else "shop_item_missing",
-                          "请按当前商店列表指定唯一物品；卖出多堆物品时指定库存槽位。",
-                          {"item_id": item_id, "slot": slot})
+        raise ClientError(
+            "shop_item_ambiguous" if matches else "shop_item_missing",
+            "请按当前商店列表指定唯一物品；卖出多堆物品时指定库存槽位。",
+            {"item_id": item_id, "slot": slot},
+        )
     item = matches[0]
     price = item["unit_price"]
     if price is None or price < 0 or item["bundle_quantity"] > 1:
@@ -114,8 +124,7 @@ def _trade(backend: Backend, direction: Literal["buy", "sell"], item_id: int, co
         raise ClientError("mesos_unavailable", "当前金币读数不可用。")
     money_before = wallet["mesos"]
     if direction == "buy" and money_before < price * count:
-        raise ClientError("insufficient_mesos", "金币不足。",
-                          {"available": money_before, "required": price * count})
+        raise ClientError("insufficient_mesos", "金币不足。", {"available": money_before, "required": price * count})
     inventory = read_inventory(backend, inventory_type)
     quantities = [entry["quantity"] for entry in inventory["items"] if entry["item_id"] == item_id]
     if any(quantity is None for quantity in quantities):
@@ -135,25 +144,40 @@ def _trade(backend: Backend, direction: Literal["buy", "sell"], item_id: int, co
         click_window(backend, window, x, 140)
         backend.read("desktop", "scroll", "up" if index < first else "down", "--ticks", "1")
         snapshot = cast(ShopSnapshot, backend.read("shop"))
-        if snapshot["window"] is None or snapshot["window"]["address"] != window["address"] \
-                or snapshot[first_field] == previous:
+        if (
+            snapshot["window"] is None
+            or snapshot["window"]["address"] != window["address"]
+            or snapshot[first_field] == previous
+        ):
             raise ClientError("shop_scroll_not_confirmed", "商店列表滚动未确认，已停止交易。")
         window = snapshot["window"]
     first = snapshot[first_field]
     if first is None or not first <= index < first + 5:
         raise ClientError("shop_item_not_visible", "目标商品尚未进入可见行。")
     click_window(backend, window, x, 144 + (index - first) * 40)
+    deadline = time.monotonic() + 1.2
     snapshot = cast(ShopSnapshot, backend.read("shop"))
-    if snapshot[selected_field] != index:
-        raise ClientError("shop_selection_not_confirmed", "未确认选中目标商品，已停止交易。")
+    while snapshot[selected_field] != index:
+        if time.monotonic() >= deadline:
+            raise ClientError("shop_selection_timeout", "等待选中目标商品超时，已停止交易。")
+        time.sleep(0.1)
+        snapshot = cast(ShopSnapshot, backend.read("shop"))
     click_control(backend, window, 1000 if direction == "buy" else 1001)
+    deadline = time.monotonic() + 1.2
     snapshot = cast(ShopSnapshot, backend.read("shop"))
     prompt = snapshot["quantity_dialog"]
-    if prompt is None:
-        raise ClientError("shop_quantity_dialog_missing", "交易按钮后未出现已识别的数量框，未继续确认。")
+    while prompt is None:
+        if time.monotonic() >= deadline:
+            raise ClientError("shop_quantity_dialog_timeout", "等待数量框超时，未继续确认；请核对现场，勿重放交易。")
+        time.sleep(0.1)
+        snapshot = cast(ShopSnapshot, backend.read("shop"))
+        prompt = snapshot["quantity_dialog"]
     if not prompt["minimum"] <= count <= prompt["maximum"]:
-        raise ClientError("shop_quantity_out_of_range", "请求数量超出当前商店数量框范围。",
-                          {"minimum": prompt["minimum"], "maximum": prompt["maximum"]})
+        raise ClientError(
+            "shop_quantity_out_of_range",
+            "请求数量超出当前商店数量框范围。",
+            {"minimum": prompt["minimum"], "maximum": prompt["maximum"]},
+        )
     actions: list[Action] = [{"action": "hold", "keys": ["Control_L", "a"], "seconds": 0.06}]
     actions.extend({"action": "hold", "keys": [digit], "seconds": 0.06} for digit in str(count))
     actions.append({"action": "wait", "seconds": 0.1})
@@ -177,12 +201,21 @@ def _trade(backend: Backend, direction: Literal["buy", "sell"], item_id: int, co
         if (quantity_after == expected_quantity and money_after == expected_money) or time.monotonic() >= deadline:
             break
         time.sleep(0.1)
-    details: JsonObject = {"direction": direction, "item_id": item_id, "count": count,
-        "shop_quote": price, "mesos_before": money_before, "mesos_after": money_after,
-        "quantity_before": quantity_before, "quantity_after": quantity_after,
+    details: JsonObject = {
+        "direction": direction,
+        "item_id": item_id,
+        "count": count,
+        "shop_quote": price,
+        "mesos_before": money_before,
+        "mesos_after": money_after,
+        "quantity_before": quantity_before,
+        "quantity_after": quantity_after,
         "quantity_changed": quantity_after == expected_quantity,
-        "actual_total_price": abs(money_after - money_before) if money_after is not None else None}
+        "actual_total_price": abs(money_after - money_before) if money_after is not None else None,
+    }
     if quantity_after != expected_quantity or money_after != expected_money:
-        raise ClientError("shop_trade_not_confirmed", "交易提交后金币与库存未同时符合预期；请核对现场，勿重放交易。", details)
+        raise ClientError(
+            "shop_trade_not_confirmed", "交易提交后金币与库存未同时符合预期；请核对现场，勿重放交易。", details
+        )
     details["completed"] = True
     return details
