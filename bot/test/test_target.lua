@@ -184,15 +184,16 @@ tick(ctx)
 assert(event_count("target/arrived") == 0 and input.direction == nil and ctx.state.bot.mode == "idle",
     "old portal coordinates and held input must not survive a scene generation change")
 
--- No selectable mob or loot (nonempty snapshots) waits in hunt; recheck later without a new command.
+-- No selectable mob or loot starts patrol; a newly landed drop preempts it.
 ctx = scenario("hunt", nil, 10, 100)
 ctx.game.scene.monsters = {{object_id = 9, template_id = 100, active = false, x = 10, y = 100}}
 ctx.game.scene.drops = {{object_id = 11, item_id = 400, landed = false, x = 15, y = 100}}
 tick(ctx)
-assert(ctx.state.bot.mode == "hunt" and event_count("hunt/empty") == 1 and input.direction == "right")
+assert(ctx.state.bot.mode == "hunt" and event_count("hunt/patrol") == 1)
 ctx.game.scene.drops[1].landed = true
 tick(ctx, 0.001)
-assert(ctx.state.bot.mode == "hunt" and input.pickups > 0, "hunt must resume immediately when a selectable drop appears")
+tick(ctx, 0.002)
+assert(ctx.state.bot.mode == "hunt" and input.pickups > 0, "loot must preempt patrol after releasing its action")
 
 io_module.poll, io_module.publish, io_module.event = saved_poll, saved_publish, saved_event
 io.open, game = saved_open, saved_game

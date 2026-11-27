@@ -75,14 +75,14 @@ function M.select(world, options)
 
     local owner = world.owner
     local origin, limit
-    if owner and owner.present ~= false then
+    if not options.hunt and owner and owner.present ~= false then
         if type(owner.x) ~= "number" or type(owner.y) ~= "number" then
             release_active()
             return nil
         end
         origin, limit = owner, 300
     else
-        origin, limit = character, 200
+        origin, limit = character, options.hunt and math.huge or 200
     end
 
     if active_target ~= nil then
@@ -96,7 +96,7 @@ function M.select(world, options)
             and not abandoned[active_target] and type(locked.x) == "number" and type(locked.y) == "number"
             and not (locked.hp_percent ~= nil and locked.hp_percent <= 0)
             and not (locked.hp ~= nil and locked.hp <= 0)
-            and distance(leash_origin, locked) <= 400 then
+            and (options.hunt or distance(leash_origin, locked) <= 400) then
             return locked
         end
         release_active()
@@ -190,8 +190,9 @@ function M.step(ctx, world, mob, mover)
     if character.platform == nil or mob.platform == nil then
         return finish("failed", "target_platform_unreachable", true)
     end
-    if world.owner and world.owner.present ~= false and type(world.owner.x) == "number"
-        and type(world.owner.y) == "number" and distance(world.owner, mob) > 400 then
+    if not (state.bot and state.bot.mode == "hunt") and world.owner and world.owner.present ~= false
+        and type(world.owner.x) == "number" and type(world.owner.y) == "number"
+        and distance(world.owner, mob) > 400 then
         return finish("failed", "leash_exceeded", true)
     end
     if now - combat.started_at >= 15 then return finish("failed", "timeout", true) end
@@ -205,7 +206,7 @@ function M.step(ctx, world, mob, mover)
         local status, reason = move.step(mover, ctx, world)
         if status == "failed" then return finish("failed", reason or "move_failed", true) end
         if status == "running" then return "running", reason or "approaching" end
-        combat.moving = nil
+        combat.moving, combat.progress_at = nil, now
     end
     if mob.platform ~= character.platform then
         if not mover or not state.graph then return finish("failed", "no_path", true) end
@@ -228,7 +229,7 @@ function M.step(ctx, world, mob, mover)
     end
     if combat.moving == "cross_platform" then
         if mover and mover.status == "running" then move.stop(mover) end
-        combat.moving = nil
+        combat.moving, combat.progress_at = nil, now
     end
     local target_distance = distance(character, mob)
     local config = world.config or state.bot and state.bot.config or {}

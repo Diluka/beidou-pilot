@@ -20,26 +20,11 @@ game = ctx.game
 local file = assert(io.open("bot/main.lua"))
 local tick = assert(load(file:read("*a") .. "\nreturn main", "bot/main.lua"))()
 file:close()
-local function at(time, expected)
-    ctx.tick.time = time
-    tick(ctx)
-    assert(inputs[#inputs] == expected, ("at %s expected %s got %s"):format(time, expected, tostring(inputs[#inputs])))
-end
-at(0, "right")
-at(1.9, "right")
-at(2, "stop")
-at(4.9, "stop")
-at(5, "left")
-at(6.9, "left")
-at(7, "stop")
-local empty_count = 0
-for _, event in ipairs(events) do if event.kind == "hunt/empty" then empty_count = empty_count + 1 end end
-assert(empty_count == 1, "continuous empty patrol emits one event")
-ctx.game.character.attacking = true
-at(10, "stop")
-ctx.game.character.attacking = false
-ctx.game.character.action_idle = false
-at(10.1, "stop")
+tick(ctx)
+local patrol_count = 0
+for _, event in ipairs(events) do if event.kind == "hunt/patrol" then patrol_count = patrol_count + 1 end end
+assert(ctx.state.hunt_action == "patrol" and ctx.state.hunt_patrol and ctx.state.hunt_patrol.target,
+    "empty hunt selects a patrol target")
 io_module.poll, io_module.publish, io_module.event, game = saved_poll, saved_publish, saved_event, saved_game
 local hunt = require("lib.hunt")
 local terrain, move = require("lib.terrain"), require("lib.move")
