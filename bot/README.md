@@ -255,6 +255,10 @@ metrics.event(samples, 'hp_potion', {map_id=world.map_id, platform=platform, mob
 
 每约 20 秒将已关闭窗口写入 `/work/bot/metrics.json`，先写临时文件再 rename；Windows 覆盖回退有短暂无文件窗口。单文件上限 256 KiB，最多保留当前及 `metrics.1.json` 两代，继续滚动会丢弃最旧一代并发布 `metrics/rotate`；宿主必须定期复制以保存更长历史。采集异常应由接线方旁路处理，不得阻塞机器人动作。宿主可选使用 `python3 tools/farm_stats.py dev/NAME --json` 或给出文件路径做离线汇总；工具不操作游戏，不做目标策略，未确认完整的窗口不进入速率计算。长时研究须定期自行复制数据。
 
+## 运行时预算
+
+bot 主循环以 `@tick.budget_ms 200` 运行（默认 100ms）：GUI 宿主的调度/桥抖动实测可让单次回调达到 110–170ms，按默认预算会以 `tick_overrun` 中止长跑会话。放宽到 200ms 继续保留 `overrun abort`，异常卡死仍会中止，只吸收宿主抖动；`script status` 的 `tick.overruns/max_us` 仍用于观察真实耗时。若需要更严格的实时性，可在复制脚本上覆盖 `@tick` 前导注释。
+
 ## 离线测试
 
 从仓库根目录运行：
