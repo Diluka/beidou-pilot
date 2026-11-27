@@ -288,15 +288,18 @@ def travel(workbench_name: str, goal: int, timeout_seconds: int) -> None:
 
 
 def open_shop(workbench_name: str, npc_name: str) -> None:
-    data = cli_json(workbench_name, "snapshot")
-    npcs = data.get("npcs")
-    for npc in npcs if isinstance(npcs, list) else []:
-        if npc.get("name") == npc_name and npc.get("ref"):
-            result = workbench(workbench_name, "click", str(npc["ref"]), "--double")
-            if result.returncode != 0:
-                raise SystemExit(f"打开商店失败：{result.stdout[-300:]}")
-            return
-    raise SystemExit(f"场景中未找到商店 NPC：{npc_name}")
+    if read_character(workbench_name).get("map_id") == 100000102 and npc_name == "卢娜":
+        result = cli_json(workbench_name, "script", "run", "bot/shop_approach.lua", "--seconds", "40")
+        script = result.get("script")
+        if (
+            result.get("status") != "completed"
+            or not isinstance(script, dict)
+            or script.get("control_released") is not True
+        ):
+            raise SystemExit(f"同平台接近未确认完成与放键，尚未购买；请核对位置和会话：{result}")
+    cli_json(workbench_name, "talk", npc_name)
+    if read_shop(workbench_name).get("open") is not True:
+        raise SystemExit("商店打开未确认，尚未购买；请核对窗口和位置")
 
 
 def read_shop(workbench_name: str) -> dict[str, object]:
@@ -314,7 +317,17 @@ def sell(workbench_name: str, item_id: int, count: int) -> dict[str, object]:
 def close_shop(workbench_name: str) -> None:
     result = workbench(workbench_name, "shop", "close")
     if result.returncode != 0:
-        raise SystemExit(f"关闭商店失败，保持停手并核对现场：{result.stdout} {result.stderr}")
+        raise SystemExit(f"关闭商店失败，保持停手并核对现场，交易可能已发生：{result.stdout} {result.stderr}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise SystemExit("商店关闭结果不可读，保持停手并核对现场；交易可能已发生") from error
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("data"), dict)
+        or payload["data"].get("closed") is not True
+    ):
+        raise SystemExit("商店关闭未确认，保持停手并核对现场；交易可能已发生")
 
 
 def restock(
@@ -351,7 +364,10 @@ def restock(
         return report
     if plan["map_id"] != shop_map:
         travel(workbench_name, shop_map, 240)
-    open_shop(workbench_name, str(shop.get("npc")))
+    try:
+        open_shop(workbench_name, str(shop.get("npc")))
+    except SystemExit as error:
+        raise SystemExit(f"打开商店失败，尚未购买；请核对当前位置、脚本终态和窗口：{error}") from error
     results = {"sell": [], "buy": []}
     report["results"] = results
     try:
@@ -377,7 +393,20 @@ def restock(
             count = min(needed, quantity_left, 1000, budget // price if price else quantity_left)
             if count <= 0:
                 raise SystemExit(f"预算或数量上限不足：{item_id}")
-            results["buy"].append(buy(workbench_name, item_id, count))
+            transaction = buy(workbench_name, item_id, count)
+            before, after = transaction.get("quantity_before"), transaction.get("quantity_after")
+            money_before, money_after = transaction.get("mesos_before"), transaction.get("mesos_after")
+            if (
+                transaction.get("completed") is not True
+                or type(before) is not int
+                or type(after) is not int
+                or type(money_before) is not int
+                or type(money_after) is not int
+                or after - before != count
+                or money_before - money_after != price * count
+            ):
+                raise SystemExit(f"购买结果未确认，可能已交易，请勿重放：{transaction}")
+            results["buy"].append(transaction)
             budget -= price * count
             quantity_left -= count
             if count < needed:
