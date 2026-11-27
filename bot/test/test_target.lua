@@ -63,7 +63,7 @@ local function scenario(kind, target, x, y)
         },
         -- Runtime JSON can supply integral IDs as Lua floats; config keys still use decimal integers.
         world = {ready = true, map_id = fixture.map_id + 0.0, scene_generation = fixture.scene_generation + 0.0},
-        character = {x = x, y = y, on_ground = true, hp = 100, max_hp = 100, mp = 100, max_mp = 100,
+        character = {x = x, y = y, on_ground = true, action_idle = true, hp = 100, max_hp = 100, mp = 100, max_mp = 100,
             movement = {max_speed = 125, max_jump_height = 75}},
         scene = {npcs = {}, monsters = {}, drops = {}, players = {}, players_complete = true},
         inventory = {items = {}},
@@ -189,12 +189,10 @@ ctx = scenario("hunt", nil, 10, 100)
 ctx.game.scene.monsters = {{object_id = 9, template_id = 100, active = false, x = 10, y = 100}}
 ctx.game.scene.drops = {{object_id = 11, item_id = 400, landed = false, x = 15, y = 100}}
 tick(ctx)
-assert(ctx.state.bot.mode == "hunt" and event_count("hunt/wait", "no_target") == 1 and input.moves == 0)
+assert(ctx.state.bot.mode == "hunt" and event_count("hunt/empty") == 1 and input.direction == "right")
 ctx.game.scene.drops[1].landed = true
 tick(ctx, 0.001)
-assert(input.pickups == 0 and event_count("hunt/wait") == 1, "empty hunt must not retry on the next tick")
-tick(ctx, 60)
-assert(ctx.state.bot.mode == "hunt" and input.pickups > 0, "hunt must resume when a selectable drop appears")
+assert(ctx.state.bot.mode == "hunt" and input.pickups > 0, "hunt must resume immediately when a selectable drop appears")
 
 io_module.poll, io_module.publish, io_module.event = saved_poll, saved_publish, saved_event
 io.open, game = saved_open, saved_game

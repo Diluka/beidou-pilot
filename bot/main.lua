@@ -82,7 +82,7 @@ local function main(context)
                 if command._ok and (command.kind == "stop" or command.kind == "stay"
                     or bot.mode ~= previous_mode or bot.target ~= previous_target) then
                     if memory.mover then move.stop(memory.mover) end
-                    memory.path_target, memory.navigation, memory.hunt_retry_at = nil, nil, nil
+                    memory.path_target, memory.navigation, memory.hunt_retry_at, memory.hunt_empty_since = nil, nil, nil, nil
                 end
                 local event_ok, event_error = io_module.event(context, "command/" .. tostring(command.kind or "invalid"), {
                     id = command.id, kind = command.kind, target = command.target,
@@ -313,21 +313,34 @@ local function main(context)
             else
                 drop = loot.select(world, bot.config or defaults)
                 if not drop then
-                    if not memory.hunt_retry_at then
+                    if not memory.hunt_empty_since then
                         if memory.mover then move.stop(memory.mover) end
-                        io_module.event(context, "hunt/wait", {reason = "no_target", map_id = world.map_id,
+                        memory.hunt_empty_since = now
+                        io_module.event(context, "hunt/empty", {map_id = world.map_id,
                             scene_generation = generation, x = character.x, y = character.y})
                     end
-                    memory.hunt_retry_at = now + 1
+                    local elapsed = now - memory.hunt_empty_since
+                    local direction = math.floor(elapsed / 5) % 2 == 0 and "right" or "left"
+                    local observed = context.game.character or {}
+                    local platform = memory.graph.platforms and memory.graph.platforms[character.platform]
+                    local safe = platform and character.on_ground and character.x
+                        and (direction == "right" and character.x < platform.right - 40
+                            or direction == "left" and character.x > platform.left + 40)
+                    if elapsed % 5 < 2 and safe and not observed.attacking and observed.action_idle then
+                        context.game.player.move(direction)
+                    else
+                        context.game.player.move(nil)
+                    end
                     io_module.publish(context, world, now)
                     return
                 end
             end
-            memory.hunt_retry_at = nil
+            if memory.hunt_empty_since then context.game.player.move(nil) end
+            memory.hunt_empty_since, memory.hunt_retry_at = nil, nil
         end
 
         local movement_status
-        if not skip_movement and memory.mover and (bot.mode == "follow" or bot.mode == "hunt") then
+        if not skip_movement and memory.mover and (bot.mode == "follow" or bot.mode == "hunt" and not mob) then
             local movement_error
             movement_status, movement_error = move.step(memory.mover, context, world)
             if movement_status == "failed" and movement_error and movement_error ~= "not_implemented" then

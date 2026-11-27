@@ -53,7 +53,7 @@ local world = make_world()
 world.mobs = {
     entity(9, 40, 1),
     entity(3, 40, 1),
-    entity(1, 20, 2),
+    entity(1, 310, 2),
     entity(2, 301, 1),
     entity(4, 10, 1, {active = false}),
     entity(5, 10, 1, {template_id = ""}),
@@ -85,7 +85,7 @@ local function player_context()
         attack = function() calls[#calls + 1] = "attack"; return true end,
         stop = function() error("combat must not call player.stop") end,
     }
-    local context = {tick = {time = 0, index = 1}, state = {}, game = {player = test_player}}
+    local context = {tick = {time = 0, index = 1}, state = {}, game = {player = test_player, character = {action_idle = true}}}
     return context
 end
 local function mover()
@@ -156,7 +156,7 @@ end
 target = fresh_step(50, 0)
 world.mobs = {entity(12, 50, 2)}
 status, reason = combat.step(ctx, world, world.mobs[1], path_mover)
-assert(status == "failed" and reason == "target_platform_unreachable" and calls[#calls] == "skill_nil")
+assert(status == "failed" and reason == "no_path" and calls[#calls] == "skill_nil")
 
 target = fresh_step(100, 0)
 world.owner.x = -301
@@ -244,7 +244,7 @@ combat.step(ctx, world, locked_a, path_mover)
 world.mobs = {locked_a, closer_b}
 locked_a.platform = 2
 status, reason = combat.step(ctx, world, locked_a, path_mover)
-assert(status == "failed" and reason == "target_platform_unreachable" and combat.select(world, {}) == closer_b,
+assert(status == "failed" and reason == "no_path" and combat.select(world, {}) == closer_b,
     "step failure must clear the lock before selecting another target")
 
 -- 远程/技能：有效射程 = 弓弩基础射程 110 + 已学「远程箭」（3000002）每级 15。
@@ -255,7 +255,7 @@ local function ranged_fixture(object_id, target_x, config, skills, complete)
     local current = entity(object_id, target_x, 1)
     world.mobs = {current}
     ctx, path_mover = player_context(), mover()
-    ctx.game.character = {skills = skills or {}, skills_complete = complete ~= false}
+    ctx.game.character = {skills = skills or {}, skills_complete = complete ~= false, action_idle = true}
     return current
 end
 
@@ -342,6 +342,74 @@ ctx.tick.time = 0.1
 status, reason = combat.step(ctx, world, target_skill_range, path_mover)
 assert(status == "running" and reason == "attacking" and calls[#calls] == "skill_3001004",
     "skill mode must use the same skill-derived range")
+
+-- Cross-platform planning uses the same mover and keeps the target locked.
+local terrain = require("lib.terrain")
+local original_plan = terrain.plan
+local planned = 0
+terrain.plan = function(graph, from, to)
+    assert(graph == ctx.state.graph and from == 1 and to == 2)
+    planned = planned + 1
+    return {{kind = "jumpup", from = 1, to = 2, x = 0, destination = 30, rise = 40}}
+end
+world = make_world()
+world.map_id = 100
+world.owner = {present = false}
+target = entity(100, 30, 2)
+world.mobs = {target}
+ctx, path_mover = player_context(), mover()
+ctx.state.graph = {}
+assert(combat.select(world, {}) == target, "cross-platform target must be selectable")
+status, reason = combat.step(ctx, world, target, path_mover)
+assert(status == "running" and planned == 1 and edges[1].to == 2,
+    "cross-platform pursuit must plan and submit a route")
+world.mobs = {entity(101, 5, 1), target}
+assert(combat.select(world, {}) == target, "cross-platform lock must survive closer same-platform mobs")
+world.character.platform = 2
+calls = {}
+status, reason = combat.step(ctx, world, target, path_mover)
+assert(status == "running" and calls[1] == "move_step" and #calls == 1,
+    "reaching the target platform must not interrupt an unfinished transition")
+movement.step = function(mover)
+    calls[#calls + 1] = "move_step"
+    mover.status = "done"
+    return "done"
+end
+calls = {}
+status, reason = combat.step(ctx, world, target, path_mover)
+assert(status == "running" and reason == "facing" and calls[1] == "move_step",
+    "combat may resume after the transition completes")
+movement.step = function(mover)
+    calls[#calls + 1] = "move_step"
+    return "running"
+end
+
+world = make_world()
+world.map_id = 101
+world.owner = {present = false}
+target = entity(102, 20, 2)
+local alternative = entity(103, 50, 1)
+world.mobs = {target, alternative}
+ctx, path_mover = player_context(), mover()
+ctx.state.graph = {}
+terrain.plan = function() return nil, "no_path" end
+assert(combat.select(world, {}) == target)
+status, reason = combat.step(ctx, world, target, path_mover)
+assert(status == "failed" and reason == "no_path")
+assert(combat.select(world, {}) == alternative, "unreachable target must be skipped in favor of the next one")
+terrain.plan = original_plan
+
+for _, busy in ipairs({"attacking", "action_idle"}) do
+    target = fresh_step(50, nil)
+    world.map_id = busy == "attacking" and 102 or 103
+    ctx.game.character = {attacking = busy == "attacking", action_idle = busy ~= "action_idle"}
+    status, reason = combat.step(ctx, world, target, path_mover)
+    assert(status == "running" and reason == "action_busy")
+    for _, call in ipairs(calls) do
+        assert(call == "move_nil" or call == "skill_nil" or call == "move_stop",
+            "attack animation must not submit directional movement or another attack")
+    end
+end
 
 movement.set_path, movement.step, movement.stop = original_set_path, original_step, original_stop
 combat_io.event = original_event
