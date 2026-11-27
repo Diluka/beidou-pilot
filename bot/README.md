@@ -36,6 +36,41 @@ game.log("platform=" .. tostring(platform))
 
 `lib.terrain.plan(graph, from_index, to_index, options)` 消费候选边，用 A* 按 `walk`、`step`、`jumpup`、`drop`、`rope` 的策略代价生成连续路径；`options.blocked` 可按 `"from:to"` 禁边，跳跃高度、速度可选调整。无路返回 `nil, "no_path"`，非法平台与模型缺失分别返回 `invalid_platform`、`model_unavailable`。上述 terrain 接口只读地形快照，不执行移动或 `player` 动作。
 
+## 安全挂机平台分析
+
+宿主工具 `tools/safe_platforms.py` 读取当前场景和静态地图，列出满足以下条件的平台：平台内没有静态刷怪点或当前场景怪物、怪物无法到达、玩家可从当前平台到达。它不发送游戏输入，只调用工作台的只读 `inspect scene` 与 `inspect map <id>`：
+
+```bash
+tools/safe_platforms.py dev/NAME
+tools/safe_platforms.py dev/NAME --json
+```
+
+默认输出按路径代价排序的安全平台（平台号、x 范围、y、路径边摘要与长度）、推荐平台，以及被排除平台的原因（`spawn`、`monster_reachable`、`player_unreachable`、`monster_unlocated`）。刷怪来源同时包含 `inspect map` 的静态刷怪点和 `inspect scene` 的当前怪物快照，避免把已经站怪的平台判成安全。`--json` 额外给出平台、移动边、刷怪点、怪物可达集合与玩家可达集合。
+
+平台由 footholds 按与原生 `shared/lua-runtime/SceneNavigation.h` 相同的链式合并规则组装，因此平台号与 `context.scene.terrain.navigation.platforms` 对齐。移动边在本工具内重建：
+
+- 同平台行走；
+- 下落：目标平台更低，且 x 范围重叠或水平边缘距离不超过 `drop_max`；
+- jumpup：目标更高、上升不超过 `jump_rise`、水平间距不超过 `jump_gap`（默认 `jump_rise + stand_height`）；
+- rope：按绳索与平台层生成上下边。
+
+玩家可达集合从当前平台用 `walk`/`drop`/`jumpup`/`rope` 边做 Dijkstra；怪物可达集合从所有刷怪点所在平台出发，只允许同平台行走和向下掉落，不允许爬绳和跳台阶。模型常量默认值与 `SceneNavigation.h` 的 `kBodyHeight/kJumpRise/kDropMin/kDropMax/kRopeGrab` 一致，可用 `--jump-rise`、`--jump-gap`、`--drop-max`、`--stand-height`、`--rope-grab` 覆盖。
+
+可选 tick 脚本 `bot/safe_spot.lua` 在场景内按同一规则计算安全平台，选择最近的玩家可达安全平台，并用 `lib.move` 沿 `terrain.plan` 路径走过去；当前平台已经安全时只报告坐标，没有可达安全平台时报告 `no_safe_platform`。它必须随 `bot` 包一起安装后运行：
+
+```bash
+tools/botctl install dev/NAME
+workbenches/workbench dev/NAME script run bot/safe_spot.lua --seconds 30
+```
+
+限制：
+
+- 怪物模型使用静态刷怪点和当前场景怪物的平台归属，未建模怪物巡逻范围 `rx0/rx1`、跳跃、爬绳、瞬移或召唤；地图存在这类怪物时，安全结论不保证。
+- 刷怪点无法定位到平台时按全图不安全处理；地图只有 `link` 引用、没有本地 footholds 时工具直接报错。
+- 玩家模型不建模墙和头顶平台对跳跃的遮挡，也不单独推导 `horizontal_jump`/`downjump`；它比客户端原生 `terrain.plan` 保守或近似。`safe_spot.lua` 在移动前会用 `terrain.plan` 逐个验证安全候选，规划失败即报告而没有安全目标。
+- `safe_spot.lua` 只使用场景中的当前怪物位置，不读取静态刷怪点；宿主工具同时使用静态刷怪点和当前怪物快照，长期安全性以宿主工具为准。
+- 分析只针对当前地图和当前时刻，不计算跨图、出租车/船等脚本交通。
+
 ## 默认值
 
 默认配置键与值如下（契约来源见 [`docs/PHASE1.md`](../docs/PHASE1.md) 的 config keys 表）：

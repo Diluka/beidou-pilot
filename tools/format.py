@@ -44,6 +44,8 @@ SOURCES = {
         "tools/observer/observe_clients.py",
         "tools/bot_route.py",
         "cli/test/test_bot_route.py",
+        "tools/safe_platforms.py",
+        "cli/test/test_safe_platforms.py",
         "cli/test/test_tick_cli.py",
         "cli/test/test_tick_gui_input.py",
         "cli/test/test_native_observations.py",
