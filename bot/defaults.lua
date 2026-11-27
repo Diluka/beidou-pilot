@@ -9,6 +9,8 @@ return {
     ranged_skill_bonus_per_level = 15, -- 远程箭每级射程增量
     ranged_skill_level = 0, -- 技能观察不可读时的兜底档位
     skill_mp_cost = 10,
+    ammo_item_id = 2060000, -- 远程弹药（弓矢）
+    ammo_low = 50, -- 低弹药阈值，低于时发布 combat/ammo_low
     hp_item = 0,
     mp_item = 0,
     follow_distance = 80,

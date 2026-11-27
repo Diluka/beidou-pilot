@@ -2,6 +2,30 @@ local move = require("lib.move")
 local io_module = require("lib.io")
 local M = {}
 local abandoned, selection_scope = {}, nil
+local low_events = {}
+
+local function emit_low(ctx, name, detail)
+    local now = (ctx.tick and ctx.tick.time) or 0
+    if low_events[name] and now - low_events[name] < 5 then return end
+    low_events[name] = now
+    io_module.event(ctx, name, detail)
+end
+
+local function count_item(ctx, item_id)
+    local inventory = ctx.game and ctx.game.inventory
+    if type(inventory) ~= "table" then return nil end
+    local items = inventory.items
+    if type(items) ~= "table" then
+        if type(inventory[1]) == "table" or #inventory > 0 then items = inventory else return nil end
+    end
+    local total = 0
+    for _, item in ipairs(items) do
+        if type(item) == "table" and tonumber(item.item_id) == item_id then
+            total = total + (tonumber(item.quantity) or 0)
+        end
+    end
+    return total
+end
 local active_target, active_player, active_mover, active_state
 
 local function release_active()
@@ -261,6 +285,18 @@ function M.step(ctx, world, mob, mover)
     local skill_id = tonumber(config.attack_skill_id) or 0
     local mp_cost = tonumber(config.skill_mp_cost) or 10
     local can_skill = skill_id > 0 and character.mp ~= nil and character.mp >= mp_cost
+    if attack_mode ~= "melee" then
+        if attack_mode == "skill" and character.max_mp and character.max_mp > 0
+            and (character.mp or 0) / character.max_mp < 0.2 then
+            emit_low(ctx, "combat/mp_low", {mp = character.mp, max_mp = character.max_mp})
+        end
+        local ammo_id = tonumber(config.ammo_item_id) or 2060000
+        local ammo_low = tonumber(config.ammo_low) or 50
+        local ammo_count = count_item(ctx, ammo_id)
+        if ammo_count ~= nil and ammo_count < ammo_low then
+            emit_low(ctx, "combat/ammo_low", {item_id = ammo_id, count = ammo_count, low = ammo_low})
+        end
+    end
     local action = "attack"
     if can_skill and (attack_mode == "skill" or attack_mode == "melee") then action = "skill" end
     if combat.action ~= action or combat.skill_id ~= (action == "skill" and skill_id or nil) then

@@ -278,6 +278,8 @@ local expected_defaults = {
     ranged_skill_bonus_per_level = 15,
     ranged_skill_level = 0,
     skill_mp_cost = 10,
+    ammo_item_id = 2060000,
+    ammo_low = 50,
 }
 local default_count = 0
 for key, value in pairs(defaults) do
