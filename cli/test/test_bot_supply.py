@@ -119,6 +119,35 @@ class BotSupplyContract(unittest.TestCase):
         self.assertEqual(["sell", "buy"], calls)
         self.assertEqual(after, report["after"])
 
+    def test_travel_diagnostic_preserves_response_and_does_not_buy(self) -> None:
+        import subprocess
+
+        output = '{"error":"start","padding":"' + ("x" * 500) + '","end":true}'
+        with (
+            patch.object(bot_supply, "read_character", return_value={"map_id": 1}),
+            patch.object(bot_supply, "write_route") as route,
+            patch.object(
+                bot_supply, "workbench", return_value=subprocess.CompletedProcess([], 1, output, "reason")
+            ) as workbench,
+        ):
+            with self.assertRaises(SystemExit) as error:
+                bot_supply.travel("dev/test", 2, 240)
+        self.assertIn(output, str(error.exception))
+        self.assertIn("尚未购买", str(error.exception))
+        route.assert_called_once_with("dev/test", 1, 2)
+        self.assertEqual("bot/supply_travel.lua", workbench.call_args.args[3])
+
+    def test_travel_refuses_unconfirmed_destination(self) -> None:
+        import subprocess
+
+        with (
+            patch.object(bot_supply, "read_character", side_effect=[{"map_id": 1}, {"map_id": 1}]),
+            patch.object(bot_supply, "write_route"),
+            patch.object(bot_supply, "workbench", return_value=subprocess.CompletedProcess([], 0, "{}", "")),
+        ):
+            with self.assertRaisesRegex(SystemExit, "未确认到达目标"):
+                bot_supply.travel("dev/test", 2, 240)
+
     def test_gear_advice_filters_by_level(self) -> None:
         with patch.object(bot_supply, "read_character", return_value={"level": 15, "job": 300}):
             advice = bot_supply.gear_advice("live/hero")
