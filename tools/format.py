@@ -73,6 +73,8 @@ SOURCES = {
         "beidou-ijl15/ezorsia/NativeSceneTerrain.cpp",
         "beidou-ijl15/ezorsia/NativeSceneTerrain.h",
         "beidou-ijl15/ezorsia/ObserveNotifications.cpp",
+        "beidou-ijl15/ezorsia/NativeChatReply.cpp",
+        "beidou-ijl15/ezorsia/NativeChatReply.h",
         "cli/test/*_contract.cpp",
     ),
     "stylua": ("shared/scripts/examples/*.lua", "shared/scripts/calibration/*.lua"),
