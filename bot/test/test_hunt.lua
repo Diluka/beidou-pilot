@@ -25,6 +25,46 @@ local patrol_count = 0
 for _, event in ipairs(events) do if event.kind == "hunt/patrol" then patrol_count = patrol_count + 1 end end
 assert(ctx.state.hunt_action == "patrol" and ctx.state.hunt_patrol and ctx.state.hunt_patrol.target,
     "empty hunt selects a patrol target")
+local combat = require("lib.combat")
+local saved_select, saved_combat_step = combat.select, combat.step
+local mob = {object_id = 900, template_id = 1000, x = 60, y = 100, platform = 1, active = true}
+combat.select = function() return mob end
+combat.step = function() return "failed", "retreat_blocked" end
+ctx.state.hunt_action = "combat"
+ctx.state.hunt_last_platform = 1
+ctx.state.hunt_patrol = {scope = "102000000:1", visited = {}, skipped = {}, attempts = {}, index = 1,
+    fallback_until = math.huge}
+ctx.tick.time = 1
+tick(ctx)
+assert(ctx.state.hunt_action == nil and ctx.state.hunt_patrol == nil,
+    "failed combat must clear action and fallback immediately")
+combat.select = function() return nil end
+ctx.tick.time = 2
+tick(ctx)
+assert(ctx.state.hunt_action == "patrol" and ctx.state.hunt_patrol.target,
+    "next tick after failed combat must plan patrol")
+ctx.state.hunt_action = "combat"
+ctx.state.hunt_patrol.fallback_until = math.huge
+ctx.game.character.x, ctx.game.character.y = 130, 80
+ctx.tick.time = 3
+tick(ctx)
+local recovered = false
+for _, e in ipairs(events) do
+    if e.kind == "hunt/recover" and e.data.reason == "platform_changed" and e.data.from == 1 and e.data.to == 2 then
+        recovered = true
+    end
+end
+assert(recovered and ctx.state.hunt_patrol and ctx.state.hunt_patrol.order[1] == 2
+    and not ctx.state.hunt_patrol.fallback_until, "knockback must rebuild patrol on the landed platform")
+ctx.state.hunt_patrol.fallback_until = math.huge
+ctx.tick.time = 4
+tick(ctx)
+ctx.tick.time = 14
+tick(ctx)
+local stalled = false
+for _, e in ipairs(events) do if e.kind == "hunt/stalled" and e.data.platform == 2 then stalled = true end end
+assert(stalled and not ctx.state.hunt_patrol.fallback_until, "idle watchdog must clear stale fallback")
+combat.select, combat.step = saved_select, saved_combat_step
 io_module.poll, io_module.publish, io_module.event, game = saved_poll, saved_publish, saved_event, saved_game
 local hunt = require("lib.hunt")
 local terrain, move = require("lib.terrain"), require("lib.move")

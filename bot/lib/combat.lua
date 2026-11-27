@@ -106,6 +106,12 @@ function M.select(world, options)
         release_active()
         abandoned, selection_scope = {}, scope
     end
+    local now = options.context and options.context.tick and options.context.tick.time or world.now
+    if type(now) == "number" then
+        for key, until_time in pairs(abandoned) do
+            if type(until_time) == "number" and now >= until_time then abandoned[key] = nil end
+        end
+    end
 
     local ranged_context
     if options.hunt and options.config and options.graph and options.context and options.context.game
@@ -258,7 +264,11 @@ function M.step(ctx, world, mob, mover)
 
     local function finish(status, reason, remember_abandoned)
         if active_target == key then release_active() else player.move(nil); player.skill(nil) end
-        if remember_abandoned then abandoned[key] = true end
+        if remember_abandoned then
+            local retryable = reason == "retreat_blocked" or reason == "timeout" or reason == "no_progress"
+                or reason == "landing_mismatch"
+            abandoned[key] = state.bot and state.bot.mode == "hunt" and retryable and now + 10 or true
+        end
         state.combat = nil
         return status, reason
     end
