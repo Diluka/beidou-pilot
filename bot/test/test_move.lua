@@ -87,7 +87,12 @@ assert(step(mover, ctx, world) == "running" and direction == nil and action == n
 world.character.on_ground = true
 status, reason = step(mover, ctx, world)
 assert(status == "failed" and reason == "landing_mismatch" and direction == nil and action == nil)
+assert(mover.last_failure.reason == "landing_mismatch" and mover.last_failure.kind == "downjump"
+    and mover.last_failure.to == 2 and mover.last_failure.landing_platform == 1
+    and mover.last_failure.landing_x == world.character.x and mover.last_failure.landing_y == world.character.y,
+    "failed movement retains edge and observed landing details")
 begin({kind = "downjump", x = 0, destination = 0})
+assert(mover.last_failure == nil, "a new path clears previous diagnostic details")
 assert(step(mover, ctx, world) == "running" and direction == "down" and action == nil)
 assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump")
 move.stop(mover)

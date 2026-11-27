@@ -7,7 +7,7 @@ end
 function M.set_path(mover, edges)
     if type(edges) ~= "table" then return false, "invalid_edge" end
     mover.edges, mover.index, mover.status = edges, 1, "running"
-    mover.started, mover.retries, mover.reason, mover.downjump_preheld = nil, 0, nil, nil
+    mover.started, mover.retries, mover.reason, mover.downjump_preheld, mover.last_failure = nil, 0, nil, nil, nil
     return true
 end
 
@@ -18,7 +18,7 @@ function M.stop(mover)
     mover.status, mover.started, mover.jump_held, mover.downjump_preheld = "done", nil, nil, nil
 end
 
-function M.step(mover, ctx, world)
+local function step(mover, ctx, world)
     if mover.stop_pending and mover.status == "running" then
         mover.stop_pending, mover.release_tick = nil, ctx.tick.index
         return "running"
@@ -479,6 +479,24 @@ function M.step(mover, ctx, world)
         return "failed", mover.reason
     end
     return "running"
+end
+
+function M.step(mover, ctx, world)
+    local status, reason = step(mover, ctx, world)
+    if status == "failed" and not mover.last_failure then
+        local edge = mover.edges and mover.edges[mover.index]
+        local character = world and world.character
+        local platform = character and character.on_ground == true and mover.graph
+            and require("lib.terrain").platform_at(mover.graph, character.x, character.y, 20) or nil
+        mover.last_failure = {
+            reason = reason, kind = type(edge) == "table" and edge.kind or nil,
+            from = type(edge) == "table" and edge.from or nil, to = type(edge) == "table" and edge.to or nil,
+            x = type(edge) == "table" and edge.x or nil, destination = type(edge) == "table" and edge.destination or nil,
+            rise = type(edge) == "table" and edge.rise or nil, landing_platform = platform,
+            landing_x = character and character.x, landing_y = character and character.y,
+        }
+    end
+    return status, reason
 end
 
 return M
