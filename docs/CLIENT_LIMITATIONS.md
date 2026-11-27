@@ -17,6 +17,16 @@
 - **策略位置**：客户端不内置寻路、狩猎、战斗、跟随或组队任务策略。策略写在角色工作台的 tick Lua 或伴游机器人应用中；`shared/scripts/` 只放随镜像固定的示例和校准探针。
 - **长时运行**：`script start ... --continuous` 没有总期限。断线会退出客户端进程；脚本结束或取消后客户端继续运行。长期运行需要外部监督、事件日志轮转和定期关闭重开。
 
+## 伴游机器人：当前能力和限制
+
+当前主包具备平台巡逻、绳梯和水平跳、顺路拾取、掉层恢复、低补给停手与地图绑定回图；`idle`/`hunt` 在绑定地图之外会尝试已有普通门户路线。行为和配置见 [机器人手册](../bot/README.md)。这些能力不是所有地图的可达性或长时稳定性保证。
+
+- **城镇与商店导航**：门户或 NPC 路线曾出现 `landing_mismatch`，影响回图和补货；遮挡类修复仍在草稿中，水平距离问题尚未解决（[#429](https://github.com/Diluka/beidou-pilot/issues/429)、[PR #438](https://github.com/Diluka/beidou-pilot/pull/438)）。
+- **NPC/商店后的输入**：现场曾在交互后出现移动和跳跃无效，即便会话已结束且按键已释放；当次以工作台 `close` 后 `open` 恢复。操作后核对实际位移，出现冻结时采用此已观察 workaround，原因仍待确认（[#440](https://github.com/Diluka/beidou-pilot/issues/440)）。
+- **补给**：低水位可停手，但低补给→回城→购买→回图→恢复狩猎的无人值守闭环尚未完成；白名单编排 [PR #433](https://github.com/Diluka/beidou-pilot/pull/433) 是草稿（[#419](https://github.com/Diluka/beidou-pilot/issues/419)）。
+- **远程攻击**：跨平台驻留选怪使用几何近似，弹道与实际命中尚待真机核对（[#425](https://github.com/Diluka/beidou-pilot/issues/425)）。大图 hunt 曾因单 tick 超预算取消；文件 IO 优化已合入，根因仍未定位（[#423](https://github.com/Diluka/beidou-pilot/issues/423)）。
+- **常驻服操作**：仅按既有授权和角色计划正常游玩，不使用 GM 写入、直接数据库修改或开发服准备操作。观察脚本终态、输入释放和实际效果；交互后如发生上述冻结，关闭并重开所属客户端。
+
 ## 观察
 
 - **角色、场景、背包、任务**：通过原版客户端原生观察提供，核心字段见 [Tick Lua API](LUA_TICK_API.md#独立只读领域)。读取时检查领域 `status`；缺失字段为 `nil`。

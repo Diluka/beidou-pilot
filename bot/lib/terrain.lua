@@ -317,6 +317,24 @@ function M.plan(graph, from_index, to_index, options)
                         end
                     elseif kind == "drop" then
                         valid = rise >= model.drop_min and rise <= model.drop_max
+                        if valid then
+                            local source_y = height_range(platforms[from], x, x)
+                            local target_y = height_range(platforms[to], destination, destination)
+                            local left, right = math.min(x, destination), math.max(x, destination)
+                            if not source_y or not target_y or target_y <= source_y then
+                                valid = false
+                            else
+                                for index, platform in ipairs(platforms) do
+                                    if index ~= from and index ~= to then
+                                        local top, bottom = height_range(platform, left, right)
+                                        if top and bottom > source_y and top < target_y then
+                                            valid = false
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        end
                     elseif kind == "rope" then
                         valid = rise ~= 0
                     end

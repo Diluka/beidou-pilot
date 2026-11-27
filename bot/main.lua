@@ -1,3 +1,6 @@
+-- bot 主循环单次回调预算：GUI 宿主调度抖动在实测中可到 ~110–170ms，默认 100ms 会直接中止长跑会话。
+-- 放宽到 200ms 仍保留 abort（异常卡死会中止），只吸收宿主抖动；见 docs/PHASE1.md / bot/README。
+-- @tick.budget_ms 200
 local io_module = require("lib.io")
 local state_module = require("lib.state")
 local world_module = require("lib.world")
