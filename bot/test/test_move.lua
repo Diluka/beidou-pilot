@@ -61,7 +61,8 @@ local function begin(edge)
     world.character = {x = 0, y = 0, on_ground = true}
     assert(move.set_path(mover, {edge}))
 end
-begin({kind = "jumpup", x = 0, destination = 30, rise = 30})
+game.character = {physics = {x = 0, velocity = {x = 0}}}
+begin({kind = "jumpup", x = 0, destination = 0, rise = 30})
 assert(step(mover, ctx, world) == "running" and action == "jump")
 ctx.tick.time = 0.1; world.character.y = -11; world.character.on_ground = false
 assert(step(mover, ctx, world) == "running" and direction == nil and action == nil)
@@ -113,14 +114,14 @@ for attempt = 1, 2 do
     status, reason = step(mover, ctx, world)
 end
 assert(status == "failed" and reason == "no_progress" and direction == nil)
-for _, edge in ipairs({{kind="jumpup",x=0,destination=100,rise=50}, {kind="drop",destination=100}}) do
+for _, edge in ipairs({{kind="jumpup",x=0,destination=0,rise=50}, {kind="drop",destination=100}}) do
     begin(edge)
     step(mover, ctx, world)
     ctx.tick.time = edge.kind == "drop" and 12 or 10
     status, reason = step(mover, ctx, world)
     assert(status == "failed" and reason == "timeout" and direction == nil and action == nil)
 end
-begin({kind="jumpup",x=0,destination=100,rise=50,to=2})
+begin({kind="jumpup",x=0,destination=0,rise=50,to=2})
 step(mover, ctx, world)
 world.character.on_ground = false; world.character.y = -11
 step(mover, ctx, world)
@@ -130,12 +131,12 @@ assert(status == "failed" and reason == "landing_mismatch" and direction == nil)
 begin({kind="rope",x=0,destination=0,rise=-100})
 for attempt = 1, 2 do
     step(mover, ctx, world)
-    world.character.x = 5
+    world.character.x = 7
     status, reason = step(mover, ctx, world)
     world.character.x = 0
 end
 assert(status == "failed" and reason == "rope_mismatch" and direction == nil)
-begin({kind="jumpup",x=0,destination=100,rise=50})
+begin({kind="jumpup",x=0,destination=0,rise=50})
 supported = false
 step(mover, ctx, world)
 status, reason = step(mover, ctx, world)
@@ -154,13 +155,13 @@ ctx.tick.time = 12
 status, reason = step(mover, ctx, world)
 assert(status == "failed" and reason == "timeout" and direction == nil)
 supported = true
-begin({kind="jumpup",x=0,destination=100,rise=50})
+begin({kind="jumpup",x=0,destination=0,rise=50})
 assert(step(mover, ctx, world) == "running" and action == "jump")
 assert(move.set_path(mover, {{kind="rope",destination=0,rise=-100}}))
 assert(step(mover, ctx, world) == "running" and action == nil)
 status, reason = step(mover, ctx, world)
 assert(status == "failed" and reason == "invalid_edge" and action == nil)
-begin({kind="jumpup",x=0,destination=100,rise=50})
+begin({kind="jumpup",x=0,destination=0,rise=50})
 assert(step(mover, ctx, world) == "running" and action == "jump")
 move.stop(mover)
 assert(action == nil and direction == nil and mover.status == "done")
@@ -175,13 +176,13 @@ assert(move.set_path(mover, reused))
 assert(step(mover, ctx, world) == "running")
 ctx.tick.time = 10
 assert(step(mover, ctx, world) == "running")
-begin({kind="jumpup",x=0,destination=30,rise=50})
+begin({kind="jumpup",x=0,destination=0,rise=50})
 step(mover, ctx, world)
 world.character.on_ground = false; world.character.y = -11
 step(mover, ctx, world)
 world.character.x = 30; world.character.y = 0; world.character.on_ground = true
 assert(step(mover, ctx, world) == "done")
-begin({kind="jumpup",x=0,destination=100,rise=50})
+begin({kind="jumpup",x=0,destination=0,rise=50})
 step(mover, ctx, world)
 world.character.on_ground = false; world.character.y = -11
 step(mover, ctx, world)
@@ -189,7 +190,7 @@ world.character.y = -30
 assert(step(mover, ctx, world) == "running")
 world.character.on_ground = true
 assert(step(mover, ctx, world) == "done")
-begin({kind="jumpup",x=0,destination=30})
+begin({kind="jumpup",x=0,destination=0})
 step(mover, ctx, world)
 world.character.on_ground = false; world.character.y = -11
 step(mover, ctx, world)
@@ -213,38 +214,38 @@ local function commit_tick()
     committed_action, committed_direction = draft_action, draft_direction
     ctx.tick.index = ctx.tick.index + 1
 end
-begin({kind="jumpup",x=0,destination=100,rise=50})
+begin({kind="jumpup",x=0,destination=0,rise=50})
 assert(move.step(mover, ctx, world) == "running")
 commit_tick()
-assert(committed_action == "jump" and committed_direction == "right")
-assert(move.set_path(mover, {{kind="jumpup",x=0,destination=100,rise=50,to=1}}))
+assert(committed_action == "jump" and committed_direction == nil)
+assert(move.set_path(mover, {{kind="jumpup",x=0,destination=0,rise=50,to=1}}))
 assert(move.step(mover, ctx, world) == "running")
-assert(move.step(mover, ctx, world) == "running")
-commit_tick()
-assert(committed_action == nil and committed_direction == nil)
-assert(move.step(mover, ctx, world) == "running")
-commit_tick()
-assert(committed_action == "jump" and committed_direction == "right")
-assert(move.step(mover, ctx, world) == "running")
-move.stop(mover)
-move.stop(mover)
-assert(move.set_path(mover, {{kind="jumpup",x=0,destination=100,rise=50,to=1}}))
 assert(move.step(mover, ctx, world) == "running")
 commit_tick()
 assert(committed_action == nil and committed_direction == nil)
 assert(move.step(mover, ctx, world) == "running")
 commit_tick()
-assert(committed_action == "jump" and committed_direction == "right")
+assert(committed_action == "jump" and committed_direction == nil)
+assert(move.step(mover, ctx, world) == "running")
+move.stop(mover)
+move.stop(mover)
+assert(move.set_path(mover, {{kind="jumpup",x=0,destination=0,rise=50,to=1}}))
+assert(move.step(mover, ctx, world) == "running")
+commit_tick()
+assert(committed_action == nil and committed_direction == nil)
+assert(move.step(mover, ctx, world) == "running")
+commit_tick()
+assert(committed_action == "jump" and committed_direction == nil)
 -- stop is the first mover call in this new tick.
 move.stop(mover)
-assert(move.set_path(mover, {{kind="jumpup",x=0,destination=100,rise=50,to=1}}))
+assert(move.set_path(mover, {{kind="jumpup",x=0,destination=0,rise=50,to=1}}))
 assert(move.step(mover, ctx, world) == "running")
 assert(move.step(mover, ctx, world) == "running")
 commit_tick()
 assert(committed_action == nil and committed_direction == nil)
 assert(move.step(mover, ctx, world) == "running")
 commit_tick()
-assert(committed_action == "jump" and committed_direction == "right")
+assert(committed_action == "jump" and committed_direction == nil)
 move.stop(mover)
 draft_action = "attack" -- another caller replaces the stopped input
 assert(move.set_path(mover, {{kind="walk",destination=100}}))
@@ -254,7 +255,7 @@ assert(committed_action == "attack")
 assert(move.step(mover, ctx, world) == "running")
 assert(draft_action == "attack" and draft_direction == "right")
 commit_tick()
-begin({kind="jumpup",x=0,destination=100,rise=50})
+begin({kind="jumpup",x=0,destination=0,rise=50})
 assert(move.step(mover, ctx, world) == "running")
 commit_tick()
 move.stop(mover)
@@ -265,7 +266,7 @@ commit_tick()
 assert(committed_action == "jump")
 for _, mode in ipairs({"character", "edge"}) do
     mover = move.new({})
-    begin({kind="jumpup",x=0,destination=100,rise=50})
+    begin({kind="jumpup",x=0,destination=0,rise=50})
     assert(move.step(mover,ctx,world)=="running")
     commit_tick()
     assert(committed_action=="jump")
@@ -273,7 +274,7 @@ for _, mode in ipairs({"character", "edge"}) do
     status,reason=move.step(mover,ctx,world)
     assert(status=="failed" and reason==(mode=="character" and "character_unavailable" or "invalid_edge"))
     world.character.on_ground=true
-    assert(move.set_path(mover,{{kind="jumpup",x=0,destination=100,rise=50,to=1}}))
+    assert(move.set_path(mover,{{kind="jumpup",x=0,destination=0,rise=50,to=1}}))
     assert(move.step(mover,ctx,world)=="running")
     commit_tick()
     assert(committed_action==nil and committed_direction==nil)
@@ -582,4 +583,186 @@ status,reason=step(mover,ctx,world)
 assert(status=="failed" and reason=="landing_mismatch" and direction==nil,
     "a horizontal jump landing on a different platform must fail explicitly")
 
+-- Directional jumpup retreats on the source platform, then measures speed across ticks.
+terrain.platform_at = function(_, _, y) return y < -5 and 2 or 1 end
+game.player.move = function(value) direction = value; return true end
+game.player.jump = function() action = "jump"; return true end
+game.player.skill = function() action = nil; return true end
+local function runup(sign, distance)
+    local extent = distance + 8
+    mover = move.new({platforms={{left=sign == 1 and -extent or -100,
+        right=sign == 1 and 100 or extent, segments={-100,100,0,0}}}})
+    begin({kind="jumpup",from=1,to=2,x=0,destination=sign*40})
+    action, direction = nil, nil
+    assert(step(mover,ctx,world)=="running" and action==nil)
+    assert(step(mover,ctx,world)=="running" and direction==(sign==1 and "left" or "right") and action==nil)
+    world.character.x=-sign*distance; ctx.tick.time=0.5
+    assert(step(mover,ctx,world)=="running" and direction==nil and action==nil)
+    game.character = {physics={velocity={x=0}}}
+    ctx.tick.time=0.51
+    assert(step(mover,ctx,world)=="running" and direction==nil and action==nil)
+    ctx.tick.time=0.52
+    assert(step(mover,ctx,world)=="running" and direction==(sign==1 and "right" or "left") and action==nil)
+end
+for _, sign in ipairs({1,-1}) do
+    for _, distance in ipairs({32,20,12}) do
+        runup(sign,distance)
+        -- A large displacement outside the launch window is insufficient.
+        if distance == 32 then
+            world.character.x=-sign*20; ctx.tick.time=0.6
+            assert(step(mover,ctx,world)=="running" and action==nil)
+        end
+        -- No elapsed time and zero speed cannot trigger a jump.
+        assert(step(mover,ctx,world)=="running" and action==nil)
+        world.character.x=-sign*8; ctx.tick.time=distance == 32 and 0.7 or 0.55
+        assert(step(mover,ctx,world)=="running" and action=="jump")
+        world.character.on_ground=false; world.character.y=-11; ctx.tick.time=0.8
+        assert(step(mover,ctx,world)=="running")
+        world.character.on_ground=true; world.character.x=sign*40
+        assert(step(mover,ctx,world)=="done")
+    end
+end
+-- Entering the launch window below 40px/s does not jump; exactly 40 does.
+runup(1,20)
+world.character.x=-12; ctx.tick.time=1
+assert(step(mover,ctx,world)=="running" and action==nil)
+world.character.x=-7; ctx.tick.time=1.125
+assert(step(mover,ctx,world)=="running" and action=="jump")
+move.stop(mover)
+-- Too little safe source space fails after the retry, without jumping.
+mover=move.new({platforms={{left=-19,right=100,segments={-19,100,0,0}}}})
+begin({kind="jumpup",from=1,to=2,x=0,destination=40}); action=nil
+assert(step(mover,ctx,world)=="running" and action==nil)
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="runup_unavailable" and action==nil)
+-- A stalled approach times out, retries, and can subsequently succeed.
+runup(1,32)
+ctx.tick.time=2.1
+assert(step(mover,ctx,world)=="running" and action==nil)
+assert(step(mover,ctx,world)=="running")
+world.character.x=-32; ctx.tick.time=2.2
+assert(step(mover,ctx,world)=="running" and direction==nil)
+ctx.tick.time=2.3
+assert(step(mover,ctx,world)=="running" and direction==nil)
+world.character.x=-8; ctx.tick.time=2.4
+assert(step(mover,ctx,world)=="running" and action=="jump")
+world.character.on_ground=false; world.character.y=-11; ctx.tick.time=2.5
+step(mover,ctx,world)
+world.character.on_ground=true; world.character.y=0
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="landing_mismatch")
+-- Regression: approach a leftward jump from far across the same wide platform.
+-- Walking toward the run-up point must not be mistaken for retreat or a retry.
+mover = move.new({platforms={{left=938,right=3458,segments={938,3458,0,0}}}})
+begin({kind="jumpup",from=1,to=2,x=944,destination=928,rise=50})
+world.character.x = 3398
+game.character = {physics={x=3398,velocity={x=0}}}
+action, direction = nil, nil
+assert(step(mover,ctx,world)=="running" and action==nil)
+for i, x in ipairs({3298,2798,2298,1798,1298,1000}) do
+    ctx.tick.time = i
+    world.character.x = x
+    game.character.physics.x = x
+    game.character.physics.velocity.x = -100
+    status, reason = step(mover,ctx,world)
+    assert(status=="running" and direction=="left" and action==nil and mover.retries==0,
+        "far approach must walk left without failing, jumping or retrying")
+end
+world.character.x = 976; game.character.physics.x = 976; ctx.tick.time = 6.25
+status, reason = step(mover,ctx,world)
+assert(status=="running" and direction==nil and action==nil and mover.retries==0,
+    "stop at the safe run-up point before settling")
+game.character.physics.velocity.x = 0; ctx.tick.time = 6.35
+status, reason = step(mover,ctx,world)
+assert(status=="running" and action==nil and mover.retries==0,
+    "settling must not jump or retry")
+ctx.tick.time = 6.45
+status, reason = step(mover,ctx,world)
+assert(status=="running" and direction=="left" and action==nil and mover.retries==0,
+    "run up left after settling")
+world.character.x = 952; game.character.physics.x = 952; ctx.tick.time = 6.65
+assert(step(mover,ctx,world)=="running" and direction=="left" and action=="jump" and mover.retries==0,
+    "jump left inside the launch window")
+world.character.on_ground=false; world.character.y=-11; ctx.tick.time=6.75
+assert(step(mover,ctx,world)=="running")
+world.character.on_ground=true; world.character.x=928; world.character.y=-50
+assert(step(mover,ctx,world)=="done" and direction==nil and mover.retries==0,
+    "land on the destination platform without retrying")
+-- Scene 29: starting exactly on the source edge can move inward safely.
+terrain.platform_at = function(_, _, y) return y < 370 and 28 or 29 end
+local platforms29 = {}
+platforms29[29] = {left=3458,right=3638,segments={3458,3638,394,394}}
+mover = move.new({platforms=platforms29})
+begin({kind="jumpup",from=29,to=28,x=3464,destination=3448,rise=60})
+world.character.x, world.character.y = 3458, 394
+game.character = {physics={x=3458,velocity={x=0}}}
+action, direction = nil, nil
+assert(step(mover,ctx,world)=="running" and action==nil and mover.retries==0)
+assert(step(mover,ctx,world)=="running" and direction=="right" and action==nil and mover.retries==0,
+    "move inward from the source platform edge")
+world.character.x=3496; ctx.tick.time=0.4
+assert(step(mover,ctx,world)=="running" and direction==nil and action==nil and mover.retries==0)
+ctx.tick.time=0.5
+assert(step(mover,ctx,world)=="running" and direction==nil and action==nil)
+ctx.tick.time=0.6
+assert(step(mover,ctx,world)=="running" and direction=="left" and action==nil)
+world.character.x=3472; ctx.tick.time=0.8
+assert(step(mover,ctx,world)=="running" and direction=="left" and action=="jump" and mover.retries==0)
+world.character.on_ground=false; world.character.y=380; ctx.tick.time=0.9
+assert(step(mover,ctx,world)=="running")
+world.character.on_ground=true; world.character.x=3448; world.character.y=334
+assert(step(mover,ctx,world)=="done" and direction==nil and mover.retries==0)
+terrain.platform_at = platform_at
+-- Raised rope: brake before jumping, hold Up, then finish on the target platform.
+local rope_graph = {ropes={{y2=356}}, platforms={
+    {left=400,right=600,segments={400,600,395,395}},
+    {left=400,right=600,segments={400,600,95,95}},
+}}
+local rope_edge = {kind="rope",from=1,to=2,x=522,destination=522,rise=-300,rope_index=1}
+mover=move.new(rope_graph); begin(rope_edge)
+world.character={x=522,y=395,on_ground=true}
+game.character={physics={velocity={x=50}}}; action,direction=nil,nil
+assert(step(mover,ctx,world)=="running" and direction==nil and action==nil)
+game.character.physics.velocity.x=0; ctx.tick.time=0.1
+assert(step(mover,ctx,world)=="running" and direction=="up" and action=="jump" and mover.phase=="rope_grab")
+world.character.y=384; world.character.on_ground=false; ctx.tick.time=0.2
+assert(step(mover,ctx,world)=="running" and mover.phase=="climb" and direction=="up" and action==nil)
+world.character.y=95; world.character.on_ground=true
+assert(step(mover,ctx,world)=="done" and direction==nil)
+-- Timeout releases the jump and direction, retries once, then reports the grab failure.
+mover=move.new(rope_graph); begin(rope_edge)
+world.character={x=522,y=395,on_ground=true}; action,direction=nil,nil
+assert(step(mover,ctx,world)=="running" and action=="jump")
+ctx.tick.time=2
+assert(step(mover,ctx,world)=="running" and mover.retries==1 and direction==nil and action==nil)
+ctx.tick.time=2.1
+assert(step(mover,ctx,world)=="running" and action=="jump")
+ctx.tick.time=4.2
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="rope_grab_failed" and direction==nil and action==nil)
+-- A retry can recover after the first unsuccessful grab.
+mover=move.new(rope_graph); begin(rope_edge)
+world.character={x=522,y=395,on_ground=true}; action,direction=nil,nil
+assert(step(mover,ctx,world)=="running")
+ctx.tick.time=2; assert(step(mover,ctx,world)=="running" and mover.retries==1)
+ctx.tick.time=2.1; assert(step(mover,ctx,world)=="running" and action=="jump")
+ctx.tick.time=2.2; world.character.y=384; world.character.on_ground=false
+assert(step(mover,ctx,world)=="running" and mover.phase=="climb")
+world.character.y=95; world.character.on_ground=true
+assert(step(mover,ctx,world)=="done" and direction==nil)
+-- Missing velocity requires two distinct stationary samples.
+mover=move.new(rope_graph); begin(rope_edge); game.character=nil
+world.character={x=522,y=395,on_ground=true}; action,direction=nil,nil
+assert(step(mover,ctx,world)=="running" and action==nil and direction==nil)
+world.character.x=523
+assert(step(mover,ctx,world)=="running" and action==nil)
+assert(step(mover,ctx,world)=="running" and action=="jump")
+move.stop(mover)
+-- Rope bottom at ground level and downward travel keep the direct direction.
+for _, rise in ipairs({-300,300}) do
+    rope_graph.ropes[1].y2=395
+    mover=move.new(rope_graph); begin({kind="rope",from=1,to=2,x=522,destination=522,rise=rise,rope_index=1})
+    world.character={x=522,y=395,on_ground=true}; game.character={physics={velocity={x=0}}}; action=nil
+    assert(step(mover,ctx,world)=="running" and direction==(rise<0 and "up" or "down") and action==nil)
+end
 print("move tests ok")

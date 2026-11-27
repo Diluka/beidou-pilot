@@ -87,8 +87,9 @@ for index, edge in ipairs(planned) do
     assert(repeated[index].kind == edge.kind and repeated[index].from == edge.from
         and repeated[index].to == edge.to, "repeated planning must return the same edge sequence")
 end
-local same_platform = assert(terrain.plan(plan_graph, 2, 2))
-assert(#same_platform == 0, "planning from a platform to itself must return an empty path")
+local same_platform, same_reason = terrain.plan(plan_graph, 2, 2)
+assert(same_platform and #same_platform == 0 and same_reason == "same_platform",
+    "planning on one platform returns a successful zero-edge path")
 local no_path, no_path_reason = terrain.plan(plan_graph, 1, 4, {blocked = {["1:2"] = true}})
 assert(no_path == nil and no_path_reason == "no_path", "blocking all first-hop edges must report no_path")
 local unreachable_path, unreachable_reason = terrain.plan(graph_for_candidate("walk", {}), 1, 2)
