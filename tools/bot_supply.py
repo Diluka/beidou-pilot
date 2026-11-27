@@ -15,6 +15,8 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
+import re
 
 import os
 
@@ -310,7 +312,9 @@ def sell(workbench_name: str, item_id: int, count: int) -> dict[str, object]:
 
 
 def close_shop(workbench_name: str) -> None:
-    workbench(workbench_name, "shop", "close")
+    result = workbench(workbench_name, "shop", "close")
+    if result.returncode != 0:
+        raise SystemExit(f"关闭商店失败，保持停手并核对现场：{result.stdout} {result.stderr}")
 
 
 def restock(
@@ -319,6 +323,7 @@ def restock(
     max_cost: int = 5000,
     max_count: int = 1000,
     sell_etc: tuple[int, ...] = (),
+    town_only: int | None = None,
 ) -> dict[str, object]:
     if max_cost < 0 or max_count < 1:
         raise SystemExit("金额上限须非负，数量上限须为正")
@@ -340,6 +345,8 @@ def restock(
         "max_count": max_count,
         "dry_run": dry_run,
     }
+    if town_only is not None and (plan["map_id"] != town_only or shop_map != town_only):
+        raise SystemExit("当前位置或商店不在批准的安全城镇，未购买")
     if dry_run or not needs:
         return report
     if plan["map_id"] != shop_map:
@@ -385,6 +392,148 @@ def restock(
     return report
 
 
+def supply_cycle(workbench_name: str, session_id: str, apply: bool, watch_seconds: int) -> dict[str, object]:
+    """仅在明确授权的城镇交易，逐段验证回图路线；一次会话最多执行一次。"""
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
+        raise SystemExit("会话 ID 无效")
+    if not re.fullmatch(r"(?:live|dev)/[a-zA-Z0-9_-]+", workbench_name):
+        raise SystemExit("工作台名称无效")
+    if watch_seconds < 0:
+        raise SystemExit("等待时间须非负")
+    bot_dir = REPO_ROOT / "private/workbenches" / workbench_name / "bot"
+    config_path = bot_dir / "supply_host.json"
+    if not config_path.is_file():
+        raise SystemExit("未配置安全城镇和路线白名单；未移动、未购买")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    towns, allowed = config.get("safe_towns"), config.get("allowed_legs")
+    if (
+        not isinstance(towns, list)
+        or not towns
+        or any(type(x) is not int for x in towns)
+        or not isinstance(allowed, list)
+    ):
+        raise SystemExit("安全城镇或路线白名单无效；未移动、未购买")
+    for leg in allowed:
+        if (
+            not isinstance(leg, dict)
+            or type(leg.get("from")) is not int
+            or type(leg.get("to")) is not int
+            or not isinstance(leg.get("portal"), str)
+        ):
+            raise SystemExit("路线白名单无效；未移动、未购买")
+    deadline = time.monotonic() + watch_seconds
+    while True:
+        event = None
+        for path in (bot_dir / "events.1.jsonl", bot_dir / "events.jsonl"):
+            if not path.is_file():
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    isinstance(entry, dict)
+                    and entry.get("type") == "supply/low"
+                    and isinstance(entry.get("data"), dict)
+                    and entry["data"].get("session_id") == session_id
+                ):
+                    event = entry["data"]
+        if event:
+            break
+        if time.monotonic() >= deadline:
+            raise SystemExit("未发现指定会话的低补给事件；未移动、未购买")
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
+    if event.get("reason") != "low":
+        raise SystemExit(f"补给观察或配置异常：{event.get('reason')}；未移动、未购买")
+    low_items = event.get("items")
+    if (
+        not isinstance(low_items, list)
+        or not low_items
+        or any(
+            not isinstance(item, dict)
+            or type(item.get("item_id")) is not int
+            or type(item.get("threshold")) is not int
+            or item["threshold"] <= 0
+            for item in low_items
+        )
+    ):
+        raise SystemExit("低补给事件缺少有效阈值；未移动、未购买")
+    while True:
+        status = cli_json(workbench_name, "script", "status", "--session", session_id)
+        script = status.get("script")
+        if (
+            isinstance(script, dict)
+            and script.get("id") == session_id
+            and script.get("status") == "completed"
+            and script.get("control_released") is True
+        ):
+            break
+        if time.monotonic() >= deadline:
+            raise SystemExit("低补给会话尚未正常结束并确认放键；未移动、未购买")
+        time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+    scripts = status.get("scripts")
+    if not isinstance(scripts, list) or any(not isinstance(s, dict) or s.get("status") == "running" for s in scripts):
+        raise SystemExit("仍有活动脚本或脚本状态不完整；未移动、未购买")
+    character = read_character(workbench_name)
+    town = character.get("map_id")
+    if type(town) is not int or town not in towns:
+        raise SystemExit("角色不在白名单安全城镇；未移动、未购买")
+    shop_map, _ = nearest_potion_shop(workbench_name)
+    if shop_map != town:
+        raise SystemExit("安全城镇内没有已配置的商店；未移动、未购买")
+    plan_path = bot_dir / "plan.conf"
+    plan_text = plan_path.read_text(encoding="utf-8") if plan_path.is_file() else ""
+    matches = re.findall(r"^\s*hunt_map\s*=\s*(\d+)\s*$", plan_text, re.MULTILINE)
+    if len(matches) != 1:
+        raise SystemExit("狩猎地图绑定缺失或不唯一；未移动、未购买")
+    hunt_map = int(matches[0])
+    receipt = bot_dir / ("supply-cycle-" + session_id + ".json")
+    if receipt.exists():
+        raise SystemExit("此会话已有补给记录；请核对现场，勿重放")
+    report = {"session_id": session_id, "town": town, "hunt_map": hunt_map, "dry_run": not apply}
+    if not apply:
+        report["restock"] = restock(workbench_name, town_only=town)
+        return report
+    # 写入不可覆盖的开始记录；崩溃或部分交易后不自动重放。
+    try:
+        with receipt.open("x", encoding="utf-8") as file:
+            json.dump({"status": "started", **report}, file, ensure_ascii=False)
+    except FileExistsError as error:
+        raise SystemExit("此会话已被处理，禁止重放") from error
+    report["restock"] = restock(workbench_name, dry_run=False, town_only=town)
+    items = read_items(workbench_name)
+    if any(counted(items, item["item_id"]) < item["threshold"] for item in low_items):
+        raise SystemExit("补货后仍低于事件阈值，保持停手")
+    if read_character(workbench_name).get("map_id") != town:
+        raise SystemExit("交易后位置已变化；停止回图")
+    command = [sys.executable, str(WORKTREE / "tools/botctl")]
+    result = subprocess.run(
+        [*command, "plan", workbench_name, "--hunt-map", str(hunt_map)], text=True, capture_output=True
+    )
+    if result.returncode:
+        raise SystemExit(f"补货后生成回图路线失败，保持停手：{result.stdout} {result.stderr}")
+    route = json.loads((bot_dir / "route.json").read_text(encoding="utf-8"))
+    legs = route.get("legs")
+    if route.get("from") != town or route.get("goal") != hunt_map or not isinstance(legs, list):
+        raise SystemExit("回图路线身份不匹配，保持停手")
+    if (town != hunt_map and not legs) or (legs and (not isinstance(legs[0], dict) or legs[0].get("map") != town)):
+        raise SystemExit("回图路线为空或起点不匹配，保持停手")
+    if any(not isinstance(leg, dict) for leg in legs):
+        raise SystemExit("回图路线无效，保持停手")
+    for index, leg in enumerate(legs):
+        destination = legs[index + 1].get("map") if index + 1 < len(legs) else hunt_map
+        if {"from": leg.get("map"), "to": destination, "portal": leg.get("portal")} not in allowed:
+            raise SystemExit("回图路线包含未授权地图或传送门，保持停手")
+    for args in (("start", workbench_name), ("send", workbench_name, "--kind", "hunt")):
+        result = subprocess.run([*command, *args], text=True, capture_output=True)
+        if result.returncode:
+            raise SystemExit(f"补货后恢复失败；请核对机器人会话：{result.stdout} {result.stderr}")
+    report["status"] = "resume_requested"
+    receipt.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return report
+
+
 def do_junk(workbench_name: str, dry_run: bool, include_equipment: bool) -> dict[str, object]:
     candidates = junk_list(workbench_name, include_equipment)
     report: dict[str, object] = {"candidates": candidates, "dry_run": dry_run}
@@ -422,6 +571,11 @@ def parser() -> argparse.ArgumentParser:
     restock_parser.add_argument(
         "--sell-etc", type=int, action="append", default=[], help="人工确认可出售的 etc 物品 ID，可重复"
     )
+    cycle = sub.add_parser("cycle", help="等待低补给事件并按白名单补货回图")
+    cycle.add_argument("workbench")
+    cycle.add_argument("--session", required=True)
+    cycle.add_argument("--apply", action="store_true")
+    cycle.add_argument("--watch-seconds", type=int, default=0)
     junk_parser = sub.add_parser("junk", help="卖无用垃圾")
     junk_parser.add_argument("workbench")
     junk_parser.add_argument("--dry-run", action="store_true")
@@ -445,6 +599,14 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 json.dumps(
                     restock(args.workbench, not args.apply, args.max_cost, args.max_count, tuple(args.sell_etc)),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        elif args.command == "cycle":
+            print(
+                json.dumps(
+                    supply_cycle(args.workbench, args.session, args.apply, args.watch_seconds),
                     ensure_ascii=False,
                     indent=2,
                 )
