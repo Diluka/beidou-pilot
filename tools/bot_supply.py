@@ -3,7 +3,7 @@
 
 子命令：
 - `status WORKBENCH`：计算红药/蓝药/箭矢缺口，输出 JSON。
-- `restock WORKBENCH [--dry-run]`：就近找药水商店并往返购买缺口（需要 GUI 后端）。
+- `restock WORKBENCH [--apply]`：默认预览；执行时售卖未保护 etc 并按上限购买（需要 GUI）。
 - `junk WORKBENCH [--dry-run|--apply] [--include-equipment]`：卖 etc 垃圾（默认只列举）。
 - `gear WORKBENCH`：按等级输出武器/防具升级建议。
 """
@@ -66,6 +66,8 @@ def workbench(workbench_name: str, *arguments: str) -> subprocess.CompletedProce
 
 def cli_json(workbench_name: str, *arguments: str) -> dict[str, object]:
     result = workbench(workbench_name, *arguments)
+    if result.returncode != 0:
+        raise SystemExit(f"CLI 命令失败（{arguments}）：{result.stderr or result.stdout}")
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as error:
@@ -298,44 +300,58 @@ def close_shop(workbench_name: str) -> None:
     workbench(workbench_name, "shop", "close")
 
 
-def restock(workbench_name: str, dry_run: bool) -> dict[str, object]:
+def restock(workbench_name: str, dry_run: bool = True, max_cost: int = 5000, max_count: int = 1000, sell_etc: tuple[int, ...] = ()) -> dict[str, object]:
+    if max_cost < 0 or max_count < 1:
+        raise SystemExit("金额上限须非负，数量上限须为正")
     plan = supply_plan(workbench_name)
     shop_map, shop = nearest_potion_shop(workbench_name)
-    needs = {
-        int(item_id): plan["gaps"][key]
-        for item_id, key in ((RED_POTION, "red"), (BLUE_POTION, "blue"))
-        if plan["gaps"][key] > 0
-    }
-    if needs.get(ARROW) is not None:
-        needs.pop(ARROW, None)
-    report: dict[str, object] = {
-        "plan": plan,
-        "shop_map": shop_map,
-        "shop": shop.get("npc"),
-        "buy": needs,
-        "route_legs": len(shop.get("legs") or []),
-    }
-    if dry_run:
-        report["dry_run"] = True
+    needs = {item_id: plan["gaps"][key] for item_id, key in (
+        (RED_POTION, "red"), (BLUE_POTION, "blue"), (ARROW, "arrow")
+    ) if plan["gaps"][key] > 0}
+    candidates = [item for item in junk_list(workbench_name) if item["item_id"] in sell_etc]
+    report = {"plan": plan, "shop_map": shop_map, "shop": shop.get("npc"),
+              "buy": needs, "sell_candidates": candidates, "max_cost": max_cost,
+              "max_count": max_count, "dry_run": dry_run}
+    if dry_run or not needs:
         return report
-    ensure_gui(workbench_name)
-    travel(workbench_name, shop_map, 240)
+    if plan["map_id"] != shop_map:
+        travel(workbench_name, shop_map, 240)
     open_shop(workbench_name, str(shop.get("npc")))
-    shop_data = read_shop(workbench_name)
-    available = {item.get("item_id") for item in shop_data.get("buy_items") or [] if isinstance(item, dict)}
-    results = {}
-    for item_id, count in needs.items():
-        if item_id not in available:
-            results[str(item_id)] = {"skipped": "not_sold_here"}
-            continue
-        try:
-            results[str(item_id)] = buy(workbench_name, item_id, count)
-        except SystemExit as error:
-            results[str(item_id)] = {"error": str(error)}
-    close_shop(workbench_name)
-    travel(workbench_name, int(plan["map_id"]), 240) if isinstance(plan["map_id"], int) else None
+    results = {"sell": [], "buy": []}
     report["results"] = results
-    report["after"] = supply_plan(workbench_name)
+    try:
+        for candidate in candidates:
+            # 多堆同一物品时 CLI 会拒绝歧义；不猜测槽位或重试交易。
+            results["sell"].append(sell(workbench_name, int(candidate["item_id"]), min(int(candidate["quantity"]), 1000)))
+        wallet = read_character(workbench_name).get("mesos")
+        if not isinstance(wallet, int) or wallet < 0:
+            raise SystemExit("金币读数不可用")
+        budget = min(max_cost, wallet)
+        quantity_left = max_count
+        shop_data = read_shop(workbench_name)
+        for item_id, needed in needs.items():
+            matches = [item for item in shop_data.get("buy_items", []) if item.get("item_id") == item_id]
+            if len(matches) != 1:
+                raise SystemExit(f"商店未提供唯一商品：{item_id}")
+            item = matches[0]
+            price = item.get("unit_price")
+            if not isinstance(price, int) or price < 0 or item.get("bundle_quantity") != 1:
+                raise SystemExit(f"商品价格或数量不受支持：{item_id}")
+            count = min(needed, quantity_left, 1000, budget // price if price else quantity_left)
+            if count <= 0:
+                raise SystemExit(f"预算或数量上限不足：{item_id}")
+            results["buy"].append(buy(workbench_name, item_id, count))
+            budget -= price * count
+            quantity_left -= count
+            if count < needed:
+                raise SystemExit(f"预算或数量上限不足：{item_id}")
+        after = supply_plan(workbench_name)
+        report["after"] = after
+        if any(after["gaps"][key] for key in ("red", "blue", "arrow")):
+            raise SystemExit("补货后库存仍有缺口")
+    finally:
+        close_shop(workbench_name)
+    # 自动回图留给后续闭环编排；失败时绝不离开商店。
     return report
 
 
@@ -368,7 +384,12 @@ def parser() -> argparse.ArgumentParser:
     status.add_argument("workbench")
     restock_parser = sub.add_parser("restock", help="就近买补给")
     restock_parser.add_argument("workbench")
-    restock_parser.add_argument("--dry-run", action="store_true")
+    mode = restock_parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true")
+    mode.add_argument("--apply", action="store_true")
+    restock_parser.add_argument("--max-cost", type=int, default=5000)
+    restock_parser.add_argument("--max-count", type=int, default=1000)
+    restock_parser.add_argument("--sell-etc", type=int, action="append", default=[], help="人工确认可出售的 etc 物品 ID，可重复")
     junk_parser = sub.add_parser("junk", help="卖无用垃圾")
     junk_parser.add_argument("workbench")
     junk_parser.add_argument("--dry-run", action="store_true")
@@ -389,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             print(json.dumps(supply_plan(args.workbench), ensure_ascii=False, indent=2))
         elif args.command == "restock":
-            print(json.dumps(restock(args.workbench, args.dry_run), ensure_ascii=False, indent=2))
+            print(json.dumps(restock(args.workbench, not args.apply, args.max_cost, args.max_count, tuple(args.sell_etc)), ensure_ascii=False, indent=2))
         elif args.command == "junk":
             print(
                 json.dumps(
