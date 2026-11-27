@@ -12,6 +12,9 @@ SOURCES = {
     "ruff": (
         "tools/format.py",
         "cli/test/test_botctl.py",
+        "tools/quest_data.py",
+        "tools/bot_quest.py",
+        "cli/test/test_bot_quest.py",
         "tools/bot_supply.py",
         "cli/test/test_bot_supply.py",
         "cli/test/test_shop.py",
