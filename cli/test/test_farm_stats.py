@@ -70,6 +70,64 @@ class FarmStatsTests(unittest.TestCase):
             self.assertTrue(group["insufficient"])
             self.assertIsNone(group["rates_per_minute"]["exp"])
 
+    def test_platform_observations_are_independent_of_mob_completeness(self):
+        platform = row(mob_template=None, complete=False, platform_complete=True,
+                       dwell_time=120, exp_delta_observed=200, arrow_delta_observed=6,
+                       hp_potion_delta_observed=2, mp_potion_delta_observed=0,
+                       estimated=True, attribution="platform_window")
+        mob = row(mob_template=3, platform_complete=True, exp_delta_observed=9999)
+        groups = farm_stats.aggregate({"schema": 1, "records": [platform, mob]})["groups"]
+        observed = groups[0]["platform_observation"]
+        self.assertEqual(observed["rates_per_minute"]["exp_delta_observed"], 100)
+        self.assertEqual(observed["rates_per_minute"]["arrow_delta_observed"], 3)
+        self.assertEqual(observed["rates_per_minute"]["mp_potion_delta_observed"], 0)
+        self.assertEqual(observed["sample_windows"], 1)
+        self.assertTrue(observed["estimated"])
+        self.assertEqual(observed["attribution"], "platform_window")
+        self.assertIsNone(observed["pickup_per_minute"])
+        self.assertIsNone(groups[0]["loot_per_minute"])
+        self.assertIsNone(groups[1]["platform_observation"])
+
+    def test_platform_unknown_and_incomplete_windows(self):
+        rows = [row(mob_template=None, platform_complete=True, dwell_time=120,
+                    exp_delta_observed=30),
+                row(mob_template=None, platform_complete=False, dwell_time=120,
+                    exp_delta_observed=999),
+                row(mob_template=None, platform_complete=None, dwell_time=120,
+                    exp_delta_observed=999)]
+        for item in rows:
+            item['attribution'] = 'platform_window'
+        observed = farm_stats.aggregate({"schema": 1, "records": rows})["groups"][0]["platform_observation"]
+        self.assertEqual(observed["rates_per_minute"]["exp_delta_observed"], 15)
+        self.assertEqual(observed["raw_totals"]["exp_delta_observed"], 2028)
+        self.assertIsNone(observed["rates_per_minute"]["arrow_delta_observed"])
+        self.assertIn("arrow_delta_observed unknown", observed["notes"])
+        self.assertEqual(observed["total_windows"], 3)
+        self.assertEqual(observed["sample_windows"], 1)
+        self.assertIn("incomplete or unknown platform windows excluded", observed["notes"])
+        rows[0]["dwell_time"] = 59
+        observed = farm_stats.aggregate({"schema": 1, "records": rows})["groups"][0]["platform_observation"]
+        self.assertTrue(observed["insufficient"])
+        self.assertIsNone(observed["rates_per_minute"]["exp_delta_observed"])
+        rows[0]["dwell_time"] = None
+        observed = farm_stats.aggregate({"schema": 1, "records": rows})["groups"][0]["platform_observation"]
+        self.assertIn("platform dwell unknown", observed["notes"])
+
+    def test_platform_rate_coverage_excludes_unknown_and_unattributed(self):
+        known = row(mob_template=None, platform_complete=True, attribution='platform_window',
+                    dwell_time=120, exp_delta_observed=60)
+        unknown = row(mob_template=None, platform_complete=True, attribution='platform_window',
+                      dwell_time=90, exp_delta_observed=None)
+        unrelated = row(mob_template=None, platform_complete=True, attribution=None,
+                        dwell_time=999, exp_delta_observed=999)
+        group = farm_stats.aggregate({'schema': 1, 'records': [known, unknown, unrelated]})['groups'][0]
+        observed = group['platform_observation']
+        self.assertEqual(observed['rates_per_minute']['exp_delta_observed'], 30)
+        self.assertEqual(observed['rate_coverage']['exp_delta_observed'], {'sample_windows': 1, 'dwell_s': 120})
+        self.assertIsNone(observed['totals']['exp_delta_observed'])
+        no_map = row(map_id=None, mob_template=None, platform_complete=True, attribution='platform_window')
+        self.assertIsNone(farm_stats.aggregate({'schema': 1, 'records': [no_map]})['groups'][0]['platform_observation'])
+
     def test_invalid_schema_and_measurements(self):
         for document in ({"schema": True, "records": []}, {"schema": 2, "records": []},
                          {"schema": 1, "records": [row(kills=-1)]},

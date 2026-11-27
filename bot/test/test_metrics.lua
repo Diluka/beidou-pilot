@@ -70,5 +70,60 @@ assert(table.concat(v.rows, ','):find('"exit_reason":"patrol"',1,true))
 ctx.tick.time=4; q.ready=false; assert(metrics.observe(v,ctx,q))
 ctx.tick.time=5; q.ready=true; q.scene_generation=4; assert(metrics.observe(v,ctx,q))
 assert(v.scene == 4 and v.window_start == 5)
+-- Platform observations are independent of monster completeness and include idle time.
+local p = assert(metrics.new('/platform.json'))
+local pc = {tick={time=0}, state={bot={config={ammo_item_id=2060000,hp_item=2000000,mp_item=2000003}}},
+    game={character={experience=100},inventory={status='ok'}}}
+local pw = {ready=true,map_id=1,scene_generation=1,character={platform=2,level=10},
+    inventory={{item_id=2060000,quantity=100},{item_id=2000000,quantity=10},{item_id=2000003,quantity=9}}}
+for i=0,20 do
+    pc.tick.time=i
+    if i==1 then pc.game.character.experience=110; pw.inventory[1].quantity=97; pw.inventory[2].quantity=9 end
+    assert(metrics.observe(p,pc,pw))
+end
+text=snapshots[#snapshots]
+assert(text:find('"dwell_s":20',1,true) and text:find('"platform_complete":true',1,true))
+assert(text:find('"exp_delta_observed":10',1,true) and text:find('"arrow_delta_observed":3',1,true))
+assert(text:find('"hp_potion_delta_observed":1',1,true) and text:find('"mp_potion_delta_observed":0',1,true))
+assert(text:find('"attribution":"platform_window"',1,true) and text:find('"complete":false',1,true))
+-- Level reset and unavailable inventory poison only the affected window, not the next.
+pc.tick.time=21; pw.character.level=11; pc.game.character.experience=0; pc.game.inventory.status='unavailable'
+assert(metrics.observe(p,pc,pw))
+for i=22,40 do pc.tick.time=i; assert(metrics.observe(p,pc,pw)) end
+text=snapshots[#snapshots]
+assert(text:find('"exp_delta_observed":null',1,true) and text:find('"arrow_delta_observed":null',1,true))
+-- A short normal platform change retains the prior valid exposure; the crossing interval is excluded.
+local cross = assert(metrics.new('/cross.json'))
+pc.tick.time=0; pc.game.inventory.status='ok'; pc.game.character.experience=200
+pw.character.level=10; pw.character.platform=2; pw.mobs=nil; pw.metrics_complete=true
+assert(metrics.observe(cross,pc,pw))
+for i=1,5 do pc.tick.time=i; assert(metrics.observe(cross,pc,pw)) end
+pc.tick.time=6; pw.character.platform=3; assert(metrics.observe(cross,pc,pw))
+text=table.concat(cross.rows, ',')
+assert(text:find('"dwell_s":5',1,true) and text:find('"platform_complete":true',1,true))
+assert(text:find('"complete":false',1,true), 'missing mobs cannot establish monster completeness')
+metrics.visit(cross, {arrival_reason='platform_or_scene_changed',preserve_observation=true})
+pc.tick.time=7; pc.game.character.experience=205; assert(metrics.observe(cross,pc,pw))
+metrics.visit(cross, {exit_reason='patrol'})
+text=table.concat(cross.rows, ',')
+assert(text:find('"dwell_s":1',1,true) and text:find('"exp_delta_observed":5',1,true),
+    'visit metadata must preserve first new-platform interval')
+local missing_mobs = assert(metrics.new('/missing-mobs.json'))
+pc.tick.time=0; assert(metrics.observe(missing_mobs,pc,pw))
+for i=1,20 do pc.tick.time=i; assert(metrics.observe(missing_mobs,pc,pw)) end
+text=snapshots[#snapshots]
+assert(text:find('"platform_complete":true',1,true) and text:find('"complete":false',1,true))
+-- Increases reset the baseline; unavailable or ambiguous item observations remain unknown.
+local inventory_test = assert(metrics.new('/inventory.json'))
+pc.tick.time=0; pw.character.platform=2; pw.inventory[1].quantity=100
+assert(metrics.observe(inventory_test,pc,pw))
+pc.tick.time=1; pw.inventory[1].quantity=110; assert(metrics.observe(inventory_test,pc,pw))
+pc.tick.time=2; pw.inventory[1].quantity=100; assert(metrics.observe(inventory_test,pc,pw))
+for i=3,20 do pc.tick.time=i; assert(metrics.observe(inventory_test,pc,pw)) end
+text=snapshots[#snapshots]
+assert(text:find('"arrow_delta_observed":10',1,true))
+pc.tick.time=21; pw.inventory[1].quantity=nil; assert(metrics.observe(inventory_test,pc,pw))
+for i=22,40 do pc.tick.time=i; assert(metrics.observe(inventory_test,pc,pw)) end
+assert(snapshots[#snapshots]:find('"arrow_delta_observed":null',1,true))
 package.loaded['lib.metrics_storage'], package.loaded['lib.io'], package.loaded['lib.metrics'] = saved_storage, saved_io, nil
 print('metrics tests ok')
