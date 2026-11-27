@@ -43,6 +43,14 @@ local expected = {
     world = {
         observe = 1,
     },
+    metrics = {
+        new = 1,
+        observe = 3,
+        event = 3,
+        flush = 3,
+        target = 2,
+        visit = 2,
+    },
 }
 
 local modules = {}
@@ -311,4 +319,6 @@ dofile("bot/test/test_map_binding.lua")
 dofile("bot/test/test_supply_stop.lua")
 dofile("bot/test/test_memory.lua")
 dofile("bot/test/test_equipment.lua")
+dofile("bot/test/test_metrics.lua")
+dofile("bot/test/test_metrics_storage.lua")
 print("bot smoke ok: 10 modules")
