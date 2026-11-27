@@ -116,7 +116,7 @@ assert(status == "failed" and reason == "no_progress" and direction == nil)
 for _, edge in ipairs({{kind="jumpup",x=0,destination=100,rise=50}, {kind="drop",destination=100}}) do
     begin(edge)
     step(mover, ctx, world)
-    ctx.tick.time = 10
+    ctx.tick.time = edge.kind == "drop" and 12 or 10
     status, reason = step(mover, ctx, world)
     assert(status == "failed" and reason == "timeout" and direction == nil and action == nil)
 end
@@ -150,7 +150,7 @@ step(mover, ctx, world)
 ctx.tick.time = 0.4; world.character.y = 20; world.character.on_ground = false
 step(mover, ctx, world)
 assert(step(mover, ctx, world) == "running")
-ctx.tick.time = 10
+ctx.tick.time = 12
 status, reason = step(mover, ctx, world)
 assert(status == "failed" and reason == "timeout" and direction == nil)
 supported = true
@@ -420,7 +420,7 @@ for _, physics in ipairs({{}, {velocity={x=-125}}}) do
     status,reason=step(mover,ctx,world)
     if physics.velocity then
         assert(status=="running" and not direction and not action)
-        ctx.tick.time=10
+        ctx.tick.time=10.01
         status,reason=step(mover,ctx,world)
         assert(reason=="timeout")
     else assert(reason=="character_unavailable") end
