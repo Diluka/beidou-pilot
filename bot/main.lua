@@ -224,7 +224,7 @@ local function main(context)
         if world.ready and world.map_id and generation and platform then
             if not visit or visit.map_id ~= world.map_id or visit.generation ~= generation or visit.platform ~= platform then
                 metric_call("visit", {arrival_reason = visit and "platform_or_scene_changed" or nil,
-                    exit_reason = visit and "platform_or_scene_changed" or nil})
+                    exit_reason = visit and "platform_or_scene_changed" or nil, preserve_observation = true})
                 memory.metrics_visit = {map_id = world.map_id, generation = generation, platform = platform}
             end
         else

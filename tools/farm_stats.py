@@ -19,6 +19,8 @@ NUMBERS = ("kills", "kill_time_sum", "kill_time_samples", "exp", "hp_potions",
            "dwell_time", "entries", "exp_unknown_kills")
 DROPS = ("drops_seen", "drops_picked")
 DIMENSIONS = ("map_id", "platform", "mob_template")
+PLATFORM_OBSERVATIONS = ("exp_delta_observed", "arrow_delta_observed",
+                         "hp_potion_delta_observed", "mp_potion_delta_observed")
 
 
 def aggregate(document, goal="balance"):
@@ -48,7 +50,14 @@ def aggregate(document, goal="balance"):
         if complete is not None and type(complete) is not bool:
             raise ValueError("complete must be a boolean or null")
         values["complete"] = complete
-        values["window"] = {field: record.get(field) for field in ("sample_windows", "estimated", "window_start", "window_end", "scene_generation", "complete", "completeness_reason", "arrival_reason", "exit_reason", "visit_start", "visit_end", "collection_policy", "policy_seed", "entries")}
+        platform_complete = record.get("platform_complete")
+        if platform_complete is not None and type(platform_complete) is not bool:
+            raise ValueError("platform_complete must be a boolean or null")
+        values["platform_complete"] = platform_complete
+        values["attribution"] = record.get("attribution")
+        values["platform_observations"] = {field: number(record.get(field), field)
+                                            for field in PLATFORM_OBSERVATIONS}
+        values["window"] = {field: record.get(field) for field in ("sample_windows", "estimated", "attribution", "platform_complete", "window_start", "window_end", "scene_generation", "complete", "completeness_reason", "arrival_reason", "exit_reason", "visit_start", "visit_end", "collection_policy", "policy_seed", "entries")}
         for field in DROPS:
             drops = record.get(field)
             if drops is not None:
@@ -119,11 +128,48 @@ def aggregate(document, goal="balance"):
             reasons.append("exp rate unknown or insufficient dwell_time")
         if loot_rate is None:
             reasons.append("loot rate unknown or insufficient dwell_time")
+        platform_observation = None
+        if key[2] is None and key[0] is not None and key[1] is not None:
+            platform_rows = [row for row in rows if row["attribution"] == "platform_window"]
+            eligible = [row for row in platform_rows if row["platform_complete"] is True]
+            platform_dwell = ([row["dwell_time"] for row in eligible] if eligible else [])
+            observed_dwell = (sum(platform_dwell) if platform_dwell and
+                              all(value is not None for value in platform_dwell) else None)
+            observed = {}
+            raw_observed = {}
+            observed_rates = {}
+            rate_coverage = {}
+            for field in PLATFORM_OBSERVATIONS:
+                raw_values = [row["platform_observations"][field] for row in platform_rows]
+                raw_observed[field] = sum(raw_values) if raw_values and all(value is not None for value in raw_values) else None
+                values = [row["platform_observations"][field] for row in eligible]
+                observed[field] = sum(values) if values and all(value is not None for value in values) else None
+                known = [row for row in eligible if row['platform_observations'][field] is not None
+                         and row['dwell_time'] is not None]
+                known_dwell = sum(row['dwell_time'] for row in known)
+                rate_coverage[field] = {'sample_windows': len(known), 'dwell_s': known_dwell}
+                observed_rates[field] = (sum(row['platform_observations'][field] for row in known) * 60 / known_dwell
+                                         if known_dwell >= 60 else None)
+            platform_observation = {
+                "estimated": True, "attribution": "platform_window",
+                "sample_windows": len(eligible), "total_windows": len(rows),
+                "dwell_s": observed_dwell, "totals": observed, "raw_totals": raw_observed,
+                "rates_per_minute": observed_rates, "rate_coverage": rate_coverage, "pickup_per_minute": None,
+                "insufficient": observed_dwell is None or observed_dwell < 60,
+                "notes": (["incomplete or unknown platform windows excluded"] if len(eligible) != len(rows) else [])
+                         + (["platform dwell unknown"] if observed_dwell is None else
+                            ["insufficient platform dwell"] if observed_dwell < 60 else [])
+                         + [f"{field} unknown" for field, value in observed.items() if value is None]
+                         + ["pickup unknown: no reliable source"],
+            }
+            rates["drops_picked"] = None
+            loot_rate = None
         groups.append({**dict(zip(DIMENSIONS, key)), "records": len(rows), "totals": raw_totals,
                        "complete_totals": totals, "sample_windows": len(complete_rows),
                        "windows": [row["window"] for row in rows], "insufficient": not sufficient,
                        "rates_per_minute": rates, "average_kill_time": average,
-                       "loot_per_minute": loot_rate, "notes": reasons})
+                       "loot_per_minute": loot_rate, "platform_observation": platform_observation,
+                       "notes": reasons})
 
     return {"schema": 1, "goal": goal, "groups": groups}
 
@@ -175,6 +221,8 @@ def main(argv=None):
             print(f"  average kill time: {group['average_kill_time'] if group['average_kill_time'] is not None else 'unknown'}; notes: {', '.join(group['notes']) or 'none'}")
             print(f"  raw totals: {json.dumps(group['totals'], ensure_ascii=False)}")
             print(f"  rates/minute: {json.dumps(group['rates_per_minute'], ensure_ascii=False)}")
+            if group["platform_observation"] is not None:
+                print(f"  platform observation: {json.dumps(group['platform_observation'], ensure_ascii=False)}")
 
 
 if __name__ == "__main__":

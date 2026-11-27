@@ -1,6 +1,7 @@
 -- Passive estimates only: the caller supplies the selected combat target and action results.
 local storage = require('lib.metrics_storage')
 local io_module = require('lib.io')
+local defaults = require('defaults')
 local M = {}
 local NULL = {}
 
@@ -22,7 +23,7 @@ local function encode(v)
     return '{' .. table.concat(parts, ',') .. '}'
 end
 
-local function record(s, map, platform, mob)
+local function record(s, map, platform, mob, platform_observation)
     local key = encode(map) .. ':' .. encode(platform) .. ':' .. encode(mob)
     local r = s.current[key]
     if not r then
@@ -36,6 +37,12 @@ local function record(s, map, platform, mob)
             visit_start=s.visit and s.visit.started or NULL, visit_end=NULL, exit_reason=NULL,
             scene_generation=s.scene or NULL, window_start=s.window_start or NULL, window_end=NULL}
         s.current[key] = r
+    end
+    if platform_observation and r.attribution == nil then
+        r.attribution, r.estimated = 'platform_window', true
+        r.exp_delta_observed, r.arrow_delta_observed = NULL, NULL
+        r.hp_potion_delta_observed, r.mp_potion_delta_observed = NULL, NULL
+        r.platform_complete = false
     end
     if s.visit and r.entries == NULL then
         if not s.visit.counted[key] then
@@ -52,6 +59,9 @@ local function close_window(s, now, reason)
     for _, r in pairs(s.current) do
         r.window_end = now
         r.complete = reason == nil and s.complete == true
+        if r.attribution == 'platform_window' then
+            r.platform_complete = reason == nil or reason == 'platform_changed'
+        end
         r.completeness_reason = reason or (r.complete and 'complete' or 'observation_unverified')
         r.insufficient = r.kills == NULL or r.kills < 5 or r.dwell_s < 60
         if r.exp_unknown_kills > 0 then r.exp = NULL end
@@ -68,6 +78,16 @@ end
 
 -- Explicit visit metadata; absent policy/reasons remain unknown, never inferred.
 function M.visit(s, data)
+    if data.preserve_observation then
+        s.visit = {reason=data.arrival_reason, policy=data.collection_policy, seed=data.policy_seed,
+            started=s.now, counted={}}
+        for key, r in pairs(s.current) do
+            r.arrival_reason, r.visit_start = data.arrival_reason or NULL, s.now or NULL
+            r.collection_policy, r.policy_seed = data.collection_policy or NULL, data.policy_seed or NULL
+            r.entries, s.visit.counted[key] = 1, true
+        end
+        return
+    end
     if s.window_start then
         for _, r in pairs(s.current) do
             r.exit_reason, r.visit_end = data.exit_reason or NULL, s.now or NULL
@@ -122,7 +142,7 @@ function M.observe(s, ctx, world)
     local native = ctx.game and ctx.game.character or {}
     local exp = native.experience or native.exp or c.exp
     local valid = world.ready == true and world.map_id ~= nil and world.scene_generation ~= nil
-        and c.platform ~= nil and type(world.mobs) == 'table'
+        and c.platform ~= nil
     local prev = s.previous
     local boundary = prev and (not valid or prev.map ~= world.map_id or prev.scene ~= world.scene_generation
         or prev.platform ~= c.platform or now < prev.time or now - prev.time > 2)
@@ -135,7 +155,9 @@ function M.observe(s, ctx, world)
         for _, r in pairs(s.current) do
             r.visit_end, r.exit_reason = prev.time, 'scene_or_observation_changed'
         end
-        close_window(s, prev.time, 'scene_or_observation_changed')
+        local platform_changed = valid and prev.map == world.map_id and prev.scene == world.scene_generation
+            and prev.platform ~= c.platform and now >= prev.time and now - prev.time <= 2
+        close_window(s, prev.time, platform_changed and 'platform_changed' or 'scene_or_observation_changed')
         s.window_start = nil
     end
     if not valid then
@@ -145,14 +167,65 @@ function M.observe(s, ctx, world)
     end
     if not s.window_start then
         s.window_start, s.scene = now, world.scene_generation
-        s.complete = valid and world.metrics_complete == true
+        s.complete = valid and type(world.mobs) == 'table' and world.metrics_complete == true
     else
-        s.complete = s.complete and valid and world.metrics_complete == true
+        s.complete = s.complete and valid and type(world.mobs) == 'table' and world.metrics_complete == true
     end
     s.now, s.map, s.platform = now, world.map_id, c.platform
+    local platform = record(s, world.map_id, c.platform, nil, true)
+    local config = ctx.state and ctx.state.bot and ctx.state.bot.config or {}
+    local item_ids = {arrow_delta_observed=config.ammo_item_id or defaults.ammo_item_id,
+        hp_potion_delta_observed=config.hp_item or defaults.hp_item,
+        mp_potion_delta_observed=config.mp_item or defaults.mp_item}
+    local items, invalid_items = {}, {}
+    local inventory = ctx.game and ctx.game.inventory
+    if inventory and inventory.status == 'ok' and type(world.inventory) == 'table' then
+        for _, item in ipairs(world.inventory) do
+            if type(item.item_id) == 'number' then
+                if type(item.quantity) == 'number' and item.quantity >= 0 and item.quantity == item.quantity then
+                    items[item.item_id] = (items[item.item_id] or 0) + item.quantity
+                else
+                    invalid_items[item.item_id] = true
+                end
+            end
+        end
+    end
+    for id in pairs(invalid_items) do items[id] = nil end
+    local levels_ok = type(c.level) == 'number' and type(exp) == 'number' and exp >= 0
+    local fields = {'exp_delta_observed', 'arrow_delta_observed', 'hp_potion_delta_observed', 'mp_potion_delta_observed'}
+    for _, field in ipairs(fields) do
+        local previous_value, current_value, available
+        if field == 'exp_delta_observed' then
+            current_value = exp
+            previous_value = prev and prev.exp
+            available = levels_ok and (not prev or boundary or (type(prev.exp) == 'number' and prev.level == c.level and exp >= prev.exp))
+        else
+            local id = item_ids[field]
+            current_value = items[id]
+            previous_value = prev and prev.items[id]
+            local distinct = true
+            for other, other_id in pairs(item_ids) do
+                if other ~= field and other_id == id then distinct = false end
+            end
+            available = type(id) == 'number' and id > 0 and distinct and current_value ~= nil
+                and (not prev or boundary or (prev.item_ids[field] == id and previous_value ~= nil))
+        end
+        local complete_field = field .. '_complete'
+        if not available then
+            platform[field], platform[complete_field] = NULL, false
+        elseif platform[complete_field] ~= false then
+            if platform[field] == NULL then platform[field] = 0 end
+            platform[complete_field] = true
+            if prev and not boundary then
+                local delta = field == 'exp_delta_observed' and current_value - previous_value
+                    or previous_value - current_value
+                if delta > 0 then platform[field] = platform[field] + delta end
+            end
+        end
+    end
     local exposures = {}
     if valid then
-        for _, mob in ipairs(world.mobs) do
+        for _, mob in ipairs(world.mobs or {}) do
             if mob.active == true and mob.platform == c.platform and mob.template_id ~= nil then
                 local key = encode(mob.platform) .. ':' .. encode(mob.template_id)
                 exposures[key] = {platform=mob.platform, template_id=mob.template_id}
@@ -160,6 +233,7 @@ function M.observe(s, ctx, world)
         end
     end
     if valid and prev and not boundary then
+        platform.dwell_s = platform.dwell_s + now - prev.time
         for key, item in pairs(exposures) do
             if prev.exposures[key] then
                 local exposure = record(s, world.map_id, item.platform, item.template_id)
@@ -171,9 +245,9 @@ function M.observe(s, ctx, world)
         local r = record(s, prev.map, t and t.platform or prev.platform, t and t.template_id)
         if t and t.map == prev.map and t.scene == prev.scene then
             local found
-            for _, mob in ipairs(world.mobs) do if mob.object_id == t.object_id then found = mob; break end end
+            for _, mob in ipairs(world.mobs or {}) do if mob.object_id == t.object_id then found = mob; break end end
             if (found and (found.platform ~= t.platform or found.template_id ~= t.template_id))
-                or (not found and world.metrics_complete ~= true) then
+                or (not found and (type(world.mobs) ~= 'table' or world.metrics_complete ~= true)) then
                 s.complete, s.target = false, nil
             end
             if s.target and ((not found and world.metrics_complete == true) or (found and (found.active == false or (found.hp_percent and found.hp_percent <= 0)))) then
@@ -205,11 +279,11 @@ function M.observe(s, ctx, world)
         end
     end
     s.previous = valid and {time=now,map=world.map_id,scene=world.scene_generation,platform=c.platform,
-        hp=c.hp,exp=exp,level=c.level,exposures=exposures} or nil
+        hp=c.hp,exp=exp,level=c.level,exposures=exposures,items=items,item_ids=item_ids} or nil
     if elapsed and not boundary then
         close_window(s, now, nil)
         s.window_start, s.scene = now, world.scene_generation
-        s.complete = valid and world.metrics_complete == true
+        s.complete = valid and type(world.mobs) == 'table' and world.metrics_complete == true
     end
     return M.flush(s, now, ctx)
 end
