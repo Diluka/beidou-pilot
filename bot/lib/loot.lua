@@ -18,13 +18,18 @@ local function owner_is_near(world, owner)
     return owner_distance == nil or owner_distance <= 100
 end
 
-local function unsafe(world)
+-- 贴身掉落允许在附近有怪时顺手捡；更远的掉落仍需周围安全。
+local CLOSE_PICKUP_RADIUS = 60
+
+local function low_hp(world)
     local character = world and world.character
-    if not character or type(character.hp) ~= "number" or type(character.max_hp) ~= "number"
+    return not character or type(character.hp) ~= "number" or type(character.max_hp) ~= "number"
         or character.max_hp <= 0 or character.hp / character.max_hp < 0.4
-        or type(world.mobs) ~= "table" then
-        return true
-    end
+end
+
+local function mob_near(world)
+    local character = world and world.character
+    if not character or type(world.mobs) ~= "table" then return true end
     for _, mob in ipairs(world.mobs) do
         local alive = mob.active == true or (mob.active == nil
             and type(mob.hp_percent) == "number" and mob.hp_percent > 0)
@@ -38,7 +43,7 @@ end
 
 function M.select(world, options)
     options = type(options) == "table" and options or {}
-    if unsafe(world) then return nil, "unsafe" end
+    if low_hp(world) then return nil, "unsafe" end
     if owner_is_near(world, options.owner or world.owner) then return nil, "owner_near" end
 
     local character = world.character
@@ -68,6 +73,12 @@ function M.select(world, options)
         end
         return tostring(left.drop.object_id) < tostring(right.drop.object_id)
     end)
+    if mob_near(world) then
+        for _, candidate in ipairs(candidates) do
+            if candidate.distance <= CLOSE_PICKUP_RADIUS then return candidate.drop end
+        end
+        return nil, "unsafe"
+    end
     return candidates[1] and candidates[1].drop or nil
 end
 
@@ -131,9 +142,12 @@ function M.step(ctx, world, drop, mover)
         if player then player.skill(nil) end
         return "failed", "observation_unavailable"
     end
-    if unsafe(world) then
-        local state = mover.loot or {attempt = 0}
-        return fail(ctx, world, drop, mover, state, "unsafe")
+    if low_hp(world) then
+        return fail(ctx, world, drop, mover, mover.loot or {attempt = 0}, "unsafe")
+    end
+    local close_distance = distance(character, drop)
+    if mob_near(world) and (close_distance == nil or close_distance > CLOSE_PICKUP_RADIUS) then
+        return fail(ctx, world, drop, mover, mover.loot or {attempt = 0}, "unsafe")
     end
     if owner_is_near(world, world.owner) then
         if mover.loot then mover.loot.started_at = ctx.tick.time end
