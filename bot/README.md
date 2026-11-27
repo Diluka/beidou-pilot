@@ -235,6 +235,26 @@ skill_mp_cost=10
 
 远程和技能模式下，目标小于 `min_range` 时释放攻击输入，以同平台有界步行后撤；平台边缘或墙的可用退距不足 `min(40, min_range/2)`、地形不可用或移动失败时放弃目标并记录 `combat/retreat_blocked`。巡逻跳过宽度小于 `min_range + 60` 的平台并按场景记录 `hunt/skip`；狩猎不会攻击该类平台的目标。贴身时无论血量均不输出；当前未接入 sustain 的 `no_potion` 返回值，也不保证可以脱离追击。墙与平台判断依赖当前地形快照，真实效果仍需客户端验证。
 
+## 刷怪指标采集合同（待主流程接线）
+
+`lib.metrics` 是独立的被动采集模块；当前主流程尚未调用它，安装机器人不会自动产生指标。它不执行游戏动作，也不进行选点或策略评分。后续接线需在平台投影后按 tick 调用 `observe`，在实际选取怪物时调用 `target`，并将经核对的药品、箭矢、掉落和卡住结果传给 `event`；退出及异常可能在下次周期写入前发生，不能保证最后一个窗口落盘。
+
+```lua
+local metrics = require('lib.metrics')
+local samples = assert(metrics.new('/work/bot/metrics.json'))
+metrics.observe(samples, context, world) -- 每 tick；失败只记录，不影响动作
+metrics.target(samples, selected_mob)   -- 无目标传 nil
+metrics.event(samples, 'hp_potion', {map_id=world.map_id, platform=platform, mob_template=template})
+```
+
+文件为 `schema: 1`、`records` 数组；每条记录是一段窗口内的 `map_id`、怪物所在 `platform`、`mob_template`（未知为 null），`scene_generation`、`window_start/window_end` 是脚本 tick 秒和场景代次，不是跨会话的墙钟。`sample_windows` 是窗口数；`dwell_s` 只计角色停留的平台上，连续两次观察到该怪种的时间；不同怪种的暴露可以重叠，不能相加作为平台总驻留。未观察到怪不等于没有刷怪。`kills` 是目标消失或不活跃的估计次数，`estimated` 和 `kill_source` 标明估计来源，不代表服务端确认击杀；切图不会计为击杀。经验取客户端 `character.experience`（回退 `exp`），仅在调用方额外提供可信唯一归因标志 `world.metrics_exp_attributable=true`、同一采样区间等级不变且经验上升时归入目标，仍是估计；当前主流程没有该标志，经验按未知处理；无法归属时 `exp_unknown_kills` 增加且该窗口的 `exp` 为 null。升级、多人攻击或多目标引起的经验变化可能无法归因。
+
+`kills` 仅涵盖调用方持续提供的选中目标，并非全场怪物死亡数；零值仅在调用方明确提供 `world.metrics_targets_complete=true` 时可用，当前主流程不提供该标志。`kill_time_sum/kill_time_samples` 是选中到估计结束的秒数及样本数；`hp_potions/mp_potions/arrows`、`drops_seen/drops_picked`（按物品 ID）、`damage_taken/deaths/stuck_events` 分列保留原始计数；HP 净下降及死亡仅归角色平台、不归怪种，净下降会被同时发生的治疗抵消。null 是未知，不等于零；调用方必须在有足够证据时才传递事件，按键请求不等于物品实际消耗或拾取成功。`complete` 仅在调用方对每次观察明确提供 `world.metrics_complete=true` 且无观察缺口、掉视野或切图时为 true；现有 world 投影未提供此标志，接线不得擅自视为完整。间隔超过 2 秒、观察缺失、切图或目标消失使窗口不完整；不完整窗口不能用于计算速率。`insufficient` 表示本窗口击杀数小于 5 或驻留不足 60 秒；跨窗口分析应先合并完整窗口后重新判断样本量。
+
+调用方在 `observe` 之后、下一采样之前可用 `metrics.visit(samples, {arrival_reason=..., exit_reason=..., collection_policy=..., policy_seed=...})` 显式登记新的一次平台访问；它截断此前目标和采样基线；上次访问的 `exit_reason` 写入关闭窗口，新的进入原因、规则 ID、种子、`visit_start` 写入新窗口。`entries` 为已知访问中该怪种的首次记录次数，缺少访问事件为 null；它不等于全图访问次数。漏采或切图按不完整窗口截断；未知离开原因不可当正常巡逻。建议使用中性、可复现轮转或随机采样并覆盖可达平台，不要依据当前效率选择，采样不足不能用于推断平台优劣；本模块不实现调度或声称采样公平。`kill_time_sum` 允许目标跨窗口，完整时长归入结束窗口，跨缺口或场景变更不计。
+
+每约 20 秒将已关闭窗口写入 `/work/bot/metrics.json`，先写临时文件再 rename；Windows 覆盖回退有短暂无文件窗口。单文件上限 256 KiB，最多保留当前及 `metrics.1.json` 两代，继续滚动会丢弃最旧一代并发布 `metrics/rotate`；宿主必须定期复制以保存更长历史。采集异常应由接线方旁路处理，不得阻塞机器人动作。宿主可选使用 `python3 tools/farm_stats.py dev/NAME --json` 或给出文件路径做离线汇总；工具不操作游戏，不做目标策略，未确认完整的窗口不进入速率计算。长时研究须定期自行复制数据。
+
 ## 离线测试
 
 从仓库根目录运行：
