@@ -266,12 +266,19 @@ local function main(context)
         end
         local local_only = (memory.hunt_failures or 0) >= 3
             or memory.hunt_patrol and memory.hunt_patrol.fallback_until and now < memory.hunt_patrol.fallback_until
-        local mob = combat.select(world, {hunt = true, platform_only = local_only})
-        local drop
         if memory.loot_abandoned_scope ~= scope then
             memory.loot_abandoned, memory.loot_abandoned_scope = {}, scope
         end
-        if not mob then
+        -- 经过掉落物时优先顺手捡：同平台、贴身范围内的掉落优先于选怪。
+        local priority_drop
+        if character.on_ground == true and type(world.drops) == "table" and #world.drops > 0 then
+            priority_drop = loot.select(world, {local_only = true, radius = 60,
+                abandoned = memory.loot_abandoned})
+        end
+        local mob = not priority_drop and combat.select(world, {hunt = true, platform_only = local_only}) or nil
+        local drop
+        if priority_drop then drop = priority_drop end
+        if not mob and not drop then
             local route = {}
             if memory.hunt_action == "patrol" and memory.mover and memory.mover.edges then
                 for _, edge in ipairs(memory.mover.edges) do route[edge.to] = true end

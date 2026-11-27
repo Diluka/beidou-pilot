@@ -75,8 +75,13 @@ selected, reason = loot.select(selection_world, {})
 assert(selected == nil and reason == "unsafe", "HP below 40 percent must block selection")
 selection_world.character.hp = 40
 selection_world.mobs = {{active = true, x = 80, y = 0}}
-selected, reason = loot.select(selection_world, {})
-assert(selected == nil and reason == "unsafe", "an active mob within 80px must block selection")
+selected = loot.select(selection_world, {})
+assert(selected and selected.object_id == 2,
+    "a close landed drop may be picked while a mob is nearby (opportunistic pickup)")
+local far_world = world_with({drop(20, 150)})
+far_world.mobs = {{active = true, x = 80, y = 0}}
+selected, reason = loot.select(far_world, {})
+assert(selected == nil and reason == "unsafe", "a far drop with an active mob within 80px must stay blocked")
 selection_world.mobs = {{active = false, x = 0, y = 0}}
 assert(loot.select(selection_world, {}) ~= nil, "inactive mobs must not block selection")
 selection_world.mobs = {}
@@ -153,6 +158,22 @@ status, reason = loot.step(ctx, world, current, mover)
 assert(status == "failed" and reason == "unsafe" and pickup_count == 4,
     "new danger during a step must stop pickup")
 world.character.hp = 40
+
+current = drop(18, 20)
+world = world_with({current})
+world.mobs = {{active = true, x = 60, y = 0}}
+mover = {status = "done"}
+local close_pickup_before = pickup_count
+assert(loot.step(context(0), world, current, mover) == "running"
+    and pickup_count == close_pickup_before + 1,
+    "a close drop may be picked while a mob is nearby")
+current = drop(19, 150)
+world = world_with({current})
+world.mobs = {{active = true, x = 60, y = 0}}
+mover = {status = "done"}
+local status_far, reason_far = loot.step(context(0), world, current, mover)
+assert(status_far == "failed" and reason_far == "unsafe",
+    "a far drop with nearby mobs must remain unsafe for pickup")
 
 current = drop(15, 20)
 world = world_with({current})
