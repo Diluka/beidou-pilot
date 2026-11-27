@@ -245,6 +245,24 @@ function M.publish(ctx, world, now)
             end
         end
     end
+    if ctx.state then
+        -- os.time is second-resolution: a three-second difference is only a
+        -- coarse publication-gap candidate, never proof of a slow resume.
+        local wall = os.time()
+        local previous = ctx.state.last_publish_wall
+        if previous and wall - previous >= 3
+            and (not ctx.state.slow_reported_at or wall - ctx.state.slow_reported_at >= 60) then
+            local tick = ctx.tick or {}
+            local action = ctx.state.travel and "travel" or ctx.state.hunt_action or bot.mode or "unknown"
+            local ok = append_event(root, {ts_ms = wall * 1000, type = "tick/slow", data = {
+                reason = "unknown", kind = "state_publish_gap", wall_gap_seconds = wall - previous,
+                session_id = tick.script_id or JSON_NULL, index = tick.index or JSON_NULL,
+                delta = tick.delta or JSON_NULL, budget_ms = JSON_NULL, action = action,
+            }})
+            if ok then ctx.state.slow_reported_at = wall end
+        end
+        ctx.state.last_publish_wall = wall
+    end
     last_publish = now
     if ctx.state then ctx.state.force_publish = nil end
 
