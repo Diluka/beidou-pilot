@@ -123,6 +123,23 @@ tools/botctl stop dev/NAME
 - 离线重登：`reconcile` 以客户端 `inventory/equipped` 为准——清单/候选里已不存在的物品自动移除，仍存在的保留；**清单持久化在 `/work/bot/memory.lua`，重登不丢**；
 - 自动清包只处理 `approved=true` 的清单项；新获得/未确认装备永不自动卖；人工确认用 `equipment.approve(store, item_id)`。
 
+## 战斗模式（近战/远程/技能）
+
+`config.conf`（或 defaults）可配置：
+
+```ini
+attack_mode=ranged   # melee | ranged | skill
+attack_range=200     # 远程停止距离；超过则接近，小于 min_range 则后撤
+min_range=70
+attack_skill_id=1000 # skill 模式主攻技能；MP 不足回退普攻
+skill_mp_cost=10
+```
+
+- `ranged`：进入 `attack_range` 即停、转向、`player.attack()`（弓/弩消耗箭矢），`< min_range` 先后撤，不贴脸；
+- `skill`：MP 足够时 `player.skill(attack_skill_id)`，否则普攻；目标丢失/切换时释放技能意图；
+- `melee`：保持旧行为（60px 内普攻）。
+弓箭手推荐：`attack_mode=ranged`，技能可用后改 `skill`。
+
 ## 离线测试
 
 从仓库根目录运行：
