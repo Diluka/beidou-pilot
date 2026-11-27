@@ -3,8 +3,11 @@ return {
     owner_character_id = 0,
     attack_skill_id = 0,
     attack_mode = "melee", -- melee|ranged|skill
-    attack_range = 200, -- 远程攻击距离（ranged/skill）
-    min_range = 70, -- 过近后撤阈值
+    attack_range = 110, -- 远程基础射程（弓/弩），远程箭加成另计
+    min_range = 60, -- 过近后撤阈值
+    ranged_skill_id = 3000002, -- 远程箭（弓箭手 1 转，8 级共 +120）
+    ranged_skill_bonus_per_level = 15, -- 远程箭每级射程增量
+    ranged_skill_level = 0, -- 技能观察不可读时的兜底档位
     skill_mp_cost = 10,
     hp_item = 0,
     mp_item = 0,

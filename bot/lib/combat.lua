@@ -174,8 +174,26 @@ function M.step(ctx, world, mob, mover)
     local target_distance = distance(character, mob)
     local config = world.config or state.bot and state.bot.config or {}
     local attack_mode = config.attack_mode or "melee"
-    local attack_range = tonumber(config.attack_range) or 200
-    local min_range = tonumber(config.min_range) or 70
+    local min_range = tonumber(config.min_range) or 60
+    -- 射程与武器/技能挂钩：弓弩基础射程 + 已学「远程箭」加成。
+    -- 远程箭（弓箭手 1 转）= 3000002：Data/Skill/300.img/skill/3000002 最高 8 级，
+    -- range 依次为 15/30/…/120，即每级 +15。弓弩基础射程 110 来自真机距离预判，
+    -- 原版客户端公式待核实。技能列表不可读时用 ranged_skill_level 兜底。
+    local attack_range = tonumber(config.attack_range) or 110
+    if attack_mode ~= "melee" then
+        local skill_id = tonumber(config.ranged_skill_id) or 3000002
+        local per_level = tonumber(config.ranged_skill_bonus_per_level) or 15
+        local observed = ctx.game.character
+        local skills = observed and observed.skills
+        local level
+        if type(skills) == "table" and observed.skills_complete ~= false then
+            local record = skills[tostring(skill_id)]
+            level = type(record) == "table" and tonumber(record.level) or 0
+        else
+            level = tonumber(config.ranged_skill_level) or 0
+        end
+        attack_range = attack_range + level * per_level
+    end
     if attack_mode ~= "melee" and target_distance < min_range then
         -- 远程/技能：过近先撤离，不主动贴脸
         if not mover or type(mover) ~= "table" then return finish("failed", "mover_unavailable", true) end
