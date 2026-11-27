@@ -66,6 +66,25 @@ function M.step(ctx, world, graph, mover)
         patrol.visited, patrol.index, patrol.wait_until, patrol.order, patrol.arrivals = {}, 1, nil, nil, 0
         return "waiting", "refresh_complete"
     end
+    local config = world.config or memory.bot and memory.bot.config or {}
+    local function narrow(index)
+        local platform = graph.platforms[index]
+        -- Reserve min_range plus 60px for spacing and turning.
+        return (config.attack_mode or "melee") ~= "melee" and platform
+            and platform.right - platform.left < (tonumber(config.min_range) or 60) + 60
+    end
+    local function skip_narrow(index)
+        if not patrol.skipped[index] then
+            io_module.event(ctx, "hunt/skip", {platform = index, reason = "narrow_platform"})
+            patrol.skipped[index] = true
+        end
+    end
+    if patrol.target and narrow(patrol.target) then
+        if mover.status == "running" then move.stop(mover) end
+        skip_narrow(patrol.target)
+        patrol.target, patrol.route_started = nil, nil
+    end
+    if narrow(character.platform) then skip_narrow(character.platform) end
     if patrol.target then
         if character.platform == patrol.target then
             if mover.status == "running" then move.stop(mover) end
@@ -117,6 +136,7 @@ function M.step(ctx, world, graph, mover)
         while patrol.index <= #patrol.order do
             local index = patrol.order[patrol.index]
             patrol.index = patrol.index + 1
+            if narrow(index) then skip_narrow(index) end
             if not patrol.visited[index] and not patrol.skipped[index] then target = index; break end
         end
         if not target then

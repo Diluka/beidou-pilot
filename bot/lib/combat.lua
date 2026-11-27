@@ -198,6 +198,55 @@ function M.step(ctx, world, mob, mover)
         return finish("failed", "leash_exceeded", true)
     end
     if now - combat.started_at >= 15 then return finish("failed", "timeout", true) end
+    local config = world.config or state.bot and state.bot.config or {}
+    local attack_mode = config.attack_mode or "melee"
+    local min_range = tonumber(config.min_range) or 60
+    local graph = state.graph or mover and mover.graph
+    local platform = graph and graph.platforms and graph.platforms[mob.platform]
+    if attack_mode ~= "melee" and state.bot and state.bot.mode == "hunt" and platform
+        and platform.right - platform.left < min_range + 60 then
+        return finish("failed", "narrow_platform", true)
+    end
+    if attack_mode ~= "melee" and mob.platform == character.platform
+        and not (combat.moving == "cross_platform" and mover and mover.status == "running")
+        and distance(character, mob) < min_range then
+        player.skill(nil)
+        combat.action, combat.skill_id, combat.facing_direction = nil, nil, nil
+        local direction = mob.x > character.x and "left" or "right"
+        local available = 0
+        local source = graph and graph.platforms and graph.platforms[character.platform]
+        if source then
+            available = direction == "left" and character.x - source.left or source.right - character.x
+            for i = 1, #(graph.walls or {}), 3 do
+                local x, top, bottom = graph.walls[i], graph.walls[i + 1], graph.walls[i + 2]
+                if top <= character.y and bottom >= character.y - (graph.model and graph.model.stand_height or 40)
+                    and (direction == "left" and x <= character.x or direction == "right" and x >= character.x) then
+                    available = math.min(available, math.abs(character.x - x))
+                end
+            end
+        end
+        local threshold = math.min(40, min_range / 2)
+        if not source or available < threshold then
+            io_module.event(ctx, "combat/retreat_blocked", {reason = source and "insufficient_space" or "platform_unavailable",
+                platform = character.platform, retreat_distance = available, target_distance = distance(character, mob)})
+            return finish("failed", "retreat_blocked", true)
+        end
+        if not mover then return finish("failed", "mover_unavailable", true) end
+        if combat.moving ~= "retreat" or mover.status ~= "running" or combat.retreat_direction ~= direction then
+            local destination = character.x + (direction == "left" and -threshold or threshold)
+            local ok, err = move.set_path(mover, {{kind = "walk", from = character.platform, to = character.platform,
+                x = character.x, destination = destination, rise = 0}})
+            if not ok then return finish("failed", err or "no_path", true) end
+            combat.moving, combat.retreat_direction = "retreat", direction
+        end
+        local status, reason = move.step(mover, ctx, world)
+        if status == "failed" then
+            io_module.event(ctx, "combat/retreat_blocked", {reason = reason or "move_failed", platform = character.platform,
+                retreat_distance = available, target_distance = distance(character, mob)})
+            return finish("failed", "retreat_blocked", true)
+        end
+        return "running", "retreating"
+    end
     local observed = ctx.game.character or {}
     if observed.attacking or not observed.action_idle then
         player.move(nil)
@@ -234,9 +283,6 @@ function M.step(ctx, world, mob, mover)
         combat.moving, combat.progress_at = nil, now
     end
     local target_distance = distance(character, mob)
-    local config = world.config or state.bot and state.bot.config or {}
-    local attack_mode = config.attack_mode or "melee"
-    local min_range = tonumber(config.min_range) or 60
     -- 射程与武器/技能挂钩：弓弩基础射程 + 已学「远程箭」加成。
     -- 远程箭（弓箭手 1 转）= 3000002：Data/Skill/300.img/skill/3000002 最高 8 级，
     -- range 依次为 15/30/…/120，即每级 +15。弓弩基础射程 110 来自真机距离预判，
@@ -256,12 +302,9 @@ function M.step(ctx, world, mob, mover)
         end
         attack_range = attack_range + level * per_level
     end
-    if attack_mode ~= "melee" and target_distance < min_range then
-        -- 远程/技能：过近先撤离，不主动贴脸
-        if not mover or type(mover) ~= "table" then return finish("failed", "mover_unavailable", true) end
-        local direction = mob.x > character.x and "left" or "right"
-        if not player.move(direction) then return finish("failed", "unsupported_edge", true) end
-        return "running", "retreating"
+    if combat.moving == "retreat" then
+        if mover and mover.status == "running" then move.stop(mover) end
+        combat.moving, combat.progress_at = nil, now
     end
     if mob.hp_percent ~= nil and combat.progress_hp ~= nil and mob.hp_percent < combat.progress_hp then
         combat.progress_hp, combat.progress_at, combat.repositioned = mob.hp_percent, now, false

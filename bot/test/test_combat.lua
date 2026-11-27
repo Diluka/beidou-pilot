@@ -257,6 +257,7 @@ local function ranged_fixture(object_id, target_x, config, skills, complete)
     world.mobs = {current}
     ctx, path_mover = player_context(), mover()
     ctx.game.character = {skills = skills or {}, skills_complete = complete ~= false, action_idle = true}
+    ctx.state.graph = {platforms = {{left = -200, right = 200}}, walls = {}, model = {stand_height = 40}}
     return current
 end
 
@@ -311,8 +312,33 @@ assert(status == "running" and reason == "attacking" and calls[#calls] == "attac
 
 local target_close = ranged_fixture(46, 40, {attack_mode = "ranged"})
 status, reason = combat.step(ctx, world, target_close, path_mover)
-assert(status == "running" and reason == "retreating" and calls[#calls] == "move_left",
-    "a target closer than the 60px min range must be left by moving away")
+assert(status == "running" and reason == "retreating" and edges[1].destination == -30,
+    "a close target must trigger a bounded retreat through the mover")
+
+local blocked = ranged_fixture(146, 40, {attack_mode = "ranged"})
+world.map_id = 146
+ctx.state.graph.platforms[1].left = -10
+world.character.hp, world.character.max_hp = 20, 100
+assert(combat.select(world, {hunt = true}) == blocked)
+status, reason = combat.step(ctx, world, blocked, path_mover)
+assert(status == "failed" and reason == "retreat_blocked")
+local event = events[#events]
+assert(event.kind == "combat/retreat_blocked" and event.data.reason == "insufficient_space"
+    and event.data.platform == 1 and event.data.retreat_distance == 10 and event.data.target_distance == 40)
+for _, call in ipairs(calls) do assert(call ~= "attack" and not call:match("^skill_%d+$")) end
+assert(combat.select(world, {hunt = true}) == nil, "blocked target must be abandoned")
+
+local wall_target = ranged_fixture(147, 40, {attack_mode = "ranged"})
+ctx.state.graph.walls = {-15, -40, 0}
+status, reason = combat.step(ctx, world, wall_target, path_mover)
+assert(status == "failed" and reason == "retreat_blocked" and events[#events].data.retreat_distance == 15)
+
+local narrow_target = ranged_fixture(148, 80, {attack_mode = "ranged"})
+ctx.state.bot = {mode = "hunt", config = world.config}
+ctx.state.graph.platforms[1] = {left = -50, right = 50}
+status, reason = combat.step(ctx, world, narrow_target, path_mover)
+assert(status == "failed" and reason == "narrow_platform", "hunt must not attack a narrow platform")
+for _, call in ipairs(calls) do assert(call ~= "attack" and not call:match("^skill_%d+$")) end
 
 local target_edge = ranged_fixture(47, 65, {attack_mode = "ranged"})
 status, reason = combat.step(ctx, world, target_edge, path_mover)
