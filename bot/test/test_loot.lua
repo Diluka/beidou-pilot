@@ -208,6 +208,17 @@ status, reason = loot.step(ctx, world, cross, mover)
 assert(status == "failed" and reason == "no_path" and ctx.state.loot_abandoned[90])
 assert(loot.select(world, {graph = {}, abandoned = ctx.state.loot_abandoned}) == nil,
     "unreachable drop must not be selected again")
+local blocked_drop = drop(92, 100, 2)
+ctx.state.hunt_failures = 0
+world.drops = {blocked_drop}
+terrain.plan = function() return {{kind = "rope", from = 1, to = 2, x = 17, destination = 17, rise = 40}} end
+mover = {status = "done"}
+move_results = {{"failed", "rope_mismatch"}}
+status, reason = loot.step(ctx, world, blocked_drop, mover)
+assert(status == "failed" and ctx.state.blocked["1:2"] and ctx.state.hunt_failures == 1)
+assert(events[#events].data.edge_kind == "rope" and events[#events].data.edge_x == 17,
+    "loot failure event identifies the failed edge")
+assert(loot.select(world, {graph = {}, local_only = true}) == nil, "fallback excludes remote loot")
 terrain.plan = saved_plan
 
 move.set_path, move.step, move.stop = saved_set_path, saved_move_step, saved_move_stop

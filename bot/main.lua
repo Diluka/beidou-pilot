@@ -118,6 +118,7 @@ local function main(context)
         if memory.mover then move.stop(memory.mover) end
         memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
         memory.loot_abandoned, memory.loot_abandoned_scope = nil, nil
+        memory.blocked, memory.hunt_failures = nil, nil
         memory.graph, memory.mover, memory.path_target, memory.follow_unreachable = nil, nil, nil, nil
         memory.graph_generation, memory.graph_attempt_generation, memory.mover_attempt_generation = nil, nil, nil
         memory.hunt_retry_at = nil
@@ -225,15 +226,29 @@ local function main(context)
 
     if bot.mode == "hunt" and terrain_ready then
         -- Do not interrupt an in-flight navigation edge when platform_at is unknown.
-        if character.on_ground == false and memory.mover and memory.mover.status == "running" then
-            local status, reason = move.step(memory.mover, context, world)
-            if status == "failed" then io_module.event(context, "error", {reason = reason}) end
+        if character.on_ground == false and memory.mover and memory.hunt_action then
+            if memory.mover.status == "running" then move.step(memory.mover, context, world) end
             io_module.publish(context, world, now)
             return
         end
-        local mob = combat.select(world, {hunt = true})
-        local drop
+        if character.on_ground and memory.mover and memory.mover.status == "failed" then
+            if memory.hunt_action == "patrol" then
+                hunt.step(context, world, memory.graph, memory.mover)
+                io_module.publish(context, world, now)
+                return
+            elseif memory.hunt_action == "loot" and memory.hunt_drop then
+                loot.step(context, world, memory.hunt_drop, memory.mover)
+                memory.hunt_drop = nil
+                io_module.publish(context, world, now)
+                return
+            end
+        end
         local scope = tostring(world.map_id) .. ":" .. tostring(generation)
+        if memory.hunt_blocked_scope ~= scope then
+            memory.blocked, memory.hunt_failures, memory.hunt_blocked_scope = nil, nil, scope
+        end
+        local mob = combat.select(world, {hunt = true, platform_only = (memory.hunt_failures or 0) >= 3})
+        local drop
         if memory.loot_abandoned_scope ~= scope then
             memory.loot_abandoned, memory.loot_abandoned_scope = {}, scope
         end
@@ -242,7 +257,8 @@ local function main(context)
             if memory.hunt_action == "patrol" and memory.mover and memory.mover.edges then
                 for _, edge in ipairs(memory.mover.edges) do route[edge.to] = true end
             end
-            local options = {graph = memory.graph, route_platforms = route, abandoned = memory.loot_abandoned}
+            local options = {graph = memory.graph, route_platforms = route, abandoned = memory.loot_abandoned,
+                local_only = (memory.hunt_failures or 0) >= 3}
             if memory.hunt_drop then
                 for _, observed in ipairs(world.drops or {}) do
                     if observed.object_id == memory.hunt_drop.object_id then
@@ -284,7 +300,21 @@ local function main(context)
             end
             if status == "failed" then
                 bot.last_error = reason
-                io_module.event(context, "error", {reason = reason})
+                if action == "combat" then
+                    local edge = mover.status == "failed" and mover.edges and mover.edges[mover.index or 1]
+                    if edge then
+                        memory.hunt_failures = (memory.hunt_failures or 0) + 1
+                        if edge.from and edge.to and edge.from ~= edge.to then
+                            memory.blocked = memory.blocked or {}
+                            memory.blocked[tostring(edge.from) .. ":" .. tostring(edge.to)] = true
+                        end
+                    end
+                    if not memory.hunt_error_at or now - memory.hunt_error_at >= 10 then
+                        io_module.event(context, "error", {reason = reason, edge_kind = edge and edge.kind,
+                            edge_from = edge and edge.from, edge_to = edge and edge.to, edge_x = edge and edge.x})
+                        memory.hunt_error_at = now
+                    end
+                end
             end
         end
         io_module.publish(context, world, now)

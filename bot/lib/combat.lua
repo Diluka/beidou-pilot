@@ -92,7 +92,8 @@ function M.select(world, options)
         end
         local leash_origin = owner and owner.present ~= false and owner or character
         if locked and locked.active == true and locked.template_id ~= nil and locked.template_id ~= ""
-            and locked.platform ~= nil and not is_excluded(options.exclude, locked.object_id)
+            and locked.platform ~= nil and (not options.platform_only or locked.platform == character.platform)
+            and not is_excluded(options.exclude, locked.object_id)
             and not abandoned[active_target] and type(locked.x) == "number" and type(locked.y) == "number"
             and not (locked.hp_percent ~= nil and locked.hp_percent <= 0)
             and not (locked.hp ~= nil and locked.hp <= 0)
@@ -106,7 +107,8 @@ function M.select(world, options)
     for _, mob in ipairs(world.mobs or {}) do
         local key = target_key(mob)
         if mob.active == true and mob.template_id ~= nil and mob.template_id ~= ""
-            and mob.platform ~= nil and not is_excluded(options.exclude, mob.object_id)
+            and mob.platform ~= nil and (not options.platform_only or mob.platform == character.platform)
+            and not is_excluded(options.exclude, mob.object_id)
             and not abandoned[key] and type(mob.x) == "number" and type(mob.y) == "number"
             and not (mob.hp_percent ~= nil and mob.hp_percent <= 0)
             and not (mob.hp ~= nil and mob.hp <= 0) then

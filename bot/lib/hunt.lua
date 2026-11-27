@@ -17,6 +17,28 @@ function M.step(ctx, world, graph, mover)
         return move.step(mover, ctx, world)
     end
     if not character.on_ground or not character.platform then return "waiting", "platform_unknown" end
+    if not patrol.fallback_until and (memory.hunt_failures or 0) >= 3 then
+        if mover.status == "running" then move.stop(mover) end
+        patrol.fallback_until = now + 30
+        io_module.event(ctx, "hunt/fallback", {platform = character.platform, reason = "move_failures"})
+    end
+    if patrol.fallback_until then
+        if now < patrol.fallback_until then
+            local platform = graph.platforms[character.platform]
+            local observed = ctx.game.character or {}
+            local direction = math.floor(now / 5) % 2 == 0 and "right" or "left"
+            local safe = platform and character.x and (direction == "right" and character.x < platform.right - 40
+                or direction == "left" and character.x > platform.left + 40)
+            if safe and observed.action_idle and not observed.attacking then
+                ctx.game.player.move(direction)
+            else
+                ctx.game.player.move(nil)
+            end
+            return "waiting", "fallback"
+        end
+        ctx.game.player.move(nil)
+        patrol.fallback_until, memory.hunt_failures = nil, 0
+    end
     if not patrol.order then
         local adjacent, seen, order = {}, {[character.platform] = true}, {character.platform}
         for kind, values in pairs(graph.candidates) do
@@ -41,12 +63,14 @@ function M.step(ctx, world, graph, mover)
     end
     if patrol.wait_until then
         if now < patrol.wait_until then return "waiting", "refresh" end
-        patrol.visited, patrol.index, patrol.wait_until = {}, 1, nil
+        patrol.visited, patrol.skipped, patrol.index, patrol.wait_until, patrol.order, patrol.arrivals = {}, {}, 1, nil, nil, 0
+        return "waiting", "refresh_complete"
     end
     if patrol.target then
         if character.platform == patrol.target then
             if mover.status == "running" then move.stop(mover) end
             patrol.visited[patrol.target] = true
+            patrol.arrivals, memory.hunt_failures = (patrol.arrivals or 0) + 1, 0
             io_module.event(ctx, "hunt/platform", {platform = patrol.target, map_id = world.map_id})
             patrol.target, patrol.failures, patrol.route_started = nil, nil, nil
             return "waiting", "arrived"
@@ -56,18 +80,27 @@ function M.step(ctx, world, graph, mover)
             move.stop(mover)
             io_module.event(ctx, "hunt/recover", {from = character.platform, to = patrol.target, reason = "displaced"})
         end
-        if mover.status == "running" then
-            local status, reason = move.step(mover, ctx, world)
-            if status == "running" then return status, reason end
-            if status == "failed" then
-                patrol.failures = (patrol.failures or 0) + 1
-                if patrol.failures >= 2 then
-                    io_module.event(ctx, "hunt/skip", {from = character.platform, to = patrol.target, reason = reason})
-                    patrol.skipped[patrol.target], patrol.target, patrol.failures = true, nil, nil
-                    return "waiting", reason
-                end
-                io_module.event(ctx, "hunt/recover", {from = character.platform, to = patrol.target, reason = reason})
+        local status, reason = mover.status, mover.reason
+        if status == "running" then status, reason = move.step(mover, ctx, world) end
+        if status == "running" then return status, reason end
+        if status == "failed" then
+            local failed = mover.edges and mover.edges[mover.index or 1]
+            if failed and failed.from and failed.to and failed.from ~= failed.to then
+                memory.blocked = memory.blocked or {}
+                memory.blocked[tostring(failed.from) .. ":" .. tostring(failed.to)] = true
             end
+            memory.hunt_failures = (memory.hunt_failures or 0) + 1
+            patrol.failures = (patrol.failures or 0) + 1
+            local detail = {from = character.platform, to = patrol.target, reason = reason,
+                edge_kind = failed and failed.kind, edge_from = failed and failed.from,
+                edge_to = failed and failed.to, edge_x = failed and failed.x}
+            mover.status = "done"
+            if patrol.failures >= 2 then
+                io_module.event(ctx, "hunt/skip", detail)
+                patrol.skipped[patrol.target], patrol.target, patrol.failures, patrol.route_started = true, nil, nil, nil
+                return "waiting", reason
+            end
+            io_module.event(ctx, "hunt/recover", detail)
         end
         -- A knockback or failed edge invalidates the old route; replan on the next tick.
         patrol.recovering = patrol.route_started or nil
@@ -80,8 +113,8 @@ function M.step(ctx, world, graph, mover)
             if not patrol.visited[index] and not patrol.skipped[index] then target = index; break end
         end
         if not target then
-            patrol.wait_until = now + 5
-            io_module.event(ctx, "hunt/cycle", {map_id = world.map_id})
+            patrol.wait_until = now + ((patrol.arrivals or 0) > 0 and 5 or 30)
+            io_module.event(ctx, "hunt/cycle", {map_id = world.map_id, arrivals = patrol.arrivals or 0})
             return "waiting", "refresh"
         end
         patrol.target = target
@@ -100,13 +133,13 @@ function M.step(ctx, world, graph, mover)
         if not patrol.skipped[target] then
             io_module.event(ctx, "hunt/skip", {from = from, to = target, reason = reason or "no_path", plan_ms = elapsed})
         end
-        patrol.skipped[target], patrol.target, patrol.recovering, patrol.route_started = true, nil, nil, nil
+        patrol.skipped[target], patrol.target, patrol.recovering, patrol.route_started, patrol.failures = true, nil, nil, nil, nil
         return "waiting", reason or "no_path"
     end
     local ok, err = move.set_path(mover, path)
     if not ok then
         io_module.event(ctx, "hunt/skip", {from = from, to = target, reason = err})
-        patrol.skipped[target], patrol.target, patrol.recovering, patrol.route_started = true, nil, nil, nil
+        patrol.skipped[target], patrol.target, patrol.recovering, patrol.route_started, patrol.failures = true, nil, nil, nil, nil
         return "waiting", err
     end
     if patrol.recovering then

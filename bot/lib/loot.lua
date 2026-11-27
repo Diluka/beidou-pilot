@@ -50,7 +50,7 @@ function M.select(world, options)
     local candidates = {}
     for _, drop in ipairs(world.drops) do
         if drop.landed == true and drop.platform ~= nil
-            and (drop.platform == character.platform or options.graph)
+            and (drop.platform == character.platform or (options.graph and not options.local_only))
             and drop.object_id ~= nil and not (options.abandoned and options.abandoned[drop.object_id]) then
             local drop_distance = distance(character, drop)
             if drop_distance and (drop_distance <= radius or options.graph) then
@@ -99,6 +99,14 @@ local function clear_input(ctx, mover)
 end
 
 local function fail(ctx, world, drop, mover, state, reason)
+    local edge = mover.status == "failed" and mover.edges and mover.edges[mover.index or 1]
+    if ctx.state and (edge or reason == "no_path" and world.character.platform ~= drop.platform) then
+        ctx.state.hunt_failures = (ctx.state.hunt_failures or 0) + 1
+        if edge and edge.from and edge.to and edge.from ~= edge.to then
+            ctx.state.blocked = ctx.state.blocked or {}
+            ctx.state.blocked[tostring(edge.from) .. ":" .. tostring(edge.to)] = true
+        end
+    end
     clear_input(ctx, mover)
     mover.loot = nil
     if ctx.state and reason ~= "unsafe" then
@@ -110,7 +118,8 @@ local function fail(ctx, world, drop, mover, state, reason)
     end
     require("lib.io").event(ctx, "loot", {
         object_id = drop.object_id, item_id = drop.item_id, reason = reason,
-        attempts = state.attempt + 1,
+        attempts = state.attempt + 1, edge_kind = edge and edge.kind,
+        edge_from = edge and edge.from, edge_to = edge and edge.to, edge_x = edge and edge.x,
     })
     return "failed", reason
 end
@@ -145,6 +154,10 @@ function M.step(ctx, world, drop, mover)
             baseline_quantity = inventory_quantity(world, drop.item_id),
         }
         mover.loot = state
+    end
+
+    if state.cross_platform and mover.status == "failed" then
+        return fail(ctx, world, drop, mover, state, mover.reason or "move_failed")
     end
 
     local quantity = inventory_quantity(world, state.item_id)
