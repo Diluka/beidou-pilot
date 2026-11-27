@@ -69,7 +69,14 @@ function M.step(ctx, world)
         end
         player.skill(nil)
         memory.potion = nil
-        return true, "no_potion"
+        -- 无药不是“被接管”：返回 false 让 idle/hunt/travel/loot 继续；
+        -- 事件按 30 秒限频，避免每 tick 刷屏。
+        local now = world.now or 0
+        if not memory.no_potion_at or now - memory.no_potion_at >= 30 then
+            memory.no_potion_at = now
+            io_module.event(ctx, "sustain/no_potion", {kind = kind, item_id = id})
+        end
+        return false, nil
     end
     return false, nil
 end
