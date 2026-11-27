@@ -122,7 +122,10 @@ local function abort_sweep(ctx, mover, reason, preserve_action)
     end
     mover.loot = nil
     require("lib.io").event(ctx, "loot/sweep", {reason = reason, items = sweep.items,
-        count = sweep.count, elapsed = ctx.tick.time - sweep.started_at, attempts = sweep.submissions})
+        count = sweep.count, elapsed = ctx.tick.time - sweep.started_at, attempts = sweep.submissions,
+        initial_drops = sweep.initial_drops, remaining_drops = sweep.remaining_drops,
+        accepted = sweep.accepted, rejected = sweep.rejected, last_rejection = sweep.last_rejection,
+        fallback = sweep.fallback or false})
     return true
 end
 
@@ -165,19 +168,11 @@ function M.step(ctx, world, drop, mover)
     end
     local function end_sweep(reason, failed)
         local sweep = mover.loot
-        if failed and reason == "timeout" and ctx.state then
-            local scope = tostring(world.map_id) .. ":" .. tostring(world.scene_generation)
-            if ctx.state.loot_abandoned_scope ~= scope then
-                ctx.state.loot_abandoned, ctx.state.loot_abandoned_scope = {}, scope
-            end
-            for id in pairs(sweep.seen) do ctx.state.loot_abandoned[id] = true end
-        end
         abort_sweep(ctx, mover, reason)
         return failed and "failed" or "done", reason
     end
-    if mover.loot and mover.loot.sweep and (low_hp(world) or mob_near(world)) then
-        return end_sweep("unsafe", true)
-    end
+    if mover.loot and mover.loot.sweep and low_hp(world) then return end_sweep("hp_low", true) end
+    if mover.loot and mover.loot.sweep and mob_near(world) then return end_sweep("unsafe", true) end
     if low_hp(world) then
         return fail(ctx, world, drop, mover, mover.loot or {attempt = 0}, "unsafe")
     end
@@ -200,27 +195,36 @@ function M.step(ctx, world, drop, mover)
     end
 
     local now = ctx.tick and ctx.tick.time or world.now
+    local scope = tostring(world.map_id) .. ":" .. tostring(world.scene_generation)
+    if mover.sweep_fallback_scope ~= scope then
+        mover.sweep_fallback, mover.sweep_fallback_scope = {}, scope
+    end
+    local fallback_until = mover.sweep_fallback[drop.object_id]
     local state = mover.loot
-    if (state and state.sweep) or (character.platform == drop.platform and close_distance
+    if (state and state.sweep) or (not (fallback_until and now < fallback_until)
+        and character.platform == drop.platform and close_distance
         and close_distance <= SWEEP_RADIUS and not mob_near(world) and drop.landed == true) then
         if not state or not state.sweep then
             if mover.status == "running" then move.stop(mover) end
             state = {sweep = true, platform = character.platform, started_at = now, seen = {}, items = {},
-                count = 0, submissions = 0, attempt = 0}
+                count = 0, submissions = 0, accepted = 0, rejected = 0, attempt = 0}
             mover.loot = state
         end
-        local closest, closest_distance
+        local closest, closest_distance, remaining = nil, nil, 0
         for _, current in ipairs(world.drops or {}) do
             local d = distance(character, current)
             if current.landed == true and current.platform == state.platform and current.object_id ~= nil
                 and d and d <= SWEEP_RADIUS
                 and not (ctx.state and ctx.state.loot_abandoned and ctx.state.loot_abandoned[current.object_id]) then
+                remaining = remaining + 1
                 if not state.seen[current.object_id] then
                     state.seen[current.object_id] = {item_id = current.item_id, present = true}
                 end
                 if not closest or d < closest_distance then closest, closest_distance = current, d end
             end
         end
+        state.initial_drops = state.initial_drops or remaining
+        state.remaining_drops = remaining
         for id, entry in pairs(state.seen) do
             if entry.present and state.pickup_requested and drop_is_present(world, id) == false then
                 entry.present = false
@@ -229,9 +233,18 @@ function M.step(ctx, world, drop, mover)
             end
         end
         if not closest then return end_sweep("cleared", false) end
-        if now - state.started_at >= 5 then return end_sweep("timeout", true) end
+        if now - state.started_at >= 5 then
+            -- Try each still-visible drop through the existing individual path before another sweep.
+            for id, entry in pairs(state.seen) do
+                if entry.present then mover.sweep_fallback[id] = now + 15 end
+            end
+            state.fallback = true
+            abort_sweep(ctx, mover, "timeout")
+            return "running", "fallback"
+        end
         if closest_distance > 25 then
-            local destination = closest.x + (character.x < closest.x and -20 or 20)
+            -- Walk's 12px arrival tolerance must not leave us outside pickup range.
+            local destination = closest.x
             if state.moving_to ~= destination or mover.status ~= "running" then
                 local ok, reason = move.set_path(mover, {{kind = "walk", from = character.platform,
                     to = character.platform, x = character.x, destination = destination, rise = 0}})
@@ -246,8 +259,14 @@ function M.step(ctx, world, drop, mover)
         end
         if not state.intent_held and (not state.next_attempt or now >= state.next_attempt) then
             state.submissions = state.submissions + 1
-            local ok = player.pickup()
-            if ok then state.pickup_requested, state.intent_held = true, true else state.next_attempt = now + 0.5 end
+            local ok, reason = player.pickup()
+            if ok then
+                state.accepted = state.accepted + 1
+                state.pickup_requested, state.intent_held = true, true
+            else
+                state.rejected, state.last_rejection = state.rejected + 1, reason or "rejected"
+                state.next_attempt = now + 0.5
+            end
         end
         return "running", "sweeping"
     end

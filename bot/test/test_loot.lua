@@ -156,8 +156,8 @@ assert(loot.step(ctx, world, current, mover) == "running" and pickup_count == 4,
 world.character.hp = 39
 ctx.tick.time = 4.2
 status, reason = loot.step(ctx, world, current, mover)
-assert(status == "failed" and reason == "unsafe" and pickup_count == 4,
-    "new danger during a step must stop pickup")
+assert(status == "failed" and reason == "hp_low" and pickup_count == 4,
+    "low HP during a sweep must stop pickup")
 world.character.hp = 40
 
 current = drop(18, 20)
@@ -183,10 +183,20 @@ ctx = context(0)
 assert(loot.step(ctx, world, current, mover) == "running")
 ctx.tick.time = 5
 status, reason = loot.step(ctx, world, current, mover)
-assert(status == "failed" and reason == "timeout" and mover.loot == nil,
-    "sweep must stop after five seconds without confirmation")
-assert(events[#events].kind == "loot/sweep" and events[#events].data.attempts == 1,
-    "timeout event reports held-intent submissions")
+assert(status == "running" and reason == "fallback" and mover.loot == nil,
+    "sweep timeout must yield to individual pickup")
+assert(events[#events].kind == "loot/sweep" and events[#events].data.attempts == 1
+    and events[#events].data.initial_drops == 1 and events[#events].data.remaining_drops == 1
+    and events[#events].data.accepted == 1 and events[#events].data.rejected == 0
+    and events[#events].data.fallback == true, "timeout event must describe the fallback")
+ctx.tick.time = 5.1
+status, reason = loot.step(ctx, world, current, mover)
+assert(status == "running" and reason == "picking", "individual pickup must run on the next tick")
+world.drops = {}
+assert(select(2, loot.step(ctx, world, current, mover)) == "picked", "fallback confirms the individual object")
+world.drops = {current}
+ctx.tick.time = 21
+assert(select(2, loot.step(ctx, world, current, mover)) == "sweeping", "sweep becomes eligible after the cooldown")
 
 current = drop(16, 140)
 world = world_with({current})
@@ -251,6 +261,7 @@ world.drops = {b, remote}
 ctx.tick.time = 40.2
 assert(select(2, loot.step(ctx, world, b, mover)) == "sweeping")
 assert(mover.loot.count == 1, "the first disappearance must be observed while the sweep continues")
+assert(edges[#edges].destination == b.x, "walk tolerance must not leave the actor short of pickup range")
 world.drops = {remote}
 ctx.tick.time = 40.4
 status, reason = loot.step(ctx, world, b, mover)
@@ -279,7 +290,9 @@ world.mobs = {{active = true, x = 30, y = 0}}
 ctx.tick.time = 50.6
 status, reason = loot.step(ctx, world, world.drops[1], mover)
 assert(status == "failed" and reason == "unsafe" and not mover.loot
-    and events[#events].kind == "loot/sweep" and events[#events].data.reason == "unsafe")
+    and events[#events].kind == "loot/sweep" and events[#events].data.reason == "unsafe"
+    and events[#events].data.accepted == 1 and events[#events].data.rejected == 1
+    and events[#events].data.last_rejection == "cooldown")
 game.player.pickup = saved_pickup
 for _, hazard in ipairs({"owner", "hp"}) do
     world = world_with({drop(220, 10)})
@@ -290,7 +303,7 @@ for _, hazard in ipairs({"owner", "hp"}) do
     ctx.tick.time = 61
     status, reason = loot.step(ctx, world, world.drops[1], mover)
     assert(status == "failed" and events[#events].kind == "loot/sweep"
-        and events[#events].data.reason == (hazard == "owner" and "owner_near" or "unsafe"))
+        and events[#events].data.reason == (hazard == "owner" and "owner_near" or "hp_low"))
 end
 
 world = world_with({drop(221, 10)})
