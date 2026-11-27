@@ -150,6 +150,26 @@ struct MapNames {
     std::string streetName;
 };
 
+// String/Map.img groups map ids under region nodes (victoria, ossyria, ...),
+// so the map id node is a descendant of the image root, not a direct child.
+bool FindMapNode(const BeidouImgDirectory* image, std::uint32_t first, std::uint32_t count, const std::string& key,
+                 BeidouImgNodeInfo& found) {
+    for (std::uint32_t index = first; index < first + count; ++index) {
+        BeidouImgNodeInfo node{};
+        if (!beidou_img_directory_node(image, index, &node)) continue;
+        std::size_t nameLength = 0;
+        const char* name = beidou_img_directory_string(image, node.name_string_id, &nameLength);
+        if (name != nullptr && std::string(name, nameLength) == key) {
+            found = node;
+            return true;
+        }
+        if (node.type == BEIDOU_IMG_NODE_NONE && node.child_count > 0
+            && FindMapNode(image, node.children, node.child_count, key, found))
+            return true;
+    }
+    return false;
+}
+
 // Reads mapName/streetName from the local String/Map resource. The IMG decoder
 // returns UTF-8 text. A missing resource, id or property yields an empty name
 // and the caller falls back to the map id.
@@ -157,7 +177,7 @@ MapNames ReadMapNames(std::uint32_t mapId) {
     MapNames result;
     const std::string root = DataRoot();
     if (root.empty() || mapId == 0) return result;
-    const std::string path = root + "\\String\\Map.img";
+    const std::string path = root + "\String\Map.img";
     std::array<char, 512> message{};
     BeidouImgDirectory* opened = nullptr;
     if (!beidou_img_file_open(path.c_str(), &opened, message.data(), message.size())) return result;
@@ -165,30 +185,24 @@ MapNames ReadMapNames(std::uint32_t mapId) {
                                                                                            beidou_img_directory_close);
     BeidouImgNodeInfo imageRoot{};
     if (!beidou_img_directory_node(image.get(), 0, &imageRoot)) return result;
-    const std::string key = std::to_string(mapId);
-    for (std::uint32_t index = imageRoot.children; index < imageRoot.children + imageRoot.child_count; ++index) {
-        BeidouImgNodeInfo node{};
-        if (!beidou_img_directory_node(image.get(), index, &node)) continue;
-        std::size_t nameLength = 0;
-        const char* name = beidou_img_directory_string(image.get(), node.name_string_id, &nameLength);
-        if (name == nullptr || std::string(name, nameLength) != key) continue;
-        for (std::uint32_t child = node.children; child < node.children + node.child_count; ++child) {
-            BeidouImgNodeInfo property{};
-            if (!beidou_img_directory_node(image.get(), child, &property)) continue;
-            if (property.type != BEIDOU_IMG_NODE_STRING) continue;
-            std::size_t propertyNameLength = 0;
-            const char* propertyName =
-                beidou_img_directory_string(image.get(), property.name_string_id, &propertyNameLength);
-            std::size_t valueLength = 0;
-            const char* value = beidou_img_directory_string(image.get(), property.value_string_id, &valueLength);
-            if (propertyName == nullptr || value == nullptr) continue;
-            const std::string propertyString(propertyName, propertyNameLength);
-            if (propertyString == "mapName")
-                result.mapName.assign(value, valueLength);
-            else if (propertyString == "streetName")
-                result.streetName.assign(value, valueLength);
-        }
-        break;
+    BeidouImgNodeInfo mapNode{};
+    if (!FindMapNode(image.get(), imageRoot.children, imageRoot.child_count, std::to_string(mapId), mapNode))
+        return result;
+    for (std::uint32_t child = mapNode.children; child < mapNode.children + mapNode.child_count; ++child) {
+        BeidouImgNodeInfo property{};
+        if (!beidou_img_directory_node(image.get(), child, &property)) continue;
+        if (property.type != BEIDOU_IMG_NODE_STRING) continue;
+        std::size_t propertyNameLength = 0;
+        const char* propertyName =
+            beidou_img_directory_string(image.get(), property.name_string_id, &propertyNameLength);
+        std::size_t valueLength = 0;
+        const char* value = beidou_img_directory_string(image.get(), property.value_string_id, &valueLength);
+        if (propertyName == nullptr || value == nullptr) continue;
+        const std::string propertyString(propertyName, propertyNameLength);
+        if (propertyString == "mapName")
+            result.mapName.assign(value, valueLength);
+        else if (propertyString == "streetName")
+            result.streetName.assign(value, valueLength);
     }
     return result;
 }
