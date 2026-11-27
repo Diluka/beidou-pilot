@@ -2,10 +2,10 @@ package.path = "bot/?.lua;bot/?/init.lua;" .. package.path
 local io_module, travel = require("lib.io"), require("lib.travel")
 local old_open, old_poll, old_publish, old_event = io.open, io_module.poll, io_module.publish, io_module.event
 local old_load, old_new, old_step, old_stop = travel.load_route, travel.new, travel.step, travel.stop
-local events, commands, stops, route = {}, {}, 0, false
+local events, commands, stops, route, plan = {}, {}, 0, false, "hunt_map=2\n"
 io.open = function(path, mode)
     if path == "/test/plan.conf" then
-        return {read = function() return "hunt_map=2\n" end, close = function() end}
+        return {read = function() return plan end, close = function() end}
     end
     return old_open(path, mode)
 end
@@ -39,6 +39,19 @@ assert(ctx.state.travel)
 commands = {{_ok = true, kind = "stop", id = "stop", source = "host"}}
 ctx.tick.time = 4; local before = stops; tick(ctx)
 assert(not ctx.state.travel and stops > before, "stop releases travel input")
+ctx.tick.time = 5; tick(ctx)
+assert(not ctx.state.travel, "explicit stop must not restart travel")
+ctx.state.travel_suspended = nil
+ctx.state.bot.mode = "idle"
+ctx.tick.time = 6; tick(ctx)
+assert(ctx.state.travel, "idle resumes travel to bound map")
+local count = #events
+ctx.tick.time = 7; tick(ctx)
+assert(ctx.state.travel and #events == count, "running travel must not restart")
+ctx.game.world.map_id = 2; ctx.game.world.scene_generation = 4; ctx.tick.time = 8; tick(ctx)
+assert(not ctx.state.travel and ctx.state.bot.mode == "idle", "idle remains idle after travel")
+plan = ""; ctx.game.world.map_id = 1; ctx.game.world.scene_generation = 5; ctx.tick.time = 9; tick(ctx)
+assert(not ctx.state.travel, "missing plan must not start travel")
 io.open, io_module.poll, io_module.publish, io_module.event = old_open, old_poll, old_publish, old_event
 travel.load_route, travel.new, travel.step, travel.stop = old_load, old_new, old_step, old_stop
 print("map binding tests passed")

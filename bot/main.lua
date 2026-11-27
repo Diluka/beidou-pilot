@@ -74,6 +74,11 @@ local function main(context)
                 if command._ok then
                     bot.last_command = command.kind
                     bot.last_error = nil
+                    if command.kind == "stop" or command.kind == "stay" then
+                        memory.travel_suspended = true
+                    elseif command.kind == "hunt" then
+                        memory.travel_suspended = nil
+                    end
                 end
                 if command._ok and (command.kind == "stop" or command.kind == "stay"
                     or bot.mode ~= previous_mode or bot.target ~= previous_target) then
@@ -238,7 +243,7 @@ local function main(context)
         return
     end
 
-    -- 地图绑定只约束 hunt；配置和航线允许在运行时更新。
+    -- idle 和 hunt 均遵循地图绑定；显式 stop/stay 保持暂停。
     local plan_file = io.open((memory.bot_root or "/work/bot") .. "/plan.conf", "r")
     local plan_text = plan_file and plan_file:read("*a") or ""
     if plan_file then plan_file:close() end
@@ -253,10 +258,15 @@ local function main(context)
         if memory.travel then travel.stop(memory.travel, context) end
         memory.travel, memory.travel_failed, memory.travel_plan = nil, nil, plan_text
     end
-    if bot.mode ~= "hunt" or not hunt_map then
+    if (bot.mode ~= "hunt" and bot.mode ~= "idle") or not hunt_map or memory.travel_suspended then
         if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
         memory.travel_failed = nil
     elseif world.ready and world.map_id and (world.map_id ~= hunt_map or memory.travel) then
+        if not memory.travel and not memory.travel_failed and not terrain_ready then
+            context.game.player.stop()
+            io_module.publish(context, world, now)
+            return
+        end
         if not memory.travel and not memory.travel_failed then
             local legs, goal = travel.load_route(route_path)
             if legs and goal == hunt_map and legs[1] and legs[1].map == world.map_id then
