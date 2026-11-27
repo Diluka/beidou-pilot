@@ -42,7 +42,7 @@ class BotctlTests(unittest.TestCase):
         with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
             botctl.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
-        for command in ("install", "start", "status", "stop", "logs"):
+        for command in ("install", "start", "status", "stop", "logs", "plan"):
             self.assertIn(command, output.getvalue())
 
     def test_name_requires_partition(self):
@@ -70,6 +70,41 @@ class BotctlTests(unittest.TestCase):
             self.assertEqual((role / "bot/state.json").read_text(), "state")
             self.assertTrue((role / "bot/queue/done").is_dir())
             self.assertTrue((role / "bot/queue/rejected").is_dir())
+
+    def test_plan_generates_route_and_updates_plan(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bot = root / "private/workbenches/dev/hero/bot"
+            bot.mkdir(parents=True)
+            (bot / "plan.conf").write_text("owner=hero\nhunt_map=2\nroute=/old\nplan_revision=1\n")
+            route = '{"from": 100, "goal": 200, "legs": []}\n'
+            with patch.object(botctl.time, "time_ns", return_value=123):
+                code, calls = self.run_botctl(
+                    ["plan", "dev/hero", "--hunt-map", "200"],
+                    [Result(stdout=response({"map_id": 100})), Result(stdout=route)], root,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(calls[0][1:], ["dev/hero", "inspect", "scene"])
+            self.assertEqual(calls[1][-3:], ["dev/hero", "100", "200"])
+            self.assertEqual((bot / "route.json").read_text(), route)
+            self.assertEqual((bot / "plan.conf").read_text(), "owner=hero\nhunt_map=200\nplan_revision=123\n")
+
+    def test_plan_failure_preserves_existing_files(self):
+        cases = ([Result(stdout=response({"map_id": None}))],
+                 [Result(returncode=1, stderr="scene failed")],
+                 [Result(stdout=response({"map_id": 100})), Result(returncode=1, stderr="no route")])
+        for responses in cases:
+            with self.subTest(responses=responses), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                bot = root / "private/workbenches/dev/hero/bot"
+                bot.mkdir(parents=True)
+                (bot / "plan.conf").write_text("hunt_map=42\n")
+                (bot / "route.json").write_text("old route")
+                with contextlib.redirect_stderr(io.StringIO()):
+                    code, _ = self.run_botctl(["plan", "dev/hero", "--hunt-map", "200"], responses, root)
+                self.assertEqual(code, 1)
+                self.assertEqual((bot / "plan.conf").read_text(), "hunt_map=42\n")
+                self.assertEqual((bot / "route.json").read_text(), "old route")
 
     def test_send_publishes_and_reads_receipt(self):
         with tempfile.TemporaryDirectory() as temp:

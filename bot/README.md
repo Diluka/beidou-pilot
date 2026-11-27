@@ -136,6 +136,7 @@ follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代�
 
 ```bash
 tools/botctl install dev/NAME
+tools/botctl plan dev/NAME --hunt-map 20000
 tools/botctl start dev/NAME
 tools/botctl send dev/NAME --kind status --ttl 10
 tools/botctl status dev/NAME
@@ -154,7 +155,9 @@ tools/botctl stop dev/NAME
 
 ## 跨图寻路
 
-宿主侧生成航点，再交给 tick 脚本执行：
+先安装 bot 并让客户端入图，然后可用 `tools/botctl plan dev/NAME --hunt-map 20000` 从当前场景地图调用 `bot_route.py` 生成 `/work/bot/route.json`，并更新 `/work/bot/plan.conf` 的 `hunt_map` 和 `plan_revision`。已有其他计划项保留，旧的 `route` 路径覆盖会清除；观察或寻路失败时原计划和航线保持不变。此命令只规划，不启动脚本或切换模式。进入 hunt 后，地图不同时 bot 使用路线前往目标；路线不可用时等待，不在错误地图狩猎。每次重规划更新 revision，使失败后的同目标路线可以重新尝试。
+
+也可手动在宿主侧生成航点，再交给独立 tick 脚本执行：
 
 ```bash
 # 生成从 10000 到 20000 的航点（写入角色 bot/route.json）

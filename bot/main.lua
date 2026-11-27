@@ -9,6 +9,7 @@ local combat = require("lib.combat")
 local sustain = require("lib.sustain")
 local loot = require("lib.loot")
 local hunt = require("lib.hunt")
+local travel = require("lib.travel")
 local defaults = require("defaults")
 local memory_module = require("lib.memory")
 
@@ -77,6 +78,8 @@ local function main(context)
                 if command._ok and (command.kind == "stop" or command.kind == "stay"
                     or bot.mode ~= previous_mode or bot.target ~= previous_target) then
                     if memory.mover then move.stop(memory.mover) end
+                    if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
+                    memory.travel_failed = nil
                     memory.path_target, memory.navigation, memory.hunt_retry_at, memory.hunt_empty_since = nil, nil, nil, nil
                     memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
                 end
@@ -103,6 +106,7 @@ local function main(context)
         local previous = bot.mode
         bot.player.stop()
         if memory.mover then move.stop(memory.mover) end
+        if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
         memory.path_target = nil
         state_module.transition(bot, "dead", "hp_zero")
         io_module.event(context, "mode", {from = previous, mode = "dead", reason = "hp_zero"})
@@ -157,10 +161,20 @@ local function main(context)
         for _, drop in ipairs(world.drops or {}) do set_platform(drop) end
     end
 
+    if memory.travel and (not world.ready or not world.map_id) then
+        context.game.player.stop()
+        memory.travel.graph, memory.travel.mover, memory.travel.path = nil, nil, nil
+        io_module.publish(context, world, now)
+        return
+    end
     local kind, name
     if bot.mode == "follow" then kind, name = navigate.selector(bot.target) end
     local handled, sustain_error = sustain.step(context, world)
     if handled and not kind then
+        if memory.travel then
+            context.game.player.move(nil)
+            memory.travel.graph, memory.travel.mover, memory.travel.path = nil, nil, nil
+        end
         if bot.mode == "hunt" and memory.hunt_action then
             context.game.player.move(nil)
             memory.mover, memory.mover_attempt_generation = nil, nil
@@ -219,6 +233,65 @@ local function main(context)
                 vx = context.game.character and context.game.character.velocity and context.game.character.velocity.x})
             io_module.event(context, "mode", {from = "follow", mode = "idle", reason = reason})
             memory.navigation, memory.force_publish = nil, true
+        end
+        io_module.publish(context, world, now)
+        return
+    end
+
+    -- 地图绑定只约束 hunt；配置和航线允许在运行时更新。
+    local plan_file = io.open((memory.bot_root or "/work/bot") .. "/plan.conf", "r")
+    local plan_text = plan_file and plan_file:read("*a") or ""
+    if plan_file then plan_file:close() end
+    local hunt_map, route_path
+    for line in plan_text:gmatch("[^\r\n]+") do
+        local key, value = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
+        if key == "hunt_map" and value:match("^%d+$") then hunt_map = tonumber(value) end
+        if key == "route" and value ~= "" then route_path = value end
+    end
+    route_path = route_path or (memory.bot_root or "/work/bot") .. "/route.json"
+    if memory.travel_plan ~= plan_text then
+        if memory.travel then travel.stop(memory.travel, context) end
+        memory.travel, memory.travel_failed, memory.travel_plan = nil, nil, plan_text
+    end
+    if bot.mode ~= "hunt" or not hunt_map then
+        if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
+        memory.travel_failed = nil
+    elseif world.ready and world.map_id and (world.map_id ~= hunt_map or memory.travel) then
+        if not memory.travel and not memory.travel_failed then
+            local legs, goal = travel.load_route(route_path)
+            if legs and goal == hunt_map and legs[1] and legs[1].map == world.map_id then
+                if memory.mover then move.stop(memory.mover); memory.mover = nil end
+                context.game.player.stop()
+                memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
+                memory.travel = travel.new(legs, goal)
+                io_module.event(context, "travel/start", {map_id = world.map_id, goal = goal})
+            else
+                if memory.mover then move.stop(memory.mover); memory.mover = nil end
+                memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
+                context.game.player.stop()
+                if not memory.travel_wait_at or now - memory.travel_wait_at >= 10 then
+                    io_module.event(context, "travel/wait", {reason = "route_unavailable", map_id = world.map_id, goal = hunt_map})
+                    memory.travel_wait_at = now
+                end
+            end
+        end
+        if memory.travel then
+            local status, reason, event = travel.step(memory.travel, context, world)
+            if event then
+                local kind = event.kind
+                event.kind = nil
+                io_module.event(context, "travel/" .. kind, event)
+            end
+            if status == "failed" then
+                bot.last_error, memory.travel_failed = reason, true
+                travel.stop(memory.travel, context)
+                memory.travel = nil
+            elseif status == "done" then
+                travel.stop(memory.travel, context)
+                memory.travel, memory.travel_wait_at = nil, nil
+            end
+        else
+            context.game.player.stop()
         end
         io_module.publish(context, world, now)
         return
