@@ -8,15 +8,14 @@
 
 共享资源在主检出的 `private/workbenches/config/resources.json`，常驻与开发目标分别在同目录的 `live.server.json` 和 `dev.server.json`。分区决定目标，角色配置不能覆盖；目标缺失或不匹配时不改连另一服。部署步骤、开发服环境文件及公开示例见[工作台指南](../workbenches/README.md)。
 
-`workbench.json` 可省略，默认使用原版 GUI、main 和90秒入图等待。目录的最小 [配置示例](../workbenches/examples/workbench.example.json) 为：
+`workbench.json` 可省略，默认使用 main 和90秒入图等待。目录的最小 [配置示例](../workbenches/examples/workbench.example.json) 为：
 
 ```json
-{"backend":"beidou"}
+{"ref":"main"}
 ```
 
 | 设置 | 默认及用途 |
 | --- | --- |
-| `backend` | `beidou`（可省略）；仅接受 `beidou` |
 | `ref` | `main`；开发验收可明确指定已提交版本 |
 | `timeout` | `90`；5至180的数值，仅限制入图等待 |
 | `bridge_artifact` | 可选的匹配 GUI 桥工件目录；相对路径按工作目录解析，省略时经 `gh` 获取相应提交成功 CI 的工件 |
@@ -290,7 +289,7 @@ AP 已为 0 时返回 `status=unchanged`；确认同角色 AP 已归零且属性
 
 ## 原版 GUI
 
-GUI 镜像包含 CLI、Lua、Wine/VirtualGL 和匹配的桥 DLL。资源路径从公共 `private/workbenches/config/resources.json` 读取；原版客户端只读挂到 `/client`，`game_data` 指向的 `Data/` 只读挂到 `/data`，供 Catalog 使用共享原生解析器。工作目录的 `workbench.json` 设置 `backend="beidou"` 后，使用相同入口：
+GUI 镜像包含 CLI、Lua、Wine/VirtualGL 和匹配的桥 DLL。资源路径从公共 `private/workbenches/config/resources.json` 读取；原版客户端只读挂到 `/client`，`game_data` 指向的 `Data/` 只读挂到 `/data`，供 Catalog 使用共享原生解析器。工作目录使用相同入口：
 
 ```bash
 workbenches/workbench dev/GUI_NAME build

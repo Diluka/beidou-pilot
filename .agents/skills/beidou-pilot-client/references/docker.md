@@ -19,7 +19,7 @@ docker exec CONTAINER beidou-pilot --json script status
 docker exec CONTAINER beidou-pilot --json snapshot
 ```
 
-账号文件使用容器路径；脚本相对路径从当前角色的 `/work/scripts` 解析，绝对路径指容器内文件或目录包。CLI 的 `--root/--backend/--instance` 核对本容器身份，连接保持原状。容器创建、服务器镜像与网络核验、正常关闭均由仓库生命周期入口负责，具体用法见 [CLI](../../../../docs/CLI.md)。容器内 `close` 返回 `host_lifecycle_required`，下线状态以宿主入口的退出核对为准。
+账号文件使用容器路径；脚本相对路径从当前角色的 `/work/scripts` 解析，绝对路径指容器内文件或目录包。CLI 的 `--root/--instance` 核对本容器身份，连接保持原状。容器创建、服务器镜像与网络核验、正常关闭均由仓库生命周期入口负责，具体用法见 [CLI](../../../../docs/CLI.md)。容器内 `close` 返回 `host_lifecycle_required`，下线状态以宿主入口的退出核对为准。
 
 ## 信号与取消
 

@@ -66,7 +66,7 @@ workbenches/workbench dev/GUI_NAME open
 workbenches/workbench dev/GUI_NAME snapshot
 ```
 
-工作目录默认使用原版 GUI 的 `default` 实例；`backend` 可省略或设为 `beidou`。账号只支持 `world=0`，按账号配置的角色和频道正常登录。`--character/--character-index/--channel` 和固定账号/名称文件已退役。
+工作目录默认使用原版 GUI 的 `default` 实例。账号只支持 `world=0`，按账号配置的角色和频道正常登录。`--character/--character-index/--channel` 和固定账号/名称文件已退役。
 
 通过当前 `snapshot`、`inspect stage` 和 `screenshot` 定位界面，优先使用新鲜对话正文与引用。根桌面 `click X Y` 必须依据当次截图。需要滚轮原语时，在所属 GUI 容器内执行，例如：
 

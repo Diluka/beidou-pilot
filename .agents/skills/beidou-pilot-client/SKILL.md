@@ -19,7 +19,7 @@ beidou-pilot --json script status
 beidou-pilot --json snapshot
 ```
 
-`status` 用于核对当前阶段、实际后端、角色和版本。`instances` 只报告当前实例；`--root/--backend/--instance` 用于核对既有身份，连接与其他实例保持原状。请求、结果和取消继续核对原生 `instance_id/run_id`。
+`status` 用于核对当前阶段、角色和版本。`--root/--instance` 用于核对既有身份，连接与其他实例保持原状。请求、结果和取消继续核对原生 `instance_id/run_id`。
 
 每次重新接入先读取 `status`、`script status` 和 `snapshot`，确认现有角色、任务与原生身份。已有正确角色且已入图时，直接接续观察；已有活动任务时沿用它的 `script.id`，不重复 `open/start`、不抢占输入。其他操作者持有控制权时，先完成交接。
 

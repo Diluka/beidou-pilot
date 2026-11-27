@@ -83,7 +83,7 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         path.write_text(json.dumps(account))
         path.chmod(0o600)
         (self.workbench / 'workbench.json').write_text(json.dumps({
-            'ref': self.revision, 'timeout': 37, 'backend': 'beidou', 'bridge_artifact': str(bridge)}))
+            'ref': self.revision, 'timeout': 37, 'bridge_artifact': str(bridge)}))
         image_id = 'sha256:' + '1' * 64
         project = 'fixture-' + env
         (self.config / (env + '.server.json')).write_text(json.dumps({'project': project, 'service': 'beidou-server-all'}))

@@ -24,7 +24,6 @@ _RESERVED_FLAGS = {
     "--json",
     "--root",
     "--debug",
-    "--backend",
     "--instance",
     "--version",
     "--help",

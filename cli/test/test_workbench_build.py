@@ -163,7 +163,13 @@ class WorkbenchBuildContract(WorkbenchFixture):
         self.assertFalse(report["data"]["current_instance"]["native_inputs_match"])
 
     def test_rejects_obsolete_settings_before_preparing_images(self) -> None:
-        for settings in ({"harness": True}, {"harness": False}, {"model_proxy": "http://192.0.2.1:1080"}):
+        for settings in (
+            {"harness": True},
+            {"harness": False},
+            {"model_proxy": "http://192.0.2.1:1080"},
+            {"backend": "beidou"},
+            {"backend": "headless"},
+        ):
             with self.subTest(settings=settings):
                 failed, report = self.build(settings)
                 self.assertNotEqual(0, failed.returncode)
@@ -181,7 +187,7 @@ class WorkbenchBuildContract(WorkbenchFixture):
                     "artifact": {"sha256": hashlib.sha256(dll).hexdigest()}, "dependencies": {"lua": {"version": "5.4.9"}}}
         (bridge / "manifest.json").write_text(json.dumps(manifest))
         (bridge / "ijl15.dll").write_bytes(dll + b" modified")
-        settings = {"ref": self.revision, "backend": "beidou", "bridge_artifact": str(bridge)}
+        settings = {"ref": self.revision, "bridge_artifact": str(bridge)}
         result, report = self.build(settings)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(manifest, report["data"]["preparation"]["bridge"]["manifest"])
