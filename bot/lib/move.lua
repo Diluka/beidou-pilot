@@ -159,6 +159,9 @@ function M.step(mover, ctx, world)
         if not mover.started then
             if mover.retries == 0 then mover.edge_started = now; mover.airborne = nil end
             mover.started, mover.phase, mover.start_y = now, "align", character.y
+            if edge.kind == "jumpup" and edge.x ~= edge.destination then
+                mover.phase = "prepare_runup"
+            end
             if edge.kind == "drop" then
                 mover.progress_time, mover.progress_x, mover.progress_y = now, character.x, character.y
             end
@@ -166,7 +169,72 @@ function M.step(mover, ctx, world)
         local failure
         if (edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop") and mover.phase ~= "align" and character.on_ground == false then mover.airborne = true end
         if now - mover.edge_started >= mover.edge_timeout then failure = "timeout" end
-        if not failure and mover.phase == "align" then
+        if not failure and mover.phase == "prepare_runup" then
+            local platforms = type(mover.graph) == "table" and mover.graph.platforms
+            local source = type(platforms) == "table" and platforms[edge.from] or nil
+            local left = type(source) == "table" and source.left or nil
+            local right = type(source) == "table" and source.right or nil
+            local function finite(x) return type(x) == "number" and x == x and math.abs(x) < math.huge end
+            local sign = edge.destination > edge.x and 1 or -1
+            local segments = type(source) == "table" and source.segments or nil
+            local on_source = false
+            if type(segments) == "table" and #segments > 0 and #segments % 4 == 0 then
+                for i = 1, #segments, 4 do
+                    local a, b, y1, y2 = segments[i], segments[i + 1], segments[i + 2], segments[i + 3]
+                    if not finite(a) or not finite(b) or not finite(y1) or not finite(y2) or a > b then
+                        on_source = false; break
+                    end
+                    if character.x >= a and character.x <= b then
+                        local y = a == b and y1 or y1 + (character.x - a) / (b - a) * (y2 - y1)
+                        if math.abs(character.y - y) <= 20 then on_source = true end
+                    end
+                end
+            end
+            if not finite(edge.x) or not finite(edge.destination) or not finite(left) or not finite(right)
+                or left > right or not character.on_ground or not on_source
+                or edge.x < left + 8 or edge.x > right - 8
+                or character.x < left + 8 or character.x > right - 8 then
+                failure = "runup_unavailable"
+            else
+                local target
+                for _, distance in ipairs({32, 20, 12}) do
+                    local candidate = edge.x - sign * distance
+                    if candidate >= left + 8 and candidate <= right - 8 then target = candidate; break end
+                end
+                if not target then failure = "runup_unavailable" else
+                    mover.runup_direction = sign == 1 and "right" or "left"
+                    mover.runup_sign, mover.runup_target = sign, target
+                    mover.runup_left, mover.runup_right = left + 8, right - 8
+                    mover.phase, mover.phase_time = "retreat", now
+                end
+            end
+        elseif not failure and mover.phase == "retreat" then
+            local sign = mover.runup_sign
+            if not character.on_ground or character.x < mover.runup_left or character.x > mover.runup_right
+                or now - mover.phase_time >= 1.5 then
+                failure = "runup_unavailable"
+            elseif (character.x - mover.runup_target) * sign <= 0 then
+                mover.phase, mover.phase_time = "approach", now
+                mover.runup_x, mover.runup_time = character.x, now
+                if not p.move(mover.runup_direction) then failure = "unsupported_edge" end
+            elseif not p.move(sign == 1 and "left" or "right") then
+                failure = "unsupported_edge"
+            end
+        elseif not failure and mover.phase == "approach" then
+            local dt = now - mover.runup_time
+            local speed = dt > 0 and (character.x - mover.runup_x) * mover.runup_sign / dt or 0
+            if not character.on_ground or character.x < mover.runup_left or character.x > mover.runup_right
+                or now - mover.phase_time >= 1.5 or (character.x - edge.x) * mover.runup_sign > 12 then
+                failure = "runup_unavailable"
+            elseif not p.move(mover.runup_direction) then
+                failure = "unsupported_edge"
+            elseif math.abs(character.x - edge.x) <= 12 and speed >= 40 then
+                if not p.jump() then failure = "unsupported_edge" else
+                    mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
+                end
+            end
+            mover.runup_x, mover.runup_time = character.x, now
+        elseif not failure and mover.phase == "align" then
             local tolerance = edge.kind == "rope" and 4 or 8
             local vertical = (edge.kind == "jumpup" and edge.x == edge.destination) or edge.kind == "downjump"
             local physics = vertical and ctx.game.character and ctx.game.character.physics
@@ -174,16 +242,7 @@ function M.step(mover, ctx, world)
             if edge.kind ~= "drop" and math.abs(align_x - edge.x) > tolerance then
                 if not p.move(align_x < edge.x and "right" or "left") then failure = "unsupported_edge" end
             elseif edge.kind == "jumpup" then
-                local direction
-                if not vertical then
-                    direction = character.x < edge.destination and "right" or (character.x > edge.destination and "left" or nil)
-                end
-                local moved = p.move(direction)
-                if moved and direction then
-                    mover.phase, mover.runup_direction = "brake", direction
-                    mover.runup_x, mover.runup_time, mover.runup_distance = character.x, now, 0
-                    return "running"
-                end
+                local moved = p.move(nil)
                 if moved and vertical then
                     -- A neutral jump inherits the approach velocity until ground friction stops it.
                     if not physics or not physics.velocity or physics.velocity.x == nil then
@@ -225,26 +284,6 @@ function M.step(mover, ctx, world)
                 mover.progress_time, mover.progress_y = now, character.y
                 if not p.move(edge.rise < 0 and "up" or "down") then failure = "unsupported_edge" end
             end
-        elseif not failure and (mover.phase == "brake" or mover.phase == "runup") then
-            local direction = mover.runup_direction
-            local delta = character.x - mover.runup_x
-            local forward = direction == "right" and delta > 0 or direction == "left" and delta < 0
-            if not p.move(direction) then
-                failure = "unsupported_edge"
-            elseif now - mover.runup_time >= 2 then
-                failure = "runup_unavailable"
-            elseif character.on_ground and forward then
-                mover.phase = "runup"
-                mover.runup_distance = mover.runup_distance + math.abs(delta)
-                if mover.runup_distance >= 8 and math.abs(character.x - edge.x) <= 8 then
-                    if not p.jump() then failure = "unsupported_edge" else
-                        mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
-                    end
-                end
-            elseif delta ~= 0 then
-                mover.phase, mover.runup_distance = "brake", 0
-            end
-            mover.runup_x = character.x
         elseif not failure and mover.phase == "launch" then
             if edge.kind == "drop" then
                 if character.on_ground == false or character.y - mover.start_y >= 10 then
