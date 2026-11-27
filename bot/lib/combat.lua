@@ -2,6 +2,30 @@ local move = require("lib.move")
 local io_module = require("lib.io")
 local M = {}
 local abandoned, selection_scope = {}, nil
+local low_events = {}
+
+local function emit_low(ctx, name, detail)
+    local now = (ctx.tick and ctx.tick.time) or 0
+    if low_events[name] and now - low_events[name] < 5 then return end
+    low_events[name] = now
+    io_module.event(ctx, name, detail)
+end
+
+local function count_item(ctx, item_id)
+    local inventory = ctx.game and ctx.game.inventory
+    if type(inventory) ~= "table" then return nil end
+    local items = inventory.items
+    if type(items) ~= "table" then
+        if type(inventory[1]) == "table" or #inventory > 0 then items = inventory else return nil end
+    end
+    local total = 0
+    for _, item in ipairs(items) do
+        if type(item) == "table" and tonumber(item.item_id) == item_id then
+            total = total + (tonumber(item.quantity) or 0)
+        end
+    end
+    return total
+end
 local active_target, active_player, active_mover, active_state
 
 local function release_active()
@@ -172,6 +196,35 @@ function M.step(ctx, world, mob, mover)
     if now - combat.started_at >= 15 then return finish("failed", "timeout", true) end
 
     local target_distance = distance(character, mob)
+    local config = world.config or state.bot and state.bot.config or {}
+    local attack_mode = config.attack_mode or "melee"
+    local min_range = tonumber(config.min_range) or 60
+    -- 射程与武器/技能挂钩：弓弩基础射程 + 已学「远程箭」加成。
+    -- 远程箭（弓箭手 1 转）= 3000002：Data/Skill/300.img/skill/3000002 最高 8 级，
+    -- range 依次为 15/30/…/120，即每级 +15。弓弩基础射程 110 来自真机距离预判，
+    -- 原版客户端公式待核实。技能列表不可读时用 ranged_skill_level 兜底。
+    local attack_range = tonumber(config.attack_range) or 110
+    if attack_mode ~= "melee" then
+        local skill_id = tonumber(config.ranged_skill_id) or 3000002
+        local per_level = tonumber(config.ranged_skill_bonus_per_level) or 15
+        local observed = ctx.game.character
+        local skills = observed and observed.skills
+        local level
+        if type(skills) == "table" and observed.skills_complete ~= false then
+            local record = skills[tostring(skill_id)]
+            level = type(record) == "table" and tonumber(record.level) or 0
+        else
+            level = tonumber(config.ranged_skill_level) or 0
+        end
+        attack_range = attack_range + level * per_level
+    end
+    if attack_mode ~= "melee" and target_distance < min_range then
+        -- 远程/技能：过近先撤离，不主动贴脸
+        if not mover or type(mover) ~= "table" then return finish("failed", "mover_unavailable", true) end
+        local direction = mob.x > character.x and "left" or "right"
+        if not player.move(direction) then return finish("failed", "unsupported_edge", true) end
+        return "running", "retreating"
+    end
     if mob.hp_percent ~= nil and combat.progress_hp ~= nil and mob.hp_percent < combat.progress_hp then
         combat.progress_hp, combat.progress_at, combat.repositioned = mob.hp_percent, now, false
     end
@@ -197,7 +250,8 @@ function M.step(ctx, world, mob, mover)
         return finish("failed", "no_progress", true)
     end
 
-    if target_distance > 60 then
+    local approach_range = attack_mode == "melee" and 60 or attack_range
+    if target_distance > approach_range then
         if not mover or type(mover) ~= "table" then return finish("failed", "mover_unavailable", true) end
         local move_target = mob.object_id
         if combat.moving ~= "approach" or combat.move_target ~= move_target or mover.status ~= "running" then
@@ -228,8 +282,23 @@ function M.step(ctx, world, mob, mover)
     end
     player.move(nil)
 
-    local skill_id = tonumber((world.config or state.bot and state.bot.config or {}).attack_skill_id) or 0
-    local action = skill_id > 0 and character.mp ~= nil and character.mp >= 10 and "skill" or "attack"
+    local skill_id = tonumber(config.attack_skill_id) or 0
+    local mp_cost = tonumber(config.skill_mp_cost) or 10
+    local can_skill = skill_id > 0 and character.mp ~= nil and character.mp >= mp_cost
+    if attack_mode ~= "melee" then
+        if attack_mode == "skill" and character.max_mp and character.max_mp > 0
+            and (character.mp or 0) / character.max_mp < 0.2 then
+            emit_low(ctx, "combat/mp_low", {mp = character.mp, max_mp = character.max_mp})
+        end
+        local ammo_id = tonumber(config.ammo_item_id) or 2060000
+        local ammo_low = tonumber(config.ammo_low) or 50
+        local ammo_count = count_item(ctx, ammo_id)
+        if ammo_count ~= nil and ammo_count < ammo_low then
+            emit_low(ctx, "combat/ammo_low", {item_id = ammo_id, count = ammo_count, low = ammo_low})
+        end
+    end
+    local action = "attack"
+    if can_skill and (attack_mode == "skill" or attack_mode == "melee") then action = "skill" end
     if combat.action ~= action or combat.skill_id ~= (action == "skill" and skill_id or nil) then
         if action == "skill" then player.skill(skill_id) else player.attack() end
         combat.action, combat.skill_id = action, action == "skill" and skill_id or nil

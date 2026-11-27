@@ -271,6 +271,15 @@ local expected_defaults = {
     pot_hp = 60,
     pot_mp = 30,
     loot_radius = 150,
+    attack_mode = "melee",
+    attack_range = 110,
+    min_range = 60,
+    ranged_skill_id = 3000002,
+    ranged_skill_bonus_per_level = 15,
+    ranged_skill_level = 0,
+    skill_mp_cost = 10,
+    ammo_item_id = 2060000,
+    ammo_low = 50,
 }
 local default_count = 0
 for key, value in pairs(defaults) do

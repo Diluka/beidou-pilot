@@ -45,6 +45,13 @@ game.log("platform=" .. tostring(platform))
 | `owner_name` | `""` |
 | `owner_character_id` | `0` |
 | `attack_skill_id` | `0` |
+| `attack_mode` | `"melee"` |
+| `attack_range` | `110` |
+| `min_range` | `60` |
+| `ranged_skill_id` | `3000002` |
+| `ranged_skill_bonus_per_level` | `15` |
+| `ranged_skill_level` | `0` |
+| `skill_mp_cost` | `10` |
 | `hp_item` | `0` |
 | `mp_item` | `0` |
 | `follow_distance` | `80` |
@@ -122,6 +129,33 @@ tools/botctl stop dev/NAME
 - 换装对账：客户端 `equipped` 变化时，被替换的旧装备自动加入 `sell_list`（`approved=false`，不自动卖），新增装备更新快照；
 - 离线重登：`reconcile` 以客户端 `inventory/equipped` 为准——清单/候选里已不存在的物品自动移除，仍存在的保留；**清单持久化在 `/work/bot/memory.lua`，重登不丢**；
 - 自动清包只处理 `approved=true` 的清单项；新获得/未确认装备永不自动卖；人工确认用 `equipment.approve(store, item_id)`。
+
+## 战斗模式（近战/远程/技能）
+
+`config.conf`（或 defaults）可配置：
+
+```ini
+attack_mode=ranged                 # melee | ranged | skill
+attack_range=110                   # 弓/弩基础射程，不含技能加成
+min_range=60                       # 过近后撤阈值
+ranged_skill_id=3000002            # 远程箭（弓箭手 1 转）
+ranged_skill_bonus_per_level=15    # 远程箭每级射程增量
+ranged_skill_level=0               # 技能列表不可读时的手动档位
+attack_skill_id=1000               # skill 模式主攻技能；MP 不足回退普攻
+skill_mp_cost=10
+```
+
+远程/技能模式的有效射程按武器与已学技能计算：`attack_range + 已学远程箭等级 × ranged_skill_bonus_per_level`。
+
+- 技能等级优先取客户端观察 `game.character.skills`；`skills_complete=false` 或技能列表不可读时使用配置的 `ranged_skill_level`；
+- 远程箭 `3000002` 数据来自客户端 `Data/Skill/300.img/skill/3000002`：最高 8 级，`range` 依次为 15/30/…/120，即每级 +15；
+- 弓/弩基础射程 110 来自真机距离预判，原版客户端公式待核实；其他武器可按实测改 `attack_range`；
+- 弓箭手默认：未学远程箭时射程 110px，远程箭 8 级后 230px。
+
+- `ranged`：进入有效射程即停、转向、`player.attack()`（弓/弩消耗箭矢），`< min_range` 先后撤，不贴脸；
+- `skill`：MP 足够时 `player.skill(attack_skill_id)`，否则普攻；目标丢失/切换时释放技能意图；
+- `melee`：保持旧行为（60px 内普攻）。
+弓箭手推荐：`attack_mode=ranged`，技能可用后改 `skill`。
 
 ## 离线测试
 

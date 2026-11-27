@@ -1,5 +1,6 @@
 -- 持久化状态存储合同：序列化/损坏恢复/命名空间/节流/超限。
 package.path = "bot/?.lua;" .. package.path
+os.execute("mkdir -p tmp")
 local memory = require("lib.memory")
 
 local path = "tmp/bot-test-memory-store.lua"
