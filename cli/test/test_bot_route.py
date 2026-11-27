@@ -135,6 +135,42 @@ assert(status == "done", "route completes only after the last map transition")
 assert(stops > 0, "completion must release input")
 ''')
 
+    def test_real_mover_long_edges_remain_bounded(self) -> None:
+        self.run_lua(r'''
+local move = assert(loadfile("bot/lib/move.lua"))()
+game = {player={move=function() return true end, skill=function() return true end,
+    jump=function() return true end}, character={movement={max_speed=100}}}
+local ctx = {game=game, tick={time=0, index=0}}
+local world = {character={x=0, y=0, on_ground=true}}
+local function tick(mover, t, x)
+    ctx.tick.time, ctx.tick.index, world.character.x = t, ctx.tick.index + 1, x
+    return move.step(mover, ctx, world)
+end
+local function begin(edge)
+    ctx.tick.time, world.character.x = 0, 0
+    local mover = move.new({})
+    assert(move.set_path(mover, {edge}))
+    return mover
+end
+local mover = begin({kind="drop", from=1, to=2, destination=1000})
+for t=0, 11 do assert(tick(mover, t, t * 6) == "running", "long drop must continue past 10 seconds") end
+local status, reason
+for t=12, 30 do status, reason = tick(mover, t, t * 6) end
+assert(status == "failed" and reason == "timeout", "long drop must time out at its bound")
+mover = begin({kind="drop", from=1, to=2, destination=1000})
+tick(mover, 0, 0); tick(mover, 2, 0); tick(mover, 2.1, 0)
+status, reason = tick(mover, 4.2, 0)
+assert(status == "failed" and reason == "no_progress", "stalled drop must still fail")
+for _, kind in ipairs({"jumpup", "downjump", "rope"}) do
+    mover = begin({kind=kind, from=1, to=2, x=1000, destination=1000, rise=-20})
+    assert(tick(mover, 0, 0) == "running")
+    assert(mover.edge_timeout == 30, kind .. " must use alignment distance")
+    assert(tick(mover, 11, 100) == "running", kind .. " must not expire at 10 seconds")
+    status, reason = tick(mover, 30, 200)
+    assert(status == "failed" and reason == "timeout", kind .. " must remain bounded")
+end
+''')
+
     def test_active_path_continues_when_character_has_no_platform(self) -> None:
         self.run_lua(r'''
 c.state.legs[1].x = 100

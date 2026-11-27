@@ -149,6 +149,12 @@ function M.step(mover, ctx, world)
         if mover.active_edges ~= mover.edges or mover.active_index ~= mover.index then
             mover.active_edges, mover.active_index, mover.edge_started = mover.edges, mover.index, now
             mover.airborne, mover.downjump_preheld = nil, nil
+            -- Allow travel to a distant launch point without removing the overall deadline.
+            local movement = ctx.game.character and ctx.game.character.movement
+            local speed = movement and movement.max_speed
+            if type(speed) ~= "number" or speed <= 0 or speed ~= speed or speed == math.huge then speed = 100 end
+            local align_x = edge.kind == "drop" and edge.destination or edge.x
+            mover.edge_timeout = 10 + 2 * math.abs(align_x - character.x) / speed
         end
         if not mover.started then
             if mover.retries == 0 then mover.edge_started = now; mover.airborne = nil end
@@ -159,7 +165,7 @@ function M.step(mover, ctx, world)
         end
         local failure
         if (edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop") and mover.phase ~= "align" and character.on_ground == false then mover.airborne = true end
-        if now - mover.edge_started >= 10 then failure = "timeout" end
+        if now - mover.edge_started >= mover.edge_timeout then failure = "timeout" end
         if not failure and mover.phase == "align" then
             local tolerance = edge.kind == "rope" and 4 or 8
             local vertical = (edge.kind == "jumpup" and edge.x == edge.destination) or edge.kind == "downjump"
