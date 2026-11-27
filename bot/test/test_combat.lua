@@ -370,6 +370,50 @@ status, reason = combat.step(ctx, world, target_skill_range, path_mover)
 assert(status == "running" and reason == "attacking" and calls[#calls] == "skill_3001004",
     "skill mode must use the same skill-derived range")
 
+-- Ranged hunt selects a visible cross-platform target without pursuing it.
+world = make_world()
+world.map_id = 155
+world.character.on_ground = true
+world.owner = {present = false}
+world.mobs = {entity(200, 90, 2), entity(201, 65, 1)}
+ctx, path_mover = player_context(), mover()
+ctx.state.bot = {mode = "hunt", config = {attack_mode = "ranged"}}
+ctx.state.graph = {platforms = {{left = -200, right = 200}, {left = 80, right = 200}}, walls = {}}
+local opts = {hunt = true, config = ctx.state.bot.config, graph = ctx.state.graph, context = ctx}
+assert(combat.select(world, opts) == world.mobs[1], "cross platform must outrank closer local target")
+local selected_event = events[#events]
+assert(selected_event.kind == "combat/ranged_target" and selected_event.data.platform == 2
+    and selected_event.data.horizontal_distance == 90 and selected_event.data.cross_platform == true)
+status, reason = combat.step(ctx, world, world.mobs[1], path_mover)
+assert(status == "running" and reason == "facing" and #edges == 0)
+ctx.tick.time = 0.1
+status, reason = combat.step(ctx, world, world.mobs[1], path_mover)
+assert(reason == "attacking" and calls[#calls] == "attack" and #edges == 0)
+world.mobs[1].x = 150
+status, reason = combat.step(ctx, world, world.mobs[1], path_mover)
+assert(status == "failed" and reason == "range_blocked" and calls[#calls] == "skill_nil" and #edges == 0,
+    "moving out of range must release attack without pursuing")
+ctx.tick.time = 6
+ctx.game.character.skills = {["3000002"] = {level = 4}}
+assert(combat.select(world, opts) == world.mobs[1], "learned range must be used on the first selection")
+ctx.game.character.skills = nil
+for _, case in ipairs({
+    {reason = "out_of_range", x = 150}, {reason = "height_difference", y = 41},
+    {reason = "wall", wall = {40, -40, 0}}, {reason = "platform_boundary", left = -10},
+}) do
+    world.scene_generation = world.scene_generation + 1
+    world.mobs = {entity(202, case.x or 90, 2)}
+    world.mobs[1].y = case.y or 0
+    ctx.state.graph.platforms[1].left = case.left or -200
+    ctx.state.graph.walls = case.wall or {}
+    ctx.tick.time = ctx.tick.time + 6
+    assert(combat.select(world, opts) == nil, case.reason .. " must not be selected")
+    local e = events[#events]
+    assert(e.kind == "combat/range_blocked" and e.data.reason == case.reason)
+    status, reason = combat.step(ctx, world, world.mobs[1], path_mover)
+    assert(status == "failed" and reason == "range_blocked" and #edges == 0)
+end
+
 -- Cross-platform planning uses the same mover and keeps the target locked.
 local terrain = require("lib.terrain")
 local original_plan = terrain.plan
