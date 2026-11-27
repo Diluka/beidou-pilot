@@ -107,6 +107,8 @@ local c = {
     game = {player={move=function(key) moves[#moves+1]=key or "release" end,
         stop=function() stops=stops+1 end}, character={}, log=function() end},
 }
+package.path = "bot/?.lua;" .. package.path
+c.state.travel = c.state
 local main = assert(load([==[
 """
             + travel
@@ -186,7 +188,7 @@ end
     def test_active_path_continues_when_character_has_no_platform(self) -> None:
         self.run_lua(r"""
 c.state.legs[1].x = 100
-main(c)
+main(c); main(c)
 assert(steps == 1, "initial plan must start movement")
 missing_character_platform = true
 main(c)
@@ -218,7 +220,7 @@ assert(c.state.retries == 1 and stops > 0 and #plans == 0, "missing target requi
         self.run_lua(r"""
 c.state.legs[1].x = 100
 fail_move = true
-main(c)
+main(c); main(c)
 assert(stops > 0, "failed movement must release input")
 fail_move = false
 main(c)
