@@ -53,18 +53,23 @@ class BotctlTests(unittest.TestCase):
     def test_install_overwrites_code_and_preserves_bot_state(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            source = root / "bot"
-            source.mkdir()
+            worktree = root / "worktree"
+            source = worktree / "bot"
+            source.mkdir(parents=True)
             (source / "main.lua").write_text("new")
+            (root / "bot").mkdir()
+            (root / "bot/main.lua").write_text("wrong source")
             role = root / "private/workbenches/dev/hero"
             (role / "scripts/bot").mkdir(parents=True)
             (role / "scripts/bot/main.lua").write_text("old")
             (role / "bot").mkdir()
             (role / "bot/state.json").write_text("state")
-            with patch.object(botctl, "ROOT", root):
+            with patch.object(botctl, "ROOT", root), patch.object(botctl, "WORKTREE", worktree):
                 self.assertEqual(botctl.main(["install", "dev/hero"]), 0)
             self.assertEqual((role / "scripts/bot/main.lua").read_text(), "new")
             self.assertEqual((role / "bot/state.json").read_text(), "state")
+            self.assertTrue((role / "bot/queue/done").is_dir())
+            self.assertTrue((role / "bot/queue/rejected").is_dir())
 
     def test_start_dispatches_continuous_script(self):
         root = Path("/repo")
