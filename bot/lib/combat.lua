@@ -172,6 +172,17 @@ function M.step(ctx, world, mob, mover)
     if now - combat.started_at >= 15 then return finish("failed", "timeout", true) end
 
     local target_distance = distance(character, mob)
+    local config = world.config or state.bot and state.bot.config or {}
+    local attack_mode = config.attack_mode or "melee"
+    local attack_range = tonumber(config.attack_range) or 200
+    local min_range = tonumber(config.min_range) or 70
+    if attack_mode ~= "melee" and target_distance < min_range then
+        -- 远程/技能：过近先撤离，不主动贴脸
+        if not mover or type(mover) ~= "table" then return finish("failed", "mover_unavailable", true) end
+        local direction = mob.x > character.x and "left" or "right"
+        if not player.move(direction) then return finish("failed", "unsupported_edge", true) end
+        return "running", "retreating"
+    end
     if mob.hp_percent ~= nil and combat.progress_hp ~= nil and mob.hp_percent < combat.progress_hp then
         combat.progress_hp, combat.progress_at, combat.repositioned = mob.hp_percent, now, false
     end
@@ -197,7 +208,8 @@ function M.step(ctx, world, mob, mover)
         return finish("failed", "no_progress", true)
     end
 
-    if target_distance > 60 then
+    local approach_range = attack_mode == "melee" and 60 or attack_range
+    if target_distance > approach_range then
         if not mover or type(mover) ~= "table" then return finish("failed", "mover_unavailable", true) end
         local move_target = mob.object_id
         if combat.moving ~= "approach" or combat.move_target ~= move_target or mover.status ~= "running" then
@@ -228,8 +240,11 @@ function M.step(ctx, world, mob, mover)
     end
     player.move(nil)
 
-    local skill_id = tonumber((world.config or state.bot and state.bot.config or {}).attack_skill_id) or 0
-    local action = skill_id > 0 and character.mp ~= nil and character.mp >= 10 and "skill" or "attack"
+    local skill_id = tonumber(config.attack_skill_id) or 0
+    local mp_cost = tonumber(config.skill_mp_cost) or 10
+    local can_skill = skill_id > 0 and character.mp ~= nil and character.mp >= mp_cost
+    local action = "attack"
+    if can_skill and (attack_mode == "skill" or attack_mode == "melee") then action = "skill" end
     if combat.action ~= action or combat.skill_id ~= (action == "skill" and skill_id or nil) then
         if action == "skill" then player.skill(skill_id) else player.attack() end
         combat.action, combat.skill_id = action, action == "skill" and skill_id or nil

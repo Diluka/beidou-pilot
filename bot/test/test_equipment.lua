@@ -1,4 +1,5 @@
 package.path = "bot/?.lua;" .. package.path
+os.execute("mkdir -p tmp")
 local memory = require("lib.memory")
 local equipment = require("lib.equipment")
 
