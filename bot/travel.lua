@@ -61,7 +61,7 @@ local function main(context)
             context.game.log("retry blocking edge " .. key)
         end
         s.retries, s.started = (s.retries or 0) + 1, now
-        s.graph, s.mover, s.path, s.portal_wait = nil, nil, nil, nil
+        s.graph, s.mover, s.path, s.portal_wait, s.platform_wait = nil, nil, nil, nil, nil
         context.game.log(string.format("leg %d retry: %s", s.index, reason))
     end
     if now - s.started > 120 then return retry("timeout") end
@@ -79,10 +79,27 @@ local function main(context)
         if not graph then return retry(reason or "terrain_unavailable") end
         s.graph, s.mover, s.generation = graph, move.new(graph), world.scene_generation
     end
+    -- 已规划的跳跃、下落和攀绳途中可能不命中任何平台；继续由移动器完成该边。
+    if s.path then
+        local status, reason = move.step(s.mover, context, world)
+        if status == "failed" then return retry(reason or "move_failed") end
+        if status == "done" then s.path = nil end
+        return
+    end
     local c = world.character
     local platform = terrain.platform_at(s.graph, c.x, c.y, s.graph.model.stand_height)
     local target = terrain.platform_at(s.graph, leg.x, leg.y, s.graph.model.stand_height)
-    if not platform or not target then return retry("platform_unavailable") end
+    if not target then return retry("platform_unavailable") end
+    if not platform then
+        p.stop()
+        s.platform_wait = s.platform_wait or now
+        if now - s.platform_wait >= 3 then
+            s.platform_wait = nil
+            return retry("platform_unavailable")
+        end
+        return
+    end
+    s.platform_wait = nil
     local dx = leg.x - c.x
     if platform == target and math.abs(dx) <= 6 then
         p.stop()

@@ -72,10 +72,14 @@ class TravelLuaContract(unittest.TestCase):
         source = r'''
 local builds, moves, stops = 0, {}, 0
 local no_path, fail_move = false, false
-local plans = {}
+local plans, steps = {}, 0
+local missing_character_platform, missing_target_platform = false, false
 package.loaded["lib.terrain"] = {
     build = function(nav) builds = builds + 1; return {model = {stand_height = 1}, nav = nav} end,
-    platform_at = function(graph, x) return x < 50 and 1 or 2 end,
+    platform_at = function(graph, x)
+        if x < 50 then if missing_character_platform then return nil end; return 1 end
+        if missing_target_platform then return nil end; return 2
+    end,
     plan = function(graph, from, to, options)
         plans[#plans + 1] = options.blocked
         if no_path then return nil, "no_path" end
@@ -85,7 +89,7 @@ package.loaded["lib.terrain"] = {
 package.loaded["lib.move"] = {
     new = function(graph) return {graph = graph} end,
     set_path = function(mover, edges) mover.edges, mover.index = edges, 1; return true end,
-    step = function() if fail_move then return "failed", "no_progress" end; return "running" end,
+    step = function() steps = steps + 1; if fail_move then return "failed", "no_progress" end; return "running" end,
 }
 package.loaded["lib.world"] = {observe = function(c) return c.world end}
 local c = {
@@ -129,6 +133,37 @@ c.world.map_id = 3; main(c)
 local status = main(c)
 assert(status == "done", "route completes only after the last map transition")
 assert(stops > 0, "completion must release input")
+''')
+
+    def test_active_path_continues_when_character_has_no_platform(self) -> None:
+        self.run_lua(r'''
+c.state.legs[1].x = 100
+main(c)
+assert(steps == 1, "initial plan must start movement")
+missing_character_platform = true
+main(c)
+assert(steps == 2 and c.state.path, "active movement must continue while off platform")
+assert(not c.state.retries, "airborne movement must not trigger retry")
+''')
+
+    def test_missing_character_platform_waits_then_retries(self) -> None:
+        self.run_lua(r'''
+c.state.legs[1].x = 100
+missing_character_platform = true
+main(c)
+assert(stops > 0 and #plans == 0 and not c.state.retries, "wait safely before planning")
+c.tick.time = 2.9; main(c)
+assert(not c.state.retries, "temporary missing platform must not retry")
+c.tick.time = 3.1; main(c)
+assert(c.state.retries == 1 and #plans == 0, "persistent missing platform must retry")
+''')
+
+    def test_missing_target_platform_retries_immediately(self) -> None:
+        self.run_lua(r'''
+c.state.legs[1].x = 100
+missing_target_platform = true
+main(c)
+assert(c.state.retries == 1 and stops > 0 and #plans == 0, "missing target requires immediate retry")
 ''')
 
     def test_failed_edge_is_blocked_on_replan(self) -> None:
