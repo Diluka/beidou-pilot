@@ -108,6 +108,14 @@ tools/botctl stop dev/NAME
 - 脚本已结束或状态输出无法确认放键：按 status 检查终态；未确认 control_released 时将其视为停止未验收，不要关闭/重启客户端来掩盖现场。
 - NAME 格式错误：必须提供 `dev/角色名` 或 `live/角色名`。
 
+## 持久化状态（memory）
+
+- 路径 `/work/bot/memory.lua`（可读 Lua 表，`schema = 1`），原子写（`.tmp` + rename），上限 64KB；
+- API：`lib.memory` 的 `load/save/get/set/unset/flush/clear/reconcile/repair_meta`；命名空间约定 `bot`（模式/目标/地图等）、`supply`（补给阶段/上次商店）、`quest`（任务进度缓存）；
+- 损坏文件自动改名为 `.bak` 并重置，不崩溃；`schema` 变化由 `repair_meta` 迁移；
+- **客户端状态是唯一权威**：启动时与运行中定期用 `character/scene/inventory/quests` 的实时观察调用 `reconcile(store, namespace, live)`，冲突字段一律覆盖为 live 值并记录修复项；调用方应发布 `memory/repair` 事件；
+- `flush` 节流 ≥1 秒；只缓存"客户端无法直接观察"的事实（巡逻进度、上次商店图、阶段），可观察事实每 tick 以 live 覆盖，禁止用旧缓存代替观察。
+
 ## 离线测试
 
 从仓库根目录运行：
