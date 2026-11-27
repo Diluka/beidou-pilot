@@ -108,13 +108,14 @@ for _, target in ipairs({"npc:导游", "npc:12101"}) do
     assert_terminal(ctx, "target/arrived", "arrived")
 end
 
--- An interrupted route must not keep walking while sustain owns the tick.
+-- 无药不再由 sustain 接管 tick：导航继续，不能生成 target/wait/no_potion。
 local interrupted = scenario("follow", "point:路口", 95, 100)
 tick(interrupted)
 assert(input.direction == "left")
 interrupted.game.character.hp = 5
 tick(interrupted)
-assert_terminal(interrupted, "target/wait", "no_potion")
+assert(event_count("target/wait", "no_potion") == 0, "no_potion must not own the tick")
+assert(interrupted.state.bot.mode == "follow", "navigation must continue without potion")
 
 -- The selected NPC vanished; another NPC with the same name/template is not the selected object.
 local ctx = scenario("follow", "npc:商人", 5, 100)
