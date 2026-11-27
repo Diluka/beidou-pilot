@@ -50,24 +50,10 @@ local function open_fake(path, mode)
 end
 
 io.open = open_fake
-os.execute = function(command)
-    local listing_path = command:match(" > '([^']+)' && date")
-    local clock_path = command:match("date %S+ > '([^']+)'$")
-    if listing_path then
-        local lines = {}
-        for _, path in ipairs(queue_paths) do
-            if files[path] ~= nil then
-                lines[#lines + 1] = tostring(modified_at[path] or saved_time()) .. " " .. path
-            end
-        end
-        table.sort(lines)
-        files[listing_path] = #lines > 0 and table.concat(lines, "\n") .. "\n" or ""
-    end
-    if clock_path then files[clock_path] = string.format("%.9f\n", saved_time() + 0.25) end
-    return true
-end
+os.execute = function() error("shell must not be called") end
 os.rename = function(source, destination)
     if files[source] == nil then return nil, "missing source" end
+    if files[destination] ~= nil then return nil, "File exists" end
     files[destination] = files[source]
     modified_at[destination] = modified_at[source]
     files[source], modified_at[source] = nil, nil
@@ -79,10 +65,9 @@ os.remove = function(path)
 end
 
 local function add_command(seq, id, body, mtime)
-    local path = root .. "/queue/" .. seq .. "-" .. id .. ".cmd"
+    local path = root .. "/queue/slot" .. seq .. ".cmd"
+    if mtime then body = body .. "created_ms=" .. math.floor(mtime * 1000) .. "\n" end
     files[path] = body
-    modified_at[path] = mtime or saved_time()
-    queue_paths[#queue_paths + 1] = path
     return path
 end
 
@@ -111,7 +96,7 @@ context.state.force_publish = true
 assert(io_module.publish(context, {character = {}}, 2))
 assert(files[root .. "/queue/rejected/c2"] == "rejected=unknown_kind\n" and files[invalid_path] == nil)
 
-local fresh_path = add_command(4, "c4", "id=c4\nkind=hunt\nttl=1\nsource=cli\n", saved_time() - 0.5)
+local fresh_path = add_command(4, "c4", "id=c4\nkind=hunt\nttl=1\nsource=cli\n", saved_time())
 commands = assert(io_module.poll(context, 2.5))
 assert(#commands == 1 and commands[1]._ok)
 context.state.pending_receipts = commands
@@ -132,12 +117,24 @@ commands = assert(io_module.poll(context, 4))
 assert(#commands == 1 and commands[1]._ok)
 context.state.pending_receipts = commands
 context.state.force_publish = true
-failed_writes[root .. "/queue/done/c5"] = true
+failed_writes[root .. "/queue/done/c5.tmp"] = true
 assert(io_module.publish(context, {character = {}}, 4))
-failed_writes[root .. "/queue/done/c5"] = nil
-assert(files[root .. "/queue/done/c5"] == "")
+failed_writes[root .. "/queue/done/c5.tmp"] = nil
+assert(files[root .. "/queue/done/c5"] == nil)
 assert(context.state.bot.last_error == "receipt_write_failed")
 assert(files[root .. "/events.jsonl"]:find("receipt_write_failed", 1, true))
+assert(#context.state.pending_receipts == 1)
+context.state.force_publish = true
+assert(io_module.publish(context, {character = {}}, 5))
+assert(files[root .. "/queue/done/c5"] == "ok\n" and #context.state.pending_receipts == 0)
+assert(files[root .. "/events.jsonl"]:find('io/rename_retry', 1, true))
+files[root .. "/queue/slot8.processing"] = "id=interrupted\nkind=stop\nttl=0\nsource=host\n"
+commands = assert(io_module.poll(context, 6))
+assert(#commands == 1 and not commands[1]._ok and commands[1]._reason == "interrupted")
+context.state.pending_receipts = commands
+context.state.force_publish = true
+assert(io_module.publish(context, {character = {}}, 6))
+assert(files[root .. "/queue/rejected/interrupted"] == "rejected=interrupted\n")
 
 files["/work/bot/config.conf"] = "owner_name=Owner\nowner_character_id=12\nfollow_distance=99\n"
 files["/work/bot/checkpoint.conf"] = "mode=hunt\ntarget=12\nmap_id=7\n"
@@ -315,11 +312,6 @@ local pipeline_context = {
         player = {move = function() return true end}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
 }
-fake_modules["lib.io"].platform_error = "unsupported_platform: bot_package_requires_posix"
-environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "event" and pipeline_context.state.bot_platform_error_reported,
-    "unsupported platforms must report once and stop before observing or polling")
-fake_modules["lib.io"].platform_error = nil
 calls = {}
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,select,combat,loot_select,publish")

@@ -53,18 +53,76 @@ class BotctlTests(unittest.TestCase):
     def test_install_overwrites_code_and_preserves_bot_state(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            source = root / "bot"
-            source.mkdir()
+            worktree = root / "worktree"
+            source = worktree / "bot"
+            source.mkdir(parents=True)
             (source / "main.lua").write_text("new")
+            (root / "bot").mkdir()
+            (root / "bot/main.lua").write_text("wrong source")
             role = root / "private/workbenches/dev/hero"
             (role / "scripts/bot").mkdir(parents=True)
             (role / "scripts/bot/main.lua").write_text("old")
             (role / "bot").mkdir()
             (role / "bot/state.json").write_text("state")
-            with patch.object(botctl, "ROOT", root):
+            with patch.object(botctl, "ROOT", root), patch.object(botctl, "WORKTREE", worktree):
                 self.assertEqual(botctl.main(["install", "dev/hero"]), 0)
             self.assertEqual((role / "scripts/bot/main.lua").read_text(), "new")
             self.assertEqual((role / "bot/state.json").read_text(), "state")
+            self.assertTrue((role / "bot/queue/done").is_dir())
+            self.assertTrue((role / "bot/queue/rejected").is_dir())
+
+    def test_send_publishes_and_reads_receipt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            queue = root / "private/workbenches/dev/hero/bot/queue"
+            (queue / "done").mkdir(parents=True)
+            (queue / "rejected").mkdir()
+
+            def receive(_):
+                fields = dict(line.split("=", 1) for line in (queue / "slot1.cmd").read_text().splitlines())
+                self.assertEqual(fields["kind"], "status")
+                self.assertEqual(fields["source"], "host")
+                self.assertEqual(fields["ttl"], "10")
+                self.assertTrue(int(fields["created_ms"]) > 0)
+                (queue / "done" / fields["id"]).write_text("ok\n")
+
+            output = io.StringIO()
+            with (
+                patch.object(botctl, "ROOT", root),
+                patch.object(botctl.time, "sleep", side_effect=receive),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(botctl.main(["send", "dev/hero", "--kind", "status", "--ttl", "10"]), 0)
+            result = json.loads(output.getvalue())
+            self.assertEqual((result["slot"], result["receipt"], result["content"]), (1, "done", "ok"))
+
+    def test_send_full_queue_does_not_overwrite(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            queue = root / "private/workbenches/dev/hero/bot/queue"
+            (queue / "done").mkdir(parents=True)
+            (queue / "rejected").mkdir()
+            for index in range(1, 9):
+                (queue / f"slot{index}.cmd").write_text("occupied")
+            with patch.object(botctl, "ROOT", root), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(botctl.main(["send", "dev/hero", "--kind", "stop"]), 1)
+            self.assertTrue(all((queue / f"slot{i}.cmd").read_text() == "occupied" for i in range(1, 9)))
+
+    def test_send_timeout_does_not_replay(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            queue = root / "private/workbenches/dev/hero/bot/queue"
+            (queue / "done").mkdir(parents=True)
+            (queue / "rejected").mkdir()
+            stderr = io.StringIO()
+            with (
+                patch.object(botctl, "ROOT", root),
+                patch.object(botctl.time, "monotonic", side_effect=[0, 4]),
+                contextlib.redirect_stderr(stderr),
+            ):
+                self.assertEqual(botctl.main(["send", "dev/hero", "--kind", "stop"]), 1)
+            self.assertIn("可能仍在处理", stderr.getvalue())
+            self.assertEqual(len(list(queue.glob("slot*.cmd"))), 1)
 
     def test_start_dispatches_continuous_script(self):
         root = Path("/repo")

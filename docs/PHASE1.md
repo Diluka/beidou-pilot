@@ -1,6 +1,6 @@
 # 第一期：能跟能打（伴游机器人 MVP）
 
-- 状态：历史拆分。原 headless 后端已退役；机器人邮箱/运行后端迁移到 GUI 是新的前置任务，任务表与验收前提需维护者重新确认后再执行。
+- 状态：历史拆分。原 headless 后端已退役；机器人邮箱已迁移到 GUI，任务表与验收前提需维护者重新确认后再执行。
 - 设计依据：[伴游机器人设计与路线](COMPANION_BOT.md) 的 P0/P1
 - 任务模板：[开发任务模板](../.github/ISSUE_TEMPLATE/task.md)
 
@@ -22,7 +22,7 @@
 **非范围**：
 
 - 原生聊天/私聊、队伍/组队、组队任务、BOSS、LLM、跨图。
-- 机器人邮箱/运行后端迁移到 GUI（新的前置任务，需维护者另行确认）。
+- 机器人邮箱/运行后端迁移（已由独立前置工作处理）。
 - 服务端修改、正式环境数据写入。
 
 ## 3. 后端分工
@@ -30,7 +30,7 @@
 > 后端选择、差异审计、GUI 兼容选型是全局约定，只在本文和设计文档维护；任务正文不重复这些共识，只写本任务特有的目标和边界。
 
 - 后端只有原版 GUI。开发任务只在这一个后端实现和验收；任务正文锁定预期行为。
-- bot 主包当前依赖 POSIX shell 与文件邮箱，尚未迁移到 GUI/Wine；迁移完成前不能在新后端启动队列 IO。
+- bot 主包使用纯 Lua 固定槽位文件邮箱，在 GUI/Wine 运行。
 - GUI 原生行为是权威依据；不再维护第二后端差异审计。
 - 如果某项行为还没有可靠依据，先派发前置调查/取证任务，把预期行为写成可复核契约；功能任务只消费已锁定的证据。
 - GUI 兼容优先通过客户端钩子/桥的直接指令实现；模拟键鼠只在有证据表明钩子不可用时使用。选型由维护者决定；证据不足先派调查任务。
@@ -211,18 +211,22 @@ local function main(context) ... end
 ### 6.6 文件与命令
 
 ```text
-/work/bot/queue/<seq>-<id>.cmd     key=value
+/work/bot/queue/slotN.cmd         N=1..8，key=value
   id=...
   kind=follow|hunt|stay|status|stop
   target=可选
-  ttl=秒，0=持续到被替换
+  ttl=秒，0=不过期
+  created_ms=Unix 毫秒（正 TTL 必填）
   source=host|cli
-/work/bot/queue/done/<id>          ok 或 rejected=<reason>
-/work/bot/state.json              1s 原子写
+/work/bot/queue/done/<id>          ok
+/work/bot/queue/rejected/<id>      rejected=<reason>
+/work/bot/state.json              约 1s 更新，Windows 替换可能短暂缺失
 /work/bot/events.jsonl            追加，按大小轮转
 /work/bot/config.conf             owner、技能/药品、阈值、安全点
 /work/bot/checkpoint.conf         模式/目标
 ```
+
+发送者先写临时文件再发布到空槽；单一发送者避免槽位竞争。脚本用 rename 领取槽位。目标已存在时 Windows 的 rename 不覆盖；状态写入先尝试 rename，失败且目标存在时移除旧目标再重试，记录事件，不能保证全程原子可见。
 
 启动从 `recover` 开始，不恢复 checkpoint 中的旧模式/目标，也不重放旧动作；世界就绪且本场景地形图可用后进入 `idle`。当前 checkpoint 仅做格式校验并保留。
 
