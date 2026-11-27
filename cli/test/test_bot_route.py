@@ -63,13 +63,21 @@ class TravelLuaContract(unittest.TestCase):
         lua.luaL_openlibs.argtypes = [ctypes.c_void_p]
         lua.luaL_loadstring.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         lua.luaL_loadstring.restype = ctypes.c_int
-        lua.lua_pcallk.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_longlong, ctypes.c_void_p]
+        lua.lua_pcallk.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_longlong,
+            ctypes.c_void_p,
+        ]
         lua.lua_pcallk.restype = ctypes.c_int
         lua.lua_tolstring.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
         lua.lua_tolstring.restype = ctypes.c_char_p
         lua.lua_close.argtypes = [ctypes.c_void_p]
         travel = (Path(__file__).resolve().parents[2] / "bot/travel.lua").read_text(encoding="utf-8")
-        source = r'''
+        source = (
+            r"""
 local builds, moves, stops = 0, {}, 0
 local no_path, fail_move = false, false
 local plans, steps = {}, 0
@@ -100,10 +108,14 @@ local c = {
         stop=function() stops=stops+1 end}, character={}, log=function() end},
 }
 local main = assert(load([==[
-''' + travel + r'''
+"""
+            + travel
+            + r"""
 return main
 ]==]))()
-''' + scenario
+"""
+            + scenario
+        )
         state = lua.luaL_newstate()
         try:
             lua.luaL_openlibs(state)
@@ -115,7 +127,7 @@ return main
             lua.lua_close(state)
 
     def test_portal_retry_waits_for_map_change_and_rebuilds_graph(self) -> None:
-        self.run_lua(r'''
+        self.run_lua(r"""
 main(c)
 c.tick.time = 0.3; main(c)
 assert(c.state.index == 1, "must not advance without a map transition")
@@ -133,10 +145,10 @@ c.world.map_id = 3; main(c)
 local status = main(c)
 assert(status == "done", "route completes only after the last map transition")
 assert(stops > 0, "completion must release input")
-''')
+""")
 
     def test_real_mover_long_edges_remain_bounded(self) -> None:
-        self.run_lua(r'''
+        self.run_lua(r"""
 local move = assert(loadfile("bot/lib/move.lua"))()
 game = {player={move=function() return true end, skill=function() return true end,
     jump=function() return true end}, character={movement={max_speed=100}}}
@@ -169,10 +181,10 @@ for _, kind in ipairs({"jumpup", "downjump", "rope"}) do
     status, reason = tick(mover, 30, 200)
     assert(status == "failed" and reason == "timeout", kind .. " must remain bounded")
 end
-''')
+""")
 
     def test_active_path_continues_when_character_has_no_platform(self) -> None:
-        self.run_lua(r'''
+        self.run_lua(r"""
 c.state.legs[1].x = 100
 main(c)
 assert(steps == 1, "initial plan must start movement")
@@ -180,10 +192,10 @@ missing_character_platform = true
 main(c)
 assert(steps == 2 and c.state.path, "active movement must continue while off platform")
 assert(not c.state.retries, "airborne movement must not trigger retry")
-''')
+""")
 
     def test_missing_character_platform_waits_then_retries(self) -> None:
-        self.run_lua(r'''
+        self.run_lua(r"""
 c.state.legs[1].x = 100
 missing_character_platform = true
 main(c)
@@ -192,18 +204,18 @@ c.tick.time = 2.9; main(c)
 assert(not c.state.retries, "temporary missing platform must not retry")
 c.tick.time = 3.1; main(c)
 assert(c.state.retries == 1 and #plans == 0, "persistent missing platform must retry")
-''')
+""")
 
     def test_missing_target_platform_retries_immediately(self) -> None:
-        self.run_lua(r'''
+        self.run_lua(r"""
 c.state.legs[1].x = 100
 missing_target_platform = true
 main(c)
 assert(c.state.retries == 1 and stops > 0 and #plans == 0, "missing target requires immediate retry")
-''')
+""")
 
     def test_failed_edge_is_blocked_on_replan(self) -> None:
-        self.run_lua(r'''
+        self.run_lua(r"""
 c.state.legs[1].x = 100
 fail_move = true
 main(c)
@@ -212,10 +224,10 @@ fail_move = false
 main(c)
 assert(#plans == 2, "movement failure must trigger a new plan")
 assert(plans[2]["1:2"], "replan must block the failed rope edge")
-''')
+""")
 
     def test_no_path_fails_instead_of_blind_walking(self) -> None:
-        self.run_lua(r'''
+        self.run_lua(r"""
 c.state.legs[1].x = 100
 no_path = true
 main(c)
@@ -223,7 +235,7 @@ assert(stops > 0, "failed plan must release input before retry")
 local status, reason = main(c)
 assert(status == "failed" and reason == "no_path", "repeated no_path must fail explicitly")
 assert(moves[#moves] ~= "right", "no_path must not walk blindly")
-''')
+""")
 
 
 if __name__ == "__main__":

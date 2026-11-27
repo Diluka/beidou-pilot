@@ -40,7 +40,9 @@ def build_route(repo_root: Path, workbench: str, start: int, goal: int) -> list[
     if not isinstance(data, dict):
         raise RouteError(f"world-map 响应缺少 data：{result.stdout[:400]}")
     if data.get("status") != "ok" or not isinstance(data.get("legs"), list):
-        raise RouteError(f"world-map 无可用路线：status={data.get('status')} error={data.get('error')}；船、出租车等脚本交通不在普通门户图中，请人工分段")
+        raise RouteError(
+            f"world-map 无可用路线：status={data.get('status')} error={data.get('error')}；船、出租车等脚本交通不在普通门户图中，请人工分段"
+        )
     waypoints: list[dict[str, object]] = []
     for leg in data["legs"]:
         if not isinstance(leg, dict):
