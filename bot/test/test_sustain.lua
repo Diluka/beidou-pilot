@@ -33,12 +33,13 @@ assert(#events == no_potion_events + 1, "no_potion event must reappear after int
 world.character.hp = 0
 handled, reason = sustain.step(ctx, world)
 assert(handled and reason == "reviving" and calls[#calls] == "revive")
-world.now = 10
+world.now = 60
 handled, reason = sustain.step(ctx, world)
-assert(handled and reason == "revive_unknown" and events[1] == "revive_unknown")
+assert(handled and reason == "revive_unknown" and events[#events] == "revive_unknown")
 local count = #calls
+local event_count_before_idle = #events
 sustain.step(ctx, world)
-assert(#calls == count and #events == 1)
+assert(#calls == count and #events == event_count_before_idle)
 ctx.state.sustain = {config = {hp_item = 1, mp_item = 2}}
 world.now = 20
 sustain.step(ctx, world)

@@ -74,7 +74,7 @@ function M.step(ctx, world)
         local now = world.now or 0
         if not memory.no_potion_at or now - memory.no_potion_at >= 30 then
             memory.no_potion_at = now
-            io_module.event(ctx, "sustain/no_potion", {kind = kind, item_id = id})
+            io_module.event(ctx, "sustain/no_potion", {reason = "no_potion", kind = kind, item_id = id})
         end
         return false, nil
     end
