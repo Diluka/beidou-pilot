@@ -90,7 +90,26 @@ class BotSupplyContract(unittest.TestCase):
             patch.object(bot_supply, "close_shop") as close,
             patch.object(bot_supply, "read_character", return_value={"mesos": 1000}),
             patch.object(bot_supply, "read_shop", return_value=shop),
-            patch.object(bot_supply, "buy", return_value={}) as buy,
+            patch.object(
+                bot_supply,
+                "buy",
+                side_effect=[
+                    {
+                        "completed": True,
+                        "quantity_before": 0,
+                        "quantity_after": 2,
+                        "mesos_before": 1000,
+                        "mesos_after": 980,
+                    },
+                    {
+                        "completed": True,
+                        "quantity_before": 0,
+                        "quantity_after": 5,
+                        "mesos_before": 980,
+                        "mesos_after": 970,
+                    },
+                ],
+            ) as buy,
             patch.object(bot_supply, "travel") as travel,
         ):
             with self.assertRaisesRegex(SystemExit, "上限不足"):
@@ -117,7 +136,20 @@ class BotSupplyContract(unittest.TestCase):
                 return_value={"buy_items": [{"item_id": bot_supply.ARROW, "unit_price": 1, "bundle_quantity": 1}]},
             ),
             patch.object(bot_supply, "sell", side_effect=lambda *args: calls.append("sell")),
-            patch.object(bot_supply, "buy", side_effect=lambda *args: calls.append("buy")),
+            patch.object(
+                bot_supply,
+                "buy",
+                side_effect=lambda *args: (
+                    calls.append("buy")
+                    or {
+                        "completed": True,
+                        "quantity_before": 0,
+                        "quantity_after": 3,
+                        "mesos_before": 10,
+                        "mesos_after": 7,
+                    }
+                ),
+            ),
         ):
             report = bot_supply.restock("dev/test", False, sell_etc=(4000999,))
         self.assertEqual(["sell", "buy"], calls)
@@ -273,6 +305,80 @@ class BotSupplyContract(unittest.TestCase):
             self.assertEqual(
                 "resume_requested", json.loads((bot_dir / "supply-cycle-session1.json").read_text())["status"]
             )
+
+    def test_open_shop_approaches_on_same_platform_then_talks(self) -> None:
+        responses = [{"status": "completed", "script": {"control_released": True}}, {}, {"open": True}]
+        with (
+            patch.object(bot_supply, "read_character", return_value={"map_id": 100000102}),
+            patch.object(bot_supply, "cli_json", side_effect=responses) as cli,
+        ):
+            bot_supply.open_shop("dev/test", "卢娜")
+        self.assertEqual(
+            [("script", "run", "bot/shop_approach.lua", "--seconds", "40"), ("talk", "卢娜"), ("shop", "read")],
+            [call.args[1:] for call in cli.call_args_list],
+        )
+
+    def test_unconfirmed_purchase_stops_and_closes_shop(self) -> None:
+        plan = {"map_id": 1, "gaps": {"red": 0, "blue": 0, "arrow": 3}}
+        with (
+            patch.object(bot_supply, "supply_plan", return_value=plan),
+            patch.object(bot_supply, "nearest_potion_shop", return_value=(1, {"npc": "shop"})),
+            patch.object(bot_supply, "junk_list", return_value=[]),
+            patch.object(bot_supply, "open_shop"),
+            patch.object(bot_supply, "close_shop") as close,
+            patch.object(bot_supply, "read_character", return_value={"mesos": 10}),
+            patch.object(
+                bot_supply,
+                "read_shop",
+                return_value={"buy_items": [{"item_id": bot_supply.ARROW, "unit_price": 1, "bundle_quantity": 1}]},
+            ),
+            patch.object(bot_supply, "buy", return_value={"completed": False}),
+        ):
+            with self.assertRaisesRegex(SystemExit, "购买结果未确认"):
+                bot_supply.restock("dev/test", False)
+        close.assert_called_once()
+
+    def test_restock_fails_when_inventory_remains_short(self) -> None:
+        plan = {"map_id": 1, "gaps": {"red": 0, "blue": 0, "arrow": 3}}
+        with (
+            patch.object(bot_supply, "supply_plan", return_value=plan),
+            patch.object(bot_supply, "nearest_potion_shop", return_value=(1, {"npc": "shop"})),
+            patch.object(bot_supply, "junk_list", return_value=[]),
+            patch.object(bot_supply, "open_shop"),
+            patch.object(bot_supply, "close_shop") as close,
+            patch.object(bot_supply, "read_character", return_value={"mesos": 10}),
+            patch.object(
+                bot_supply,
+                "read_shop",
+                return_value={"buy_items": [{"item_id": bot_supply.ARROW, "unit_price": 1, "bundle_quantity": 1}]},
+            ),
+            patch.object(
+                bot_supply,
+                "buy",
+                return_value={
+                    "completed": True,
+                    "quantity_before": 0,
+                    "quantity_after": 3,
+                    "mesos_before": 10,
+                    "mesos_after": 7,
+                },
+            ),
+        ):
+            with self.assertRaisesRegex(SystemExit, "库存仍有缺口"):
+                bot_supply.restock("dev/test", False)
+        close.assert_called_once()
+
+    def test_close_shop_requires_closed_confirmation(self) -> None:
+        with patch.object(
+            bot_supply, "workbench", return_value=subprocess.CompletedProcess([], 0, '{"data":{"closed":false}}', "")
+        ):
+            with self.assertRaisesRegex(SystemExit, "关闭未确认"):
+                bot_supply.close_shop("dev/test")
+        with patch.object(
+            bot_supply, "workbench", return_value=subprocess.CompletedProcess([], 1, "shop_close_not_confirmed", "")
+        ):
+            with self.assertRaisesRegex(SystemExit, "shop_close_not_confirmed"):
+                bot_supply.close_shop("dev/test")
 
     def test_gear_advice_filters_by_level(self) -> None:
         with patch.object(bot_supply, "read_character", return_value={"level": 15, "job": 300}):
