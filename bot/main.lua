@@ -13,17 +13,11 @@ local memory_module = require("lib.memory")
 
 local function main(context)
     local memory = context.state
-    if io_module.platform_error then
-        if not memory.bot_platform_error_reported then
-            io_module.event(context, "error", {reason = io_module.platform_error})
-            memory.bot_platform_error_reported = true
-        end
-        return
-    end
     if not memory.bot then
+        memory.bot_root = memory.bot_root or "/work/bot"
+        state_module.bot_root = memory.bot_root
         memory.bot = state_module.new()
         memory.bot.player = context.game.player
-        memory.bot_root = memory.bot_root or "/work/bot"
         memory.started_at = context.tick.time
         memory.last_poll = nil
         memory.force_publish = true
@@ -33,8 +27,8 @@ local function main(context)
     local bot = memory.bot
     local now = context.tick.time
     if (bot.config or defaults).memory_enabled and not memory.store then
-        memory.store = memory_module.load("/work/bot/memory.lua", now)
-        memory.store_path = "/work/bot/memory.lua"
+        memory.store = memory_module.load(memory.bot_root .. "/memory.lua", now)
+        memory.store_path = memory.bot_root .. "/memory.lua"
     end
     local world, observe_error = world_module.observe(context)
     if (bot.config or defaults).memory_enabled and world and world.ready and world.character then
@@ -163,7 +157,7 @@ local function main(context)
     local handled, sustain_error = sustain.step(context, world)
     if handled and not kind then
         if (bot.config or defaults).memory_enabled and memory.store then
-        memory_module.flush(memory.store, memory.store_path or "/work/bot/memory.lua", now)
+        memory_module.flush(memory.store, memory.store_path or memory.bot_root .. "/memory.lua", now)
     end
     io_module.publish(context, world, now)
         return

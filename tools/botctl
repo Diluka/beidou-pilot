@@ -57,7 +57,7 @@ def main(argv=None):
         parser.error("NAME 必须是 live/NAME 或 dev/NAME")
     role = ROOT / "private/workbenches" / args.name
     if args.command == "install":
-        source = ROOT / "bot"
+        source = WORKTREE / "bot"
         target = role / "scripts/bot"
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
@@ -69,6 +69,8 @@ def main(argv=None):
                     shutil.copy2(child, dest)
         else:
             shutil.copytree(source, target)
+        (role / "bot/queue/done").mkdir(parents=True, exist_ok=True)
+        (role / "bot/queue/rejected").mkdir(parents=True, exist_ok=True)
         return 0
     if args.command == "logs":
         if args.lines < 0:

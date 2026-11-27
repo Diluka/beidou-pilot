@@ -23,6 +23,15 @@ assert(decoded.supply.items[2000000] == 3 and decoded.supply.items[2060000] == 4
 assert(memory.save(store, path))
 local loaded = assert(memory.load(path))
 assert(loaded.bot.mode == "hunt" and loaded.supply.red_goal == 25)
+local rename = os.rename
+os.rename = function(source, destination)
+    local existing = io.open(destination, "r")
+    if existing then existing:close(); return nil, "File exists" end
+    return rename(source, destination)
+end
+assert(memory.save(store, path), "Windows rename retry must save")
+os.rename = rename
+assert(memory.load(path).bot.mode == "hunt")
 
 -- 命名空间 get/set/unset
 assert(memory.get(loaded, "bot", "patrol", 0) == 3)

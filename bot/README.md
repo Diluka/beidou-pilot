@@ -99,16 +99,17 @@ workbenches/workbench dev/NAME script run bot/safe_spot.lua --seconds 30
 
 ## 指令、状态与事件
 
-把每条命令写入 `/work/bot/queue/<seq>-<id>.cmd`，每行一个 `key=value` 字段。`id/kind/ttl/source` 必填，`target` 可选；`kind` 仅支持 `follow`、`hunt`、`stay`、`status`、`stop`，`source` 为 `host` 或 `cli`。例如：
+把每条命令写入 `/work/bot/queue/slotN.cmd`（N 为 1 至 8），每行一个 `key=value` 字段。`id/kind/ttl/source` 必填，正 TTL 还需 `created_ms`（Unix 毫秒），`target` 可选；`kind` 仅支持 `follow`、`hunt`、`stay`、`status`、`stop`，`source` 为 `host` 或 `cli`。例如：
 
 ```text
 id=c1
 kind=status
 ttl=10
+created_ms=1760000000000
 source=host
 ```
 
-脚本在约 0.5 秒间隔扫描队列。命令处理后移动到 `queue/done/<id>`（内容 `ok`）或 `queue/rejected/<id>`（内容 `rejected=<reason>`）；重复 ID 不会再次执行，最近 100 个 ID 会留在会话内去重。`ttl=0` 不过期；正 TTL 从命令文件修改时间起计时，过期命令写入拒绝回执。`status` 立即发布状态。
+宿主先把完整内容写入临时文件，选取空槽后 rename 到槽位；单一写入者避免槽位竞争。脚本约每 0.5 秒按槽号扫描，以 rename 领取为 `.processing`。Windows 下覆盖已有 state 的 rename 失败后会删除旧文件再重试，因此更新存在短暂无文件窗口，不保证严格原子替换。命令处理后写入 `queue/done/<id>`（内容 `ok`）或 `queue/rejected/<id>`（内容 `rejected=<reason>`）；重复 ID 不会再次执行，最近 100 个 ID 会留在会话内去重。`ttl=0` 不过期；正 TTL 从命令内 `created_ms` 起计时，过期命令写入拒绝回执。`status` 立即发布状态。
 
 follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代次变化，或 owner 的期望位置移动达到 `stop_distance` 时重算路径，同平台内的小幅位置变化继续复用路径。自然场景中 owner 与 bot 位于不同平台且路径规划返回 `no_path` 时，跟随不能保证接近目标；原 headless dev 冒烟在修复后仍观察到 `follow/wait: owner_platform_unreachable`；headless 已退役，GUI 迁移后的 30 分钟跟随验收尚未完成。
 
@@ -125,7 +126,7 @@ follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代�
 
 `hunt` 当前地图没有可选怪物且没有可拾取物时保留 hunt 模式并发出 `hunt/wait`，原因是 `no_target`；每秒复查一次，等待期间不逐 tick 重试攻击或拾取。
 
-`/work/bot/state.json` 原子更新，常规间隔约 1 秒；`/work/bot/events.jsonl` 记录命令、模式和错误事件，单文件达到 1 MiB 时滚动到 `events.1.jsonl`。启动进入 `recover`；世界就绪且当前场景有可用地形图时转为 `idle`，不要求 `move.new` 已实现。mover 仅在 follow/hunt 产生实际移动或目标动作时才按场景代次尝试创建。checkpoint 当前只校验并保留，不重放上次动作或恢复旧模式/目标。
+`/work/bot/state.json` 常规间隔约 1 秒更新，Windows 覆盖回退时有短暂缺失窗口；`/work/bot/events.jsonl` 记录命令、模式和错误事件，单文件达到 1 MiB 时滚动到 `events.1.jsonl`。启动进入 `recover`；世界就绪且当前场景有可用地形图时转为 `idle`，不要求 `move.new` 已实现。mover 仅在 follow/hunt 产生实际移动或目标动作时才按场景代次尝试创建。checkpoint 当前只校验并保留，不重放上次动作或恢复旧模式/目标。
 
 `state.json.session_id` 取自只读 `context.tick.script_id`，即当前 Runtime tick 会话 ID。
 
@@ -141,7 +142,7 @@ tools/botctl logs dev/NAME --lines 50
 tools/botctl stop dev/NAME
 ```
 
-`install` 覆盖 `scripts/bot` 中的机器人代码但保留 `state.json`、事件日志等角色状态；`start` 仅经 workbench 发布连续 tick 脚本，不启动客户端；`status` 同时显示 workbench 脚本状态和 `state.json`；`stop` 根据当前 `script.id` 发起取消，并检查脚本终止与 control_released；`logs` 默认显示最近 50 行。客户端关闭仍由 workbench 单独管理。
+`install` 从当前检出复制并覆盖 `scripts/bot` 中的机器人代码，创建邮箱目录但保留 `state.json`、事件日志等角色状态；`start` 仅经 workbench 发布连续 tick 脚本，不启动客户端；`status` 同时显示 workbench 脚本状态和 `state.json`；`stop` 根据当前 `script.id` 发起取消，并检查脚本终止与 control_released；`logs` 默认显示最近 50 行。客户端关闭仍由 workbench 单独管理。
 
 配置键及状态/事件字段见上方“默认值”“指令、状态与事件”。常见故障：
 
@@ -169,7 +170,7 @@ workbenches/workbench dev/NAME script run bot/travel.lua --seconds 240
 
 ## 持久化状态（memory）
 
-- 路径 `/work/bot/memory.lua`（可读 Lua 表，`schema = 1`），原子写（`.tmp` + rename），上限 64KB；
+- 路径 `/work/bot/memory.lua`（可读 Lua 表，`schema = 1`），先写 `.tmp` 再 rename；Windows 覆盖回退时存在短暂缺失窗口，上限 64KB；
 - API：`lib.memory` 的 `load/save/get/set/unset/flush/clear/reconcile/repair_meta`；命名空间约定 `bot`（模式/目标/地图等）、`supply`（补给阶段/上次商店）、`quest`（任务进度缓存）；
 - 损坏文件自动改名为 `.bak` 并重置，不崩溃；`schema` 变化由 `repair_meta` 迁移；
 - **客户端状态是唯一权威**：启动时与运行中定期用 `character/scene/inventory/quests` 的实时观察调用 `reconcile(store, namespace, live)`，冲突字段一律覆盖为 live 值并记录修复项；调用方应发布 `memory/repair` 事件；
