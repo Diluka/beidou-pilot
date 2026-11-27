@@ -174,8 +174,6 @@ flows:
       - {id: select, kind: action, name: 选择并核验所属实例, summary: 按 live/NAME 或 dev/NAME 选择角色、读取登记并核验所属容器。, concept: client-session.open}
       - {id: existing, kind: decision, name: 是否已有运行会话, summary: 判断所选实例是否已有所属容器运行。}
       - {id: matching, kind: decision, name: 请求是否允许复用现有会话, summary: 核对可证明的显式目标和账号中的角色、世界与频道，不匹配时保留现场。}
-      - {id: reuse-backend, kind: decision, name: 复用哪个后端的会话, summary: 继续当前 GUI 登录流程，入图后核对角色和频道。}
-      - {id: resumed, kind: outcome, name: 返回已有 GUI 会话状态, summary: 返回实际阶段与ready，不重复登录或隐式切换角色。}
       - {id: continue-gui, kind: action, name: 继续已有GUI会话的登录与入图等待, summary: 根据当前登录、频道或选角阶段继续正常GUI流程，不新建客户端容器。, concept: client-session.open}
       - {id: validate, kind: action, name: 核验新会话前置条件, summary: 核对目标、角色配置、资源、镜像和其他实例的角色占用。, concept: client-session.open}
       - {id: permitted, kind: decision, name: 是否允许建立会话, summary: 目标与配置有效且没有重复角色接管才允许启动。}
@@ -188,10 +186,8 @@ flows:
       - {from: select, to: existing}
       - {from: existing, to: matching, when: 已有运行会话}
       - {from: existing, to: validate, when: 没有运行会话}
-      - {from: matching, to: reuse-backend, when: 已证明匹配或未请求切换}
+      - {from: matching, to: continue-gui, when: 已证明匹配或未请求切换}
       - {from: matching, to: refused, when: 不匹配或无法证明一致}
-      - {from: reuse-backend, to: resumed, when: GUI 会话}
-      - {from: reuse-backend, to: continue-gui, when: GUI会话}
       - {from: continue-gui, to: ready}
       - {from: validate, to: permitted}
       - {from: permitted, to: launch, when: 前置条件通过}

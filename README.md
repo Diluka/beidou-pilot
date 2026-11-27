@@ -56,7 +56,7 @@ workbenches/workbench --help
 | 常驻服自然游玩与养成 | `live/NAME` | 已授权角色的 `PLAN.md` 与实际游戏进度 |
 | 开发服调试、复现与验收 | `dev/NAME` | `STATE.md` 记录角色条件、来源与核对时间 |
 
-角色目录整体挂载到容器 `/work`；`account.json` 权限为 `0600`。`workbench.json` 可省略；保留时 `backend` 只接受 `beidou`。
+角色目录整体挂载到容器 `/work`；`account.json` 权限为 `0600`。`workbench.json` 可省略；保留时只配置版本、超时、桥工件或缓存。
 
 ## 操作工作台
 

@@ -23,7 +23,7 @@ usage() {
   --help           显示本说明
 
 目录内维护 account.json、可选 workbench.json、计划、脚本与运行数据。
-workbench.json 可配置 backend（仅接受 beidou）、ref、timeout、bridge_artifact、cache_dir。
+workbench.json 可配置 ref、timeout、bridge_artifact、cache_dir。
 默认 main、90秒。客户端使用本启动器的 Compose 清单装配所选版本的 GUI 镜像。
 cache_dir 为角色目录内的宿主绝对路径，默认 <workbench>/cache；容器内固定为 /cache。
 两区只读取主检出 private/workbenches/config 下对应的服务器配置与共享资源路径。
@@ -383,14 +383,13 @@ esac
 settings='{}'
 if [ -f "$workbench/workbench.json" ]; then
     settings=$(jq -e 'select(type == "object") | select(
-        ((keys - ["backend", "ref", "timeout", "bridge_artifact", "cache_dir"]) | length) == 0
-        and (if has("backend") then .backend == "beidou" else true end)
+        ((keys - ["ref", "timeout", "bridge_artifact", "cache_dir"]) | length) == 0
         and (if has("ref") then (.ref | type == "string" and length > 0) else true end)
         and (if has("timeout") then (.timeout | type == "number" and . >= 5 and . <= 180) else true end)
         and (if has("bridge_artifact") then (.bridge_artifact | type == "string" and length > 0) else true end)
         and (if has("cache_dir") then (.cache_dir | type == "string" and length > 0 and startswith("/")) else true end)
         )' "$workbench/workbench.json") ||
-        fail workbench_config_invalid 'workbench.json 仅支持 backend、ref、timeout、bridge_artifact、cache_dir；请移除未知字段并检查取值，cache_dir 须为宿主绝对路径。选服由分区决定。'
+        fail workbench_config_invalid 'workbench.json 仅支持 ref、timeout、bridge_artifact、cache_dir；请移除未知字段并检查取值，cache_dir 须为宿主绝对路径。选服由分区决定。'
 fi
 if [ "$command" = open ] && "$running" && [ -f "$record" ]; then
     wait_runtime

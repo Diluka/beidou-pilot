@@ -28,7 +28,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/tes
 
 解析库是本地构建产物，新的 worktree 不会继承其他检出的产物；缺少它时，依赖地图、物品等静态资料的测试会返回 `img_parser_unavailable`；按该错误区分环境问题与逻辑回归。
 
-在已准备的 `dev/NAME` 角色目录里将 `workbench.json.ref` 设为待测提交；`backend` 可省略或设为 `beidou`。从仓库根运行以下命令，检查该提交的镜像和容器内 CLI（用实际角色名替换 `NAME`）：
+在已准备的 `dev/NAME` 角色目录里将 `workbench.json.ref` 设为待测提交。从仓库根运行以下命令，检查该提交的镜像和容器内 CLI（用实际角色名替换 `NAME`）：
 
 ```bash
 mkdir -p tmp/ci-reproduction
@@ -43,7 +43,7 @@ docker run --rm --entrypoint beidou-pilot "$image" --help
 
 网络需能下载子模块、基础镜像及 Debian 构建包。确认网络权限并按项目网络规则选择代理后，可在启动构建前导出 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`；统一入口按 Docker标准build args 透传这些变量。代理地址须能从构建网络访问，文档不固定本机地址。
 
-工作台在 `workbench.json` 选择客户端 `ref`（`backend` 只接受 `beidou`），然后执行 `workbenches/workbench dev/NAME build`。默认由 `gh` 获取所选提交成功的 Windows 桥 CI 工件；`bridge_artifact` 可指定原生输入匹配的本地工件。运行时使用当前启动器配套的 GUI Compose，挂载原客户端、只读 `Data/` 和所选角色目录。打包检查须确认容器内 CLI 可执行。
+工作台在 `workbench.json` 选择客户端 `ref`，然后执行 `workbenches/workbench dev/NAME build`。默认由 `gh` 获取所选提交成功的 Windows 桥 CI 工件；`bridge_artifact` 可指定原生输入匹配的本地工件。运行时使用当前启动器配套的 GUI Compose，挂载原客户端、只读 `Data/` 和所选角色目录。打包检查须确认容器内 CLI 可执行。
 
 ## 查看结果与合并
 
