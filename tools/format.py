@@ -42,6 +42,8 @@ SOURCES = {
         "cli/test/test_bridge_physics.py",
         "tools/motion_compare.py",
         "tools/observer/observe_clients.py",
+        "tools/bot_route.py",
+        "cli/test/test_bot_route.py",
         "tools/safe_platforms.py",
         "cli/test/test_safe_platforms.py",
         "cli/test/test_tick_cli.py",

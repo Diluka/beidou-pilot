@@ -150,6 +150,23 @@ tools/botctl stop dev/NAME
 - 脚本已结束或状态输出无法确认放键：按 status 检查终态；未确认 control_released 时将其视为停止未验收，不要关闭/重启客户端来掩盖现场。
 - NAME 格式错误：必须提供 `dev/角色名` 或 `live/角色名`。
 
+## 跨图寻路
+
+宿主侧生成航点，再交给 tick 脚本执行：
+
+```bash
+# 生成从 10000 到 20000 的航点（写入角色 bot/route.json）
+python3 tools/bot_route.py dev/NAME 10000 20000 \
+  --output private/workbenches/dev/NAME/bot/route.json
+
+# 在客户端内逐航点走到传送门并按上
+workbenches/workbench dev/NAME script run bot/travel.lua --seconds 240
+```
+
+- 航点来源是客户端原生 `world-map route`，只覆盖普通门户；船、出租车等脚本交通不在图中，找不到路线时返回非零并提示人工分段处理，不能保证识别所有脚本门。
+- 每个航点执行 `terrain.plan` + `move.step` 到传送门坐标，再按上并确认换图；失败重试一次，仍失败或超时则释放输入并返回原因，`no_path` 不会盲目直走。
+- 执行日志会记录 `leg i/N map=... plan ... -> portal ...` 与换图结果，便于核对。
+
 ## 持久化状态（memory）
 
 - 路径 `/work/bot/memory.lua`（可读 Lua 表，`schema = 1`），原子写（`.tmp` + rename），上限 64KB；
