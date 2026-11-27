@@ -109,6 +109,7 @@ workbenches/workbench dev/NAME script run bot/safe_spot.lua --seconds 30
 | `pot_hp` | `60` |
 | `pot_mp` | `30` |
 | `loot_radius` | `150` |
+| `metrics_enabled` | `1` |
 
 将配置写入角色 `/work/bot/config.conf`，格式为 `key=value`，例如 `owner_name=Owner`、`owner_character_id=123`。缺失或无法解析的值使用表中默认值。
 
@@ -235,9 +236,9 @@ skill_mp_cost=10
 
 远程和技能模式下，目标小于 `min_range` 时释放攻击输入，以同平台有界步行后撤；平台边缘或墙的可用退距不足 `min(40, min_range/2)`、地形不可用或移动失败时放弃目标并记录 `combat/retreat_blocked`。巡逻跳过宽度小于 `min_range + 60` 的平台并按场景记录 `hunt/skip`；狩猎不会攻击该类平台的目标。贴身时无论血量均不输出；当前未接入 sustain 的 `no_potion` 返回值，也不保证可以脱离追击。墙与平台判断依赖当前地形快照，真实效果仍需客户端验证。
 
-## 刷怪指标采集合同（待主流程接线）
+## 刷怪指标采集合同
 
-`lib.metrics` 是独立的被动采集模块；当前主流程尚未调用它，安装机器人不会自动产生指标。它不执行游戏动作，也不进行选点或策略评分。后续接线需在平台投影后按 tick 调用 `observe`，在实际选取怪物时调用 `target`，并将经核对的药品、箭矢、掉落和卡住结果传给 `event`；退出及异常可能在下次周期写入前发生，不能保证最后一个窗口落盘。
+主流程默认启用 `lib.metrics` 被动采集，在 `/work/bot/config.conf` 设置 `metrics_enabled=0` 可关闭，默认值为 `1`。初始化失败会记录 `metrics/error` 并在本会话禁用；采集调用异常限频报告，不阻塞原有动作。采集在平台投影后观察、跟踪狩猎目标，并记录明确的卡住事件；平台或场景变化仅记录变化事实，不猜测选择原因与采样策略。当前喝药返回值只表示请求，拾取 `picked` 可能只是掉落消失，均不能证明实际消耗或拾取，故不计为确认事件；死亡和 HP 净下降由模块观察，避免重复计数。它不执行动作或选点评分。退出及异常可能在下次周期写入前发生，不能保证最后一个窗口落盘。
 
 ```lua
 local metrics = require('lib.metrics')

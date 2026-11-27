@@ -138,6 +138,7 @@ bot/
 | `pot_hp` | `60` |
 | `pot_mp` | `30` |
 | `loot_radius` | `150` |
+| `metrics_enabled` | `1`（0 为关闭） |
 
 ### 6.4 世界模型
 
