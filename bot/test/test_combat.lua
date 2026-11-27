@@ -65,6 +65,7 @@ world.mobs = {entity(1, 200, 1), entity(2, 201, 1)}
 assert(combat.select(world, {}).object_id == 1, "without owner, self range includes 200px")
 world.mobs = {entity(2, 201, 1)}
 assert(combat.select(world, {}) == nil, "without owner, targets beyond 200px must be ignored")
+assert(combat.select(world, {hunt = true}).object_id == 2, "hunt selects visible targets beyond assist range")
 world.owner = {present = true, x = 0, y = 0}
 world.mobs = {entity(1, 300, 1), entity(2, 301, 1)}
 assert(combat.select(world, {}).object_id == 1, "owner range includes 300px")

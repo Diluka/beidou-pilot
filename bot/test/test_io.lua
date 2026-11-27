@@ -286,6 +286,7 @@ local fake_modules = {
         calls[#calls + 1] = "sustain"
         return sustain_handled
     end},
+    ["lib.hunt"] = {step = function() calls[#calls + 1] = "patrol"; return "running" end},
     ["lib.loot"] = {
         select = function() calls[#calls + 1] = "loot_select"; return selected_drop end,
         step = function(_, _, drop)
@@ -309,21 +310,24 @@ local pipeline_context = {
         mover = {}, last_poll = 10, started_at = 1,
     },
     game = {character = {action_idle = true, movement = {max_speed = 100, max_jump_height = 50}},
-        player = {move = function() return true end}},
+        player = {move = function() return true end, skill = function() return true end}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
 }
 calls = {}
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,combat,loot_select,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,combat,publish")
 calls, movement_result = {}, "running"
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,combat,loot_select,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,combat,publish")
 calls, movement_result, combat_result = {}, "done", "running"
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,select,combat,publish")
 calls, movement_result, combat_result, selected_mob, selected_drop = {}, "done", "done", nil, {}
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,move,loot_step,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,stop,publish")
+calls = {}
+environment.__test_main(pipeline_context)
+assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,loot_step,publish")
 calls, sustain_handled = {}, true
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,publish")
@@ -333,7 +337,7 @@ local recovery_context = {
     tick = {time = 20},
     state = {bot = {mode = "recover", config = {}}, last_poll = 20, started_at = 1},
     game = {character = {action_idle = true, movement = {max_speed = 100, max_jump_height = 50}},
-        player = {move = function() return true end}},
+        player = {move = function() return true end, skill = function() return true end}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
 }
 environment.__test_main(recovery_context)
@@ -356,8 +360,8 @@ assert(recovery_context.state.mover_attempt_generation == nil, "wait must not cr
 selected_mob, selected_drop = nil, nil
 recovery_context.state.bot.mode, recovery_context.tick.time, calls = "hunt", 20.3, {}
 environment.__test_main(recovery_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,event,publish")
-assert(recovery_context.state.mover_attempt_generation == nil, "no hunt target must not create a mover")
+assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,new,publish")
+assert(recovery_context.state.mover_attempt_generation == 1, "patrol must attempt to create a mover")
 
 selected_mob, selected_drop = {}, nil
 local hunt_action_context = {
@@ -369,9 +373,10 @@ local hunt_action_context = {
 }
 calls = {}
 environment.__test_main(hunt_action_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,new,loot_select,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,new,publish")
 assert(hunt_action_context.state.mover == nil and hunt_action_context.state.mover_attempt_generation == 1)
 
+recovery_context.state.mover_attempt_generation = nil
 follow_action, recovery_context.state.bot.mode, recovery_context.tick.time, calls =
     {kind = "move", x = 20, y = 2, stop_distance = 40}, "follow", 20.4, {}
 environment.__test_main(recovery_context)
@@ -416,7 +421,7 @@ local combat_context = {
 }
 calls = {}
 environment.__test_main(combat_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,new,combat,loot_select,loot_step,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,new,combat,publish")
 assert(combat_context.state.mover == created_mover)
 
 selected_mob, selected_drop, created_mover = nil, {}, {}
@@ -434,6 +439,7 @@ assert(loot_context.state.mover == created_mover)
 created_mover = nil
 
 local bot_memory = pipeline_context.state
+bot_memory.mover = {}
 bot_memory.bot.mode, sustain_handled = "follow", false
 bot_memory.path_target = {platform = 1, scene_generation = 1}
 follow_action, calls = {kind = "wait", reason = "within_distance"}, {}
@@ -471,7 +477,7 @@ bot_memory.path_target, bot_memory.last_poll = {platform = 2, scene_generation =
 pending_commands, calls, mover_stopped = {{id = "switch-hunt", kind = "hunt", _ok = true, source = "host"}}, {}, false
 selected_mob, selected_drop, movement_result = nil, nil, "running"
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,poll,stop,event,event,sustain,select,loot_select,stop,event,publish")
+assert(table.concat(calls, ",") == "observe,poll,stop,event,event,sustain,select,loot_select,patrol,publish")
 assert(bot_memory.bot.mode == "hunt" and bot_memory.bot.target == nil)
 assert(bot_memory.path_target == nil and mover_stopped)
 

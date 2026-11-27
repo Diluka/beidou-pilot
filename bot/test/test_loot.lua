@@ -180,6 +180,47 @@ status, reason = loot.step(ctx, world, current, mover)
 assert(status == "failed" and reason == "no_progress", "repeated no progress must fail")
 assert(events[#events].data.attempts == 2, "no-progress failure must not exceed one retry")
 
+local terrain = require("lib.terrain")
+local saved_plan = terrain.plan
+local cross = drop(90, 100, 2)
+world = world_with({cross, drop(91, 140, 1)})
+world.map_id, world.scene_generation = 1, 1
+assert(loot.select(world, {graph = {}, radius = 150}).object_id == 91,
+    "same-platform drops must precede cross-platform drops")
+world.drops = {cross}
+ctx = context(30)
+ctx.state = {graph = {}}
+mover = {status = "done"}
+terrain.plan = function(_, from, to)
+    assert(from == 1 and to == 2)
+    return {{kind = "jumpup", from = 1, to = 2, x = 0, destination = 0, rise = 50}}
+end
+move_results = {{"running"}}
+status, reason = loot.step(ctx, world, cross, mover)
+assert(status == "running" and reason == "cross_platform" and edges[#edges].kind == "jumpup")
+world.character.platform, world.character.x = 2, 80
+status, reason = loot.step(ctx, world, cross, mover)
+assert(status == "running" and reason == "picking", "pickup follows observed arrival")
+world.character.platform = 1
+mover = {status = "done"}
+terrain.plan = function() return nil, "no_path" end
+status, reason = loot.step(ctx, world, cross, mover)
+assert(status == "failed" and reason == "no_path" and ctx.state.loot_abandoned[90])
+assert(loot.select(world, {graph = {}, abandoned = ctx.state.loot_abandoned}) == nil,
+    "unreachable drop must not be selected again")
+local blocked_drop = drop(92, 100, 2)
+ctx.state.hunt_failures = 0
+world.drops = {blocked_drop}
+terrain.plan = function() return {{kind = "rope", from = 1, to = 2, x = 17, destination = 17, rise = 40}} end
+mover = {status = "done"}
+move_results = {{"failed", "rope_mismatch"}}
+status, reason = loot.step(ctx, world, blocked_drop, mover)
+assert(status == "failed" and ctx.state.blocked["1:2"] and ctx.state.hunt_failures == 1)
+assert(events[#events].data.edge_kind == "rope" and events[#events].data.edge_x == 17,
+    "loot failure event identifies the failed edge")
+assert(loot.select(world, {graph = {}, local_only = true}) == nil, "fallback excludes remote loot")
+terrain.plan = saved_plan
+
 move.set_path, move.step, move.stop = saved_set_path, saved_move_step, saved_move_stop
 io_module.event = saved_event
 print("loot tests passed")

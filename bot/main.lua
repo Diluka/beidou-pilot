@@ -8,6 +8,7 @@ local navigate = require("lib.target")
 local combat = require("lib.combat")
 local sustain = require("lib.sustain")
 local loot = require("lib.loot")
+local hunt = require("lib.hunt")
 local defaults = require("defaults")
 local memory_module = require("lib.memory")
 
@@ -77,6 +78,7 @@ local function main(context)
                     or bot.mode ~= previous_mode or bot.target ~= previous_target) then
                     if memory.mover then move.stop(memory.mover) end
                     memory.path_target, memory.navigation, memory.hunt_retry_at, memory.hunt_empty_since = nil, nil, nil, nil
+                    memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
                 end
                 local event_ok, event_error = io_module.event(context, "command/" .. tostring(command.kind or "invalid"), {
                     id = command.id, kind = command.kind, target = command.target,
@@ -113,7 +115,10 @@ local function main(context)
     local terrain_scene = scene and scene.terrain
     local generation = world.scene_generation
     if memory.graph_generation ~= generation then
-        if memory.navigation and memory.mover then move.stop(memory.mover) end
+        if memory.mover then move.stop(memory.mover) end
+        memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
+        memory.loot_abandoned, memory.loot_abandoned_scope = nil, nil
+        memory.blocked, memory.hunt_failures = nil, nil
         memory.graph, memory.mover, memory.path_target, memory.follow_unreachable = nil, nil, nil, nil
         memory.graph_generation, memory.graph_attempt_generation, memory.mover_attempt_generation = nil, nil, nil
         memory.hunt_retry_at = nil
@@ -156,6 +161,11 @@ local function main(context)
     if bot.mode == "follow" then kind, name = navigate.selector(bot.target) end
     local handled, sustain_error = sustain.step(context, world)
     if handled and not kind then
+        if bot.mode == "hunt" and memory.hunt_action then
+            context.game.player.move(nil)
+            memory.mover, memory.mover_attempt_generation = nil, nil
+            memory.hunt_action, memory.hunt_drop = nil, nil
+        end
         if (bot.config or defaults).memory_enabled and memory.store then
         memory_module.flush(memory.store, memory.store_path or memory.bot_root .. "/memory.lua", now)
     end
@@ -214,11 +224,123 @@ local function main(context)
         return
     end
 
-    if bot.mode == "hunt" and memory.hunt_retry_at and now < memory.hunt_retry_at then
+    local function loot_step(drop, mover)
+        local edge = mover.edges and mover.edges[mover.index or 1]
+        local key = edge and edge.from and edge.to and tostring(edge.from) .. ":" .. tostring(edge.to)
+        local was_blocked = key and memory.blocked and memory.blocked[key]
+        local status, reason = loot.step(context, world, drop, mover)
+        if not key then
+            edge = mover.edges and mover.edges[mover.index or 1]
+            key = edge and edge.from and edge.to and tostring(edge.from) .. ":" .. tostring(edge.to)
+        end
+        if status == "failed" and key and not was_blocked and memory.blocked
+            and (reason == "landing_mismatch" or reason == "timeout" or reason == "no_progress"
+                or reason == "rope_mismatch") then
+            memory.blocked[key] = nil
+        end
+        return status, reason
+    end
+
+    if bot.mode == "hunt" and terrain_ready then
+        -- Do not interrupt an in-flight navigation edge when platform_at is unknown.
+        if character.on_ground == false and memory.mover and memory.hunt_action then
+            if memory.mover.status == "running" then move.step(memory.mover, context, world) end
+            io_module.publish(context, world, now)
+            return
+        end
+        if character.on_ground and memory.mover and memory.mover.status == "failed" then
+            if memory.hunt_action == "patrol" then
+                hunt.step(context, world, memory.graph, memory.mover)
+                io_module.publish(context, world, now)
+                return
+            elseif memory.hunt_action == "loot" and memory.hunt_drop then
+                loot_step(memory.hunt_drop, memory.mover)
+                memory.hunt_drop = nil
+                io_module.publish(context, world, now)
+                return
+            end
+        end
+        local scope = tostring(world.map_id) .. ":" .. tostring(generation)
+        if memory.hunt_blocked_scope ~= scope then
+            memory.blocked, memory.hunt_failures, memory.hunt_blocked_scope = nil, nil, scope
+        end
+        local local_only = (memory.hunt_failures or 0) >= 3
+            or memory.hunt_patrol and memory.hunt_patrol.fallback_until and now < memory.hunt_patrol.fallback_until
+        local mob = combat.select(world, {hunt = true, platform_only = local_only})
+        local drop
+        if memory.loot_abandoned_scope ~= scope then
+            memory.loot_abandoned, memory.loot_abandoned_scope = {}, scope
+        end
+        if not mob then
+            local route = {}
+            if memory.hunt_action == "patrol" and memory.mover and memory.mover.edges then
+                for _, edge in ipairs(memory.mover.edges) do route[edge.to] = true end
+            end
+            local options = {graph = memory.graph, route_platforms = route, abandoned = memory.loot_abandoned,
+                local_only = local_only}
+            if memory.hunt_drop then
+                for _, observed in ipairs(world.drops or {}) do
+                    if observed.object_id == memory.hunt_drop.object_id then
+                        local filtered = {character = world.character, owner = world.owner, mobs = world.mobs,
+                            drops = {observed}}
+                        drop = loot.select(filtered, options)
+                        break
+                    end
+                end
+                if not drop and memory.mover and memory.mover.loot and memory.mover.loot.pickup_requested then
+                    drop = memory.hunt_drop
+                end
+            end
+            drop = drop or loot.select(world, options)
+        end
+        local action = mob and "combat" or drop and "loot" or "patrol"
+        if memory.hunt_action and memory.hunt_action ~= action then
+            if memory.mover then
+                move.stop(memory.mover)
+                memory.mover.loot = nil
+            end
+            context.game.player.skill(nil)
+            memory.hunt_action, memory.hunt_drop = action, nil
+            io_module.publish(context, world, now)
+            return
+        end
+        memory.hunt_action = action
+        local mover = ensure_mover()
+        if mover then
+            local status, reason
+            if action == "combat" then
+                status, reason = combat.step(context, world, mob, mover)
+            elseif action == "loot" then
+                memory.hunt_drop = drop
+                status, reason = loot_step(drop, mover)
+                if status ~= "running" then memory.hunt_drop = nil end
+            else
+                status, reason = hunt.step(context, world, memory.graph, mover)
+            end
+            if status == "failed" then
+                bot.last_error = reason
+                if action == "combat" then
+                    local edge = mover.status == "failed" and mover.edges and mover.edges[mover.index or 1]
+                    if edge then
+                        memory.hunt_failures = (memory.hunt_failures or 0) + 1
+                        local structural = reason == "no_path" or reason == "unsupported_edge"
+                            or reason == "invalid_edge" or reason == "character_unavailable"
+                        if structural and edge.from and edge.to and edge.from ~= edge.to then
+                            memory.blocked = memory.blocked or {}
+                            memory.blocked[tostring(edge.from) .. ":" .. tostring(edge.to)] = true
+                        end
+                    end
+                    if not memory.hunt_error_at or now - memory.hunt_error_at >= 10 then
+                        io_module.event(context, "error", {reason = reason, edge_kind = edge and edge.kind,
+                            edge_from = edge and edge.from, edge_to = edge and edge.to, edge_x = edge and edge.x})
+                        memory.hunt_error_at = now
+                    end
+                end
+            end
+        end
         io_module.publish(context, world, now)
         return
     end
-    local mob, drop
     if terrain_ready then
         local skip_movement = false
         if bot.mode == "follow" then
@@ -300,41 +422,10 @@ local function main(context)
                 memory.path_target = nil
                 skip_movement = true
             end
-        elseif bot.mode == "hunt" then
-            mob = combat.select(world, bot.config or defaults)
-            if mob then
-                ensure_mover()
-            else
-                drop = loot.select(world, bot.config or defaults)
-                if not drop then
-                    if not memory.hunt_empty_since then
-                        if memory.mover then move.stop(memory.mover) end
-                        memory.hunt_empty_since = now
-                        io_module.event(context, "hunt/empty", {map_id = world.map_id,
-                            scene_generation = generation, x = character.x, y = character.y})
-                    end
-                    local elapsed = now - memory.hunt_empty_since
-                    local direction = math.floor(elapsed / 5) % 2 == 0 and "right" or "left"
-                    local observed = context.game.character or {}
-                    local platform = memory.graph.platforms and memory.graph.platforms[character.platform]
-                    local safe = platform and character.on_ground and character.x
-                        and (direction == "right" and character.x < platform.right - 40
-                            or direction == "left" and character.x > platform.left + 40)
-                    if elapsed % 5 < 2 and safe and not observed.attacking and observed.action_idle then
-                        context.game.player.move(direction)
-                    else
-                        context.game.player.move(nil)
-                    end
-                    io_module.publish(context, world, now)
-                    return
-                end
-            end
-            if memory.hunt_empty_since then context.game.player.move(nil) end
-            memory.hunt_empty_since, memory.hunt_retry_at = nil, nil
         end
 
         local movement_status
-        if not skip_movement and memory.mover and (bot.mode == "follow" or bot.mode == "hunt" and not mob) then
+        if not skip_movement and memory.mover and bot.mode == "follow" then
             local movement_error
             movement_status, movement_error = move.step(memory.mover, context, world)
             if movement_status == "failed" and movement_error and movement_error ~= "not_implemented" then
@@ -342,29 +433,7 @@ local function main(context)
                 io_module.event(context, "error", {reason = movement_error})
             end
         end
-        if movement_status ~= "running" and bot.mode == "hunt" then
-            local combat_status, combat_error
-            if mob and memory.mover then
-                combat_status, combat_error = combat.step(context, world, mob, memory.mover)
-                if combat_status == "failed" and combat_error and combat_error ~= "not_implemented" then
-                    bot.last_error = combat_error
-                    io_module.event(context, "error", {reason = combat_error})
-                end
-            end
-            if combat_status ~= "running" then
-                if mob then drop = loot.select(world, bot.config or defaults) end
-                if drop then
-                    if not memory.mover then ensure_mover() end
-                    if memory.mover then
-                        local loot_status, loot_error = loot.step(context, world, drop, memory.mover)
-                        if loot_status == "failed" and loot_error and loot_error ~= "not_implemented" then
-                            bot.last_error = loot_error
-                            io_module.event(context, "error", {reason = loot_error})
-                        end
-                    end
-                end
-            end
-        end
+
     end
 
     io_module.publish(context, world, now)
