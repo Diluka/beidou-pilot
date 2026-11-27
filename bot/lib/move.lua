@@ -323,7 +323,7 @@ function M.step(mover, ctx, world)
                 or (edge.kind == "jumpup" and character.y < mover.start_y - 10) then
                 if edge.kind == "jumpup" and mover.runup_direction then
                     -- 水平 jumpup：越过平台高度差前持续按住落点方向；0.3s 后释放跳跃键但方向保持到落地。
-                    if character.on_ground == true then
+                    if character.on_ground == true and mover.airborne then
                         if mover.jump_held then p.skill(nil); mover.jump_held = nil; mover.release_tick = ctx.tick.index end
                         local platform = terrain.platform_at(mover.graph, character.x, character.y, 20)
                         if platform ~= edge.to then
