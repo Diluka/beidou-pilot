@@ -200,13 +200,13 @@ std::string MapDescription(std::uint32_t mapId) {
     const MapNames names = ReadMapNames(mapId);
     std::string description;
     if (!names.mapName.empty() && !names.streetName.empty() && names.streetName != names.mapName)
-        description = names.mapName + "（" + names.streetName + "）";
+        description = names.mapName + " (" + names.streetName + ")";
     else if (!names.mapName.empty())
         description = names.mapName;
     else if (!names.streetName.empty())
         description = names.streetName;
     else
-        description = "地图" + std::to_string(mapId);
+        description = "map " + std::to_string(mapId);
     cache[mapId] = description;
     return description;
 }
@@ -215,13 +215,14 @@ bool ContainsKeyword(const std::string& text, const char* keyword) {
     return text.find(keyword) != std::string::npos;
 }
 
-// Answers only questions about the local character's location. Chinese and
-// English forms are matched on the UTF-8 text; English matching ignores ASCII
-// case so the keyword list stays small.
-bool AsksLocation(const std::string& utf8) {
+// Answers only questions about the local character's location. The bridge is
+// built with /execution-charset:.936, so the Chinese keywords below are CP936
+// bytes; match them against the raw CP936 message body instead of its UTF-8
+// projection. ASCII matching ignores case so the keyword list stays small.
+bool AsksLocation(const std::string& cp936) {
     static const char* const keywords[] = {"在哪", "哪里", "哪儿",  "什么地方", "什么图",    "哪张图",  "哪个图",
                                            "位置", "坐标", "where", "location", "which map", "what map"};
-    std::string lowered = utf8;
+    std::string lowered = cp936;
     for (char& character : lowered)
         if (character >= 'A' && character <= 'Z') character = static_cast<char>(character - 'A' + 'a');
     for (const char* keyword : keywords) {
@@ -287,7 +288,7 @@ void HandleReceiveWhisper(const unsigned char* data, std::size_t size) {
     const std::string senderUtf8 = GbkToUtf8(sender);
     const std::string messageUtf8 = GbkToUtf8(message);
     AppendLog(Timestamp() + " whisper from " + (senderUtf8.empty() ? sender : senderUtf8) + ": " + messageUtf8);
-    if (!AsksLocation(messageUtf8)) return;
+    if (!AsksLocation(message)) return;
     const std::uint32_t mapId = AgentBridge::CurrentMapId();
     if (mapId == 0) {
         AppendLog(Timestamp() + " location reply skipped: current map unknown");
@@ -298,19 +299,21 @@ void HandleReceiveWhisper(const unsigned char* data, std::size_t size) {
         AppendLog(Timestamp() + " location reply skipped: rate limited");
         return;
     }
-    const std::string replyUtf8 = "我在" + MapDescription(mapId);
-    const std::string replyGbk = Utf8ToGbk(replyUtf8);
-    if (replyGbk.empty()) {
-        AppendLog(Timestamp() + " location reply skipped: reply encoding failed");
+    // The literal prefix is CP936 at build time; the map text from the IMG
+    // decoder is UTF-8, so convert that half and concatenate CP936 bytes.
+    const std::string description = Utf8ToGbk(MapDescription(mapId));
+    if (description.empty()) {
+        AppendLog(Timestamp() + " location reply skipped: map name encoding failed");
         return;
     }
+    const std::string replyGbk = "我在" + description;
     if (!SendWhisper(sender, replyGbk)) {
         AppendLog(Timestamp() + " location reply skipped: send failed");
         return;
     }
     lastReplyAt = now;
     repliedOnce = true;
-    AppendLog(Timestamp() + " location reply sent to " + senderUtf8 + ": " + replyUtf8 + " [map "
+    AppendLog(Timestamp() + " location reply sent to " + senderUtf8 + ": " + GbkToUtf8(replyGbk) + " [map "
               + std::to_string(mapId) + "]");
 }
 
