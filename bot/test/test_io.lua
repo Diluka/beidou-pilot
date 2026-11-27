@@ -156,6 +156,28 @@ local _, later_retry_events = files[root .. "/events.jsonl"]:gsub('"type":"io/re
 assert(later_retry_events == 2 and files[root .. "/events.jsonl"]:find('"count":', 1, true),
     "periodic retry summary must include accumulated occurrences")
 
+local clock = 1000
+os.time = function() return clock end
+local timing = {tick = {index = 1, delta = 0.04}, state = {bot_root = root, bot = {mode = "hunt"}, hunt_action = "patrol", force_publish = true}}
+assert(io_module.publish(timing, {character = {}}, 100))
+clock = 1002; timing.state.force_publish = true
+assert(io_module.publish(timing, {character = {}}, 101))
+assert(not files[root .. "/events.jsonl"]:find('"type":"tick/slow"', 1, true))
+clock = 1005; timing.tick.index = 2; timing.state.force_publish = true
+assert(io_module.publish(timing, {character = {}}, 102))
+local events = files[root .. "/events.jsonl"]
+assert(events:find('"type":"tick/slow"', 1, true) and events:find('"wall_gap_seconds":3', 1, true))
+assert(events:find('"reason":"unknown"', 1, true) and events:find('"budget_ms":null', 1, true))
+clock = 1008; timing.state.force_publish = true
+assert(io_module.publish(timing, {character = {}}, 103))
+local _, slow_count = files[root .. "/events.jsonl"]:gsub('"type":"tick/slow"', "")
+assert(slow_count == 1, "slow candidate reports are rate limited")
+clock = 1065; timing.state.force_publish = true
+assert(io_module.publish(timing, {character = {}}, 104))
+_, slow_count = files[root .. "/events.jsonl"]:gsub('"type":"tick/slow"', "")
+assert(slow_count == 2, "a new candidate is recorded after the rate limit")
+os.time = saved_time
+
 files["/work/bot/config.conf"] = "owner_name=Owner\nowner_character_id=12\nfollow_distance=99\n"
 files["/work/bot/checkpoint.conf"] = "mode=hunt\ntarget=12\nmap_id=7\n"
 local state = state_module.new()

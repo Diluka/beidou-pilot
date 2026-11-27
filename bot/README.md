@@ -152,7 +152,7 @@ follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代�
 
 `/work/bot/state.json` 常规间隔约 1 秒更新，Windows 覆盖回退时有短暂缺失窗口；`/work/bot/events.jsonl` 记录命令、模式和错误事件，单文件达到 1 MiB 时滚动到 `events.1.jsonl`。启动进入 `recover`；世界就绪且当前场景有可用地形图时转为 `idle`，不要求 `move.new` 已实现。mover 仅在 follow/hunt 产生实际移动或目标动作时才按场景代次尝试创建。checkpoint 当前只校验并保留，不重放上次动作或恢复旧模式/目标。
 
-`state.json.session_id` 取自只读 `context.tick.script_id`，即当前 Runtime tick 会话 ID。
+`tick/slow` 是状态发布间隔候选：两次成功发布的 `os.time()` 整数秒之差至少 3 时最多每 60 秒记录一次，包含 tick index、delta、动作类别和 `reason=unknown`。它使用系统墙钟且只有秒级精度，可能受调度、钟表调整或发布节流影响，不表示单次 tick 超时，也不区分 CPU 和 IO；Lua tick 上下文不暴露预算值，`budget_ms` 为 null。\n\n`state.json.session_id` 取自只读 `context.tick.script_id`，即当前 Runtime tick 会话 ID。
 
 ## 宿主运行手册
 
