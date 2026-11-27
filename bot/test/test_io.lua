@@ -5,10 +5,11 @@ local state_module = require("lib.state")
 local world_module = require("lib.world")
 local saved_open = io.open
 local saved_execute, saved_rename, saved_remove, saved_time = os.execute, os.rename, os.remove, os.time
-local files, queue_paths, modified_at, failed_writes = {}, {}, {}, {}
+local files, queue_paths, modified_at, failed_writes, open_counts = {}, {}, {}, {}, {}
 local root = "tmp/bot-io-test"
 
 local function open_fake(path, mode)
+    open_counts[path] = (open_counts[path] or 0) + 1
     mode = mode or "r"
     if mode:find("r") and files[path] == nil and not mode:find("+") then return nil end
     local buffer = mode:find("r") and files[path] or mode:find("a") and (files[path] or "") or ""
@@ -135,6 +136,25 @@ context.state.pending_receipts = commands
 context.state.force_publish = true
 assert(io_module.publish(context, {character = {}}, 6))
 assert(files[root .. "/queue/rejected/interrupted"] == "rejected=interrupted\n")
+local before_empty_scan = 0
+for slot = 1, 8 do
+    before_empty_scan = before_empty_scan + (open_counts[root .. "/queue/slot" .. slot .. ".processing"] or 0)
+        + (open_counts[root .. "/queue/slot" .. slot .. ".cmd"] or 0)
+end
+assert(#assert(io_module.poll(context, 6.5)) == 0)
+local after_empty_scan = 0
+for slot = 1, 8 do
+    after_empty_scan = after_empty_scan + (open_counts[root .. "/queue/slot" .. slot .. ".processing"] or 0)
+        + (open_counts[root .. "/queue/slot" .. slot .. ".cmd"] or 0)
+end
+assert(after_empty_scan - before_empty_scan == 16, "empty queue opens each slot only once")
+local _, retry_events = files[root .. "/events.jsonl"]:gsub('"type":"io/rename_retry"', "")
+assert(retry_events == 1, "repeated GUI rename retries must not append an event every publish")
+context.state.force_publish = true
+assert(io_module.publish(context, {character = {}}, 63))
+local _, later_retry_events = files[root .. "/events.jsonl"]:gsub('"type":"io/rename_retry"', "")
+assert(later_retry_events == 2 and files[root .. "/events.jsonl"]:find('"count":', 1, true),
+    "periodic retry summary must include accumulated occurrences")
 
 files["/work/bot/config.conf"] = "owner_name=Owner\nowner_character_id=12\nfollow_distance=99\n"
 files["/work/bot/checkpoint.conf"] = "mode=hunt\ntarget=12\nmap_id=7\n"
@@ -189,6 +209,9 @@ local absent_owner = world_module.observe({
 assert(absent_owner.owner.present == false)
 
 local event_path = root .. "/events.jsonl"
+local opens = open_counts[event_path] or 0
+assert(io_module.event(context, "ordinary", {}))
+assert(open_counts[event_path] == opens + 1, "ordinary event append opens the file once")
 local large_event = {text = string.rep("x", 600 * 1024)}
 assert(io_module.event(context, "test", large_event))
 assert(io_module.event(context, "test", large_event))
