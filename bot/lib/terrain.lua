@@ -280,7 +280,7 @@ function M.plan(graph, from_index, to_index, options)
     if not valid_platform(from_index) or not valid_platform(to_index) then
         return nil, "invalid_platform"
     end
-    if from_index == to_index then return {} end
+    if from_index == to_index then return {}, "same_platform" end
 
     options = type(options) == "table" and options or {}
     local speed = finite_number(options.speed) and options.speed or 100
