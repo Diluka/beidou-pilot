@@ -85,8 +85,8 @@ class GuiLoginCliTest(unittest.TestCase):
             self.assertEqual(self.run_login(), stage)
             execute.assert_not_called()
 
-    def test_headless_dispatch_unchanged(self):
-        self.backend.name = "headless"
+    def test_dispatch_unchanged(self):
+        self.backend.name = "beidou"
         with patch("beidou_pilot.first_character.execute", return_value={"phase": "character_list"}) as execute:
             self.assertEqual(self.run_login("--timeout", "5"), {"phase": "character_list"})
             self.assertEqual(execute.call_args.args[1].timeout, 5)

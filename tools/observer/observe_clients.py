@@ -3,7 +3,7 @@
 
 工具只读两个工作台最新 run 的桥状态文件（不发输入、不写角色数据），输出 JSONL
 并给出可读摘要：入图位置差、移动中观察端单帧跳变、停止后速度残留、最终位置差。
-默认用于 headless 与 GUI 各作为观察端核对另一端，也可用于任意两个后端。
+用于两个 GUI 实例互为观察端，核对入图、移动与停止收尾。
 """
 
 import argparse
@@ -17,7 +17,7 @@ from typing import TypedDict
 
 DEFAULT_INTERVAL = 0.03
 RESOLVE_INTERVAL = 0.5
-STATE_CANDIDATES = ("runtime/headless/bridge/state.json", "runtime/bridge/state.json")
+STATE_CANDIDATES = ("runtime/bridge/state.json",)
 
 
 class ObserverError(Exception):

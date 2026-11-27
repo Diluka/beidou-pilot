@@ -247,21 +247,6 @@ int main(int argc, char** argv) {
             self.reader.read()
         self.assertEqual(failure.exception.code, "events_identity_changed")
 
-    def test_missing_capability_and_failed_publication_remain_explicit(self) -> None:
-        with self.assertRaises(ClientError) as failure:
-            EventReader(self.files.root, "headless")
-        self.assertEqual(failure.exception.code, "unsupported_capability")
-        self.files.state["capabilities"] = {}
-        self.files.publish()
-        with self.assertRaises(ClientError) as failure:
-            self.reader.read()
-        self.assertEqual(failure.exception.code, "unsupported_capability")
-        self.files.state.update(capabilities={"events": True}, event_stream_status="publish_failed")
-        self.files.publish()
-        with self.assertRaises(ClientError) as failure:
-            self.reader.read()
-        self.assertEqual(failure.exception.code, "events_unavailable")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -102,7 +102,7 @@ void Fixture(bool enhanced = false) {
     Attribute(Attributes + 0x48, JumpBacking, enhanced ? Jump123 : Ratio100);
     Put(0x00BEBFA0, Space);
     Put(Space + 8, Coefficients);
-    // Deliberately different from any headless defaults: the real helper must
+    // Deliberately different from the bridge defaults: the real helper must
     // consume this client's coefficient object, not reproduce another backend.
     Put(Coefficients + 8, 128.5);
     Put(Coefficients + 0x60, 1920.0);

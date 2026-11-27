@@ -1,4 +1,4 @@
-"""One terrain contract over real hot nl::nodes and restricted IMG C API nodes."""
+"""Terrain contract over the shared restricted IMG C API nodes."""
 
 from copy import deepcopy
 import json
@@ -67,9 +67,8 @@ class SceneTerrainContract(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.directory = Path(cls.temporary.name)
         root = Path(__file__).resolve().parents[2]
-        native = root / "headless/src"
+        native = root / "shared/img"
         shared = root / "shared/lua-runtime"
-        nlnx = root / "third_party/maplestory-client/includes/NoLifeNx/nlnx"
         library = cls.directory / "libbeidou-img.so"
         subprocess.run(
             [
@@ -100,30 +99,9 @@ class SceneTerrainContract(unittest.TestCase):
             str(shared / "Observation.cpp"),
         ]
         linking = [f"-L{cls.directory}", "-Wl,-rpath,$ORIGIN", "-lbeidou-img"]
-        cls.executables = {
-            "single_img_cpp14": cls.directory / "terrain-cpp14",
-            "headless_hot_tree": cls.directory / "terrain-hot-tree",
-        }
+        cls.executable = cls.directory / "terrain-cpp14"
         subprocess.run(
-            ["g++", "-std=c++14", *common, *linking, "-o", str(cls.executables["single_img_cpp14"])],
-            check=True,
-            cwd=cls.directory,
-            timeout=90,
-        )
-        subprocess.run(
-            [
-                "g++",
-                "-std=c++20",
-                "-DTERRAIN_HOT_TREE",
-                f"-I{nlnx.parent}",
-                *common,
-                str(native / "ImgResourceFile.cpp"),
-                str(nlnx / "file.cpp"),
-                str(nlnx / "node.cpp"),
-                *linking,
-                "-o",
-                str(cls.executables["headless_hot_tree"]),
-            ],
+            ["g++", "-std=c++14", *common, *linking, "-o", str(cls.executable)],
             check=True,
             cwd=cls.directory,
             timeout=90,
@@ -136,22 +114,17 @@ class SceneTerrainContract(unittest.TestCase):
 
     def query(self, properties: dict, map_id: int = 50000) -> list[dict]:
         source = write_img(self.data / f"{map_id:09d}.img", properties)
-        results = []
-        for backend, executable in self.executables.items():
-            with self.subTest(backend=backend):
-                completed = subprocess.run(
-                    [str(executable), str(self.data), source.name, str(map_id)],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                result = json.loads(completed.stdout)
-                self.assertEqual(map_id, result["data"]["map_id"])
-                self.assertEqual(str(source), result["data"]["source"])
-                results.append(result)
-        self.assertEqual(results[0], results[1])
-        return results
+        completed = subprocess.run(
+            [str(self.executable), str(self.data), source.name, str(map_id)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        result = json.loads(completed.stdout)
+        self.assertEqual(map_id, result["data"]["map_id"])
+        self.assertEqual(str(source), result["data"]["source"])
+        return [result]
 
     def assert_failure(self, properties: dict, status: str, error: str) -> None:
         for result in self.query(properties):
@@ -262,12 +235,11 @@ class SceneTerrainContract(unittest.TestCase):
                 }
             },
         }
-        for backend, result in zip(self.executables, self.query(properties)):
-            with self.subTest(backend=backend):
-                edges = result["data"]["navigation"]["candidates"]["jumpup"]
-                tuples = [edges[i : i + 5] for i in range(0, len(edges), 5)]
-                self.assertIn([1, 2, 360, 376, 60], tuples)
-                self.assertIn([2, 3, 450, 466, 60], tuples)
+        result = self.query(properties)[0]
+        edges = result["data"]["navigation"]["candidates"]["jumpup"]
+        tuples = [edges[i : i + 5] for i in range(0, len(edges), 5)]
+        self.assertIn([1, 2, 360, 376, 60], tuples)
+        self.assertIn([2, 3, 450, 466, 60], tuples)
 
     def test_wall_jump_rejects_unsafe_geometry(self) -> None:
         base = [(1, 225, 366, 485, 485), (2, 366, 456, 425, 425), (3, 366, 366, 425, 485)]

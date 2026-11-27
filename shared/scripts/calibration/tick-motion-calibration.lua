@@ -207,10 +207,10 @@ local function start_scenario(context)
     state.phase = "arm"
 end
 
--- 阶段推进按“已消费的物理更新数”而不是墙钟秒数：GUI 约 60Hz、headless 约
--- 125Hz 的宿主回调下，同一毫秒阈值可能落在相差一个 30ms 物理步的位置，导致
--- 两端输入边沿虽经对齐，跳跃/空中阶段仍相差一步。按 update_id 步数触发后，
--- 两端执行完全相同的物理步序列，轨迹和接触事件可以逐物理步比较。
+-- 阶段推进按“已消费的物理更新数”而不是墙钟秒数：GUI 约 60Hz 的宿主回调下，
+-- 同一毫秒阈值可能落在相差一个 30ms 物理步的位置，导致输入边沿与跳跃/空中
+-- 阶段相差一步。按 update_id 步数触发后，各次运行执行相同的物理步序列，
+-- 轨迹和接触事件可以逐物理步比较。
 local PHYSICS_STEP_MS = 30
 
 local function steps_for(milliseconds)
@@ -297,10 +297,8 @@ local function advance(context)
         end
     elseif scenario == "drop" then
         -- 简单 drop：先从底层抓绳爬到高处平台，再沿水平方向走出平台边缘自由落下。
-        -- setup（抓绳/攀爬）不进入比较记录：攀爬沿用各端 legacy 路径、两端不承诺
-        -- 一致；只有到达同一高处起点后的“走位→离地→落地”段纳入双端比较。
-        -- 抓取方式按端能力自适应：GUI 原版站着按上即可；headless 旧绳梯判定要求
-        -- 脚点 y-5 落在绳段内，需要先跳起再按上。
+        -- setup（抓绳/攀爬）不进入比较记录；只有到达同一高处起点后的
+        -- “走位→离地→落地”段纳入比较。GUI 原版站着按上即可抓取。
         if state.phase == "arm" then
             state.rope = find_setup_rope(context)
             if state.rope == nil then return finish(context, "setup_no_rope") end
@@ -390,11 +388,6 @@ local function advance(context)
                 set_move(state, player, nil)
                 state.phase = "rope_top"
                 state.top_started = context.tick.time
-            elseif physics.y <= state.rope.y1 - 6 then
-                -- headless 越过绳顶后旧绳梯判定会让角色脱离并落到平台。
-                set_move(state, player, nil)
-                state.phase = "rope_top"
-                state.top_started = context.tick.time
             elseif on_ground == true and physics.y > state.base_y - 30 then
                 return finish(context, "setup_grab_failed")
             elseif context.tick.time - (state.climb_started or context.tick.time) > 10.0 then
@@ -408,7 +401,7 @@ local function advance(context)
                 and physics.x ~= nil
                 and math.abs(physics.x - state.rope.x) <= 2
             then
-                -- 高处平台起步前的走位不进入记录：两端起点 x 对齐有亚像素误差时，
+                -- 高处平台起步前的走位不进入记录：各次运行起点 x 对齐有亚像素误差时，
                 -- 越过平台边缘的步数可能相差一步。只比较“已经离地”的自由落体段。
                 set_move(state, player, direction)
                 state.phase = "walk_silent"
@@ -418,7 +411,7 @@ local function advance(context)
         elseif state.phase == "walk_silent" then
             if on_ground == false then
                 -- 离地那一 tick 先清方向并发布 begin（无输入），下一 tick 重新按下方向，
-                -- 形成可被比较器识别的消费边沿；两端执行完全相同的步序列。
+                -- 形成可被比较器识别的消费边沿；各次运行执行相同的步序列。
                 set_move(state, player, nil)
                 state.silent = false
                 emit(context, "begin")

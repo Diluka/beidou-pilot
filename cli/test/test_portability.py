@@ -31,7 +31,7 @@ class ResourceConfigurationContract(unittest.TestCase):
     def test_misspelled_external_resource_setting_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "resources.json"
-            config.write_text(json.dumps({"headless_resource": "/unselected"}))
+            config.write_text(json.dumps({"unselected_resource": "/unselected"}))
             with patch.dict(os.environ, {"MAPLE_RESOURCES_CONFIG": str(config)}):
                 with self.assertRaises(ClientError) as failure:
                     load_resources(Path(directory))

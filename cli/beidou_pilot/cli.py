@@ -77,12 +77,6 @@ def parser() -> Parser:
     )
     common.add_argument("--root", type=Path, default=argparse.SUPPRESS, help="本容器运行目录，默认CLIENT_ROOT")
     common.add_argument("--debug", action="store_true", default=argparse.SUPPRESS, help="保留引擎原始来源和布局细节")
-    common.add_argument(
-        "--backend",
-        choices=["beidou", "headless"],
-        default=argparse.SUPPRESS,
-        help="核对本容器后端，默认MAPLE_BACKEND",
-    )
     common.add_argument("--instance", default=argparse.SUPPRESS, help="核对本容器实例名，默认MAPLE_INSTANCE")
     p = Parser(prog="beidou-pilot", description="北斗客户端：登录、状态观察、tick Lua脚本与GUI操作。", parents=[common])
     p.add_argument("--version", action="version", version="beidou-pilot " + __version__)
@@ -102,13 +96,12 @@ def parser() -> Parser:
     for option in ("job", "face", "hair", "hair-color", "skin", "top", "bottom", "shoes", "weapon"):
         create.add_argument("--" + option, type=int, required=True)
     create.add_argument("--gender", choices=["male", "female"], required=True)
-    create.add_argument("--timeout", type=float, default=None, help="等待秒数；无头默认3秒，GUI默认90秒")
+    create.add_argument("--timeout", type=float, default=None, help="等待秒数；GUI默认90秒")
     result = actions.add_parser("result", parents=[common])
     result.add_argument("request_id")
     result.add_argument("--run-id", required=True, help="提交时的原运行身份")
     result.add_argument("--instance-id", required=True, help="提交时的原生实例身份")
     command("status", "当前客户端阶段与角色，不启动、不输入")
-    command("instances", "列出本目录已登记的无头实例，不启动客户端")
     command("capabilities", "读取原生动作能力与静态观察支持范围，不启动客户端")
     q = command("world-map", "只读查询原生世界地图的跨图路线，不控制客户端")
     actions = q.add_subparsers(dest="world_map_action", required=True, parser_class=Parser)
@@ -232,13 +225,6 @@ def control(backend: Backend, name: str) -> Iterator[None]:
 
 
 def status(backend: Backend) -> JsonObject:
-    if backend.name == "headless":
-        from .headless import status as native_status
-
-        result = native_status(backend.root, backend.instance)
-        if result["stage"] == "IN_GAME" and result["character"] is not None:
-            result["advancement"] = advancement(cast(JsonObject, result["character"]))
-        return result
     stage = backend.read("stage")
     result: JsonObject = {
         "stage": stage["stage"],
@@ -280,62 +266,30 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .first_character import execute
 
         if cmd == "login" and args.timeout is None:
-            args.timeout = 30 if backend.name == "beidou" and (args.accept_terms or args.gender is not None) else 0
-        if cmd == "login" and backend.name == "beidou" and (args.accept_terms or args.gender is not None):
+            args.timeout = 30 if (args.accept_terms or args.gender is not None) else 0
+        if cmd == "login" and (args.accept_terms or args.gender is not None):
             if args.gender is None:
                 raise ClientError("usage", "GUI 登录动作必须明确指定性别。")
             with control(backend, "login"):
                 return execute(backend, args)
-        if cmd == "character" and backend.name == "beidou" and args.character_action == "create":
+        if cmd == "character" and args.character_action == "create":
             with control(backend, "character create"):
                 return execute(backend, args)
-        if cmd == "login" and backend.name == "headless" and (args.accept_terms or args.gender is not None):
-            raise ClientError("usage", "无头登录不接受 GUI 登录选项。")
         return execute(backend, args)
-    if backend.name == "headless" and cmd not in {
-        "status",
-        "instances",
-        "capabilities",
-        "world-map",
-        "doctor",
-        "bridge",
-        "script",
-        "open",
-        "close",
-        "snapshot",
-        "watch",
-        "events",
-        "inspect",
-        "stop",
+    if cmd in {
         "revive",
+        "auto-ap",
         "skill-up",
         "skill-up-reconcile",
-        "auto-ap",
-        "batch",
+        "click",
         "talk",
         "dialog",
-        "click",
-    }:
-        raise ClientError("unsupported_capability", "无头端尚未提供这个窗口、原始按键或GUI输入接口。", {"command": cmd})
-    if (
-        backend.name == "beidou"
-        and cmd
-        in {
-            "revive",
-            "auto-ap",
-            "skill-up",
-            "skill-up-reconcile",
-            "click",
-            "talk",
-            "dialog",
-            "ui",
-            "equip",
-            "bind",
-            "shop",
-            "notifications",
-        }
-        and not (cmd in {"dialog", "ui", "shop", "notifications"} and args.action == "read")
-    ):
+        "ui",
+        "equip",
+        "bind",
+        "shop",
+        "notifications",
+    } and not (cmd in {"dialog", "ui", "shop", "notifications"} and args.action == "read"):
         from .bridge import BridgeClient
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
@@ -350,22 +304,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 )
     if cmd == "status":
         return status(backend)
-    if cmd == "instances":
-        runtime = backend.runtime
-        return {
-            "instances": [
-                {
-                    "name": runtime.instance,
-                    "backend": runtime.backend,
-                    "container_id": runtime.container_id,
-                    "run_id": runtime.run_id,
-                    "running": runtime.running,
-                    "character_id": runtime.character_id,
-                    "image": runtime.image,
-                    "source_revision": runtime.source_revision,
-                }
-            ]
-        }
     if cmd == "capabilities":
         from .bridge import BridgeClient
         from .observations import DOMAINS
@@ -381,11 +319,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             }:
                 raise
             state = None
-        domains = (
-            DOMAINS - {"interaction"}
-            if backend.name == "beidou"
-            else DOMAINS - {"hotkeys", "dialog", "ui", "shop", "notifications"}
-        )
+        domains = DOMAINS - {"interaction"}
         return {
             "connected": state is not None,
             "ready": state["ready"] if state is not None else False,
@@ -400,7 +334,7 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         from .resources import load_resources
 
         resources = load_resources(backend.root)
-        available = resources.gui_client.is_dir() if backend.name == "beidou" else resources.game_data.is_dir()
+        available = resources.gui_client.is_dir()
         return {
             "backend": backend.name,
             "root": str(backend.root),
@@ -509,16 +443,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
 
         profile = load_profile(args.account)
 
-        if backend.name == "headless":
-            from .headless import open_game as open_native
-
-            return open_native(
-                backend.root,
-                server=args.server,
-                profile=profile,
-                timeout=args.timeout,
-                instance=backend.instance,
-            )
         from .session import open_game
 
         opened = open_game(
@@ -539,19 +463,12 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
 
         return BridgeClient(backend.root, backend.name, backend.instance).stop()
     if cmd == "skill-up-reconcile":
-        if backend.name == "headless":
-            from .headless_skill_up import reconcile_skill_up
-        else:
-            from .skill_up import reconcile_skill_up
+        from .skill_up import reconcile_skill_up
 
         return reconcile_skill_up(backend, args.skill_id, args.request_id)
     if cmd == "skill-up":
         if args.skill_id <= 0 or args.points <= 0:
             raise ClientError("usage", "技能 ID 和点数须为正整数。")
-        if backend.name == "headless":
-            from .headless_skill_up import skill_up
-
-            return skill_up(backend, args.skill_id, args.points)
         from .skill_up import preflight_skill_up, skill_up_once
 
         confirmed = []
@@ -628,20 +545,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         if args.id is not None and kind == "quests":
             values += ["--quest-id", str(args.id)]
         return backend.read(engine, *values)
-    if backend.name == "headless" and cmd in {"talk", "dialog", "click"}:
-        from . import headless_dialog
-
-        if cmd == "talk":
-            return headless_dialog.talk(backend, args.target)
-        if cmd == "click":
-            if args.y is not None or args.double:
-                raise ClientError("unsupported_capability", "无头端不支持坐标点击。")
-            return headless_dialog.activate(backend, args.target)
-        if args.action == "read":
-            return headless_dialog.read(backend)
-        if args.action == "advance":
-            raise ClientError("unsupported_capability", "无头端暂不支持自动推进对话。")
-        return headless_dialog.act(backend, args.action, args.selector)
     if cmd == "talk":
         return dialogs.talk(backend, args.target)
     if cmd == "dialog":
@@ -696,10 +599,9 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                 )
             if (
                 getattr(parsed, "root", backend.root).resolve() != backend.root
-                or getattr(parsed, "backend", backend.name) != backend.name
                 or getattr(parsed, "instance", backend.instance) != backend.instance
             ):
-                raise ClientError("usage", "一批命令只控制同一客户端目录、后端和实例。", {"index": index})
+                raise ClientError("usage", "一批命令只控制同一客户端目录和实例。", {"index": index})
             commands.append(parsed)
         completed: list[JsonObject] = []
         for index, parsed in enumerate(commands):
@@ -720,8 +622,6 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
     if cmd == "ui":
         return backend.read("ui")
     if cmd == "equip":
-        if backend.name != "beidou":
-            raise ClientError("unsupported_capability", "equip 仅保留GUI背包换装路径；无头端不提供。")
         from . import items
 
         return items.equip(backend, resolve_item(backend, args.item))
@@ -838,7 +738,7 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "ok": True,
                         "command": "script",
-                        "backend": getattr(args, "backend", os.environ.get("MAPLE_BACKEND", "beidou")),
+                        "backend": "beidou",
                         "instance": getattr(args, "instance", os.environ.get("MAPLE_INSTANCE", "default")),
                         "data": data,
                     },
@@ -849,7 +749,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         backend = Backend(
             getattr(args, "root", Path(os.environ.get("CLIENT_ROOT", "/work"))),
-            getattr(args, "backend", os.environ.get("MAPLE_BACKEND", "beidou")),
+            os.environ.get("MAPLE_BACKEND", "beidou"),
             getattr(args, "instance", os.environ.get("MAPLE_INSTANCE", "default")),
         )
         readonly = (
@@ -858,7 +758,6 @@ def main(argv: list[str] | None = None) -> int:
                 "status",
                 "login",
                 "character",
-                "instances",
                 "capabilities",
                 "world-map",
                 "doctor",
@@ -891,7 +790,7 @@ def main(argv: list[str] | None = None) -> int:
             with control(backend, args.command):
                 result = dispatch(backend, args)
         if result is not None:
-            if args.command == "snapshot" and not json_output and backend.name == "beidou":
+            if args.command == "snapshot" and not json_output:
                 print(format_snapshot(result, interactive_only=args.interactive))
             else:
                 data = result if getattr(args, "debug", False) or args.command in ("inspect", "ui") else concise(result)

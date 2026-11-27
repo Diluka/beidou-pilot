@@ -38,7 +38,7 @@ elif args[0] == "build":
         print("compiler fixture failed", file=sys.stderr)
         sys.exit(17)
     tag = args[args.index("--tag") + 1]
-    backend = "beidou" if "-beidou:" in tag else "headless"
+    backend = "beidou"
     labels = {"org.opencontainers.image.revision": tag.split(":")[-1], "beidou.backend": backend}
     manifest_path = Path(args[-1]) / "build-input/manifest.json"
     state["images"][tag] = {"Id": "sha256:" + str(len(state["images"]) + 1),
@@ -72,15 +72,19 @@ class WorkbenchFixture(unittest.TestCase):
         self.native = self.repository / "shared/lua-runtime/TickRuntime.cpp"
         self.native.parent.mkdir(parents=True)
         self.native.write_text("native version one\n")
-        self.dockerfile = self.repository / "docker/headless/Dockerfile"
+        self.dockerfile = self.repository / "docker/gui/Dockerfile"
         self.dockerfile.parent.mkdir(parents=True)
-        self.dockerfile.write_text("RUN make -C headless CXXFLAGS=-O2\n")
+        self.dockerfile.write_text("RUN make -C shared/img CXXFLAGS=-O2\n")
         self.git("init", "--initial-branch=main")
         self.git("config", "user.name", "Build contract")
         self.git("config", "user.email", "build-contract@example.invalid")
-        self.git("add", "workbenches/workbench", "shared/lua-runtime/TickRuntime.cpp", "docker/headless/Dockerfile")
+        self.git("add", "workbenches/workbench", "shared/lua-runtime/TickRuntime.cpp", "docker/gui/Dockerfile")
         self.git("commit", "-m", "fixture source")
         self.revision = self.git("rev-parse", "HEAD")
+        self.default_bridge = self.directory / "default-bridge"
+        self.default_bridge.mkdir()
+        (self.default_bridge / "manifest.json").write_text(json.dumps({"source": {"commit_sha": self.revision}}))
+        (self.default_bridge / "ijl15.dll").write_bytes(b"bridge fixture")
         self.private_root = self.repository / "private/workbenches"
         self.config = self.private_root / "config"
         self.config.mkdir(parents=True)
@@ -110,6 +114,7 @@ class WorkbenchFixture(unittest.TestCase):
 
 class WorkbenchBuildContract(WorkbenchFixture):
     def build(self, settings: dict[str, str | bool]):
+        settings = {"bridge_artifact": str(self.default_bridge), **settings}
         (self.workbench / "workbench.json").write_text(json.dumps(settings))
         result = self.invoke("build")
         self.assertTrue(result.stdout.strip(), result.stderr)
@@ -121,7 +126,7 @@ class WorkbenchBuildContract(WorkbenchFixture):
             "Id": "client", "Image": "sha256:running", "State": {"Running": True},
             "Config": {"Env": ["RUN_ID=existing-run"], "Labels": {
                 "beidou.workbench": str(self.workbench), "beidou.client.instance": "default",
-                "beidou.task": "client-v17-maintained", "beidou.backend": "headless",
+                "beidou.task": "client-v17-maintained", "beidou.backend": "beidou",
                 "org.opencontainers.image.revision": self.revision}},
             "HostConfig": {"Privileged": False, "NetworkMode": "isolated", "PortBindings": {}},
         }
@@ -136,12 +141,12 @@ class WorkbenchBuildContract(WorkbenchFixture):
         first_data = created["data"]
         self.assertEqual(prepared_revision, first_data["source_revision"])
         self.assertEqual(self.git("rev-parse", "HEAD^{tree}"), first_data["preparation"]["context"]["source"]["tree"])
-        self.assertEqual({"context": "created", "client_image": "created"},
+        self.assertEqual({"context": "created", "bridge": "reused", "client_image": "created"},
                          {key: stage["outcome"] for key, stage in first_data["preparation"].items()})
         repeated, reused = self.build(settings)
         self.assertEqual(0, repeated.returncode, repeated.stderr)
         self.assertEqual(first_data["image"], reused["data"]["image"])
-        self.assertEqual({"context": "reused", "client_image": "reused"},
+        self.assertEqual({"context": "reused", "bridge": "reused", "client_image": "reused"},
                          {key: stage["outcome"] for key, stage in reused["data"]["preparation"].items()})
         for stage in reused["data"]["preparation"].values():
             self.assertGreaterEqual(stage["duration_ms"], 0)
@@ -149,10 +154,10 @@ class WorkbenchBuildContract(WorkbenchFixture):
                           "running": True, "source_revision": self.revision, "native_inputs_match": True,
                           "matches_prepared_image": False}, reused["data"]["current_instance"])
         calls = json.loads(self.state_path.read_text())["calls"]
-        self.assertFalse({"start", "stop", "rm", "exec", "run"} & {call[0] for call in calls})
-        self.dockerfile.write_text("RUN make -C headless CXXFLAGS=-O3\n")
-        self.git("add", "docker/headless/Dockerfile")
-        self.git("commit", "-m", "change native compilation flags")
+        self.assertFalse({"start", "stop", "rm", "exec"} & {call[0] for call in calls})
+        (self.repository / "shared/lua-runtime/TickRuntime.cpp").write_text("native version two\n")
+        self.git("add", "shared/lua-runtime/TickRuntime.cpp")
+        self.git("commit", "-m", "change native compilation input")
         changed, report = self.build({"ref": self.git("rev-parse", "HEAD")})
         self.assertEqual(0, changed.returncode, changed.stderr)
         self.assertFalse(report["data"]["current_instance"]["native_inputs_match"])

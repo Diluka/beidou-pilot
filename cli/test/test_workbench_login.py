@@ -16,7 +16,7 @@ class WorkbenchLoginContract(WorkbenchFixture):
             "Config": {"User": "1000:1000", "Env": ["CLIENT_ROOT=/work/runtime/default/run"],
                        "Labels": {"beidou.workbench": str(self.workbench),
                                   "beidou.client.instance": "default", "beidou.client.root": str(root),
-                                  "beidou.task": "maple-headless-maintained", "beidou.backend": "headless"}},
+                                  "beidou.task": "client-v17-maintained", "beidou.backend": "beidou"}},
             "HostConfig": {"Privileged": False, "NetworkMode": "isolated", "PortBindings": {}},
         }
         self.state_path.write_text(json.dumps(state))
@@ -53,9 +53,6 @@ class WorkbenchLoginContract(WorkbenchFixture):
 
     def test_running_gui_login_only_observes_and_rejects_replayed_options(self):
         self.running_client()
-        state = json.loads(self.state_path.read_text())
-        state["container"]["Config"]["Labels"]["beidou.backend"] = "beidou"
-        self.state_path.write_text(json.dumps(state))
         result = self.invoke("login")
         self.assertEqual(0, result.returncode, result.stderr)
         calls = json.loads(self.state_path.read_text())["calls"]

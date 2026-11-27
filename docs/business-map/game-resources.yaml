@@ -64,7 +64,7 @@ nodes:
         value: cli/beidou_pilot/img_resources.py
         description: 在 CLI 进程内加载解析库并读取 IMG 节点。
       - kind: file
-        value: headless/Makefile
+        value: shared/img/Makefile
         description: 定义 libbeidou-img.so 的构建目标。
   - id: game-resources.configure
     kind: operation
@@ -92,12 +92,12 @@ nodes:
   - id: game-resources.check
     kind: operation
     name: 离线检查资源
-    summary: 使用无头镜像以无网络短时容器只读挂载配置的原版 Data/，验证解析与读取能力，不登录游戏、不依赖账号或服务器。
+    summary: 使用 GUI 镜像以无网络短时容器只读挂载配置的原版 Data/，验证解析与读取能力，不登录游戏、不依赖账号或服务器。
     aliases: [resources-check, 离线检查]
     anchors:
       - kind: file
         value: workbenches/workbench
-        description: 宿主统一入口固定 headless 镜像并装配只读资源检查。
+        description: 宿主统一入口使用 GUI 镜像并装配只读资源检查。
       - kind: document
         value: docs/CLI.md
         description: resources-check 的输入与输出边界。

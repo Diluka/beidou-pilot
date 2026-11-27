@@ -16,7 +16,7 @@
 | 世界交互与交易 | 操作者处理当前 NPC 正文和普通商店买卖 | 对话选择、当前窗口上下文、报价与交易结果核对；打开、推进、需决策时停下、买卖及关闭 | [world-interaction.yaml](world-interaction.yaml) |
 | 角色维护 | 操作者在原版 GUI 中换装、复活并配置快捷键 | 每项变更的前提与结果确认；GUI 专属支持范围，无 AP/SP 自动分配或药品命令 | [character-care.yaml](character-care.yaml) |
 
-GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生命周期，动作领域决定意图与效果边界；世界交互处理当前正文与交易，角色维护决定特定角色变更的确认方式。
+GUI 是各领域的实现及支持面。Lua 执行管理通用控制生命周期，动作领域决定意图与效果边界；世界交互处理当前正文与交易，角色维护决定特定角色变更的确认方式。
 
 游戏服务器拥有真实游戏状态和不可逆结果，服务端与数据库业务由游戏服务器承担。Docker、外部原客户端及第三方引擎是协作者；图中只描述本仓库可证实的集成责任。
 
@@ -30,17 +30,17 @@ GUI 与无头是各领域的实现及支持面。Lua 执行管理通用控制生
 | 活动 Lua 期间关闭、保存退出原因 | 客户端会话；[宿主入口](../../workbenches/workbench)、[instances.py](../../cli/beidou_pilot/instances.py) | 关闭仅回收所属客户端，不停止服务器；Lua 结束也不关闭容器 |
 | 配置、只读核验原版 IMG 与装配 GUI 副本 | 外部资源；[架构资源说明](../ARCHITECTURE.md#外部资源与配置)、[prepare-client.sh](../../docker/gui/prepare-client.sh) | 运行时资源读取和运行副本操作；原件保持只读 |
 | 名称、NPC 点击范围、地形和物品恢复类型查询 | 外部资源；[catalog.py](../../cli/beidou_pilot/catalog.py) | 静态查询和资料数据；缺资料保持未知，实时对象以现场观察为准 |
-| 查询本端领域、能力、快照及持续观察 | 游戏事实观察；[observations.py](../../cli/beidou_pilot/observations.py)、[snapshot.py](../../cli/beidou_pilot/snapshot.py)、[cli.py](../../cli/beidou_pilot/cli.py) | 观察操作和快照流程；无头任务仅登录快照，CLI 观察面与 Lua 状态面分别判断 |
+| 查询本端领域、能力、快照及持续观察 | 游戏事实观察；[observations.py](../../cli/beidou_pilot/observations.py)、[snapshot.py](../../cli/beidou_pilot/snapshot.py)、[cli.py](../../cli/beidou_pilot/cli.py) | 观察操作和快照流程；CLI 观察面与 Lua 状态面分别判断 |
 | tick 文件或目录脚本包运行、会话状态查询与取消 | Lua 执行；[bridge.py](../../cli/beidou_pilot/bridge.py)、[cli.py](../../cli/beidou_pilot/cli.py)、[TickRuntime.cpp](../../shared/lua-runtime/TickRuntime.cpp) | 执行与取消流程；相对路径从所选角色的 `/work/scripts` 解析，按 script.id 定位会话 |
 | tick 目录脚本包按 require 装载模块 | Lua 执行；[cli.py](../../cli/beidou_pilot/cli.py)、[TickRuntime.cpp](../../shared/lua-runtime/TickRuntime.cpp)、[LUA_TICK_API.md](../LUA_TICK_API.md) | 包根由 CLI 发布、模块按源路径直读；会话可查实际装载来源，错误归属模块与行号，单文件行为不变 |
 | 取消、期限到达、错误及输入释放 | Lua 执行；[TickRuntime.h](../../shared/lua-runtime/TickRuntime.h)、[TickRuntime.cpp](../../shared/lua-runtime/TickRuntime.cpp) | 所有权和效果边界；会话取消、容器关闭分别拥有生命周期 |
 | 方向与动作意图提交及运动观察 | 动作领域；[LUA_TICK_API.md](../LUA_TICK_API.md)、[shared/scripts/examples](../../shared/scripts/examples/) | 共享 player 与单动作槽；派发、动画与游戏效果分别判断 |
 | 打开 NPC、推进对话、当前引用操作和窗口焦点 | 世界交互；[dialogs.py](../../cli/beidou_pilot/dialogs.py)、[ui.py](../../cli/beidou_pilot/ui.py) | 当前上下文与对话流程；任务、奖励与文本输入的选择由操作者确认 |
 | 买卖、数量框和关店 | 世界交互；[shop.py](../../cli/beidou_pilot/shop.py) | 普通交易和关闭流程；库存与金币双确认，未确认时先观察 |
-| GUI 背包换装、复活与快捷键绑定 | 角色维护；[items.py](../../cli/beidou_pilot/items.py)、[hotkeys.py](../../cli/beidou_pilot/hotkeys.py)、[cli.py](../../cli/beidou_pilot/cli.py) | GUI 操作与结果确认；无头明确拒绝，Lua 不提供窗口动作 |
+| GUI 背包换装、复活与快捷键绑定 | 角色维护；[items.py](../../cli/beidou_pilot/items.py)、[hotkeys.py](../../cli/beidou_pilot/hotkeys.py)、[cli.py](../../cli/beidou_pilot/cli.py) | GUI 操作与结果确认；Lua 不提供窗口动作 |
 | tick 动作槽中的技能与用药意图 | 动作领域；[LUA_TICK_API.md](../LUA_TICK_API.md)、[TickRuntime.cpp](../../shared/lua-runtime/TickRuntime.cpp) | 只提交持续输入意图；消耗、恢复与命中由现场观察确认 |
 | 有限命令批次 | 既有领域入口；[cli.py](../../cli/beidou_pilot/cli.py) | 批次是同实例的有限编排，遇错即停；按键与技能命令已退役，动作写 tick Lua |
-| 截图及有界录制 | 观察支持；[desktop.py](../../cli/beidou_pilot/engines/desktop.py)、[record.py](../../cli/beidou_pilot/engines/record.py) | GUI 画面证据，无头端按结构化观察交付 |
+| 截图及有界录制 | 观察支持；[desktop.py](../../cli/beidou_pilot/engines/desktop.py)、[record.py](../../cli/beidou_pilot/engines/record.py) | GUI 画面证据 |
 | 镜像构建、CI 和依赖维护 | 工程交付支持；[workbench](../../workbenches/workbench)、[CI.md](../CI.md)、[DEPENDENCIES.md](../DEPENDENCIES.md) | 工程交付支持，游戏结果由各业务领域负责；客户端交付统一经版本化镜像入口 |
 
 ## 阅读与查询

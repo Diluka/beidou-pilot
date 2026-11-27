@@ -4,7 +4,7 @@
 只保留离线资料生成需要的解析、门户边、区域与展示函数；跨图路线由客户端原生
 `beidou-pilot world-map route` 提供，本模块不计算路线。
 
-需要共享 IMG 解析库：生成器默认在检出目录的 `headless/build/libbeidou-img.so` 查找，
+需要共享 IMG 解析库：生成器默认在检出目录的 `shared/img/build/libbeidou-img.so` 查找，
 也可用 BEIDOU_IMG_LIBRARY 显式指定。
 """
 
@@ -99,7 +99,7 @@ def _library() -> CDLL:
     checkout = Path(__file__).resolve().parents[4]
     configured = os.environ.get("BEIDOU_IMG_LIBRARY")
     candidates = [Path(configured).expanduser()] if configured else [
-        checkout / "headless/build/libbeidou-img.so",
+        checkout / "shared/img/build/libbeidou-img.so",
         checkout / "lib/libbeidou-img.so",
     ]
     path = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)

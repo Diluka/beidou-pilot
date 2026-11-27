@@ -1247,15 +1247,6 @@ class GuiCharacterObserveContractTest(GuiCharacterCase):
                 self.assertEqual(raised.exception.code, "gui_character_state_unknown", "页面观察身份不明时禁止输入")
         self.assertEqual(self.bridge.calls, [], "观察异常时不得发送原生动作")
 
-    def test_rejects_non_beidou_backend(self):
-        self.show([page_window("category", address=CATEGORY_ADDRESS)])
-        record = self.record()
-        self.backend.name = "headless"
-        with self.assertRaises(ClientError) as raised:
-            _navigate_category(self.backend, PARAMS, **self.arguments(record), deadline=2)
-        self.assertEqual(raised.exception.code, "gui_character_state_unknown", "非 GUI 客户端不得执行建角动作")
-
-
 class GuiCharacterWaitResultTest(GuiCharacterCase):
     def wait_arguments(self, request_id="a" * 32):
         return {

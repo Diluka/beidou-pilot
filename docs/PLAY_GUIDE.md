@@ -40,7 +40,7 @@ workbenches/workbench dev/NAME snapshot
 
 ## 观察、选择能力并核对结果
 
-先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`。`capabilities.native_actions` 来自有效在线桥；按领域响应的支持状态、来源与时效读取字段；只使用已提供的字段。无头任务支持正常增量，原始进度串及关联语义按原样保留。
+先读 `snapshot`，再按需使用 `inspect scene/inventory/quests/skills`。`capabilities.native_actions` 来自有效在线桥；按领域响应的支持状态、来源与时效读取字段；只使用已提供的字段。任务观察支持正常增量，原始进度串及关联语义按原样保留。
 
 在已确认安全区域选择一项有界 tick 动作并比较前后事实。仓库示例 [tick-jump-attack.lua](../shared/scripts/examples/tick-jump-attack.lua) 是可复用的有界移动跳砍脚本；仅需短移时写一个设置 `player.move`、在 `context.tick.time` 到达期限后清方向并返回 `done` 的 tick 文件。下面按示例运行，须先核实该方向有足够空间且没有其他脚本控制角色：
 
@@ -66,7 +66,7 @@ workbenches/workbench dev/GUI_NAME open
 workbenches/workbench dev/GUI_NAME snapshot
 ```
 
-GUI 工作目录在 `workbench.json` 选择 `backend="beidou"`，与无头端一样使用自己的 `default` 实例；账号只支持 `world=0`，按账号配置的角色和频道正常登录。两端共享 CLI，但各自保留能力范围。GUI 的 `--character/--character-index/--channel` 和固定账号/名称文件已退役。
+工作目录默认使用原版 GUI 的 `default` 实例；`backend` 可省略或设为 `beidou`。账号只支持 `world=0`，按账号配置的角色和频道正常登录。`--character/--character-index/--channel` 和固定账号/名称文件已退役。
 
 通过当前 `snapshot`、`inspect stage` 和 `screenshot` 定位界面，优先使用新鲜对话正文与引用。根桌面 `click X Y` 必须依据当次截图。需要滚轮原语时，在所属 GUI 容器内执行，例如：
 
@@ -99,7 +99,7 @@ workbenches/workbench dev/NAME status
 
 ## 伴游机器人（应用层）
 
-伴游机器人不是客户端内置策略，而是计划跑在 headless 客户端里的常驻 tick 目录脚本包；当前仍在设计与分阶段实施，尚未交付。玩家用 GUI 正常游玩；机器人跟随、协助战斗、组队任务或 BOSS 行为由脚本和内容包决定。
+伴游机器人不是客户端内置策略，而是计划跑在 GUI 客户端里的常驻 tick 目录脚本包；当前仍在设计与分阶段实施，尚未交付。机器人跟随、协助战斗、组队任务或 BOSS 行为由脚本和内容包决定。
 
 - 机器人代码放该角色 `/work/scripts/bot/`，状态/事件/指令放 `/work/bot/`；一行一个角色。
 - 玩家私聊控制和大模型自然语言属于后续原生能力；在聊天/队伍能力交付前，用宿主文件邮箱和同图跟随验证闭环。

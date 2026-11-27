@@ -5,7 +5,7 @@ type: Task
 ---
 
 <!--
-共性约定（headless、差异审计、GUI 选型）见 docs/PHASE1.md 与 docs/COMPANION_BOT.md；正文只写本任务特有的目标与边界，不重复共识。默认只做 headless；独立的“后端差异审计”任务按目标明确写两边。
+共性约定（GUI 能力、后端边界）见 docs/PHASE1.md 与 docs/COMPANION_BOT.md；正文只写本任务特有的目标与边界，不重复共识。默认按 GUI 后端验收，不再拆分双端差异任务。
 执行者只改本任务指定的代码/测试/包内 README；不要改 docs/、AGENTS.md、.github/ 或 Issue 正文。需要契约/流程变更时停止并回报，由维护者更新。
 依赖用 GitHub 原生 blocked by 关联，正文不写前置任务编号。
 接口、算法、常量、状态机在“锁定契约”里写死；执行者不得自行改设计，偏离即停止。

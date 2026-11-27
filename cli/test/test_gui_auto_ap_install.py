@@ -50,8 +50,11 @@ class GuiAutoApInstallStructure(unittest.TestCase):
             subprocess.run([str(executable)], check=True, timeout=10)
 
     def test_unknown_install_remains_unknown_and_is_not_retried(self) -> None:
+        open_window = patch("beidou_pilot.ui.open_window")
+        open_window.start()
+        self.addCleanup(open_window.stop)
         backend = Mock()
-        backend.name = "headless"
+        backend.name = "beidou"
         backend.read.return_value = {"character": {"id": 7, "strength": 10, "dexterity": 4,
             "intelligence": 4, "luck": 4, "ability_points": 2}, "native_values_valid": True}
         with patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \

@@ -138,10 +138,7 @@ class TickCliContract(unittest.TestCase):
                 }
             }"""
         )
-        for backend, status, reason, player_reason, dispatched in (
-            ("headless", "completed", "script_returned", "native_jump_input_consumed", True),
-            ("beidou", "cancelled", "time_limit", "", False),
-        ):
+        for backend, status, reason, player_reason, dispatched in (("beidou", "cancelled", "time_limit", "", False),):
             with self.subTest(backend=backend):
                 self.files.register(backend)
                 script = deepcopy(native_script)

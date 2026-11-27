@@ -152,32 +152,10 @@ class NativeObservationContract(unittest.TestCase):
         self.assertIsNone(result["windows"])
         self.assertIn(reason, result["unavailable"])
 
-    def test_headless_preserves_unknown_checksum_and_snapshot_data_source(self) -> None:
-        with patch("beidou_pilot.observations.active_session", return_value=self.session):
-            observer = NativeObserver(self.root, "headless")
-            observer.directory = self.directory
-            domain = {
-                "items": [],
-                "checksums_valid": None,
-                "native_values_valid": True,
-                "source": "character_data_snapshot",
-                "live_updates": False,
-            }
-            with self.responder(domain):
-                result = observer.observe("inventory", timeout=0.2)
-            sampled = read_observation(observer)
-        self.assertTrue(result["native_values_valid"])
-        self.assertIsNone(result["checksums_valid"])
-        self.assertEqual("character_data_snapshot", result["data_source"])
-        self.assertFalse(result["live_updates"])
-        self.assertTrue(sampled["native_values_valid"])
-        self.assertIsNone(sampled["map_checksum_valid"])
-        self.assertIsNone(sampled["character_checksum_valid"])
-
     def test_death_facts_require_a_ready_native_character(self) -> None:
         self.state.update(dead=True, revive_requestable=True)
         with patch("beidou_pilot.observations.active_session", return_value=self.session):
-            observer = NativeObserver(self.root, "headless")
+            observer = NativeObserver(self.root)
             observer.directory = self.directory
             for ready in (True, False):
                 self.state["ready"] = ready
@@ -264,8 +242,6 @@ class NativeObservationContract(unittest.TestCase):
                     [
                         "--root",
                         str(self.root),
-                        "--backend",
-                        "beidou",
                         "--json",
                         "world-map",
                         "route",
@@ -304,21 +280,21 @@ class NativeObservationContract(unittest.TestCase):
         self.assertEqual("intel", stage["renderer"])
 
     def test_engine_module_uses_source_package_before_an_old_runtime_copy(self) -> None:
-        self.files.register("headless")
+        self.files.register("beidou")
         engines = self.root / "beidou_pilot/engines"
         engines.mkdir(parents=True)
         (engines.parent / "__init__.py").write_text("")
         (engines / "__init__.py").write_text("")
         (engines / "observe.py").write_text('print("stale runtime engine loaded")\n')
-        help_text = Backend(self.root, "headless").text("observe", "--help")
+        help_text = Backend(self.root, "beidou").text("observe", "--help")
         self.assertIn("--interval", help_text)
 
     def test_backend_forwards_selected_backend_to_observation_engine(self) -> None:
-        self.files.register("headless")
+        self.files.register("beidou")
         with patch("beidou_pilot.backend.subprocess.run") as run:
             run.return_value.stdout = '{"quests": []}'
-            self.assertEqual({"quests": []}, Backend(self.root, "headless").read("quests"))
-        self.assertEqual("headless", run.call_args.kwargs["env"]["MAPLE_BACKEND"])
+            self.assertEqual({"quests": []}, Backend(self.root, "beidou").read("quests"))
+        self.assertEqual("beidou", run.call_args.kwargs["env"]["MAPLE_BACKEND"])
 
 
 if __name__ == "__main__":

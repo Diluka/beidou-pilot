@@ -462,7 +462,7 @@ def compare(
             {
                 "left": left_series["step_ms"],
                 "right": right_series["step_ms"],
-                "note": "物理步长不同的两端不能按同一步序号对齐；#239 前 headless 为8ms。",
+                "note": "物理步长不同的样本不能按同一步序号对齐，按证据不足拒绝。",
             },
         )
     for side, series in (("left", left_series), ("right", right_series)):

@@ -12,7 +12,7 @@ nodes:
     anchors:
       - kind: document
         value: docs/ARCHITECTURE.md
-        description: 说明容器常驻、动作与实例的独立生命周期及两端支持范围。
+        description: 说明容器常驻、动作与实例的独立生命周期及GUI 支持范围。
   - id: client-session.open
     kind: scenario
     name: 打开或复用客户端
@@ -20,9 +20,9 @@ nodes:
     aliases: [启动, 登录, 重用实例]
     anchors:
       - kind: symbol
-        file: cli/beidou_pilot/headless.py
+        file: cli/beidou_pilot/session.py
         value: open_game
-        description: 为命名无头实例核验目标、profile与重复角色占用，启动容器并等待原生就绪状态。
+        description: 复用或启动 GUI 会话，按原生登录阶段等待入图与就绪状态。
       - kind: symbol
         file: cli/beidou_pilot/session.py
         value: open_game
@@ -34,8 +34,8 @@ nodes:
     aliases: [退出, 容器回收]
     anchors:
       - kind: file
-        value: cli/beidou_pilot/headless.py
-        description: 停止登记的无头容器并核实退出与运行记录。
+        value: cli/beidou_pilot/session.py
+        description: 关闭本目录 GUI 客户端并核对退出与运行记录。
       - kind: file
         value: cli/beidou_pilot/session.py
         description: 关闭本目录 GUI 客户端并报告网络回收成功或 cleanup_pending。
@@ -102,11 +102,11 @@ nodes:
   - id: client-session.exclusive-character
     kind: invariant
     name: 同一目标角色只有一个控制实例
-    summary: 同一目标、世界和角色不得由多个无头实例同时接管；GUI保持一名明确操作者。
+    summary: 同一目标、世界和角色不得由多个客户端实例同时接管；GUI 保持一名明确操作者。
     aliases: [角色独占, 单控制者]
     anchors:
       - kind: symbol
-        file: cli/beidou_pilot/headless.py
+        file: cli/beidou_pilot/session.py
         value: open_game
         description: 在启动锁内检查其他运行实例的目标、世界和角色，拒绝重复接管。
       - kind: document
@@ -173,9 +173,9 @@ flows:
     steps:
       - {id: select, kind: action, name: 选择并核验所属实例, summary: 按 live/NAME 或 dev/NAME 选择角色、读取登记并核验所属容器。, concept: client-session.open}
       - {id: existing, kind: decision, name: 是否已有运行会话, summary: 判断所选实例是否已有所属容器运行。}
-      - {id: matching, kind: decision, name: 请求是否允许复用现有会话, summary: 核对可证明的显式目标；无头另核对profile中的角色、世界和频道，不匹配时保留现场。}
-      - {id: reuse-backend, kind: decision, name: 复用哪个后端的会话, summary: 无头直接返回现有运行状态；GUI继续当前登录流程，入图后核对角色和频道。}
-      - {id: resumed, kind: outcome, name: 返回已有无头会话状态, summary: 返回实际阶段与ready，不重复登录或隐式切换角色。}
+      - {id: matching, kind: decision, name: 请求是否允许复用现有会话, summary: 核对可证明的显式目标和账号中的角色、世界与频道，不匹配时保留现场。}
+      - {id: reuse-backend, kind: decision, name: 复用哪个后端的会话, summary: 继续当前 GUI 登录流程，入图后核对角色和频道。}
+      - {id: resumed, kind: outcome, name: 返回已有 GUI 会话状态, summary: 返回实际阶段与ready，不重复登录或隐式切换角色。}
       - {id: continue-gui, kind: action, name: 继续已有GUI会话的登录与入图等待, summary: 根据当前登录、频道或选角阶段继续正常GUI流程，不新建客户端容器。, concept: client-session.open}
       - {id: validate, kind: action, name: 核验新会话前置条件, summary: 核对目标、角色配置、资源、镜像和其他实例的角色占用。, concept: client-session.open}
       - {id: permitted, kind: decision, name: 是否允许建立会话, summary: 目标与配置有效且没有重复角色接管才允许启动。}
@@ -190,7 +190,7 @@ flows:
       - {from: existing, to: validate, when: 没有运行会话}
       - {from: matching, to: reuse-backend, when: 已证明匹配或未请求切换}
       - {from: matching, to: refused, when: 不匹配或无法证明一致}
-      - {from: reuse-backend, to: resumed, when: 无头会话}
+      - {from: reuse-backend, to: resumed, when: GUI 会话}
       - {from: reuse-backend, to: continue-gui, when: GUI会话}
       - {from: continue-gui, to: ready}
       - {from: validate, to: permitted}
@@ -209,7 +209,7 @@ flows:
       - {id: locate, kind: action, name: 定位所属容器, summary: 依据实例登记和容器身份确定关闭对象。, concept: client-session.close}
       - {id: stop, kind: action, name: 确认所属客户端停止, summary: 有所属容器时通过Docker正常停止并核对Running和Pid；无容器时保留已经停止的事实。, concept: client-session.close}
       - {id: exited, kind: decision, name: 是否确认容器退出, summary: 未确认退出时不报告关闭成功。}
-      - {id: archive, kind: action, name: 保存退出结果并清理所属资源, summary: 无头归档退出原因并回收容器；GUI仅回收已证明归属的会话网络。, concept: client-session.close}
+      - {id: archive, kind: action, name: 保存退出结果并清理所属资源, summary: 归档退出原因并回收容器；GUI 仅回收已证明归属的会话网络。, concept: client-session.close}
       - {id: cleaned, kind: decision, name: 是否仍有GUI网络清理待办, summary: 依据网络归属证据与回收结果报告cleanup_pending。}
       - {id: closed, kind: outcome, name: 实例已关闭, summary: 客户端已退出，所属生命周期处理完成。}
       - {id: pending, kind: outcome, name: 已关闭且清理待办明确, summary: 客户端已退出，网络归属或回收问题另行报告。}

@@ -32,7 +32,7 @@ struct Monster : MovableObject {
     bool templateKnown = false;
     std::string name;
     bool active = false;
-    // Local controller ownership of this monster. Only the headless engine can
+    // Local controller ownership of this monster. The GUI bridge keeps it
     // report it; the original client observation leaves it unknown.
     Fact controlled = Fact::Unknown;
     int hpPercent = 0;

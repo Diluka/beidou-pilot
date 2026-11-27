@@ -21,23 +21,28 @@ jobs:
         with:
           python-version: "3.14"
       - name: Build shared IMG parser for Catalog tests
-        run: make -C headless build/libbeidou-img.so
+        run: make -C shared/img build/libbeidou-img.so
       - name: Run offline tests
         run: |
           PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=cli python3 -m unittest discover -s cli/test -t cli -v
           python3 docker/dev-server/test_cli.py
 
-  headless-image:
-    name: Headless image build
+  gui-image:
+    name: GUI image build
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
-      - name: Build headless image
-        run: docker build --file docker/headless/Dockerfile --tag local/beidou-pilot:ci .
-      - name: Run the packaged CLI as its runtime user
+      - name: Create bridge build input placeholder
         run: |
-          docker run --rm --network none --read-only --entrypoint beidou-pilot local/beidou-pilot:ci --help
-          docker run --rm --network none --read-only --entrypoint beidou-pilot local/beidou-pilot:ci --version
+          mkdir -p build-input
+          printf 'placeholder bridge for packaging check\n' > build-input/ijl15.dll
+          printf '{"source":{"commit_sha":"%s"}}\n' "$GITHUB_SHA" > build-input/manifest.json
+      - name: Build GUI image
+        run: docker build --file docker/gui/Dockerfile --tag local/beidou-pilot-gui:ci .
+      - name: Run the packaged CLI
+        run: |
+          docker run --rm --network none --read-only --entrypoint beidou-pilot local/beidou-pilot-gui:ci --help
+          docker run --rm --network none --read-only --entrypoint beidou-pilot local/beidou-pilot-gui:ci --version

@@ -12,6 +12,9 @@ from beidou_pilot.strategies import compile_strategy
 
 class AutoApRuntimeArbitration(unittest.TestCase):
     def test_shared_draft_arbitration(self) -> None:
+        open_window = patch("beidou_pilot.ui.open_window")
+        open_window.start()
+        self.addCleanup(open_window.stop)
         root = Path(__file__).resolve().parents[2]
         lua = root / "third_party/lua"
         sources = sorted(path for path in lua.glob("*.c")
@@ -32,7 +35,7 @@ class AutoApRuntimeArbitration(unittest.TestCase):
             scene = {"instance_id": "test", "character_id": 7, "scene_generation": 1, "map_id": 0}
             snapshot = {**scene, "ready": True, "character": {"id": 7}, "scripts": []}
             backend = Mock()
-            backend.name = "headless"
+            backend.name = "beidou"
             backend.read.return_value = {"character": {"id": 7, "strength": 10, "dexterity": 4,
                 "intelligence": 4, "luck": 4, "ability_points": 2}, "native_values_valid": True}
             with patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \
