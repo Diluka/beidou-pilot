@@ -181,7 +181,7 @@ function M.step(mover, ctx, world)
                 local moved = p.move(direction)
                 if moved and direction then
                     mover.phase, mover.runup_direction = "brake", direction
-                    mover.runup_x, mover.runup_time = character.x, now
+                    mover.runup_x, mover.runup_time, mover.runup_distance = character.x, now, 0
                     return "running"
                 end
                 if moved and vertical then
@@ -235,11 +235,14 @@ function M.step(mover, ctx, world)
                 failure = "runup_unavailable"
             elseif character.on_ground and forward then
                 mover.phase = "runup"
-                if math.abs(character.x - edge.x) <= 8 then
+                mover.runup_distance = mover.runup_distance + math.abs(delta)
+                if mover.runup_distance >= 8 and math.abs(character.x - edge.x) <= 8 then
                     if not p.jump() then failure = "unsupported_edge" else
                         mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
                     end
                 end
+            elseif delta ~= 0 then
+                mover.phase, mover.runup_distance = "brake", 0
             end
             mover.runup_x = character.x
         elseif not failure and mover.phase == "launch" then
