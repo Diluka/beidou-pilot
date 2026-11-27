@@ -346,6 +346,20 @@ local function main(context)
         local scope = tostring(world.map_id) .. ":" .. tostring(generation)
         if memory.hunt_blocked_scope ~= scope then
             memory.blocked, memory.hunt_failures, memory.hunt_blocked_scope = nil, nil, scope
+            memory.hunt_last_platform, memory.hunt_idle = nil, nil
+        end
+        if character.on_ground and character.platform then
+            local edge = memory.mover and memory.mover.status == "running" and memory.mover.edges
+                and memory.mover.edges[memory.mover.index or 1]
+            if memory.hunt_last_platform and memory.hunt_last_platform ~= character.platform
+                and not (memory.hunt_action == "patrol" and edge and edge.to == character.platform) then
+                if memory.mover and memory.mover.status == "running" then move.stop(memory.mover) end
+                io_module.event(context, "hunt/recover", {reason = "platform_changed",
+                    from = memory.hunt_last_platform, to = character.platform})
+                memory.hunt_patrol, memory.hunt_failures, memory.hunt_action, memory.hunt_drop = nil, 0, nil, nil
+                memory.hunt_idle = nil
+            end
+            memory.hunt_last_platform = character.platform
         end
         local local_only = (memory.hunt_failures or 0) >= 3
             or memory.hunt_patrol and memory.hunt_patrol.fallback_until and now < memory.hunt_patrol.fallback_until
@@ -384,6 +398,22 @@ local function main(context)
             end
             drop = drop or loot.select(world, options)
         end
+        if not mob and not drop and character.on_ground and character.platform
+            and type(character.x) == "number" and type(character.y) == "number"
+            and not (context.game.character or {}).attacking then
+            local idle = memory.hunt_idle
+            if not idle or idle.platform ~= character.platform
+                or math.abs(character.x - idle.x) >= 5 or math.abs(character.y - idle.y) >= 5 then
+                memory.hunt_idle = {x = character.x, y = character.y, platform = character.platform, since = now}
+            elseif now - idle.since >= 10 then
+                if memory.mover and memory.mover.status == "running" then move.stop(memory.mover) end
+                io_module.event(context, "hunt/stalled", {platform = character.platform, seconds = now - idle.since})
+                memory.hunt_patrol, memory.hunt_failures, memory.hunt_action = nil, 0, nil
+                memory.hunt_idle = {x = character.x, y = character.y, platform = character.platform, since = now}
+            end
+        else
+            memory.hunt_idle = nil
+        end
         local action = mob and "combat" or drop and "loot" or "patrol"
         if memory.hunt_action and memory.hunt_action ~= action then
             if memory.mover then
@@ -420,6 +450,11 @@ local function main(context)
                             memory.blocked = memory.blocked or {}
                             memory.blocked[tostring(edge.from) .. ":" .. tostring(edge.to)] = true
                         end
+                    end
+                    if reason == "retreat_blocked" or reason == "timeout" or reason == "no_progress"
+                        or reason == "landing_mismatch" then
+                        memory.hunt_action, memory.hunt_patrol, memory.hunt_idle = nil, nil, nil
+                        memory.hunt_failures = 0
                     end
                     if not memory.hunt_error_at or now - memory.hunt_error_at >= 10 then
                         io_module.event(context, "error", {reason = reason, edge_kind = edge and edge.kind,

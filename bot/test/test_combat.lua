@@ -319,6 +319,8 @@ local blocked = ranged_fixture(146, 40, {attack_mode = "ranged"})
 world.map_id = 146
 ctx.state.graph.platforms[1].left = -10
 world.character.hp, world.character.max_hp = 20, 100
+ctx.state.bot = {mode = "hunt", config = world.config}
+world.now = 0
 assert(combat.select(world, {hunt = true}) == blocked)
 status, reason = combat.step(ctx, world, blocked, path_mover)
 assert(status == "failed" and reason == "retreat_blocked")
@@ -326,7 +328,14 @@ local event = events[#events]
 assert(event.kind == "combat/retreat_blocked" and event.data.reason == "insufficient_space"
     and event.data.platform == 1 and event.data.retreat_distance == 10 and event.data.target_distance == 40)
 for _, call in ipairs(calls) do assert(call ~= "attack" and not call:match("^skill_%d+$")) end
-assert(combat.select(world, {hunt = true}) == nil, "blocked target must be abandoned")
+local alternative_blocked = entity(149, 100, 1)
+world.mobs = {blocked, alternative_blocked}
+assert(combat.select(world, {hunt = true}) == alternative_blocked, "blocked target must yield immediately")
+world.mobs = {blocked}
+world.now = 9
+assert(combat.select(world, {hunt = true}) == nil, "cooldown must suppress the target")
+world.now = 10
+assert(combat.select(world, {hunt = true}) == blocked, "target must be eligible after cooldown")
 
 local wall_target = ranged_fixture(147, 40, {attack_mode = "ranged"})
 ctx.state.graph.walls = {-15, -40, 0}
