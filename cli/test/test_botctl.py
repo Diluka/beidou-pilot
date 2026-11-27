@@ -81,7 +81,8 @@ class BotctlTests(unittest.TestCase):
             with patch.object(botctl.time, "time_ns", return_value=123):
                 code, calls = self.run_botctl(
                     ["plan", "dev/hero", "--hunt-map", "200"],
-                    [Result(stdout=response({"map_id": 100})), Result(stdout=route)], root,
+                    [Result(stdout=response({"map_id": 100})), Result(stdout=route)],
+                    root,
                 )
             self.assertEqual(code, 0)
             self.assertEqual(calls[0][1:], ["dev/hero", "inspect", "scene"])
@@ -90,9 +91,11 @@ class BotctlTests(unittest.TestCase):
             self.assertEqual((bot / "plan.conf").read_text(), "owner=hero\nhunt_map=200\nplan_revision=123\n")
 
     def test_plan_failure_preserves_existing_files(self):
-        cases = ([Result(stdout=response({"map_id": None}))],
-                 [Result(returncode=1, stderr="scene failed")],
-                 [Result(stdout=response({"map_id": 100})), Result(returncode=1, stderr="no route")])
+        cases = (
+            [Result(stdout=response({"map_id": None}))],
+            [Result(returncode=1, stderr="scene failed")],
+            [Result(stdout=response({"map_id": 100})), Result(returncode=1, stderr="no route")],
+        )
         for responses in cases:
             with self.subTest(responses=responses), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
