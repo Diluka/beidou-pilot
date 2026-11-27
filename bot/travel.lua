@@ -1,5 +1,4 @@
--- 跨图寻路：按 /work/bot/route.json 的 {legs=[{map,x,y,portal}]} 逐图走到传送门并按上。
--- 每个航点用 terrain.plan 一次性规划 + move.step 执行；到点后按上等换图，换图成功进入下一航点。
+-- 按 /work/bot/route.json 的航点逐图走到传送门；仅在观察到目标地图后推进。
 package.path = "/work/scripts/bot/?.lua;/work/scripts/bot/?/init.lua;" .. package.path
 local terrain = require("lib.terrain")
 local move = require("lib.move")
@@ -10,91 +9,98 @@ local function load_route()
     if not file then return nil end
     local text = file:read("*a")
     file:close()
-    local ok, decoded = pcall(function() return text end)
-    if not ok then return nil end
-    -- 极简 JSON 解析：只支持本工具生成的固定结构。
+    local goal = tonumber(text:match('"goal"%s*:%s*(%d+)'))
     local legs = {}
-    -- 标准顺序：map, portal, x, y（与 tools/bot_route.py 输出一致）
     for map, portal, x, y in text:gmatch('"map"%s*:%s*(%d+),%s*"portal"%s*:%s*"([^"]*)",%s*"x"%s*:%s*(-?%d+%.?%d*),%s*"y"%s*:%s*(-?%d+%.?%d*)') do
         legs[#legs + 1] = { map = tonumber(map), portal = portal, x = tonumber(x), y = tonumber(y) }
     end
-    if #legs == 0 then
-        for map, x, y in text:gmatch('"map"%s*:%s*(%d+)[^}]-"x"%s*:%s*(-?%d+%.?%d*)[^}]-"y"%s*:%s*(-?%d+%.?%d*)') do
-            legs[#legs + 1] = { map = tonumber(map), x = tonumber(x), y = tonumber(y) }
-        end
-    end
-    if #legs == 0 then return nil end
-    return legs
+    if #legs == 0 or not goal then return nil end
+    return legs, goal
 end
 
 local function main(context)
     local s, p = context.state, context.game.player
     local world = world_mod.observe(context)
-    if not world then return "failed", "world_unavailable" end
-    s.legs = s.legs or load_route()
-    if not s.legs then return "failed", "route_missing" end
+    local function fail(reason)
+        p.stop()
+        context.game.log("travel failed: " .. reason)
+        return "failed", reason
+    end
+    if not s.legs then
+        s.legs, s.goal = load_route()
+        if not s.legs then return fail("route_missing") end
+    end
     s.index = s.index or 1
-    s.t = s.t or context.tick.time
     local leg = s.legs[s.index]
     if not leg then p.stop(); context.game.log("route complete"); return "done" end
+    if not world.ready or not world.character or world.map_id == nil then
+        return fail("world_unavailable")
+    end
+    local now = context.tick.time
+    s.started = s.started or now
+    local expected = s.legs[s.index + 1] and s.legs[s.index + 1].map or s.goal
     if world.map_id ~= leg.map then
-        -- 已经在下一张图（上一个传送门生效），前进
-        s.index = s.index + 1
-        s.path = nil
+        if s.portal_wait and world.map_id == expected then
+            p.stop()
+            context.game.log(string.format("portal %s confirmed, leg %d/%d", tostring(leg.portal), s.index, #s.legs))
+            s.index, s.retries, s.started = s.index + 1, 0, now
+            s.graph, s.mover, s.path, s.portal_wait, s.generation = nil, nil, nil, nil, nil
+            if s.index > #s.legs then context.game.log("route complete"); return "done" end
+            return
+        end
+        return fail("unexpected_map")
+    end
+    local function retry(reason)
+        p.stop()
+        if (s.retries or 0) >= 1 then return fail(reason) end
+        s.retries, s.started = (s.retries or 0) + 1, now
+        s.graph, s.mover, s.path, s.portal_wait, s.generation = nil, nil, nil, nil, nil
+        context.game.log(string.format("leg %d retry: %s", s.index, reason))
+    end
+    if now - s.started > 120 then return retry("timeout") end
+    if s.portal_wait then
+        if now - s.portal_wait >= 0.2 then p.stop() end
+        if now - s.portal_wait >= 3 then return retry("portal_timeout") end
         return
+    end
+    if s.generation and s.generation ~= world.scene_generation then
+        s.graph, s.mover, s.path = nil, nil, nil
+    end
+    if not s.graph then
+        if context.scene.terrain.status ~= "available" then return retry("terrain_unavailable") end
+        local graph, reason = terrain.build(context.scene.terrain.navigation)
+        if not graph then return retry(reason or "terrain_unavailable") end
+        s.graph, s.mover, s.generation = graph, move.new(graph), world.scene_generation
     end
     local c = world.character
-    if not s.graph then
-        s.graph = assert(terrain.build(context.scene.terrain.navigation))
-        s.mover = move.new(s.graph)
-    end
     local platform = terrain.platform_at(s.graph, c.x, c.y, s.graph.model.stand_height)
-    local target_platform = terrain.platform_at(s.graph, leg.x, leg.y, s.graph.model.stand_height)
-    if platform == nil or target_platform == nil then
-        p.move(leg.x > c.x and "right" or "left")
+    local target = terrain.platform_at(s.graph, leg.x, leg.y, s.graph.model.stand_height)
+    if not platform or not target then return retry("platform_unavailable") end
+    local dx = leg.x - c.x
+    if platform == target and math.abs(dx) <= 6 then
+        p.stop()
+        p.move("up")
+        s.portal_wait = now
         return
     end
-    local dx = leg.x - c.x
-    if platform == target_platform and math.abs(dx) <= 6 then
-        if not s.up then s.up, s.up_time = true, context.tick.time end
-        if context.tick.time - s.up_time < 0.2 then
-            p.move(nil)
-            p.move("up")
-        else
-            p.move(nil)
-            s.up = nil
-            s.path = nil
-            s.index = s.index + 1
-            context.game.log(string.format("portal %s used, leg %d/%d", tostring(leg.portal), s.index - 1, #s.legs))
-        end
+    if platform == target then
+        s.path = nil
+        p.skill(nil)
+        p.move(dx > 0 and "right" or "left")
         return
     end
     if not s.path then
         local movement = context.game.character.movement or { max_speed = 125, max_jump_height = 77 }
-        local edges, reason = terrain.plan(s.graph, platform, target_platform,
+        local edges, reason = terrain.plan(s.graph, platform, target,
             { speed = movement.max_speed, max_jump_height = movement.max_jump_height, blocked = {} })
-        if not edges or #edges == 0 then
-            p.move(dx > 0 and "right" or "left")
-            context.game.log("plan fallback reason=" .. tostring(reason))
-            return
-        end
-        assert(move.set_path(s.mover, edges))
+        if not edges or #edges == 0 then return retry(reason or "no_path") end
+        local ok, set_reason = move.set_path(s.mover, edges)
+        if not ok then return retry(set_reason or "no_path") end
         s.path = true
         context.game.log(string.format("leg %d/%d map=%d plan %d edge(s) -> portal %s", s.index, #s.legs,
             leg.map, #edges, tostring(leg.portal)))
     end
     local status, reason = move.step(s.mover, context, world)
-    if status == "failed" then
-        s.path = nil
-        p.stop()
-        context.game.log("leg failed: " .. tostring(reason))
-        return "failed", reason
-    end
-    if status == "done" then
-        s.path = nil
-    end
-    if context.tick.index % 90 == 0 then
-        context.game.log(string.format("t=%.0f map=%d x=%.0f y=%.0f", context.tick.time - s.t, world.map_id, c.x, c.y))
-    end
-    if context.tick.time - s.t > 240 then p.stop(); return "failed", "timeout" end
+    if status == "failed" then return retry(reason or "move_failed") end
+    if status == "done" then s.path = nil end
 end

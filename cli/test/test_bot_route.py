@@ -1,5 +1,7 @@
 """bot_route 生成跨图航点表的离线合同。"""
 
+import ctypes
+import ctypes.util
 import json
 from pathlib import Path
 import subprocess
@@ -49,6 +51,91 @@ class BotRouteContract(unittest.TestCase):
     def test_workbench_must_have_partition(self) -> None:
         with self.assertRaises(SystemExit):
             bot_route.main(["hero", "1", "2"])
+
+
+class TravelLuaContract(unittest.TestCase):
+    def run_lua(self, scenario: str) -> None:
+        library = ctypes.util.find_library("lua5.4")
+        if not library:
+            self.skipTest("Lua 5.4 shared library unavailable")
+        lua = ctypes.CDLL(library)
+        lua.luaL_newstate.restype = ctypes.c_void_p
+        lua.luaL_openlibs.argtypes = [ctypes.c_void_p]
+        lua.luaL_loadstring.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        lua.luaL_loadstring.restype = ctypes.c_int
+        lua.lua_pcallk.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_longlong, ctypes.c_void_p]
+        lua.lua_pcallk.restype = ctypes.c_int
+        lua.lua_tolstring.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        lua.lua_tolstring.restype = ctypes.c_char_p
+        lua.lua_close.argtypes = [ctypes.c_void_p]
+        travel = (Path(__file__).resolve().parents[2] / "bot/travel.lua").read_text(encoding="utf-8")
+        source = r'''
+local builds, moves, stops = 0, {}, 0
+local no_path = false
+package.loaded["lib.terrain"] = {
+    build = function(nav) builds = builds + 1; return {model = {stand_height = 1}, nav = nav} end,
+    platform_at = function(graph, x) return x < 50 and 1 or 2 end,
+    plan = function() if no_path then return nil, "no_path" end; return {{}} end,
+}
+package.loaded["lib.move"] = {
+    new = function(graph) return {graph = graph} end,
+    set_path = function() return true end,
+    step = function() return "running" end,
+}
+package.loaded["lib.world"] = {observe = function(c) return c.world end}
+local c = {
+    state = {goal = 3, legs = {{map=1, x=0, y=0, portal="a"}, {map=2, x=0, y=0, portal="b"}}},
+    world = {ready=true, map_id=1, character={x=0, y=0}},
+    scene = {scene_generation=1, terrain={status="available", navigation={}}}, tick={time=0, index=1},
+    game = {player={move=function(key) moves[#moves+1]=key or "release" end,
+        stop=function() stops=stops+1 end}, character={}, log=function() end},
+}
+local main = assert(load([==[
+''' + travel + r'''
+return main
+]==]))()
+''' + scenario
+        state = lua.luaL_newstate()
+        try:
+            lua.luaL_openlibs(state)
+            rc = lua.luaL_loadstring(state, source.encode())
+            if rc == 0:
+                rc = lua.lua_pcallk(state, 0, 0, 0, 0, None)
+            self.assertEqual(0, rc, lua.lua_tolstring(state, -1, None) if rc else None)
+        finally:
+            lua.lua_close(state)
+
+    def test_portal_retry_waits_for_map_change_and_rebuilds_graph(self) -> None:
+        self.run_lua(r'''
+main(c)
+c.tick.time = 0.3; main(c)
+assert(c.state.index == 1, "must not advance without a map transition")
+c.tick.time = 3.1; main(c)
+assert(c.state.index == 1 and c.state.retries == 1, "portal timeout must retry the same leg")
+main(c)
+assert(moves[#moves] == "up", "retry must attempt the portal again")
+c.world.map_id = 2; c.scene.terrain.navigation = {}; main(c)
+main(c)
+assert(c.state.index == 2, "map transition must advance exactly one leg")
+assert(builds == 3, "retry and new map require fresh navigation graphs")
+c.tick.time = 3.4; main(c)
+assert(c.state.index == 2, "last leg must also wait for a transition")
+c.world.map_id = 3; main(c)
+local status = main(c)
+assert(status == "done", "route completes only after the last map transition")
+assert(stops > 0, "completion must release input")
+''')
+
+    def test_no_path_fails_instead_of_blind_walking(self) -> None:
+        self.run_lua(r'''
+c.state.legs[1].x = 100
+no_path = true
+main(c)
+assert(stops > 0, "failed plan must release input before retry")
+local status, reason = main(c)
+assert(status == "failed" and reason == "no_path", "repeated no_path must fail explicitly")
+assert(moves[#moves] ~= "right", "no_path must not walk blindly")
+''')
 
 
 if __name__ == "__main__":

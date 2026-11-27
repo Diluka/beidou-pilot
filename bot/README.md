@@ -128,8 +128,8 @@ python3 tools/bot_route.py dev/NAME 10000 20000 \
 workbenches/workbench dev/NAME script run bot/travel.lua --seconds 240
 ```
 
-- 航点来源是客户端原生 `world-map route`（只覆盖普通门户）；出租车、船等脚本交通返回 `no_route`，需要人工分段并单独处理。
-- 每个航点执行 `terrain.plan` + `move.step` 到传送门坐标，再按上换图；失败/超时释放输入并返回可读原因。
+- 航点来源是客户端原生 `world-map route`，只覆盖普通门户；船、出租车等脚本交通不在图中，找不到路线时返回非零并提示人工分段处理，不能保证识别所有脚本门。
+- 每个航点执行 `terrain.plan` + `move.step` 到传送门坐标，再按上并确认换图；失败重试一次，仍失败或超时则释放输入并返回原因，`no_path` 不会盲目直走。
 - 执行日志会记录 `leg i/N map=... plan ... -> portal ...` 与换图结果，便于核对。
 
 ## 持久化状态（memory）
