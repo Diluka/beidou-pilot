@@ -176,18 +176,29 @@ bool FindMapNode(const BeidouImgDirectory* image, std::uint32_t first, std::uint
 MapNames ReadMapNames(std::uint32_t mapId) {
     MapNames result;
     const std::string root = DataRoot();
-    if (root.empty() || mapId == 0) return result;
-    const std::string path = root + "\String\Map.img";
+    if (root.empty() || mapId == 0) {
+        AppendLog(Timestamp() + " map name lookup skipped: data root or map id unavailable");
+        return result;
+    }
+    const std::string path = root + "\\String\\Map.img";
     std::array<char, 512> message{};
     BeidouImgDirectory* opened = nullptr;
-    if (!beidou_img_file_open(path.c_str(), &opened, message.data(), message.size())) return result;
+    if (!beidou_img_file_open(path.c_str(), &opened, message.data(), message.size())) {
+        AppendLog(Timestamp() + " map name lookup failed: cannot open " + path + " :: " + std::string(message.data()));
+        return result;
+    }
     const std::unique_ptr<BeidouImgDirectory, decltype(&beidou_img_directory_close)> image(opened,
                                                                                            beidou_img_directory_close);
     BeidouImgNodeInfo imageRoot{};
-    if (!beidou_img_directory_node(image.get(), 0, &imageRoot)) return result;
-    BeidouImgNodeInfo mapNode{};
-    if (!FindMapNode(image.get(), imageRoot.children, imageRoot.child_count, std::to_string(mapId), mapNode))
+    if (!beidou_img_directory_node(image.get(), 0, &imageRoot)) {
+        AppendLog(Timestamp() + " map name lookup failed: image root unavailable");
         return result;
+    }
+    BeidouImgNodeInfo mapNode{};
+    if (!FindMapNode(image.get(), imageRoot.children, imageRoot.child_count, std::to_string(mapId), mapNode)) {
+        AppendLog(Timestamp() + " map name lookup failed: map id not found in " + path);
+        return result;
+    }
     for (std::uint32_t child = mapNode.children; child < mapNode.children + mapNode.child_count; ++child) {
         BeidouImgNodeInfo property{};
         if (!beidou_img_directory_node(image.get(), child, &property)) continue;
