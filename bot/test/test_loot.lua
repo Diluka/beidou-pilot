@@ -95,9 +95,10 @@ local ctx = context(0)
 local status = loot.step(ctx, world, current, mover)
 assert(status == "running" and pickup_count == 1, "nearby drop must issue pickup")
 world.inventory[1].quantity = 11
+world.drops = {}
 status, reason = loot.step(ctx, world, current, mover)
-assert(status == "done" and reason == "picked" and mover.loot == nil,
-    "inventory increase must confirm pickup")
+assert(status == "done" and reason == "cleared" and mover.loot == nil,
+    "a disappeared local drop must complete the sweep")
 assert(cleared_actions > 0, "terminal success must clear the action slot")
 
 current = drop(11, 20)
@@ -107,9 +108,9 @@ ctx = context(1)
 assert(loot.step(ctx, world, current, mover) == "running")
 world.drops = {}
 status, reason = loot.step(ctx, world, current, mover)
-assert(status == "done" and reason == "picked", "disappeared drop must confirm pickup")
+assert(status == "done" and reason == "cleared", "disappeared drop must end the sweep")
 
-current = drop(12, 100)
+current = drop(12, 140)
 world = world_with({current})
 mover = {status = "done"}
 move_results = {{"running"}}
@@ -118,10 +119,10 @@ status, reason = loot.step(ctx, world, current, mover)
 assert(status == "running" and reason == "moving", "far drop must delegate movement")
 local edge = edges[#edges]
 assert(edge.kind == "walk" and edge.from == 1 and edge.to == 1 and edge.x == 0
-    and edge.destination == 100 and edge.rise == 0, "loot movement edge must match the locked contract")
-world.character.x = 80
+    and edge.destination == 140 and edge.rise == 0, "loot movement edge must match the locked contract")
+world.character.x = 120
 status, reason = loot.step(ctx, world, current, mover)
-assert(status == "running" and reason == "picking" and move_stop_count == 1,
+assert(status == "running" and reason == "sweeping" and move_stop_count == 1,
     "within 25px loot must stop approach and pick up")
 
 current = drop(13, 20, 2)
@@ -182,15 +183,12 @@ ctx = context(0)
 assert(loot.step(ctx, world, current, mover) == "running")
 ctx.tick.time = 5
 status, reason = loot.step(ctx, world, current, mover)
-assert(status == "running" and reason == "retry" and mover.loot.attempt == 1,
-    "first five-second timeout must retry exactly once")
-ctx.tick.time = 10
-status, reason = loot.step(ctx, world, current, mover)
 assert(status == "failed" and reason == "timeout" and mover.loot == nil,
-    "second five-second timeout must fail")
-assert(events[#events].data.attempts == 2, "failure event must report both attempts")
+    "sweep must stop after five seconds without confirmation")
+assert(events[#events].kind == "loot/sweep" and events[#events].data.attempts == 1,
+    "timeout event reports held-intent submissions")
 
-current = drop(16, 100)
+current = drop(16, 140)
 world = world_with({current})
 mover = {status = "done"}
 move_results = {{"failed", "no_progress"}, {"failed", "no_progress"}}
@@ -221,7 +219,7 @@ status, reason = loot.step(ctx, world, cross, mover)
 assert(status == "running" and reason == "cross_platform" and edges[#edges].kind == "jumpup")
 world.character.platform, world.character.x = 2, 80
 status, reason = loot.step(ctx, world, cross, mover)
-assert(status == "running" and reason == "picking", "pickup follows observed arrival")
+assert(status == "running" and reason == "sweeping", "sweep follows observed arrival")
 world.character.platform = 1
 mover = {status = "done"}
 terrain.plan = function() return nil, "no_path" end
@@ -241,6 +239,115 @@ assert(events[#events].data.edge_kind == "rope" and events[#events].data.edge_x 
     "loot failure event identifies the failed edge")
 assert(loot.select(world, {graph = {}, local_only = true}) == nil, "fallback excludes remote loot")
 terrain.plan = saved_plan
+
+-- A cluster keeps one pickup intent until the local drops are observed gone.
+local a, b, remote = drop(200, 10), drop(201, 30), drop(202, 10, 2)
+world = world_with({a, b, remote})
+ctx, mover = context(40), {status = "done"}
+ctx.state = {}
+local before = pickup_count
+assert(select(2, loot.step(ctx, world, a, mover)) == "sweeping")
+world.drops = {b, remote}
+ctx.tick.time = 40.2
+assert(select(2, loot.step(ctx, world, b, mover)) == "sweeping")
+assert(mover.loot.count == 1, "the first disappearance must be observed while the sweep continues")
+world.drops = {remote}
+ctx.tick.time = 40.4
+status, reason = loot.step(ctx, world, b, mover)
+local summary = events[#events]
+assert(status == "done" and reason == "cleared" and summary.kind == "loot/sweep"
+    and summary.data.count == 2 and #summary.data.items == 2 and summary.data.elapsed > 0)
+assert(pickup_count == before + 1, "held pickup must not be resubmitted each tick")
+
+local saved_pickup = game.player.pickup
+local attempts = 0
+game.player.pickup = function()
+    attempts = attempts + 1
+    if attempts == 1 then return false, "cooldown" end
+    return true
+end
+world = world_with({drop(210, 10)})
+ctx, mover = context(50), {status = "done"}
+assert(select(2, loot.step(ctx, world, world.drops[1], mover)) == "sweeping")
+ctx.tick.time = 50.2
+loot.step(ctx, world, world.drops[1], mover)
+assert(attempts == 1, "rejected intent must not be retried every tick")
+ctx.tick.time = 50.5
+loot.step(ctx, world, world.drops[1], mover)
+assert(attempts == 2 and mover.loot.pickup_requested)
+world.mobs = {{active = true, x = 30, y = 0}}
+ctx.tick.time = 50.6
+status, reason = loot.step(ctx, world, world.drops[1], mover)
+assert(status == "failed" and reason == "unsafe" and not mover.loot
+    and events[#events].kind == "loot/sweep" and events[#events].data.reason == "unsafe")
+game.player.pickup = saved_pickup
+for _, hazard in ipairs({"owner", "hp"}) do
+    world = world_with({drop(220, 10)})
+    ctx, mover = context(60), {status = "done"}
+    loot.step(ctx, world, world.drops[1], mover)
+    if hazard == "owner" then world.owner = {present = true, distance = 50}
+    else world.character.hp = 39 end
+    ctx.tick.time = 61
+    status, reason = loot.step(ctx, world, world.drops[1], mover)
+    assert(status == "failed" and events[#events].kind == "loot/sweep"
+        and events[#events].data.reason == (hazard == "owner" and "owner_near" or "unsafe"))
+end
+
+world = world_with({drop(221, 10)})
+ctx, mover = context(62), {status = "done"}
+loot.step(ctx, world, world.drops[1], mover)
+local cleared_before = cleared_actions
+loot.step(ctx, world, {sweep_abort = true, preserve_action = true}, mover)
+assert(cleared_actions == cleared_before and not mover.loot and events[#events].data.reason == "interrupted",
+    "sustain preemption must not clear the newly installed action")
+
+-- Main action-slot preemption must emit the summary before discarding the sweep.
+local world_module, sustain, combat = require("lib.world"), require("lib.sustain"), require("lib.combat")
+local old_observe, old_sustain, old_select, old_poll, old_publish = world_module.observe, sustain.step,
+    combat.select, io_module.poll, io_module.publish
+world = world_with({})
+world.map_id, world.scene_generation, world.ready = 808, 1, true
+world.character.x, world.character.y, world.character.on_ground = 50, 100, true
+world_module.observe = function() return world end
+sustain.step = function() return false end
+combat.select = function() return {object_id = 500} end
+io_module.poll = function() return {} end
+io_module.publish = function() return true end
+local nav = dofile("bot/test/fixtures/synthetic.lua").navigation
+local graph = assert(terrain.build(nav))
+ctx = {tick = {time = 71, index = 1}, game = game, scene = {terrain = {status = "available", navigation = nav}},
+    state = {bot = {mode = "hunt", config = {}}, graph = graph, graph_generation = 1,
+        hunt_action = "loot", mover = {status = "done", loot = {sweep = true, started_at = 70,
+            items = {}, count = 0, submissions = 1}}}}
+game.character = {action_idle = true}
+local main_file = assert(io.open("bot/main.lua"))
+local tick = assert(load(main_file:read("*a") .. "\nreturn main", "bot/main.lua"))()
+main_file:close()
+local event_start = #events
+tick(ctx)
+local summaries = 0
+for i = event_start + 1, #events do
+    if events[i].kind == "loot/sweep" and events[i].data.reason == "interrupted" then summaries = summaries + 1 end
+end
+assert(summaries == 1 and ctx.state.mover.loot == nil, "main preemption must summarize exactly once")
+combat.select = function() return nil end
+for _, hazard in ipairs({"owner", "hp"}) do
+    world.owner = hazard == "owner" and {present = true, distance = 20} or {present = false}
+    world.character.hp = hazard == "hp" and 39 or 100
+    world.drops = {drop(230, 55)}
+    world.drops[1].y = 100
+    ctx.state.hunt_action, ctx.state.hunt_drop = "loot", world.drops[1]
+    ctx.state.mover.loot = {sweep = true, started_at = 70, items = {}, count = 0, submissions = 1}
+    event_start = #events
+    tick(ctx)
+    summaries = 0
+    for i = event_start + 1, #events do
+        if events[i].kind == "loot/sweep" then summaries = summaries + 1 end
+    end
+    assert(summaries == 1 and not ctx.state.mover.loot, hazard .. " must summarize the interrupted sweep")
+end
+world_module.observe, sustain.step, combat.select, io_module.poll, io_module.publish = old_observe, old_sustain,
+    old_select, old_poll, old_publish
 
 move.set_path, move.step, move.stop = saved_set_path, saved_move_step, saved_move_stop
 io_module.event = saved_event

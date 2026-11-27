@@ -20,6 +20,8 @@ end
 
 -- 贴身掉落允许在附近有怪时顺手捡；更远的掉落仍需周围安全。
 local CLOSE_PICKUP_RADIUS = 60
+-- Sweep only the local cluster; native pickup reach and repeat rate require GUI validation.
+local SWEEP_RADIUS = 100
 
 local function low_hp(world)
     local character = world and world.character
@@ -109,6 +111,21 @@ local function clear_input(ctx, mover)
     end
 end
 
+-- The caller may already have installed a sustain action in the shared slot.
+local function abort_sweep(ctx, mover, reason, preserve_action)
+    local sweep = mover and mover.loot
+    if not sweep or not sweep.sweep then return false end
+    if preserve_action then
+        ctx.game.player.move(nil)
+    else
+        clear_input(ctx, mover)
+    end
+    mover.loot = nil
+    require("lib.io").event(ctx, "loot/sweep", {reason = reason, items = sweep.items,
+        count = sweep.count, elapsed = ctx.tick.time - sweep.started_at, attempts = sweep.submissions})
+    return true
+end
+
 local function fail(ctx, world, drop, mover, state, reason)
     local edge = mover.status == "failed" and mover.edges and mover.edges[mover.index or 1]
     if ctx.state and (edge or reason == "no_path" and world.character.platform ~= drop.platform) then
@@ -136,11 +153,30 @@ local function fail(ctx, world, drop, mover, state, reason)
 end
 
 function M.step(ctx, world, drop, mover)
+    if type(drop) == "table" and drop.sweep_abort then
+        abort_sweep(ctx, mover, "interrupted", drop.preserve_action)
+        return "done", "interrupted"
+    end
     local player = ctx and ctx.game and ctx.game.player
     local character = world and world.character
     if not player or not character or not mover or type(drop) ~= "table" then
         if player then player.skill(nil) end
         return "failed", "observation_unavailable"
+    end
+    local function end_sweep(reason, failed)
+        local sweep = mover.loot
+        if failed and reason == "timeout" and ctx.state then
+            local scope = tostring(world.map_id) .. ":" .. tostring(world.scene_generation)
+            if ctx.state.loot_abandoned_scope ~= scope then
+                ctx.state.loot_abandoned, ctx.state.loot_abandoned_scope = {}, scope
+            end
+            for id in pairs(sweep.seen) do ctx.state.loot_abandoned[id] = true end
+        end
+        abort_sweep(ctx, mover, reason)
+        return failed and "failed" or "done", reason
+    end
+    if mover.loot and mover.loot.sweep and (low_hp(world) or mob_near(world)) then
+        return end_sweep("unsafe", true)
     end
     if low_hp(world) then
         return fail(ctx, world, drop, mover, mover.loot or {attempt = 0}, "unsafe")
@@ -150,9 +186,13 @@ function M.step(ctx, world, drop, mover)
         return fail(ctx, world, drop, mover, mover.loot or {attempt = 0}, "unsafe")
     end
     if owner_is_near(world, world.owner) then
+        if mover.loot and mover.loot.sweep then return end_sweep("owner_near", true) end
         if mover.loot then mover.loot.started_at = ctx.tick.time end
         clear_input(ctx, mover)
         return "running", "owner_near"
+    end
+    if mover.loot and mover.loot.sweep and character.platform ~= mover.loot.platform then
+        return end_sweep("platform_changed", true)
     end
     if type(character.platform) ~= "number" or type(drop.platform) ~= "number"
         or (character.platform ~= drop.platform and not (ctx.state and ctx.state.graph)) then
@@ -161,6 +201,56 @@ function M.step(ctx, world, drop, mover)
 
     local now = ctx.tick and ctx.tick.time or world.now
     local state = mover.loot
+    if (state and state.sweep) or (character.platform == drop.platform and close_distance
+        and close_distance <= SWEEP_RADIUS and not mob_near(world) and drop.landed == true) then
+        if not state or not state.sweep then
+            if mover.status == "running" then move.stop(mover) end
+            state = {sweep = true, platform = character.platform, started_at = now, seen = {}, items = {},
+                count = 0, submissions = 0, attempt = 0}
+            mover.loot = state
+        end
+        local closest, closest_distance
+        for _, current in ipairs(world.drops or {}) do
+            local d = distance(character, current)
+            if current.landed == true and current.platform == state.platform and current.object_id ~= nil
+                and d and d <= SWEEP_RADIUS
+                and not (ctx.state and ctx.state.loot_abandoned and ctx.state.loot_abandoned[current.object_id]) then
+                if not state.seen[current.object_id] then
+                    state.seen[current.object_id] = {item_id = current.item_id, present = true}
+                end
+                if not closest or d < closest_distance then closest, closest_distance = current, d end
+            end
+        end
+        for id, entry in pairs(state.seen) do
+            if entry.present and state.pickup_requested and drop_is_present(world, id) == false then
+                entry.present = false
+                state.count = state.count + 1
+                state.items[#state.items + 1] = {object_id = id, item_id = entry.item_id}
+            end
+        end
+        if not closest then return end_sweep("cleared", false) end
+        if now - state.started_at >= 5 then return end_sweep("timeout", true) end
+        if closest_distance > 25 then
+            local destination = closest.x + (character.x < closest.x and -20 or 20)
+            if state.moving_to ~= destination or mover.status ~= "running" then
+                local ok, reason = move.set_path(mover, {{kind = "walk", from = character.platform,
+                    to = character.platform, x = character.x, destination = destination, rise = 0}})
+                if not ok then return end_sweep(reason or "move_failed", true) end
+                state.moving_to = destination
+            end
+            local status, reason = move.step(mover, ctx, world)
+            if status == "failed" then return end_sweep(reason or "move_failed", true) end
+        elseif mover.status == "running" then
+            move.stop(mover)
+            state.moving_to, state.intent_held = nil, nil
+        end
+        if not state.intent_held and (not state.next_attempt or now >= state.next_attempt) then
+            state.submissions = state.submissions + 1
+            local ok = player.pickup()
+            if ok then state.pickup_requested, state.intent_held = true, true else state.next_attempt = now + 0.5 end
+        end
+        return "running", "sweeping"
+    end
     if not state or state.object_id ~= drop.object_id then
         state = {
             object_id = drop.object_id, item_id = drop.item_id,
