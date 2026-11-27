@@ -318,10 +318,28 @@ function M.step(mover, ctx, world)
                         end
                     end
                 end
-            elseif now - mover.phase_time >= 0.3 or (edge.kind == "jumpup" and character.y < mover.start_y - 10) then
-                p.move(nil)
-                if mover.jump_held then p.skill(nil); mover.jump_held = nil; mover.release_tick = ctx.tick.index end
-                mover.phase = "wait"
+            elseif (edge.kind == "jumpup" and mover.runup_direction)
+                or now - mover.phase_time >= 0.3
+                or (edge.kind == "jumpup" and character.y < mover.start_y - 10) then
+                if edge.kind == "jumpup" and mover.runup_direction then
+                    -- 水平 jumpup：越过平台高度差前持续按住落点方向；0.3s 后释放跳跃键但方向保持到落地。
+                    if character.on_ground == true then
+                        if mover.jump_held then p.skill(nil); mover.jump_held = nil; mover.release_tick = ctx.tick.index end
+                        local platform = terrain.platform_at(mover.graph, character.x, character.y, 20)
+                        if platform ~= edge.to then
+                            failure = "landing_mismatch"
+                        else
+                            mover.phase = "complete"
+                        end
+                    elseif now - mover.phase_time >= 0.3 then
+                        if mover.jump_held then p.skill(nil); mover.jump_held = nil; mover.release_tick = ctx.tick.index end
+                        mover.phase = "wait"
+                    end
+                else
+                    p.move(nil)
+                    if mover.jump_held then p.skill(nil); mover.jump_held = nil; mover.release_tick = ctx.tick.index end
+                    mover.phase = "wait"
+                end
             end
         elseif not failure and mover.phase == "climb" then
             -- 爬升中持续按住方向；只有落到目标平台才完成，落到别的平台报 landing_mismatch。
@@ -350,6 +368,9 @@ function M.step(mover, ctx, world)
             if character.on_ground == true or now - mover.phase_time >= 0.3 then mover.phase = "complete" end
         elseif not failure and mover.phase == "wait" then
             if character.on_ground == false then mover.airborne = true end
+            if not failure and character.on_ground == false and edge.kind == "jumpup" and mover.runup_direction then
+                if not p.move(mover.runup_direction) then failure = "unsupported_edge" end
+            end
             if character.on_ground == true and mover.airborne then
                 local platform = terrain.platform_at(mover.graph, character.x, character.y, 20)
                 if platform ~= edge.to or (edge.kind == "drop" and math.abs(character.x - edge.destination) > 20) then
