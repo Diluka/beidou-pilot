@@ -131,6 +131,23 @@ failed_world.scene_generation = 2
 hunt.step(empty, failed_world, failed_graph, em)
 assert(empty.state.hunt_patrol.scope == "2:2" and not empty.state.hunt_patrol.skipped[3],
     "scene change rebuilds patrol state")
+local ranged_graph = {platforms = {{left = 0, right = 200}, {left = 0, right = 100},
+    {left = 0, right = 150}}, candidates = {jumpup = {1, 2, 0, 0, 40, 1, 3, 0, 0, 40}}}
+local ranged_world = {map_id = 50, scene_generation = 1, config = {attack_mode = "ranged", min_range = 60},
+    character = {platform = 1, on_ground = true, x = 50}}
+local ranged_ctx = {state = {}, tick = {time = 0}, game = failures.game}
+local ranged_mover = {status = "done"}
+terrain.plan = function(_, from, to) return {{kind = "jumpup", from = from, to = to, x = 0, destination = 0, rise = 40}} end
+assert(hunt.step(ranged_ctx, ranged_world, ranged_graph, ranged_mover) == "running")
+assert(ranged_ctx.state.hunt_patrol.target == 3 and ranged_ctx.state.hunt_patrol.skipped[2])
+local skips = 0
+for _, e in ipairs(patrol_events) do
+    if e[1] == "hunt/skip" and e[2].reason == "narrow_platform" and e[2].platform == 2 then skips = skips + 1 end
+end
+assert(skips == 1, "narrow platform must emit a single scoped skip")
+ranged_world.character.platform = 3
+assert(select(2, hunt.step(ranged_ctx, ranged_world, ranged_graph, ranged_mover)) == "arrived")
+
 terrain.plan, move.set_path, move.step, move.stop = old_plan, old_set, old_step, old_stop
 hunt_io.event = old_hunt_event
 io_module.event = saved_event
