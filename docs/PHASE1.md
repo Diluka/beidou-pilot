@@ -223,8 +223,12 @@ local function main(context) ... end
 /work/bot/state.json              约 1s 更新，Windows 替换可能短暂缺失
 /work/bot/events.jsonl            追加，按大小轮转
 /work/bot/config.conf             owner、技能/药品、阈值、安全点
+/work/bot/plan.conf               hunt_map、可选 route、plan_revision
+/work/bot/route.json              跨图路线（默认路径）
 /work/bot/checkpoint.conf         模式/目标
 ```
+
+`tools/botctl plan dev/NAME --hunt-map 20000` 从运行客户端的当前场景取起点，调用 `bot_route.py` 生成默认航线并更新计划；失败保留旧文件。重规划改变 `plan_revision`，允许同目标路线失败后再次尝试。hunt 模式在目标图外使用匹配当前地图和目标的路线，缺失或不匹配时等待，不在错误地图狩猎。普通门户图不覆盖船、出租车等脚本交通。
 
 发送者先写临时文件再发布到空槽；单一发送者避免槽位竞争。脚本用 rename 领取槽位。目标已存在时 Windows 的 rename 不覆盖；状态写入先尝试 rename，失败且目标存在时移除旧目标再重试，记录事件，不能保证全程原子可见。
 
