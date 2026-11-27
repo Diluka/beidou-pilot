@@ -365,6 +365,24 @@ assert(status == "running" and planned == 1 and edges[1].to == 2,
     "cross-platform pursuit must plan and submit a route")
 world.mobs = {entity(101, 5, 1), target}
 assert(combat.select(world, {}) == target, "cross-platform lock must survive closer same-platform mobs")
+world.character.platform = 2
+calls = {}
+status, reason = combat.step(ctx, world, target, path_mover)
+assert(status == "running" and calls[1] == "move_step" and #calls == 1,
+    "reaching the target platform must not interrupt an unfinished transition")
+movement.step = function(mover)
+    calls[#calls + 1] = "move_step"
+    mover.status = "done"
+    return "done"
+end
+calls = {}
+status, reason = combat.step(ctx, world, target, path_mover)
+assert(status == "running" and reason == "facing" and calls[1] == "move_step",
+    "combat may resume after the transition completes")
+movement.step = function(mover)
+    calls[#calls + 1] = "move_step"
+    return "running"
+end
 
 world = make_world()
 world.map_id = 101

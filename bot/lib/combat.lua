@@ -200,6 +200,13 @@ function M.step(ctx, world, mob, mover)
         player.move(nil)
         return "running", "action_busy"
     end
+    if combat.moving == "cross_platform" and combat.goal_platform == mob.platform
+        and mover and mover.status == "running" then
+        local status, reason = move.step(mover, ctx, world)
+        if status == "failed" then return finish("failed", reason or "move_failed", true) end
+        if status == "running" then return "running", reason or "approaching" end
+        combat.moving = nil
+    end
     if mob.platform ~= character.platform then
         if not mover or not state.graph then return finish("failed", "no_path", true) end
         if combat.moving ~= "cross_platform" or combat.goal_platform ~= mob.platform or mover.status ~= "running" then
