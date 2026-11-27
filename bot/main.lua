@@ -275,7 +275,8 @@ local function main(context)
             priority_drop = loot.select(world, {local_only = true, radius = 60,
                 abandoned = memory.loot_abandoned})
         end
-        local mob = not priority_drop and combat.select(world, {hunt = true, platform_only = local_only}) or nil
+        local mob = not priority_drop and combat.select(world, {hunt = true, platform_only = local_only,
+            config = bot.config or defaults, graph = memory.graph, context = context}) or nil
         local drop
         if priority_drop then drop = priority_drop end
         if not mob and not drop then

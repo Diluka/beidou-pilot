@@ -58,6 +58,40 @@ local function is_excluded(exclude, object_id)
     return false
 end
 
+local function ranged_range(config, observed)
+    local skills = observed and observed.skills
+    local level
+    if type(skills) == "table" and observed.skills_complete ~= false then
+        local record = skills[tostring(tonumber(config.ranged_skill_id) or 3000002)]
+        level = type(record) == "table" and tonumber(record.level) or 0
+    else
+        level = tonumber(config.ranged_skill_level) or 0
+    end
+    return (tonumber(config.attack_range) or 110) + level * (tonumber(config.ranged_skill_bonus_per_level) or 15)
+end
+
+local function cross_range(character, mob, graph, config, observed)
+    local source = graph and graph.platforms and graph.platforms[character.platform]
+    local target = graph and graph.platforms and graph.platforms[mob.platform]
+    if not source or not target or not graph.walls or not character.on_ground then return "geometry_unavailable" end
+    local margin = math.min(40, (tonumber(config.min_range) or 60) / 2)
+    if source.right - source.left < (tonumber(config.min_range) or 60) + 60
+        or character.x - source.left < margin or source.right - character.x < margin
+        or mob.x < target.left or mob.x > target.right then return "platform_boundary" end
+    local dx = math.abs(mob.x - character.x)
+    if dx < (tonumber(config.min_range) or 60) then return "too_close" end
+    if dx > ranged_range(config, observed) then return "out_of_range" end
+    if math.abs(mob.y - character.y) > 40 then return "height_difference" end
+    local left, right = math.min(character.x, mob.x), math.max(character.x, mob.x)
+    for i = 1, #graph.walls, 3 do
+        local x, top, bottom = graph.walls[i], graph.walls[i + 1], graph.walls[i + 2]
+        if top <= math.max(character.y, mob.y) and bottom >= math.min(character.y, mob.y) - 40 then
+            if math.abs(x - character.x) < margin or x >= left and x <= right then return "wall" end
+        end
+    end
+    return nil
+end
+
 function M.select(world, options)
     options = options or {}
     local character = world and world.character
@@ -71,6 +105,38 @@ function M.select(world, options)
     if selection_scope ~= scope then
         release_active()
         abandoned, selection_scope = {}, scope
+    end
+
+    local ranged_context
+    if options.hunt and options.config and options.graph and options.context and options.context.game
+        and (options.config.attack_mode or "melee") ~= "melee" then
+        ranged_context = options.context
+        local best, best_dx, blocked_reason
+        for _, mob in ipairs(world.mobs or {}) do
+            if mob.active == true and mob.template_id ~= nil and mob.template_id ~= ""
+                and mob.platform ~= nil and mob.platform ~= character.platform
+                and type(mob.x) == "number" and type(mob.y) == "number"
+                and not is_excluded(options.exclude, mob.object_id) and not abandoned[target_key(mob)]
+                and not (mob.hp_percent ~= nil and mob.hp_percent <= 0)
+                and not (mob.hp ~= nil and mob.hp <= 0) then
+                local reason = cross_range(character, mob, options.graph, options.config, options.context.game.character)
+                if reason then blocked_reason = blocked_reason or reason else
+                    local dx = math.abs(character.x - mob.x)
+                    if not best or dx < best_dx or dx == best_dx and tostring(mob.object_id) < tostring(best.object_id) then
+                        best, best_dx = mob, dx
+                    end
+                end
+            end
+        end
+        if best then
+            if active_target ~= nil and active_target ~= target_key(best) then release_active() end
+            emit_low(options.context, "combat/ranged_target", {object_id = best.object_id,
+                platform = best.platform, horizontal_distance = best_dx, cross_platform = true})
+            return best
+        end
+        emit_low(options.context, "combat/range_blocked", {reason = blocked_reason or "no_target"})
+        -- Other-platform mobs that cannot be hit are not pursuit targets.
+        options = {hunt = true, platform_only = true, exclude = options.exclude}
     end
 
     local owner = world.owner
@@ -98,6 +164,10 @@ function M.select(world, options)
             and not (locked.hp_percent ~= nil and locked.hp_percent <= 0)
             and not (locked.hp ~= nil and locked.hp <= 0)
             and (options.hunt or distance(leash_origin, locked) <= 400) then
+            if ranged_context then
+                emit_low(ranged_context, "combat/ranged_target", {object_id = locked.object_id, platform = locked.platform,
+                    horizontal_distance = math.abs(locked.x - character.x), cross_platform = false})
+            end
             return locked
         end
         release_active()
@@ -125,6 +195,10 @@ function M.select(world, options)
         return tostring(left_id) < tostring(right_id)
     end)
     local selected = candidates[1] and candidates[1].mob or nil
+    if selected and ranged_context then
+        emit_low(ranged_context, "combat/ranged_target", {object_id = selected.object_id, platform = selected.platform,
+            horizontal_distance = math.abs(selected.x - character.x), cross_platform = false})
+    end
     if active_target ~= nil and (not selected or target_key(selected) ~= active_target) then release_active() end
     return selected
 end
@@ -204,7 +278,7 @@ function M.step(ctx, world, mob, mover)
     local graph = state.graph or mover and mover.graph
     local platform = graph and graph.platforms and graph.platforms[mob.platform]
     if attack_mode ~= "melee" and state.bot and state.bot.mode == "hunt" and platform
-        and platform.right - platform.left < min_range + 60 then
+        and mob.platform == character.platform and platform.right - platform.left < min_range + 60 then
         return finish("failed", "narrow_platform", true)
     end
     if attack_mode ~= "melee" and mob.platform == character.platform
@@ -248,6 +322,17 @@ function M.step(ctx, world, mob, mover)
         return "running", "retreating"
     end
     local observed = ctx.game.character or {}
+    local ranged_cross = attack_mode ~= "melee" and state.bot and state.bot.mode == "hunt"
+        and mob.platform ~= character.platform
+    if ranged_cross then
+        local reason = cross_range(character, mob, graph, config, observed)
+        if reason then
+            emit_low(ctx, "combat/range_blocked", {reason = reason, object_id = mob.object_id, platform = mob.platform})
+            return finish("failed", "range_blocked", false)
+        end
+        if mover and mover.status == "running" then move.stop(mover) end
+        combat.moving = nil
+    end
     if observed.attacking or not observed.action_idle then
         player.move(nil)
         return "running", "action_busy"
@@ -259,7 +344,7 @@ function M.step(ctx, world, mob, mover)
         if status == "running" then return "running", reason or "approaching" end
         combat.moving, combat.progress_at = nil, now
     end
-    if mob.platform ~= character.platform then
+    if mob.platform ~= character.platform and not ranged_cross then
         if not mover or not state.graph then return finish("failed", "no_path", true) end
         if combat.moving ~= "cross_platform" or combat.goal_platform ~= mob.platform or mover.status ~= "running" then
             local movement = observed.movement or {}
@@ -282,26 +367,13 @@ function M.step(ctx, world, mob, mover)
         if mover and mover.status == "running" then move.stop(mover) end
         combat.moving, combat.progress_at = nil, now
     end
-    local target_distance = distance(character, mob)
+    local target_distance = ranged_cross and math.abs(character.x - mob.x) or distance(character, mob)
     -- 射程与武器/技能挂钩：弓弩基础射程 + 已学「远程箭」加成。
     -- 远程箭（弓箭手 1 转）= 3000002：Data/Skill/300.img/skill/3000002 最高 8 级，
     -- range 依次为 15/30/…/120，即每级 +15。弓弩基础射程 110 来自真机距离预判，
     -- 原版客户端公式待核实。技能列表不可读时用 ranged_skill_level 兜底。
     local attack_range = tonumber(config.attack_range) or 110
-    if attack_mode ~= "melee" then
-        local skill_id = tonumber(config.ranged_skill_id) or 3000002
-        local per_level = tonumber(config.ranged_skill_bonus_per_level) or 15
-        local observed = ctx.game.character
-        local skills = observed and observed.skills
-        local level
-        if type(skills) == "table" and observed.skills_complete ~= false then
-            local record = skills[tostring(skill_id)]
-            level = type(record) == "table" and tonumber(record.level) or 0
-        else
-            level = tonumber(config.ranged_skill_level) or 0
-        end
-        attack_range = attack_range + level * per_level
-    end
+    if attack_mode ~= "melee" then attack_range = ranged_range(config, observed) end
     if combat.moving == "retreat" then
         if mover and mover.status == "running" then move.stop(mover) end
         combat.moving, combat.progress_at = nil, now
@@ -310,7 +382,7 @@ function M.step(ctx, world, mob, mover)
         combat.progress_hp, combat.progress_at, combat.repositioned = mob.hp_percent, now, false
     end
     if now - combat.progress_at >= 3 then
-        if not combat.repositioned then
+        if not combat.repositioned and not ranged_cross then
             if not mover or type(mover) ~= "table" then
                 return finish("failed", "mover_unavailable", true)
             end
