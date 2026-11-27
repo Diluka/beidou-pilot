@@ -131,7 +131,7 @@ assert(status == "failed" and reason == "landing_mismatch" and direction == nil)
 begin({kind="rope",x=0,destination=0,rise=-100})
 for attempt = 1, 2 do
     step(mover, ctx, world)
-    world.character.x = 5
+    world.character.x = 7
     status, reason = step(mover, ctx, world)
     world.character.x = 0
 end
@@ -713,4 +713,56 @@ assert(step(mover,ctx,world)=="running")
 world.character.on_ground=true; world.character.x=3448; world.character.y=334
 assert(step(mover,ctx,world)=="done" and direction==nil and mover.retries==0)
 terrain.platform_at = platform_at
+-- Raised rope: brake before jumping, hold Up, then finish on the target platform.
+local rope_graph = {ropes={{y2=356}}, platforms={
+    {left=400,right=600,segments={400,600,395,395}},
+    {left=400,right=600,segments={400,600,95,95}},
+}}
+local rope_edge = {kind="rope",from=1,to=2,x=522,destination=522,rise=-300,rope_index=1}
+mover=move.new(rope_graph); begin(rope_edge)
+world.character={x=522,y=395,on_ground=true}
+game.character={physics={velocity={x=50}}}; action,direction=nil,nil
+assert(step(mover,ctx,world)=="running" and direction==nil and action==nil)
+game.character.physics.velocity.x=0; ctx.tick.time=0.1
+assert(step(mover,ctx,world)=="running" and direction=="up" and action=="jump" and mover.phase=="rope_grab")
+world.character.y=384; world.character.on_ground=false; ctx.tick.time=0.2
+assert(step(mover,ctx,world)=="running" and mover.phase=="climb" and direction=="up" and action==nil)
+world.character.y=95; world.character.on_ground=true
+assert(step(mover,ctx,world)=="done" and direction==nil)
+-- Timeout releases the jump and direction, retries once, then reports the grab failure.
+mover=move.new(rope_graph); begin(rope_edge)
+world.character={x=522,y=395,on_ground=true}; action,direction=nil,nil
+assert(step(mover,ctx,world)=="running" and action=="jump")
+ctx.tick.time=2
+assert(step(mover,ctx,world)=="running" and mover.retries==1 and direction==nil and action==nil)
+ctx.tick.time=2.1
+assert(step(mover,ctx,world)=="running" and action=="jump")
+ctx.tick.time=4.2
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="rope_grab_failed" and direction==nil and action==nil)
+-- A retry can recover after the first unsuccessful grab.
+mover=move.new(rope_graph); begin(rope_edge)
+world.character={x=522,y=395,on_ground=true}; action,direction=nil,nil
+assert(step(mover,ctx,world)=="running")
+ctx.tick.time=2; assert(step(mover,ctx,world)=="running" and mover.retries==1)
+ctx.tick.time=2.1; assert(step(mover,ctx,world)=="running" and action=="jump")
+ctx.tick.time=2.2; world.character.y=384; world.character.on_ground=false
+assert(step(mover,ctx,world)=="running" and mover.phase=="climb")
+world.character.y=95; world.character.on_ground=true
+assert(step(mover,ctx,world)=="done" and direction==nil)
+-- Missing velocity requires two distinct stationary samples.
+mover=move.new(rope_graph); begin(rope_edge); game.character=nil
+world.character={x=522,y=395,on_ground=true}; action,direction=nil,nil
+assert(step(mover,ctx,world)=="running" and action==nil and direction==nil)
+world.character.x=523
+assert(step(mover,ctx,world)=="running" and action==nil)
+assert(step(mover,ctx,world)=="running" and action=="jump")
+move.stop(mover)
+-- Rope bottom at ground level and downward travel keep the direct direction.
+for _, rise in ipairs({-300,300}) do
+    rope_graph.ropes[1].y2=395
+    mover=move.new(rope_graph); begin({kind="rope",from=1,to=2,x=522,destination=522,rise=rise,rope_index=1})
+    world.character={x=522,y=395,on_ground=true}; game.character={physics={velocity={x=0}}}; action=nil
+    assert(step(mover,ctx,world)=="running" and direction==(rise<0 and "up" or "down") and action==nil)
+end
 print("move tests ok")

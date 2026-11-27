@@ -159,6 +159,7 @@ function M.step(mover, ctx, world)
         if not mover.started then
             if mover.retries == 0 then mover.edge_started = now; mover.airborne = nil end
             mover.started, mover.phase, mover.start_y = now, "align", character.y
+            mover.rope_x, mover.rope_tick = nil, nil
             if edge.kind == "jumpup" and edge.x ~= edge.destination then
                 mover.phase = "prepare_runup"
             end
@@ -252,11 +253,12 @@ function M.step(mover, ctx, world)
             end
             mover.runup_x, mover.runup_time = character.x, now
         elseif not failure and mover.phase == "align" then
-            local tolerance = edge.kind == "rope" and 4 or 8
+            local tolerance = edge.kind == "rope" and 6 or 8
             local vertical = (edge.kind == "jumpup" and edge.x == edge.destination) or edge.kind == "downjump"
             local physics = vertical and ctx.game.character and ctx.game.character.physics
             local align_x = (physics and physics.x) or character.x
             if edge.kind ~= "drop" and math.abs(align_x - edge.x) > tolerance then
+                if edge.kind == "rope" then mover.rope_x, mover.rope_tick = nil, nil end
                 if not p.move(align_x < edge.x and "right" or "left") then failure = "unsupported_edge" end
             elseif edge.kind == "jumpup" then
                 local moved = p.move(nil)
@@ -297,9 +299,40 @@ function M.step(mover, ctx, world)
                 if not p.move(character.x < edge.destination and "right" or "left") then failure = "unsupported_edge" end
                 mover.phase, mover.phase_time, mover.start_y = "launch", now, character.y
             else
-                mover.phase, mover.start_y = "climb", character.y
+                local physics = ctx.game.character and ctx.game.character.physics
+                local velocity = physics and physics.velocity and physics.velocity.x
+                local stable = type(velocity) == "number" and math.abs(velocity) <= 1
+                    or type(velocity) ~= "number" and mover.rope_x ~= nil
+                        and ctx.tick.index ~= mover.rope_tick and character.x == mover.rope_x
+                mover.rope_x, mover.rope_tick = character.x, ctx.tick.index
+                if not stable then
+                    if not p.move(nil) then failure = "unsupported_edge" end
+                else
+                    local ropes = mover.graph and mover.graph.ropes
+                    local rope = ropes and ropes[edge.rope_index]
+                    if edge.rise < 0 and rope and type(rope.y2) == "number" and character.y - rope.y2 > 10 then
+                        if not p.jump() then failure = "unsupported_edge" else
+                            mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "rope_grab", now, character.y, true
+                            if not p.move("up") then failure = "unsupported_edge" end
+                        end
+                    else
+                        mover.phase, mover.start_y = "climb", character.y
+                        mover.progress_time, mover.progress_y = now, character.y
+                        if not p.move(edge.rise < 0 and "up" or "down") then failure = "unsupported_edge" end
+                    end
+                end
+            end
+        elseif not failure and mover.phase == "rope_grab" then
+            if now - mover.phase_time >= 2 then
+                failure = "rope_grab_failed"
+            elseif not p.move("up") then
+                failure = "unsupported_edge"
+            elseif not character.on_ground and mover.start_y - character.y >= 10 then
+                if mover.jump_held then p.skill(nil); mover.jump_held = nil end
+                mover.phase = "climb"
                 mover.progress_time, mover.progress_y = now, character.y
-                if not p.move(edge.rise < 0 and "up" or "down") then failure = "unsupported_edge" end
+            elseif mover.jump_held and now - mover.phase_time >= 0.3 then
+                p.skill(nil); mover.jump_held = nil
             end
         elseif not failure and mover.phase == "launch" then
             if edge.kind == "drop" then
@@ -343,7 +376,7 @@ function M.step(mover, ctx, world)
             end
         elseif not failure and mover.phase == "climb" then
             -- 爬升中持续按住方向；只有落到目标平台才完成，落到别的平台报 landing_mismatch。
-            if math.abs(character.x - edge.x) > 4 then
+            if math.abs(character.x - edge.x) > 6 then
                 failure = "rope_mismatch"
             else
                 local platform = character.on_ground == true
