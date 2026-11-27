@@ -116,6 +116,13 @@ tools/botctl stop dev/NAME
 - **客户端状态是唯一权威**：启动时与运行中定期用 `character/scene/inventory/quests` 的实时观察调用 `reconcile(store, namespace, live)`，冲突字段一律覆盖为 live 值并记录修复项；调用方应发布 `memory/repair` 事件；
 - `flush` 节流 ≥1 秒；只缓存"客户端无法直接观察"的事实（巡逻进度、上次商店图、阶段），可观察事实每 tick 以 live 覆盖，禁止用旧缓存代替观察。
 
+### 装备换装与待卖清单（equipment）
+
+- 命名空间 `equipment`：`equipped`（客户端权威快照）、`sell_list`（待卖清单，含 `approved`）、`candidates`；
+- 换装对账：客户端 `equipped` 变化时，被替换的旧装备自动加入 `sell_list`（`approved=false`，不自动卖），新增装备更新快照；
+- 离线重登：`reconcile` 以客户端 `inventory/equipped` 为准——清单/候选里已不存在的物品自动移除，仍存在的保留；**清单持久化在 `/work/bot/memory.lua`，重登不丢**；
+- 自动清包只处理 `approved=true` 的清单项；新获得/未确认装备永不自动卖；人工确认用 `equipment.approve(store, item_id)`。
+
 ## 离线测试
 
 从仓库根目录运行：
