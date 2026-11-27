@@ -22,16 +22,24 @@ handled, reason = sustain.step(ctx, world)
 assert(handled and reason == "mp_potion" and calls[#calls] == 2)
 world.inventory = {{item_id = 2}, {item_id = 2, quantity = 0}}
 handled, reason = sustain.step(ctx, world)
-assert(handled and reason == "no_potion" and calls[#calls] == "clear")
+assert(not handled and reason == nil and calls[#calls] == "clear")
+assert(events[#events] == "no_potion")
+local no_potion_events = #events
+sustain.step(ctx, world)
+assert(#events == no_potion_events, "no_potion event must be rate limited")
+world.now = 40
+sustain.step(ctx, world)
+assert(#events == no_potion_events + 1, "no_potion event must reappear after interval")
 world.character.hp = 0
 handled, reason = sustain.step(ctx, world)
 assert(handled and reason == "reviving" and calls[#calls] == "revive")
-world.now = 10
+world.now = 60
 handled, reason = sustain.step(ctx, world)
-assert(handled and reason == "revive_unknown" and events[1] == "revive_unknown")
+assert(handled and reason == "revive_unknown" and events[#events] == "revive_unknown")
 local count = #calls
+local event_count_before_idle = #events
 sustain.step(ctx, world)
-assert(#calls == count and #events == 1)
+assert(#calls == count and #events == event_count_before_idle)
 ctx.state.sustain = {config = {hp_item = 1, mp_item = 2}}
 world.now = 20
 sustain.step(ctx, world)
@@ -57,11 +65,11 @@ ctx.state.sustain = {config = {hp_item = 1.5, mp_item = 2}}
 world.character.hp, world.character.mp = 50, 100
 world.inventory = {{item_id = 1.5, quantity = 1}}
 handled, reason = sustain.step(ctx, world)
-assert(handled and reason == "no_potion")
+assert(not handled and reason == nil)
 ctx.state.sustain.config.hp_item = 2147483648
 world.inventory = {{item_id = 2147483648, quantity = 1}}
 handled, reason = sustain.step(ctx, world)
-assert(handled and reason == "no_potion")
+assert(not handled and reason == nil)
 ctx.state.sustain = {revive_at = 0, revive_reported = true, config = {hp_item = 1, mp_item = 2}}
 world.character.hp = 100
 local event_count = #events
