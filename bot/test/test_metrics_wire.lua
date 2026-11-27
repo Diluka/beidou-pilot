@@ -38,6 +38,13 @@ ctx.tick.time=1; calls={}; tick(ctx)
 assert(table.concat(calls,','):find('observe,target',1,true))
 selected=nil; ctx.tick.time=2; calls={}; tick(ctx)
 assert(table.concat(calls,','):find('observe,clear',1,true))
+selected={object_id=7,template_id=1,platform=1,x=1,y=100,active=true}
+combat.step=function() return 'failed','no_progress' end
+ctx.tick.time=3; calls={}; tick(ctx)
+-- Action transitions may defer combat by one tick.
+ctx.tick.time=4; tick(ctx)
+assert(table.concat(calls,','):find('event:stuck',1,true), 'observed no-progress must be recorded')
+combat.step=function() return 'running','attacking' end
 local disabled=context(0); calls={}; tick(disabled); assert(not table.concat(calls,','):find('new',1,true))
 local broken=context(1); fail_init=true; calls={}; tick(broken); tick(broken)
 assert(table.concat(calls,','):find('new',1,true) and not table.concat(calls,','):find('observe',1,true))
