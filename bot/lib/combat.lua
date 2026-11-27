@@ -1,4 +1,5 @@
 local move = require("lib.move")
+local terrain = require("lib.terrain")
 local io_module = require("lib.io")
 local M = {}
 local abandoned, selection_scope = {}, nil
@@ -91,7 +92,7 @@ function M.select(world, options)
         end
         local leash_origin = owner and owner.present ~= false and owner or character
         if locked and locked.active == true and locked.template_id ~= nil and locked.template_id ~= ""
-            and locked.platform == character.platform and not is_excluded(options.exclude, locked.object_id)
+            and locked.platform ~= nil and not is_excluded(options.exclude, locked.object_id)
             and not abandoned[active_target] and type(locked.x) == "number" and type(locked.y) == "number"
             and not (locked.hp_percent ~= nil and locked.hp_percent <= 0)
             and not (locked.hp ~= nil and locked.hp <= 0)
@@ -105,7 +106,7 @@ function M.select(world, options)
     for _, mob in ipairs(world.mobs or {}) do
         local key = target_key(mob)
         if mob.active == true and mob.template_id ~= nil and mob.template_id ~= ""
-            and mob.platform == character.platform and not is_excluded(options.exclude, mob.object_id)
+            and mob.platform ~= nil and not is_excluded(options.exclude, mob.object_id)
             and not abandoned[key] and type(mob.x) == "number" and type(mob.y) == "number"
             and not (mob.hp_percent ~= nil and mob.hp_percent <= 0)
             and not (mob.hp ~= nil and mob.hp <= 0) then
@@ -186,7 +187,7 @@ function M.step(ctx, world, mob, mover)
         return status, reason
     end
 
-    if character.platform == nil or mob.platform == nil or mob.platform ~= character.platform then
+    if character.platform == nil or mob.platform == nil then
         return finish("failed", "target_platform_unreachable", true)
     end
     if world.owner and world.owner.present ~= false and type(world.owner.x) == "number"
@@ -194,7 +195,34 @@ function M.step(ctx, world, mob, mover)
         return finish("failed", "leash_exceeded", true)
     end
     if now - combat.started_at >= 15 then return finish("failed", "timeout", true) end
-
+    local observed = ctx.game.character or {}
+    if observed.attacking or not observed.action_idle then
+        player.move(nil)
+        return "running", "action_busy"
+    end
+    if mob.platform ~= character.platform then
+        if not mover or not state.graph then return finish("failed", "no_path", true) end
+        if combat.moving ~= "cross_platform" or combat.goal_platform ~= mob.platform or mover.status ~= "running" then
+            local movement = observed.movement or {}
+            local model = type(movement.model) == "table" and movement.model or movement.defaults or movement.model_defaults or {}
+            local edges, err = terrain.plan(state.graph, character.platform, mob.platform, {
+                speed = movement.max_speed or model.max_speed,
+                max_jump_height = movement.max_jump_height or model.max_jump_height,
+                blocked = state.blocked or {},
+            })
+            if not edges or #edges == 0 then return finish("failed", err or "no_path", true) end
+            local set, set_error = move.set_path(mover, edges)
+            if not set then return finish("failed", set_error or "no_path", true) end
+            combat.moving, combat.goal_platform = "cross_platform", mob.platform
+        end
+        local status, reason = move.step(mover, ctx, world)
+        if status == "failed" then return finish("failed", reason or "move_failed", true) end
+        return "running", reason or "approaching"
+    end
+    if combat.moving == "cross_platform" then
+        if mover and mover.status == "running" then move.stop(mover) end
+        combat.moving = nil
+    end
     local target_distance = distance(character, mob)
     local config = world.config or state.bot and state.bot.config or {}
     local attack_mode = config.attack_mode or "melee"

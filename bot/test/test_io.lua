@@ -311,7 +311,8 @@ local pipeline_context = {
         bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
         mover = {}, last_poll = 10, started_at = 1,
     },
-    game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
+    game = {character = {action_idle = true, movement = {max_speed = 100, max_jump_height = 50}},
+        player = {move = function() return true end}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
 }
 fake_modules["lib.io"].platform_error = "unsupported_platform: bot_package_requires_posix"
@@ -321,13 +322,13 @@ assert(table.concat(calls, ",") == "event" and pipeline_context.state.bot_platfo
 fake_modules["lib.io"].platform_error = nil
 calls = {}
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,move,combat,loot_select,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,combat,loot_select,publish")
 calls, movement_result = {}, "running"
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,move,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,combat,loot_select,publish")
 calls, movement_result, combat_result = {}, "done", "running"
 environment.__test_main(pipeline_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,move,combat,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,combat,publish")
 calls, movement_result, combat_result, selected_mob, selected_drop = {}, "done", "done", nil, {}
 environment.__test_main(pipeline_context)
 assert(table.concat(calls, ",") == "observe,sustain,select,loot_select,move,loot_step,publish")
@@ -339,7 +340,8 @@ calls, sustain_handled = {}, false
 local recovery_context = {
     tick = {time = 20},
     state = {bot = {mode = "recover", config = {}}, last_poll = 20, started_at = 1},
-    game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
+    game = {character = {action_idle = true, movement = {max_speed = 100, max_jump_height = 50}},
+        player = {move = function() return true end}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
 }
 environment.__test_main(recovery_context)
@@ -422,7 +424,7 @@ local combat_context = {
 }
 calls = {}
 environment.__test_main(combat_context)
-assert(table.concat(calls, ",") == "observe,sustain,select,new,move,combat,loot_select,loot_step,publish")
+assert(table.concat(calls, ",") == "observe,sustain,select,new,combat,loot_select,loot_step,publish")
 assert(combat_context.state.mover == created_mover)
 
 selected_mob, selected_drop, created_mover = nil, {}, {}
