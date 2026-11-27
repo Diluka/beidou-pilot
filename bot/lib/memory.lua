@@ -116,7 +116,16 @@ function M.save(store, path)
     file:close()
     if not ok then return false, "write_failed" end
     local renamed, rename_error = os.rename(temporary, path)
-    if not renamed then return false, "rename_failed:" .. tostring(rename_error) end
+    if not renamed then
+        local existing = io.open(path, "r")
+        if not existing then return false, "rename_failed:" .. tostring(rename_error) end
+        existing:close()
+        local removed = os.remove(path)
+        if not removed then return false, "rename_failed:" .. tostring(rename_error) end
+        renamed, rename_error = os.rename(temporary, path)
+        if not renamed then return false, "rename_failed:" .. tostring(rename_error) end
+        print("bot memory rename retry: " .. path)
+    end
     store.__dirty = nil
     store.__last_flush = store.__last_flush or 0
     return true

@@ -17,7 +17,7 @@ end
 function M.new()
     local config = {}
     for key, value in pairs(defaults) do config[key] = value end
-    local configured = read_values("/work/bot/config.conf") or {}
+    local configured = read_values((M.bot_root or "/work/bot") .. "/config.conf") or {}
     for key, value in pairs(defaults) do
         local raw = configured[key]
         if raw ~= nil then
@@ -28,7 +28,7 @@ function M.new()
             end
         end
     end
-    local checkpoint = read_values("/work/bot/checkpoint.conf")
+    local checkpoint = read_values((M.bot_root or "/work/bot") .. "/checkpoint.conf")
     local valid_checkpoint = checkpoint ~= nil
         and allowed_modes[checkpoint.mode] ~= nil
         and (checkpoint.map_id == nil or tonumber(checkpoint.map_id) ~= nil)
