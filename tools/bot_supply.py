@@ -16,7 +16,9 @@ from pathlib import Path
 import subprocess
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+import os
+
+REPO_ROOT = Path(os.environ.get("BOT_SUPPLY_ROOT", Path(__file__).resolve().parents[1]))
 
 RED_POTION = 2000000
 BLUE_POTION = 2000003
