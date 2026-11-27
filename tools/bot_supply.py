@@ -300,18 +300,33 @@ def close_shop(workbench_name: str) -> None:
     workbench(workbench_name, "shop", "close")
 
 
-def restock(workbench_name: str, dry_run: bool = True, max_cost: int = 5000, max_count: int = 1000, sell_etc: tuple[int, ...] = ()) -> dict[str, object]:
+def restock(
+    workbench_name: str,
+    dry_run: bool = True,
+    max_cost: int = 5000,
+    max_count: int = 1000,
+    sell_etc: tuple[int, ...] = (),
+) -> dict[str, object]:
     if max_cost < 0 or max_count < 1:
         raise SystemExit("金额上限须非负，数量上限须为正")
     plan = supply_plan(workbench_name)
     shop_map, shop = nearest_potion_shop(workbench_name)
-    needs = {item_id: plan["gaps"][key] for item_id, key in (
-        (RED_POTION, "red"), (BLUE_POTION, "blue"), (ARROW, "arrow")
-    ) if plan["gaps"][key] > 0}
+    needs = {
+        item_id: plan["gaps"][key]
+        for item_id, key in ((RED_POTION, "red"), (BLUE_POTION, "blue"), (ARROW, "arrow"))
+        if plan["gaps"][key] > 0
+    }
     candidates = [item for item in junk_list(workbench_name) if item["item_id"] in sell_etc]
-    report = {"plan": plan, "shop_map": shop_map, "shop": shop.get("npc"),
-              "buy": needs, "sell_candidates": candidates, "max_cost": max_cost,
-              "max_count": max_count, "dry_run": dry_run}
+    report = {
+        "plan": plan,
+        "shop_map": shop_map,
+        "shop": shop.get("npc"),
+        "buy": needs,
+        "sell_candidates": candidates,
+        "max_cost": max_cost,
+        "max_count": max_count,
+        "dry_run": dry_run,
+    }
     if dry_run or not needs:
         return report
     if plan["map_id"] != shop_map:
@@ -322,7 +337,9 @@ def restock(workbench_name: str, dry_run: bool = True, max_cost: int = 5000, max
     try:
         for candidate in candidates:
             # 多堆同一物品时 CLI 会拒绝歧义；不猜测槽位或重试交易。
-            results["sell"].append(sell(workbench_name, int(candidate["item_id"]), min(int(candidate["quantity"]), 1000)))
+            results["sell"].append(
+                sell(workbench_name, int(candidate["item_id"]), min(int(candidate["quantity"]), 1000))
+            )
         wallet = read_character(workbench_name).get("mesos")
         if not isinstance(wallet, int) or wallet < 0:
             raise SystemExit("金币读数不可用")
@@ -389,7 +406,9 @@ def parser() -> argparse.ArgumentParser:
     mode.add_argument("--apply", action="store_true")
     restock_parser.add_argument("--max-cost", type=int, default=5000)
     restock_parser.add_argument("--max-count", type=int, default=1000)
-    restock_parser.add_argument("--sell-etc", type=int, action="append", default=[], help="人工确认可出售的 etc 物品 ID，可重复")
+    restock_parser.add_argument(
+        "--sell-etc", type=int, action="append", default=[], help="人工确认可出售的 etc 物品 ID，可重复"
+    )
     junk_parser = sub.add_parser("junk", help="卖无用垃圾")
     junk_parser.add_argument("workbench")
     junk_parser.add_argument("--dry-run", action="store_true")
@@ -410,7 +429,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             print(json.dumps(supply_plan(args.workbench), ensure_ascii=False, indent=2))
         elif args.command == "restock":
-            print(json.dumps(restock(args.workbench, not args.apply, args.max_cost, args.max_count, tuple(args.sell_etc)), ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    restock(args.workbench, not args.apply, args.max_cost, args.max_count, tuple(args.sell_etc)),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
         elif args.command == "junk":
             print(
                 json.dumps(

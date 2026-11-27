@@ -71,15 +71,18 @@ class BotSupplyContract(unittest.TestCase):
 
     def test_restock_caps_budget_and_stops_on_partial_purchase(self) -> None:
         plan = {"map_id": 1, "gaps": {"red": 2, "blue": 0, "arrow": 100}}
-        shop = {"buy_items": [
-            {"item_id": bot_supply.RED_POTION, "unit_price": 10, "bundle_quantity": 1},
-            {"item_id": bot_supply.ARROW, "unit_price": 2, "bundle_quantity": 1},
-        ]}
+        shop = {
+            "buy_items": [
+                {"item_id": bot_supply.RED_POTION, "unit_price": 10, "bundle_quantity": 1},
+                {"item_id": bot_supply.ARROW, "unit_price": 2, "bundle_quantity": 1},
+            ]
+        }
         with (
             patch.object(bot_supply, "supply_plan", return_value=plan),
             patch.object(bot_supply, "nearest_potion_shop", return_value=(1, {"npc": "shop"})),
             patch.object(bot_supply, "junk_list", return_value=[]),
-            patch.object(bot_supply, "ensure_gui"), patch.object(bot_supply, "open_shop"),
+            patch.object(bot_supply, "ensure_gui"),
+            patch.object(bot_supply, "open_shop"),
             patch.object(bot_supply, "close_shop") as close,
             patch.object(bot_supply, "read_character", return_value={"mesos": 1000}),
             patch.object(bot_supply, "read_shop", return_value=shop),
@@ -100,10 +103,15 @@ class BotSupplyContract(unittest.TestCase):
             patch.object(bot_supply, "supply_plan", side_effect=[plan, after]),
             patch.object(bot_supply, "nearest_potion_shop", return_value=(1, {"npc": "shop"})),
             patch.object(bot_supply, "junk_list", return_value=[{"item_id": 4000999, "quantity": 2}]),
-            patch.object(bot_supply, "ensure_gui"), patch.object(bot_supply, "open_shop"),
+            patch.object(bot_supply, "ensure_gui"),
+            patch.object(bot_supply, "open_shop"),
             patch.object(bot_supply, "close_shop"),
             patch.object(bot_supply, "read_character", return_value={"mesos": 10}),
-            patch.object(bot_supply, "read_shop", return_value={"buy_items": [{"item_id": bot_supply.ARROW, "unit_price": 1, "bundle_quantity": 1}]}),
+            patch.object(
+                bot_supply,
+                "read_shop",
+                return_value={"buy_items": [{"item_id": bot_supply.ARROW, "unit_price": 1, "bundle_quantity": 1}]},
+            ),
             patch.object(bot_supply, "sell", side_effect=lambda *args: calls.append("sell")),
             patch.object(bot_supply, "buy", side_effect=lambda *args: calls.append("buy")),
         ):
