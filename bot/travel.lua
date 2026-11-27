@@ -44,7 +44,7 @@ local function main(context)
             p.stop()
             context.game.log(string.format("portal %s confirmed, leg %d/%d", tostring(leg.portal), s.index, #s.legs))
             s.index, s.retries, s.started = s.index + 1, 0, now
-            s.graph, s.mover, s.path, s.portal_wait, s.generation = nil, nil, nil, nil, nil
+            s.graph, s.mover, s.path, s.portal_wait, s.generation, s.blocked = nil, nil, nil, nil, nil, nil
             if s.index > #s.legs then context.game.log("route complete"); return "done" end
             return
         end
@@ -53,8 +53,15 @@ local function main(context)
     local function retry(reason)
         p.stop()
         if (s.retries or 0) >= 1 then return fail(reason) end
+        local edge = s.path and s.mover and s.mover.edges[s.mover.index]
+        if edge and edge.from and edge.to then
+            s.blocked = s.blocked or {}
+            local key = tostring(edge.from) .. ":" .. tostring(edge.to)
+            s.blocked[key] = true
+            context.game.log("retry blocking edge " .. key)
+        end
         s.retries, s.started = (s.retries or 0) + 1, now
-        s.graph, s.mover, s.path, s.portal_wait, s.generation = nil, nil, nil, nil, nil
+        s.graph, s.mover, s.path, s.portal_wait = nil, nil, nil, nil
         context.game.log(string.format("leg %d retry: %s", s.index, reason))
     end
     if now - s.started > 120 then return retry("timeout") end
@@ -64,7 +71,7 @@ local function main(context)
         return
     end
     if s.generation and s.generation ~= world.scene_generation then
-        s.graph, s.mover, s.path = nil, nil, nil
+        s.graph, s.mover, s.path, s.blocked = nil, nil, nil, nil
     end
     if not s.graph then
         if context.scene.terrain.status ~= "available" then return retry("terrain_unavailable") end
@@ -92,7 +99,7 @@ local function main(context)
     if not s.path then
         local movement = context.game.character.movement or { max_speed = 125, max_jump_height = 77 }
         local edges, reason = terrain.plan(s.graph, platform, target,
-            { speed = movement.max_speed, max_jump_height = movement.max_jump_height, blocked = {} })
+            { speed = movement.max_speed, max_jump_height = movement.max_jump_height, blocked = s.blocked or {} })
         if not edges or #edges == 0 then return retry(reason or "no_path") end
         local ok, set_reason = move.set_path(s.mover, edges)
         if not ok then return retry(set_reason or "no_path") end

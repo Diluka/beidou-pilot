@@ -71,16 +71,21 @@ class TravelLuaContract(unittest.TestCase):
         travel = (Path(__file__).resolve().parents[2] / "bot/travel.lua").read_text(encoding="utf-8")
         source = r'''
 local builds, moves, stops = 0, {}, 0
-local no_path = false
+local no_path, fail_move = false, false
+local plans = {}
 package.loaded["lib.terrain"] = {
     build = function(nav) builds = builds + 1; return {model = {stand_height = 1}, nav = nav} end,
     platform_at = function(graph, x) return x < 50 and 1 or 2 end,
-    plan = function() if no_path then return nil, "no_path" end; return {{}} end,
+    plan = function(graph, from, to, options)
+        plans[#plans + 1] = options.blocked
+        if no_path then return nil, "no_path" end
+        return {{from=1, to=2, kind="rope"}}
+    end,
 }
 package.loaded["lib.move"] = {
     new = function(graph) return {graph = graph} end,
-    set_path = function() return true end,
-    step = function() return "running" end,
+    set_path = function(mover, edges) mover.edges, mover.index = edges, 1; return true end,
+    step = function() if fail_move then return "failed", "no_progress" end; return "running" end,
 }
 package.loaded["lib.world"] = {observe = function(c) return c.world end}
 local c = {
@@ -124,6 +129,18 @@ c.world.map_id = 3; main(c)
 local status = main(c)
 assert(status == "done", "route completes only after the last map transition")
 assert(stops > 0, "completion must release input")
+''')
+
+    def test_failed_edge_is_blocked_on_replan(self) -> None:
+        self.run_lua(r'''
+c.state.legs[1].x = 100
+fail_move = true
+main(c)
+assert(stops > 0, "failed movement must release input")
+fail_move = false
+main(c)
+assert(#plans == 2, "movement failure must trigger a new plan")
+assert(plans[2]["1:2"], "replan must block the failed rope edge")
 ''')
 
     def test_no_path_fails_instead_of_blind_walking(self) -> None:
