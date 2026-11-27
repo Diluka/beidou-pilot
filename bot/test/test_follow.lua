@@ -134,7 +134,7 @@ io_module.publish = function() return true end
 local owner = {character_id = 12, x = 275, y = 160}
 local navigation = dofile("bot/test/fixtures/synthetic.lua").navigation
 ctx = context({owner})
-ctx.state.bot = {mode = "follow", target = "12"}
+ctx.state.bot = {mode = "follow", target = "12", config = {metrics_enabled = 0}}
 ctx.scene = {terrain = {status = "available", navigation = navigation}}
 -- Start on the wide platform 1, remove outgoing edges, and place the owner on 4.
 navigation.candidates = {walk = {}, step = {}, jumpup = {}, drop = {}, rope = {}}

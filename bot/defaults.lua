@@ -18,4 +18,5 @@ return {
     pot_hp = 60,
     pot_mp = 30,
     loot_radius = 150,
+    metrics_enabled = 1, -- 1: collect passive metrics, 0: disabled
 }

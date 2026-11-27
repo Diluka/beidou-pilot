@@ -16,6 +16,7 @@ local hunt = require("lib.hunt")
 local travel = require("lib.travel")
 local defaults = require("defaults")
 local memory_module = require("lib.memory")
+local metrics_module = require("lib.metrics")
 
 local function main(context)
     local memory = context.state
@@ -32,6 +33,29 @@ local function main(context)
 
     local bot = memory.bot
     local now = context.tick.time
+    local function metrics_error(reason)
+        if not memory.metrics_error_at or now < memory.metrics_error_at or now - memory.metrics_error_at >= 20 then
+            memory.metrics_error_at = now
+            pcall(io_module.event, context, "metrics/error", {reason = tostring(reason)})
+        end
+    end
+    if memory.metrics_initialized == nil then
+        memory.metrics_initialized = true
+        local enabled = (bot.config or defaults).metrics_enabled
+        if enabled == nil then enabled = defaults.metrics_enabled end
+        if enabled ~= 0 then
+            local ok, result, reason = pcall(metrics_module.new, (memory.bot_root or "/work/bot") .. "/metrics.json")
+            if ok and result then memory.metrics = result else metrics_error(ok and reason or result) end
+        end
+    end
+    local function metric_call(method, ...)
+        if not memory.metrics then return end
+        local ok, result, reason = pcall(metrics_module[method], memory.metrics, ...)
+        if not ok then
+            metrics_error(result)
+            memory.metrics = nil -- a partially mutated accumulator is not safe to reuse
+        elseif result == false and (method ~= "observe" or reason == "invalid_time") then metrics_error(reason) end
+    end
     if (bot.config or defaults).memory_enabled and not memory.store then
         memory.store = memory_module.load(memory.bot_root .. "/memory.lua", now)
         memory.store_path = memory.bot_root .. "/memory.lua"
@@ -51,6 +75,8 @@ local function main(context)
         memory.store.__synced = true
     end
     if not world then
+        metric_call("observe", context, {ready = false})
+        memory.metrics_visit = nil
         bot.last_error = observe_error or "world_unavailable"
         io_module.event(context, "error", {reason = bot.last_error})
         memory.force_publish = true
@@ -130,6 +156,8 @@ local function main(context)
             and world.inventory or nil
         local low = supply.check(memory.bot_root or "/work/bot", items)
         if low then
+            metric_call("observe", context, {ready = false})
+            metric_call("target", nil)
             if memory.mover then move.stop(memory.mover) end
             if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
             context.game.player.stop()
@@ -189,6 +217,23 @@ local function main(context)
         for _, drop in ipairs(world.drops or {}) do set_platform(drop) end
     end
 
+    metric_call("observe", context, world)
+    if memory.metrics then
+        local platform = world.character and world.character.platform
+        local visit = memory.metrics_visit
+        if world.ready and world.map_id and generation and platform then
+            if not visit or visit.map_id ~= world.map_id or visit.generation ~= generation or visit.platform ~= platform then
+                metric_call("visit", {arrival_reason = visit and "platform_or_scene_changed" or nil,
+                    exit_reason = visit and "platform_or_scene_changed" or nil})
+                memory.metrics_visit = {map_id = world.map_id, generation = generation, platform = platform}
+            end
+        else
+            memory.metrics_visit = nil
+        end
+        if bot.mode ~= "hunt" or not world.ready or not memory.graph or memory.graph_generation ~= generation
+            or memory.travel then metric_call("target", nil) end
+    end
+
     if memory.travel and (not world.ready or not world.map_id) then
         context.game.player.stop()
         memory.travel.graph, memory.travel.mover, memory.travel.path = nil, nil, nil
@@ -199,6 +244,7 @@ local function main(context)
     if bot.mode == "follow" then kind, name = navigate.selector(bot.target) end
     local handled, sustain_error = sustain.step(context, world)
     if handled and not kind then
+        metric_call("target", nil)
         if memory.travel then
             context.game.player.move(nil)
             memory.travel.graph, memory.travel.mover, memory.travel.path = nil, nil, nil
@@ -397,6 +443,7 @@ local function main(context)
         end
         local mob = not priority_drop and combat.select(world, {hunt = true, platform_only = local_only,
             config = bot.config or defaults, graph = memory.graph, context = context}) or nil
+        metric_call("target", mob)
         local drop
         if priority_drop then drop = priority_drop end
         if not mob and not drop then
@@ -431,6 +478,7 @@ local function main(context)
             elseif now - idle.since >= 10 then
                 if memory.mover and memory.mover.status == "running" then move.stop(memory.mover) end
                 io_module.event(context, "hunt/stalled", {platform = character.platform, seconds = now - idle.since})
+                metric_call("event", "stuck", {map_id = world.map_id, platform = character.platform, unattributed = true})
                 memory.hunt_patrol, memory.hunt_failures, memory.hunt_action = nil, 0, nil
                 memory.hunt_idle = {x = character.x, y = character.y, platform = character.platform, since = now}
             end
@@ -462,6 +510,10 @@ local function main(context)
                 status, reason = hunt.step(context, world, memory.graph, mover)
             end
             if status == "failed" then
+                if action == "combat" then metric_call("target", nil) end
+                if reason == "no_progress" then
+                    metric_call("event", "stuck", {map_id = world.map_id, platform = character.platform, unattributed = true})
+                end
                 bot.last_error = reason
                 if action == "combat" then
                     local edge = mover.status == "failed" and mover.edges and mover.edges[mover.index or 1]

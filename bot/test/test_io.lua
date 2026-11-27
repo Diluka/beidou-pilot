@@ -329,7 +329,7 @@ main_chunk()
 local pipeline_context = {
     tick = {time = 10},
     state = {
-        bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+        bot = {mode = "hunt", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         mover = {}, last_poll = 10, started_at = 1,
     },
     game = {character = {action_idle = true, movement = {max_speed = 100, max_jump_height = 50}},
@@ -358,7 +358,7 @@ assert(table.concat(calls, ",") == "observe,sustain,publish")
 calls, sustain_handled = {}, false
 local recovery_context = {
     tick = {time = 20},
-    state = {bot = {mode = "recover", config = {}}, last_poll = 20, started_at = 1},
+    state = {bot = {mode = "recover", config = {metrics_enabled = 0}}, last_poll = 20, started_at = 1},
     game = {character = {action_idle = true, movement = {max_speed = 100, max_jump_height = 50}},
         player = {move = function() return true end, skill = function() return true end}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
@@ -389,7 +389,7 @@ assert(recovery_context.state.mover_attempt_generation == 1, "patrol must attemp
 selected_mob, selected_drop = {}, nil
 local hunt_action_context = {
     tick = {time = 20.35},
-    state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+    state = {bot = {mode = "hunt", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         last_poll = 20.35, started_at = 1},
     game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
@@ -420,7 +420,7 @@ scene_generation = 1
 created_mover, follow_action = {}, {kind = "move", x = 20, y = 2, stop_distance = 40}
 local follow_context = {
     tick = {time = 20.5},
-    state = {bot = {mode = "follow", config = {}}, graph = {}, graph_generation = 1,
+    state = {bot = {mode = "follow", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         last_poll = 20.5, started_at = 1},
     game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
@@ -437,7 +437,7 @@ assert(last_set_path_edges and #last_set_path_edges == 1
 selected_mob, selected_drop, created_mover, movement_result, combat_result = {}, {}, {}, "done", "done"
 local combat_context = {
     tick = {time = 20.5},
-    state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+    state = {bot = {mode = "hunt", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         last_poll = 20.5, started_at = 1},
     game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
@@ -450,7 +450,7 @@ assert(combat_context.state.mover == created_mover)
 selected_mob, selected_drop, created_mover = nil, {}, {}
 local loot_context = {
     tick = {time = 20.5},
-    state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+    state = {bot = {mode = "hunt", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         last_poll = 20.5, started_at = 1},
     game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},

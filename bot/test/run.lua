@@ -279,6 +279,7 @@ local expected_defaults = {
     pot_hp = 60,
     pot_mp = 30,
     loot_radius = 150,
+    metrics_enabled = 1,
     attack_mode = "melee",
     attack_range = 110,
     min_range = 60,
@@ -321,4 +322,5 @@ dofile("bot/test/test_memory.lua")
 dofile("bot/test/test_equipment.lua")
 dofile("bot/test/test_metrics.lua")
 dofile("bot/test/test_metrics_storage.lua")
+dofile("bot/test/test_metrics_wire.lua")
 print("bot smoke ok: 10 modules")
