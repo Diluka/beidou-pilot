@@ -87,8 +87,11 @@ class BotctlTests(unittest.TestCase):
                 (queue / "done" / fields["id"]).write_text("ok\n")
 
             output = io.StringIO()
-            with patch.object(botctl, "ROOT", root), patch.object(botctl.time, "sleep", side_effect=receive), \
-                    contextlib.redirect_stdout(output):
+            with (
+                patch.object(botctl, "ROOT", root),
+                patch.object(botctl.time, "sleep", side_effect=receive),
+                contextlib.redirect_stdout(output),
+            ):
                 self.assertEqual(botctl.main(["send", "dev/hero", "--kind", "status", "--ttl", "10"]), 0)
             result = json.loads(output.getvalue())
             self.assertEqual((result["slot"], result["receipt"], result["content"]), (1, "done", "ok"))
@@ -112,8 +115,11 @@ class BotctlTests(unittest.TestCase):
             (queue / "done").mkdir(parents=True)
             (queue / "rejected").mkdir()
             stderr = io.StringIO()
-            with patch.object(botctl, "ROOT", root), patch.object(botctl.time, "monotonic", side_effect=[0, 4]), \
-                    contextlib.redirect_stderr(stderr):
+            with (
+                patch.object(botctl, "ROOT", root),
+                patch.object(botctl.time, "monotonic", side_effect=[0, 4]),
+                contextlib.redirect_stderr(stderr),
+            ):
                 self.assertEqual(botctl.main(["send", "dev/hero", "--kind", "stop"]), 1)
             self.assertIn("可能仍在处理", stderr.getvalue())
             self.assertEqual(len(list(queue.glob("slot*.cmd"))), 1)
