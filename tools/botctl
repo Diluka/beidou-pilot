@@ -3,10 +3,14 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
+import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 
 WORKTREE = Path(__file__).resolve().parent.parent
 COMMON_GIT = Path(
@@ -48,7 +52,14 @@ def main(argv=None):
         item.add_argument("name")
         if command == "logs":
             item.add_argument("--lines", type=int, default=50)
+    send = sub.add_parser("send")
+    send.add_argument("name")
+    send.add_argument("--kind", required=True, choices=("follow", "hunt", "stay", "status", "stop"))
+    send.add_argument("--target")
+    send.add_argument("--ttl", type=int, default=0)
     args = parser.parse_args(argv)
+    if args.command == "send" and (args.ttl < 0 or (args.target and ("\n" in args.target or "\r" in args.target))):
+        parser.error("ttl 必须非负且 target 不能包含换行")
     if (
         not (args.name.startswith("live/") or args.name.startswith("dev/"))
         or len(args.name.split("/")) != 2
@@ -72,6 +83,46 @@ def main(argv=None):
         (role / "bot/queue/done").mkdir(parents=True, exist_ok=True)
         (role / "bot/queue/rejected").mkdir(parents=True, exist_ok=True)
         return 0
+    if args.command == "send":
+        queue = role / "bot/queue"
+        if not (queue / "done").is_dir() or not (queue / "rejected").is_dir():
+            print("邮箱目录不存在，请先 install", file=sys.stderr)
+            return 1
+        created_ms = time.time_ns() // 1_000_000
+        command_id = f"{created_ms}_{secrets.token_hex(8)}"
+        content = f"id={command_id}\nkind={args.kind}\nttl={args.ttl}\nsource=host\ncreated_ms={created_ms}\n"
+        if args.target is not None:
+            content += f"target={args.target}\n"
+        slot = None
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=queue, prefix=".send-", delete=False) as file:
+            temporary = Path(file.name)
+            file.write(content)
+        try:
+            for index in range(1, 9):
+                destination = queue / f"slot{index}.cmd"
+                try:
+                    # 硬链接提供不覆盖已有槽位的原子发布；os.rename 在 POSIX 会覆盖。
+                    os.link(temporary, destination)
+                except FileExistsError:
+                    continue
+                slot = index
+                break
+        finally:
+            temporary.unlink()
+        if slot is None:
+            print("邮箱槽位已满，命令未发布", file=sys.stderr)
+            return 1
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            for receipt in ("done", "rejected"):
+                path = queue / receipt / command_id
+                if path.exists():
+                    print(json.dumps({"id": command_id, "slot": slot, "receipt": receipt,
+                                      "content": path.read_text(encoding="utf-8").strip()}, ensure_ascii=False))
+                    return 0 if receipt == "done" else 1
+            time.sleep(0.05)
+        print(f"命令 {command_id} 回执等待超时；命令可能仍在处理，请勿重发", file=sys.stderr)
+        return 1
     if args.command == "logs":
         if args.lines < 0:
             parser.error("--lines 必须不小于 0")

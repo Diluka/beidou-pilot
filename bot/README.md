@@ -137,6 +137,7 @@ follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代�
 ```bash
 tools/botctl install dev/NAME
 tools/botctl start dev/NAME
+tools/botctl send dev/NAME --kind status --ttl 10
 tools/botctl status dev/NAME
 tools/botctl logs dev/NAME --lines 50
 tools/botctl stop dev/NAME
@@ -144,7 +145,7 @@ tools/botctl stop dev/NAME
 
 `install` 从当前检出复制并覆盖 `scripts/bot` 中的机器人代码，创建邮箱目录但保留 `state.json`、事件日志等角色状态；`start` 仅经 workbench 发布连续 tick 脚本，不启动客户端；`status` 同时显示 workbench 脚本状态和 `state.json`；`stop` 根据当前 `script.id` 发起取消，并检查脚本终止与 control_released；`logs` 默认显示最近 50 行。客户端关闭仍由 workbench 单独管理。
 
-配置键及状态/事件字段见上方“默认值”“指令、状态与事件”。常见故障：
+`send` 使用单一宿主发送者，先写临时文件再以不覆盖的硬链接发布到空槽，最多等待回执 3 秒。超时不代表命令未执行，不要重发；先检查原命令 ID 的回执与状态。启动后遗留的 `.processing` 会拒绝为 `interrupted`，不重放旧动作。\n\n配置键及状态/事件字段见上方“默认值”“指令、状态与事件”。常见故障：
 
 - “没有运行中的 bot script”：先运行 status；脚本已结束时无需 stop，也不要重复 start。
 - `/work/bot` 写入失败：检查角色目录挂载权限与空间，勿用宿主绕过 workbench 写客户端状态。
