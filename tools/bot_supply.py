@@ -18,7 +18,16 @@ import sys
 
 import os
 
-REPO_ROOT = Path(os.environ.get("BOT_SUPPLY_ROOT", Path(__file__).resolve().parents[1]))
+WORKTREE = Path(__file__).resolve().parents[1]
+REPO_ROOT = (
+    Path(os.environ["BOT_SUPPLY_ROOT"])
+    if "BOT_SUPPLY_ROOT" in os.environ
+    else Path(
+        subprocess.check_output(
+            ["git", "-C", str(WORKTREE), "rev-parse", "--path-format=absolute", "--git-common-dir"], text=True
+        ).strip()
+    ).parent
+)
 
 RED_POTION = 2000000
 BLUE_POTION = 2000003
@@ -243,12 +252,12 @@ def ensure_gui(workbench_name: str) -> None:
 
 def write_route(workbench_name: str, start: int, goal: int) -> Path:
     role_directory = REPO_ROOT / "private/workbenches" / workbench_name
-    route_path = role_directory / "bot/route.json"
+    route_path = role_directory / "bot/route.supply.json"
     route_path.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "tools/bot_route.py"),
+            str(WORKTREE / "tools/bot_route.py"),
             workbench_name,
             str(start),
             str(goal),
@@ -267,9 +276,13 @@ def write_route(workbench_name: str, start: int, goal: int) -> Path:
 
 def travel(workbench_name: str, goal: int, timeout_seconds: int) -> None:
     write_route(workbench_name, read_character(workbench_name).get("map_id"), goal)
-    result = workbench(workbench_name, "script", "run", "bot/travel.lua", "--seconds", str(timeout_seconds))
+    result = workbench(workbench_name, "script", "run", "bot/supply_travel.lua", "--seconds", str(timeout_seconds))
     if result.returncode != 0:
-        raise SystemExit(f"跨图失败：{result.stdout[-400:]}")
+        raise SystemExit(
+            f"跨图失败，尚未购买；请先核对会话终态和当前位置，勿盲目重试。\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+    if read_character(workbench_name).get("map_id") != goal:
+        raise SystemExit("跨图终态未确认到达目标，尚未购买；请核对会话和当前位置，勿盲目重试。")
 
 
 def open_shop(workbench_name: str, npc_name: str) -> None:
