@@ -5,7 +5,10 @@ local events, stops = {}, 0
 io_module.poll = function() return {} end
 io_module.publish = function() return true end
 io_module.event = function(_, kind, data) events[#events + 1] = {kind=kind, data=data}; return true end
-supply.check = function() return {reason="low", items={{kind="arrow", quantity=3}}} end
+supply.check = function(_, inventory)
+    assert(inventory == nil, "unavailable inventory must not be interpreted as empty")
+    return {reason="low", items={{kind="arrow", quantity=3}}}
+end
 local ctx = {tick = {time=0, script_id="session-1"}, state={bot_root="/test", bot={mode="hunt", config={}}},
     scene={terrain={status="unavailable"}}, game={character={hp=10, max_hp=10, mp=10, max_mp=10},
     world={ready=true, map_id=1, scene_generation=1}, scene={}, inventory={items={}},

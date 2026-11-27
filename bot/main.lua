@@ -122,7 +122,10 @@ local function main(context)
     end
 
     if bot.mode == "hunt" and world.ready then
-        local low = supply.check(memory.bot_root or "/work/bot", world.inventory)
+        local inventory = context.game.inventory
+        local items = inventory and inventory.status == "ok" and type(inventory.items) == "table"
+            and world.inventory or nil
+        local low = supply.check(memory.bot_root or "/work/bot", items)
         if low then
             if memory.mover then move.stop(memory.mover) end
             if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
