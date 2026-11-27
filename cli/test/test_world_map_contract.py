@@ -37,7 +37,7 @@ class WorldMapContract(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.directory = Path(cls.temporary.name)
         root = Path(__file__).resolve().parents[2]
-        native = root / "headless/src"
+        native = root / "shared/img"
         shared = root / "shared/lua-runtime"
         library = cls.directory / "libbeidou-img.so"
         subprocess.run(
@@ -49,7 +49,7 @@ class WorldMapContract(unittest.TestCase):
             [
                 "g++", "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror",
                 f"-I{native}", f"-I{shared}", str(root / "cli/test/world_map_contract.cpp"),
-                str(native / "WorldMapImage.cpp"), f"-L{cls.directory}", "-Wl,-rpath,$ORIGIN",
+                str(shared / "WorldMapImage.cpp"), f"-L{cls.directory}", "-Wl,-rpath,$ORIGIN",
                 "-lbeidou-img", "-o", str(cls.executable),
             ],
             check=True, cwd=cls.directory, timeout=90)

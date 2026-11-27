@@ -8,7 +8,7 @@
 
 共享资源在主检出的 `private/workbenches/config/resources.json`，常驻与开发目标分别在同目录的 `live.server.json` 和 `dev.server.json`。分区决定目标，角色配置不能覆盖；目标缺失或不匹配时不改连另一服。部署步骤、开发服环境文件及公开示例见[工作台指南](../workbenches/README.md)。
 
-`workbench.json` 可省略，默认使用 headless、main 和90秒入图等待。GUI 目录的最小 [配置示例](../workbenches/examples/workbench.example.json) 为：
+`workbench.json` 可省略，默认使用原版 GUI、main 和90秒入图等待。目录的最小 [配置示例](../workbenches/examples/workbench.example.json) 为：
 
 ```json
 {"backend":"beidou"}
@@ -16,7 +16,7 @@
 
 | 设置 | 默认及用途 |
 | --- | --- |
-| `backend` | `headless`；可选 `headless` 或 `beidou` |
+| `backend` | `beidou`（可省略）；仅接受 `beidou` |
 | `ref` | `main`；开发验收可明确指定已提交版本 |
 | `timeout` | `90`；5至180的数值，仅限制入图等待 |
 | `bridge_artifact` | 可选的匹配 GUI 桥工件目录；相对路径按工作目录解析，省略时经 `gh` 获取相应提交成功 CI 的工件 |
@@ -42,7 +42,7 @@
 
 `data.current_instance` 在暂无所属容器时为 `null`，存在时报告实际容器、镜像、运行身份及 `matches_prepared_image`。`native_inputs_match` 按对应后端原生源码输入比较，文档变更导致镜像 ID 不同时也能判断原生输入是否相同；后端不同或本地缺少来源树时为 `null`。这个比较只覆盖原生输入，CLI、策略与整个镜像的差异另行核对。`build` 只准备产物，切换已有实例仍需明确的 `close/open`。
 
-整个工作目录以一个读写挂载进入容器 `/work`。宿主保存 `runtime/default/host.json`，本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID`；桥、锁、日志和自动生成的账号/服务器快照按此隔离。资源 `/client` 和 `/data` 保持各自现有只读格式和来源。用户脚本直接使用 `/work/scripts`。`cache_dir`（默认 `<workbench>/cache`）在创建新实例时创建并解析，不可用时启动失败（`cache_dir_unavailable`）；该目录读写挂到容器 `/cache`，GUI 与 headless 相同，客户端进程以 `BEIDOU_CACHE_DIR=/cache` 写入版本化世界地图缓存。
+整个工作目录以一个读写挂载进入容器 `/work`。宿主保存 `runtime/default/host.json`，本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID`；桥、锁、日志和自动生成的账号/服务器快照按此隔离。资源 `/client` 和 `/data` 保持各自现有只读格式和来源。用户脚本直接使用 `/work/scripts`。`cache_dir`（默认 `<workbench>/cache`）在创建新实例时创建并解析，不可用时启动失败（`cache_dir_unavailable`）；该目录读写挂到容器 `/cache`，客户端进程以 `BEIDOU_CACHE_DIR=/cache` 写入版本化世界地图缓存。
 
 普通结果为 JSON 信封，含 `ok/command/data`；客户端结果还含 `backend/instance`。失败含 `error.code/message/details`，已识别失败退出码2、中断130。`list` 和 `notes` 输出文本，`watch/events watch` 输出 JSONL，`resources-check` 输出原生资源检查 JSON；`server dev` 的输出来自 Compose 或服务端 CLI。
 
@@ -60,7 +60,7 @@ workbenches/workbench dev/NAME close
 
 `list [live|dev]` 列出角色。`notes` 读取所选角色的交接资料：常驻角色看养成计划，开发角色看状态记录。`plan` 只核对目标；`build` 准备镜像，`open` 构建或复用后确认入图。`close` 只回收所属客户端，不停止游戏服务器。
 
-两端使用权限为 `0600` 的 `account.json`：必填 `username`、`password`，已有角色的 `open` 还要求真实 `character_id`（正 int32）；`world/channel` 可选、为0基索引，默认各为0。GUI 仅支持世界0、第1至20频道，并按CID选角。密码只从账号文件读取。
+客户端使用权限为 `0600` 的 `account.json`：必填 `username`、`password`，已有角色的 `open` 还要求真实 `character_id`（正 int32）；`world/channel` 可选、为0基索引，默认各为0。GUI 仅支持世界0、第1至20频道，并按CID选角。密码只从账号文件读取。
 
 ### 首次登录与建角
 
@@ -75,22 +75,21 @@ workbenches/workbench dev/NAME character create --name NAME --gender female --jo
 workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANCE_ID --run-id RUN_ID
 ```
 
-角色外观等数值须按实际选择填写；`--hair` 是基础发型，`--hair-color` 是独立必填项，不能省略或并入 `--hair`。建角是独立的一次请求，不自动入图。运行中再次 `login` 只观察，不能重新应用启动选项；容器内 `beidou-pilot login [--timeout N]` 不带授权选项时只观察，不接受宿主启动选项。GUI 容器内可显式传 `--gender male|female` 发起首次登录动作，需要同意声明时另加 `--accept-terms`；GUI 动作必须指定性别，无头容器内不接受这些选项。GUI 的账号提交、声明接受、性别、世界、频道与建角步骤由原生桥在游戏线程调用原版客户端内部入口完成，Python 只核对实例身份与页面、保持一次性去重并投影结果，不使用桌面键鼠坐标。已有角色账号若服务端仍要求设置性别，安全收紧后不再依据 CID 隐式选择性别；CID 不代表授权选择。`dev` 测试账号由执行会话按验收需要选择性别；`live` 账号须经用户确认。随后关闭所属实例并核对退出，以 `login --gender male|female` 新启动完成选择并核对角色列表，再关闭该实例、核对退出，最后按真实已有 CID `open`。此迁移路径尚未真实游戏实测。`live` 账号若同时需要接受声明，须另有明确授权并添加 `--accept-terms`；`dev` 测试账号直接添加。
+角色外观等数值须按实际选择填写；`--hair` 是基础发型，`--hair-color` 是独立必填项，不能省略或并入 `--hair`。建角是独立的一次请求，不自动入图。运行中再次 `login` 只观察，不能重新应用启动选项；容器内 `beidou-pilot login [--timeout N]` 不带授权选项时只观察，不接受宿主启动选项。GUI 容器内可显式传 `--gender male|female` 发起首次登录动作，需要同意声明时另加 `--accept-terms`；GUI 动作必须指定性别。GUI 的账号提交、声明接受、性别、世界、频道与建角步骤由原生桥在游戏线程调用原版客户端内部入口完成，Python 只核对实例身份与页面、保持一次性去重并投影结果，不使用桌面键鼠坐标。已有角色账号若服务端仍要求设置性别，安全收紧后不再依据 CID 隐式选择性别；CID 不代表授权选择。`dev` 测试账号由执行会话按验收需要选择性别；`live` 账号须经用户确认。随后关闭所属实例并核对退出，以 `login --gender male|female` 新启动完成选择并核对角色列表，再关闭该实例、核对退出，最后按真实已有 CID `open`。此迁移路径尚未真实游戏实测。`live` 账号若同时需要接受声明，须另有明确授权并添加 `--accept-terms`；`dev` 测试账号直接添加。
 
 `character create` 返回请求与实例身份（GUI 的建角步骤由原生桥调用原版客户端内部动作，结果仍以新鲜角色列表的唯一新增 CID 核验）；`completed` 含真实 CID，`rejected` 为拒绝；`accepted` 或 `unknown` 并非完成，保留身份用 `character result` 查询，不重发。宿主 `character result` 要求原容器仍运行；实例退出或身份变化时未终结结果可能变为 `unknown`，无法保证恢复。容器停止后保留已有结果和身份等证据，人工核验，不保证可通过宿主命令查询。宿主仅在完成且账号文件与运行快照匹配、权限正确、绑定无冲突时写入 CID；`binding` 失败不代表建角失败，应依据结果及实际角色列表人工核对恢复，勿重发。完成绑定后，账号模式进程不支持同进程选角；先以工作台 `close` 并核对所属容器退出，再 `open` 并核对实际入图。GUI 建角同样经原生动作完成：打开建角页、确认类别、姓名核查、外观性别与逐槽外观轮转、最终确认；当前仅支持世界 0、第 1 至 20 频道、空角色列表、职业 `job=1` 与可打印 ASCII 角色名，外观候选须在当前界面实际核验，无法到达时停止。GUI 登录或建角超时、页面不明或原生动作拒绝时保留现场与身份，先观察或查询，不重放。
 
 启动器把账号与已解析的服务器配置自动保存到 `runtime/default/RUN_ID/account.json`、`server.json`。容器入口读取该快照、生成内部资源映射与 `state/container.json`，再运行原生进程。随后宿主向容器内 `open` 传入这两个快照路径，完成或确认登录；容器 CLI 的 `--server` 核对已有实例的服务器，连接保持原样。日常只维护工作目录根的账号和新建设置，运行快照由启动器管理。
 
-已核验目标公告频道 IPv4 为 `127.0.0.0/8` 时，无头端使用该目标内部IP并保留公告端口；其他地址沿用公告。该映射不修改服务端或原资源。
+已核验目标公告频道 IPv4 为 `127.0.0.0/8` 时，GUI 容器使用该目标内部IP并保留公告端口；其他地址沿用公告。该映射不修改服务端或原资源。
 
 | 命令 | 行为 |
 | --- | --- |
 | `build` | 构建或复用所选版本镜像 |
 | `plan` | 只读核对授权目标 |
-| `resources-check` | 用headless镜像离线解析配置的只读原版 Data/IMG，仅依赖镜像与资源配置 |
+| `resources-check` | 用 GUI 镜像离线解析配置的只读原版 Data/IMG，仅依赖镜像与资源配置 |
 | `status` | 报告未运行实例；运行时由容器CLI读取实时阶段与版本 |
 | `doctor` | 在已有容器内检查资源和读取能力 |
-| `instances` | 返回当前容器实例身份与版本 |
 | `capabilities` | 读取原生能力和静态观察支持范围 |
 | `world-map route START GOAL` | 只读查询原生世界门户图的有向跨图路线；不启动、不控制客户端 |
 | `open/close` | 新建或接续所属实例；正常停止、确认退出并回收 |
@@ -107,7 +106,7 @@ workbenches/workbench dev/NAME character result REQUEST_ID --instance-id INSTANC
 workbenches/workbench dev/NAME inspect character
 ```
 
-该命令在两端读取入图后 `status` 所依据的同类原生 `observe` 快照，返回 `character`、`native_values_valid` 及采样元数据；四维为 `strength`、`dexterity`、`intelligence`、`luck`，剩余 AP 为 `ability_points`。角色不可用时保留原生空值和 `unavailable`，不补零；观察失败直接报告原错误。
+该命令读取入图后 `status` 所依据的同类原生 `observe` 快照，返回 `character`、`native_values_valid` 及采样元数据；四维为 `strength`、`dexterity`、`intelligence`、`luck`，剩余 AP 为 `ability_points`。角色不可用时保留原生空值和 `unavailable`，不补零；观察失败直接报告原错误。
 
 动作、脚本等参数由容器内客户端解释。核对容器归属后可用 `docker exec CONTAINER beidou-pilot --json status` 只读排查。中断脚本 CLI 只结束等待，脚本取消另行显式 `script cancel --session`。
 
@@ -123,7 +122,7 @@ workbenches/workbench dev/NAME world-map route 100000000 100000100
 
 `world-map route START GOAL` 用两个正整数地图号查询原版静态门户模型中的跨图路线。命令只读：不启动客户端、不发送游戏输入，需要该目录已有运行中的客户端提供只读观察通道。缺少子命令、地图号缺失或非正整数、多余参数按 `usage` 拒绝，不会启动客户端。
 
-原生侧从客户端只读 `Data/` 的地图 IMG（`Map002/Map`，缺少 `Map002/` 时用 `Map/Map`）门户记录派生模型：只把指向其他地图的跨图门户当作有向边，排除带 script 的门户和外部目标 `999999999`；同地图内同名同目的地的门户合并为一条边，不推断反向边。路线按有向 BFS 搜索，最多 24 段。模型、路线搜索和版本化缓存都由两端共用的原生实现（[WorldMap.h](../shared/lua-runtime/WorldMap.h)、[WorldMapImage.h](../headless/src/WorldMapImage.h)）负责，Lua 侧不解析模型、不做搜索。
+原生侧从客户端只读 `Data/` 的地图 IMG（`Map002/Map`，缺少 `Map002/` 时用 `Map/Map`）门户记录派生模型：只把指向其他地图的跨图门户当作有向边，排除带 script 的门户和外部目标 `999999999`；同地图内同名同目的地的门户合并为一条边，不推断反向边。路线按有向 BFS 搜索，最多 24 段。模型、路线搜索和版本化缓存都由原生实现（[WorldMap.h](../shared/lua-runtime/WorldMap.h)、[WorldMapImage.h](../shared/lua-runtime/WorldMapImage.h)）负责，Lua 侧不解析模型、不做搜索。
 
 缓存路径为 `<cache_dir>/world-map/<logic_version>/<source_fingerprint>.wmap`，当前 `logic_version=2`。`logic_version` 或来源 fingerprint（地图 IMG 的相对路径、字节数与首尾内容采样哈希；不依赖 mtime，避免 Linux 与 Wine/Windows 时间表示不同导致同一资料分叉缓存）任一变化都会使用新路径；运行时只写新文件，不删除旧版本缓存。缓存不可写时本次仍用内存模型查询（`cache="memory"`）；来源数据缺失或不可读、观察通道或实例身份异常时返回统一错误信封（`ok=false`，退出码 2），不猜测缺失资料。
 
@@ -147,9 +146,9 @@ workbenches/workbench dev/NAME world-map route 100000000 100000100
 workbenches/workbench dev/NAME resources-check
 ```
 
-该命令固定选择headless镜像，读取公共资源配置并只读解析原版 Data/IMG，全程离线；GUI工作目录也可使用，后端设置保持原样。
+该命令使用GUI镜像，读取公共资源配置并只读解析原版 Data/IMG，全程离线；所有工作目录都可使用。
 
-Python `Catalog` 同样直接读取资源配置的 `game_data`，在自身进程内加载独立的 `libbeidou-img.so` 解码原版 IMG；不向游戏客户端、桥 DLL 或服务器请求静态数据。解析库随两种客户端镜像交付，源码离线开发可用 `make -C headless build/libbeidou-img.so` 构建，`BEIDOU_IMG_LIBRARY` 可显式选择该本地库。资源只取北斗 `Data/`；缺失条目保持未知，不回退到旧 NX 或导出 XML。内存节点兼容库仍保留上游 `nl::node` / `nl::nx` 名称，它们不是 NX 文件来源。
+Python `Catalog` 同样直接读取资源配置的 `game_data`，在自身进程内加载独立的 `libbeidou-img.so` 解码原版 IMG；不向游戏客户端、桥 DLL 或服务器请求静态数据。解析库随 GUI 镜像交付，源码离线开发可用 `make -C shared/img build/libbeidou-img.so` 构建，`BEIDOU_IMG_LIBRARY` 可显式选择该本地库。资源只取北斗 `Data/`；缺失条目保持未知，不回退到旧 NX 或导出 XML。内存节点兼容库仍保留上游 `nl::node` / `nl::nx` 名称，它们不是 NX 文件来源。
 
 ## 客户端事件
 
@@ -166,7 +165,7 @@ workbenches/workbench dev/GUI_NAME events watch \
 
 绑定身份后的持续监听遇到暂时失效采样引发的 `stale_bridge_state` 时，保留游标等待新鲜采样，旧文件中的事件不投递。同一不可用期间只输出一条 `event="events_unavailable"` 流诊断；恢复后输出 `events_ready` 并从原游标继续。首次基线尚未建立时诊断中的 `cursor=null`。这些流诊断只描述事件流健康；等待仍遵守 `--seconds` 和取消。单次 `events read` 按本次采样结果返回，身份、协议及其他错误使监听退出。
 
-原生保留最近128条事件，每个读者独立持有游标。落后于保留区返回 `events_gap`，须重新观察当前事实；身份变化返回 `events_identity_changed` 并停止，后续实例另行接入。旧桥及无头未提供通知气泡事件时返回 `unsupported_capability`；原生报告事件发布失败时返回 `events_unavailable`，旧文件只作历史保留。事件通知描述界面事实：`notification.opened` 提示发现气泡，`notification.closed` 表示该气泡不再待处理，关闭载荷的 pending/available 均为 false；`notification.observation_unavailable` 表示本端观察中断。后续业务结果按相应当前状态另行核对。
+原生保留最近128条事件，每个读者独立持有游标。落后于保留区返回 `events_gap`，须重新观察当前事实；身份变化返回 `events_identity_changed` 并停止，后续实例另行接入。镜像未提供通知气泡事件时返回 `unsupported_capability`；原生报告事件发布失败时返回 `events_unavailable`，旧文件只作历史保留。事件通知描述界面事实：`notification.opened` 提示发现气泡，`notification.closed` 表示该气泡不再待处理，关闭载荷的 pending/available 均为 false；`notification.observation_unavailable` 表示本端观察中断。后续业务结果按相应当前状态另行核对。
 
 ## 原生通知气泡
 
@@ -184,7 +183,7 @@ workbenches/workbench dev/GUI_NAME notifications respond @notificationCURRENT --
 
 返回的 `input_dispatched=true` 仅确认本轮桌面输入已派发；`after` 分别报告气泡是否还在、是否仍待处理及可响应，`effect` 保持 `unknown`。主按钮操作后气泡仍在属于正常结果，再次点击需重新读取后决定。输入派发后采样不可用时，结果保留该事实并返回 `observation_error`，派发按已提交处理。
 
-业务结果另外核对：实际入队需要成员状态，接受交易邀请需要确认交易窗口，最终成交则是不同动作，需要独立明确授权；气泡消失与否作为界面事实单独记录。本接口只响应气泡按钮，物品、金币和成交由对应命令完成。组队成员接口和真实核验仍是缺口，见[客户端能力边界](CLIENT_LIMITATIONS.md)。GUI 气泡由 GUI 端提供，无头端按结构化事件交付。
+业务结果另外核对：实际入队需要成员状态，接受交易邀请需要确认交易窗口，最终成交则是不同动作，需要独立明确授权；气泡消失与否作为界面事实单独记录。本接口只响应气泡按钮，物品、金币和成交由对应命令完成。组队成员接口和真实核验仍是缺口，见[客户端能力边界](CLIENT_LIMITATIONS.md)。气泡由 GUI 端提供。
 
 ## 动作与 Lua
 
@@ -210,7 +209,7 @@ workbenches/workbench dev/NAME script cancel --session SCRIPT_ID
 
 `script describe/run/start` 的相对路径从所选角色的 `/work/scripts` 解析，例如 `tick_observe.lua`；绝对路径指向容器内指定位置，例如 `/opt/beidou-pilot/shared/scripts/examples/tick-jump-attack.lua`。单文件和目录包规则相同。运行期限用 `--seconds`（默认 30，范围 `0.001..4294967.295` 秒）或显式 `--continuous`；期限与单次回调的 `@tick.budget_ms` 独立。脚本日志由原生端写入所属实例桥目录的 `script-events.jsonl`，游戏效果另行核对。
 
-tick 引擎按每会话频率档位到期调用 `main(context)`，通过 `context.state` 保留跨调用状态，通过 `context.game` 的只读领域观察，通过 `context.game.player` 提交方向与动作意图；调用频率、预算、领域字段和动作槽语义以 [Tick Lua API](LUA_TICK_API.md#tick-环境) 为准。tick 入口可以是单文件，也可以是目录脚本包：目录内固定 `main.lua` 为入口，其余 `.lua` 由入口用原生 `require` 按包内相对路径装载，模块文件保持原位置、不复制进会话目录；GUI 与 headless 由原生各自把包根映射到本端文件系统，会话状态可查实际装载模块，模块缺失、编译或运行错误带来源模块与行号。完整示例：
+tick 引擎按每会话频率档位到期调用 `main(context)`，通过 `context.state` 保留跨调用状态，通过 `context.game` 的只读领域观察，通过 `context.game.player` 提交方向与动作意图；调用频率、预算、领域字段和动作槽语义以 [Tick Lua API](LUA_TICK_API.md#tick-环境) 为准。tick 入口可以是单文件，也可以是目录脚本包：目录内固定 `main.lua` 为入口，其余 `.lua` 由入口用原生 `require` 按包内相对路径装载，模块文件保持原位置、不复制进会话目录；GUI 由原生把包根映射到本端文件系统，会话状态可查实际装载模块，模块缺失、编译或运行错误带来源模块与行号。完整示例：
 
 ```lua
 -- @tick.gear 3            -- 1=10Hz，2=20Hz，3=30Hz默认，4=本端原生更新
@@ -265,44 +264,33 @@ end
 workbenches/workbench dev/NAME skill-up 1001003 --points 1
 ```
 
-`skill-up SKILL_ID [--points N]` 要求正整数技能 ID 与点数，点数默认 1。先确认角色、技能和加点授权。无头端逐点请求，每点核对同一角色的技能等级增加 1、剩余 SP 减少 1 后才继续；原生端检查职业、技能和上限等条件。中途失败的 `details.confirmed` 保留已确认的点数；`skill_up_unknown` 表示请求已发布但结果未知，先重新观察，不要重放。无头端与 GUI 同样以冒险家职业群为目标；冒险家初学者技能使用新手技能组 `0` 的三项计算独立余量：`min(等级−1, 6)` 减去对应三项技能等级之和，不以总 SP 代替。headless 另有骑士团/战神新手组的实现，但未经真实样本验收，不在本阶段目标与验收范围；其他职业群不承诺。
+`skill-up SKILL_ID [--points N]` 要求正整数技能 ID 与点数，点数默认 1。先确认角色、技能和加点授权。GUI 逐点请求，每点核对同一角色的技能等级增加 1、剩余 SP 减少 1 后才继续；原生端检查职业、技能和上限等条件。中途失败的 `details.confirmed` 保留已确认的点数；`skill_up_unknown` 表示请求已发布但结果未知，先重新观察，不要重放。以冒险家职业群为目标；冒险家初学者技能使用新手技能组 `0` 的三项计算独立余量：`min(等级−1, 6)` 减去对应三项技能等级之和，不以总 SP 代替。其他职业群不承诺。
 
-GUI 不打开技能窗口，使用原生游戏线程协议逐点调用。普通技能候选覆盖已核验的冒险家职业；原生端仍需两次确认技能属于当前职业祖先组，候选不等于允许加点。初学者技能候选为普通冒险家职业的 `1000`、`1001`、`1002`；原生端核验技能组成员及可见性，范围外返回 `skill_up_unsupported`。初学者点数以角色等级及十二项基础技能等级计算。每点先核对剩余 SP，原生端在调用前核对本批剩余点数、有效等级上限和技能条件；确认同一实例、运行、角色与场景下等级增加 1、SP 减少 1 后才继续。中途失败返回已确认点数；结果未知时停止，不自动重发；请求超时的详情包含 `request_id` 和 UTC Unix 毫秒 `deadline_ms`，应在截止后继续观察，截止也不能证明原生调用未发生。原生端另对整批剩余点数执行阶段累计加点门禁，超出或事实不可用时拒绝；组缺失、结构异常或技能非成员时返回 `skill_up_group_unavailable_or_not_member`。恢复后的 GUI 无窗口加点已在开发服实测战士多点与法师单点等场景；其他职业群不在本阶段范围，超时场景仍待验收。无头同 run 核对已在 `40b16bf` 开发服场景实测，证据见 PR 评论 `7031143430`；该证据不覆盖超时场景。
+GUI 不打开技能窗口，使用原生游戏线程协议逐点调用。普通技能候选覆盖已核验的冒险家职业；原生端仍需两次确认技能属于当前职业祖先组，候选不等于允许加点。初学者技能候选为普通冒险家职业的 `1000`、`1001`、`1002`；原生端核验技能组成员及可见性，范围外返回 `skill_up_unsupported`。初学者点数以角色等级及十二项基础技能等级计算。每点先核对剩余 SP，原生端在调用前核对本批剩余点数、有效等级上限和技能条件；确认同一实例、运行、角色与场景下等级增加 1、SP 减少 1 后才继续。中途失败返回已确认点数；结果未知时停止，不自动重发；请求超时的详情包含 `request_id` 和 UTC Unix 毫秒 `deadline_ms`，应在截止后继续观察，截止也不能证明原生调用未发生。原生端另对整批剩余点数执行阶段累计加点门禁，超出或事实不可用时拒绝；组缺失、结构异常或技能非成员时返回 `skill_up_group_unavailable_or_not_member`。恢复后的 GUI 无窗口加点已在开发服实测战士多点与法师单点等场景；其他职业群不在本阶段范围，超时场景仍待验收。
 
-GUI 和无头端每个成功确认的加点结果含 `request_id` 和 `run_id`；批量结果在 `allocations` 中逐点保留它们。结果未知时从错误详情取得原请求 ID；可在同一客户端运行及同一角色下显式核对原请求：
+GUI 每个成功确认的加点结果含 `request_id` 和 `run_id`；批量结果在 `allocations` 中逐点保留它们。结果未知时从错误详情取得原请求 ID；可在同一客户端运行及同一角色下显式核对原请求：
 
 ```bash
 workbenches/workbench dev/NAME skill-up-reconcile 1000 --request-id 0123456789abcdef0123456789abcdef
 ```
 
-该命令只核对待确认记录，不发加点事件；`confirmed` 表示已观察到原请求的等级与对应点数变化，`unresolved` 表示仍无法确认且不会解除待确认状态。同一运行及匹配角色、职业下，可用原请求 ID 再次显式核对已确认记录；无头端若记录变为 `unresolved`，会保守阻止当前运行的后续加点。进程重启或角色变化后不能用它恢复原运行的记录；重启不证明旧请求未生效，不能将未确认当作未加点或自动重发。
+该命令只核对待确认记录，不发加点事件；`confirmed` 表示已观察到原请求的等级与对应点数变化，`unresolved` 表示仍无法确认且不会解除待确认状态。同一运行及匹配角色、职业下，可用原请求 ID 再次显式核对已确认记录；记录变为 `unresolved` 时，会保守阻止当前运行的后续加点。进程重启或角色变化后不能用它恢复原运行的记录；重启不证明旧请求未生效，不能将未确认当作未加点或自动重发。
 
-**当前范围：**目标是冒险家职业群（`100`–`522` 的普通技能及初学者技能 `1000`、`1001`、`1002`）。骑士团、战神、Evan 等其他职业群不在本阶段范围；headless 的骑士团/战神新手组实现未经真实样本验收，也不在本阶段目标与验收范围。GUI 遇到范围外技能返回 `skill_up_unsupported`；旧窗口路径的 12 个初学者技能支持不在当前目标内，出现真实需求再评估。
+**当前范围：**目标是冒险家职业群（`100`–`522` 的普通技能及初学者技能 `1000`、`1001`、`1002`）。骑士团、战神、Evan 等其他职业群不在本阶段范围。GUI 遇到范围外技能返回 `skill_up_unsupported`；旧窗口路径的 12 个初学者技能支持不在当前目标内，出现真实需求再评估。
 
 ## 正常复活
 
-`revive` 在 GUI 与无头端都提交一次普通复活请求。HP 已知为正时返回 `already_alive` 且不发送请求；角色或 HP 读数不可用时拒绝操作。两端均调用共享 tick Lua 的 `player.revive()`：GUI 端只在唯一已识别复活窗口及其启用的确认按钮可验证时调用原版窗口确认动作；无头端由本端发送普通 `CHANGEMAP` 请求。请求派发不表示恢复成功：命令只在同一角色 ID 的 HP 为正、地图与位置有效时返回 `revived`；GUI 还要确认复活窗口消失。超时或身份变化时停止，不重发。
+`revive` 提交一次普通复活请求。HP 已知为正时返回 `already_alive` 且不发送请求；角色或 HP 读数不可用时拒绝操作。命令调用共享 tick Lua 的 `player.revive()`，只在唯一已识别复活窗口及其启用的确认按钮可验证时调用原版窗口确认动作。请求派发不表示恢复成功：命令只在同一角色 ID 的 HP 为正、地图与位置有效且复活窗口消失时返回 `revived`。超时或身份变化时停止，不重发。
 
 ## AP 自动分配
 
-`workbenches/workbench dev/NAME auto-ap` 无参数，提交一次当前全部剩余 AP 的自动分配请求。GUI 调用原版自动分配流程，无头端按其已实现的职业规则计算；不支持的版本或职业返回 `unsupported_capability`。服务端负责最终校验，不直接修改数据库。
+`workbenches/workbench dev/NAME auto-ap` 无参数，提交一次当前全部剩余 AP 的自动分配请求。GUI 调用原版自动分配流程；不支持的版本或职业返回 `unsupported_capability`。服务端负责最终校验，不直接修改数据库。
 
 AP 已为 0 时返回 `status=unchanged`；确认同角色 AP 已归零且属性增量合计等于原 AP 时返回 `status=allocated`。两者都返回 `before`、`after`（含 `strength`、`dexterity`、`intelligence`、`luck`、`ability_points`）、`allocated` 和 `remaining_ap`。`unknown` 表示结果未确认，先观察同一角色的属性和剩余 AP，不重复请求。完整职业覆盖不作保证。
 
-## 无头控件交互
-
-无头端通过原生引用操作 NPC 和对话，不模拟桌面坐标。对话应在 NPC 交互范围内发起；客户端是否派发不代表服务器接受，不能保证远距离有效：`talk 希娜` 按当前场景名称选择 NPC，`dialog read` 返回正文、选项、按钮及引用，`dialog select 选项文字`、`dialog next`、`dialog confirm`、`dialog yes/no/end` 激活当前页面控件，`click @ui-...` 直接激活引用。任务列表、接取和交付尚未作为已支持能力交付；可用性未知时保守拒绝。请求派发不代表服务端结果已确认，应重新读取页面或任务记录；结果未知时不要重放。若页面停在控件未知的等待状态，表示仍未确认后续结果，不要把该状态当作成功结束；部分服务器的关闭信号可能先于终页响应到达。引用只在当前实例、角色、场景及页面有效。运行中的脚本占用输入时返回 `input_busy`。`dialog advance`、桌面坐标及商店操作尚不支持，其他限制见[能力边界](CLIENT_LIMITATIONS.md)。
-
-```bash
-workbenches/workbench dev/NAME snapshot
-workbenches/workbench dev/NAME inspect quests
-```
-
-页面只有 `source/title/text/controls`，控件只有 `role/text/enabled/ref`。正文或控件未知时为 `null`，`enabled=null` 保持未知。服务端普通脚本页和客户端本地任务页的激活由 GUI 端提供；本地页只显示当前状态能证明的任务条目。任务观察已合并完整角色包与本端正常增量，`live_updates=true`，`live_update_kinds` 为 `not_started/started/completed`。原生观察保留原始进度串，关联语义未核实时 `linked_progress=null`。
-
 ## 原版 GUI
 
-GUI 镜像包含与无头端相同的CLI与Lua，以及Wine/VirtualGL和匹配的桥DLL。其资源路径仍从公共 `private/workbenches/config/resources.json` 读取；原版客户端只读挂到 `/client`，`game_data` 指向的 `Data/` 只读挂到 `/data`，供 Catalog 使用共享原生解析器。工作目录的 `workbench.json` 设置 `backend="beidou"` 后，使用相同入口：
+GUI 镜像包含 CLI、Lua、Wine/VirtualGL 和匹配的桥 DLL。资源路径从公共 `private/workbenches/config/resources.json` 读取；原版客户端只读挂到 `/client`，`game_data` 指向的 `Data/` 只读挂到 `/data`，供 Catalog 使用共享原生解析器。工作目录的 `workbench.json` 设置 `backend="beidou"` 后，使用相同入口：
 
 ```bash
 workbenches/workbench dev/GUI_NAME build
@@ -318,14 +306,14 @@ GUI 容器在自身网络命名空间启用回环游戏端口 NAT，连接已核
 
 构建成功、环境检查和实际入图分别记录；涉及动作时另核对实际游戏结果。GUI 输入仍只允许一名明确操作者。
 
-以下列出 GUI 的窗口操作；无头端对 NPC 和交互引用的支持范围见上节：
+以下列出 GUI 的窗口操作：
 
 | 命令组 | 用途 |
 | --- | --- |
 | `talk TARGET`、`dialog` | 原版 NPC 对话与桌面消费者 |
-| `click REF` | GUI 激活引用或桌面坐标；无头端仅激活原生交互引用 |
+| `click REF` | GUI 激活引用或桌面坐标 |
 | `ui read` | 读取已识别窗口；窗口开关与焦点命令不再提供 |
-| `equip ITEM` | 普通唯一槽位走原版背包点击换装；无头端返回 `unsupported_capability` |
+| `equip ITEM` | 普通唯一槽位走原版背包点击换装 |
 | `hotkeys`、`bind` | 读取当前键位、拖放绑定物品或技能 |
 | `shop read/buy/sell/close` | 普通商店读取与指定买卖；数量框和关店按实际 UI 收尾 |
 | `screenshot [NAME]`、`record NAME` | 当前窗口截图或有界逐帧记录，不发游戏输入 |

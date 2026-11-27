@@ -2,6 +2,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+
+_OPEN_WINDOW = patch("beidou_pilot.ui.open_window")
+
 from beidou_pilot.auto_ap import auto_ap
 from beidou_pilot.errors import ClientError
 
@@ -12,6 +15,10 @@ def observation(ap, strength=10, identity=1):
 
 
 class AutoApTest(unittest.TestCase):
+    def setUp(self) -> None:
+        _OPEN_WINDOW.start()
+        self.addCleanup(_OPEN_WINDOW.stop)
+
     def test_zero_ap_never_submits(self):
         from unittest.mock import Mock
         backend = Mock()
@@ -66,7 +73,7 @@ class AutoApTest(unittest.TestCase):
         lua.lua_tolstring.restype = ctypes.c_char_p
         lua.lua_close.argtypes = [ctypes.c_void_p]
         backend = Mock()
-        backend.name = "headless"
+        backend.name = "beidou"
         backend.read.side_effect = [observation(2), observation(0, 12)]
         scene = {"character_id": 1, "instance_id": "original", "scene_generation": 3, "map_id": 4}
         with patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \
@@ -153,7 +160,7 @@ entry.main(entry.context)
     def test_actual_result_and_single_submission(self):
         from unittest.mock import Mock
         backend = Mock(name="backend")
-        backend.name = "headless"
+        backend.name = "beidou"
         backend.read.side_effect = [observation(2), observation(2), observation(0, 12)]
         with patch("beidou_pilot.auto_ap.BridgeClient") as bridge, \
              patch("beidou_pilot.auto_ap.scene_context", return_value={"character_id": 1}), \

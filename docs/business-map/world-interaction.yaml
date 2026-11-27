@@ -122,13 +122,13 @@ nodes:
 - id: world-interaction.gui-only
   kind: invariant
   name: 当前语义交互仅由原版 GUI 提供
-  summary: NPC 对话与商店流程是 GUI CLI 的已有能力，当前无头端与公共 Lua API 不提供这些语义操作；窗口只保留只读查看，不再提供开关或焦点命令。
+  summary: NPC 对话与商店流程是 GUI CLI 的已有能力，公共 Lua API 不提供这些语义操作；窗口只保留只读查看，不再提供开关或焦点命令。
   aliases: []
   anchors:
   - kind: symbol
     file: cli/beidou_pilot/cli.py
     value: dispatch
-    description: 在无头入口明确拒绝未支持的窗口和玩法命令。
+    description: 在 CLI 明确拒绝未支持的窗口和玩法命令。
   - kind: document
     value: docs/LUA_API.md
     description: 公共 Lua API 的实际消费范围。

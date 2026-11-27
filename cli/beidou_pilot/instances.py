@@ -21,19 +21,18 @@ class InstancePaths:
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,47}", self.name):
             raise ClientError("invalid_instance", "实例名须为1至48位小写字母、数字、下划线或连字符，并以字母或数字开头。")
-        if self.backend != "headless" and self.name != "default":
-            raise ClientError("unsupported_instance", "命名实例目前仅支持headless；北斗图形端使用default。")
+        if self.backend != "beidou":
+            raise ClientError("unsupported_backend", "客户端后端仅为原版 GUI。")
+        if self.name != "default":
+            raise ClientError("unsupported_instance", "原版 GUI 仅支持 default 实例。")
 
     @property
     def state_directory(self) -> Path:
-        return self.root / "state" if self.name == "default" else self.root / "state/instances" / self.name
+        return self.root / "state"
 
     @property
     def runtime_directory(self) -> Path:
-        if self.backend != "headless":
-            return self.root / "runtime"
-        directory = self.root / "runtime/headless"
-        return directory if self.name == "default" else directory / "instances" / self.name
+        return self.root / "runtime"
 
     @property
     def bridge(self) -> Path:

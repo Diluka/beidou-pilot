@@ -39,7 +39,7 @@
     <ClInclude Include="NativeMotion.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="NativeDeath.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="NativeSceneTerrain.h"><Filter>Header Files</Filter></ClInclude>
-    <ClInclude Include="..\..\headless\src\ImgResources.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\..\shared\img\ImgResources.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\shared\lua-runtime\SceneTerrain.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="NativeKeyUnion.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="NativeTickInput.h"><Filter>Header Files</Filter></ClInclude>
@@ -166,8 +166,8 @@
   <ItemGroup>
     <ClCompile Include="NativeMotion.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="NativeSceneTerrain.cpp"><Filter>Source Files</Filter></ClCompile>
-    <ClCompile Include="..\..\headless\src\ImgResources.cpp"><Filter>Source Files</Filter></ClCompile>
-    <ClCompile Include="..\..\headless\src\ImgKeys.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\shared\img\ImgResources.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\shared\img\ImgKeys.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="..\..\shared\lua-runtime\TickRuntime.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="dllmain.cpp">
       <Filter>Source Files</Filter>

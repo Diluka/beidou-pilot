@@ -1,7 +1,7 @@
 """Read BeiDou IMG files in this process using a standalone decoder.
 
 The local shared library decodes disk files; it does not connect to a running
-headless/GUI client, load the GUI bridge DLL, or query a game server.
+GUI client, load the GUI bridge DLL, or query a game server.
 """
 
 from ctypes import CDLL, POINTER, Structure, byref, c_char_p, c_double, c_int, c_int32, c_int64, c_size_t, c_uint16, c_uint32, c_void_p, create_string_buffer, string_at
@@ -40,7 +40,7 @@ def _library() -> CDLL:
     configured = os.environ.get("BEIDOU_IMG_LIBRARY")
     root = Path(__file__).resolve().parents[2]
     candidates = [Path(configured).expanduser()] if configured else [
-        root / "headless/build/libbeidou-img.so",
+        root / "shared/img/build/libbeidou-img.so",
         root / "lib/libbeidou-img.so",
     ]
     path = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
@@ -94,6 +94,9 @@ class ImgDirectory:
             Path(self._read_path(self._library.beidou_img_directory_source, index))
             for index in range(self._library.beidou_img_directory_source_count(self._handle))
         )
+
+    def summary(self) -> dict[str, int]:
+        return {"nodes": self._node_count, "strings": self._string_count, "sources": len(self._sources)}
 
     def _read_path(self, getter, index: int) -> str:
         length = c_size_t()

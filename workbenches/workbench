@@ -16,15 +16,15 @@ usage() {
   character create 显式提交完整建角参数至运行中的实例
   status           查询本工作台，省略命令时默认执行
   close            正常关闭并核对所属容器退出
-  resources-check  用无头镜像离线检查原版 Data/IMG，不登录
+  resources-check  用 GUI 镜像离线检查原版 Data/IMG，不登录
   notes            读取本工作台 README、PLAN/STATE、HANDOFF 和脚本说明
   其他命令         交给所属容器内的 beidou-pilot
 
   --help           显示本说明
 
 目录内维护 account.json、可选 workbench.json、计划、脚本与运行数据。
-workbench.json 可配置 backend、ref、timeout、bridge_artifact、cache_dir。
-默认 headless、main、90秒。GUI 使用本启动器的 Compose 清单装配所选版本的镜像。
+workbench.json 可配置 backend（仅接受 beidou）、ref、timeout、bridge_artifact、cache_dir。
+默认 main、90秒。客户端使用本启动器的 Compose 清单装配所选版本的 GUI 镜像。
 cache_dir 为角色目录内的宿主绝对路径，默认 <workbench>/cache；容器内固定为 /cache。
 两区只读取主检出 private/workbenches/config 下对应的服务器配置与共享资源路径。
 开发服 stop 不清库；角色工作台 close 不停止服务器。脚本相对当前角色的 scripts/。
@@ -229,8 +229,7 @@ locate() {
     inspect=$(docker inspect "$id" | jq -e --arg wb "$workbench" --arg instance "$instance" '
         .[0] | select(.Config.Labels["beidou.workbench"] == $wb
         and .Config.Labels["beidou.client.instance"] == $instance
-        and (.Config.Labels["beidou.task"] == "client-v17-maintained"
-             or .Config.Labels["beidou.task"] == "maple-headless-maintained")
+        and .Config.Labels["beidou.task"] == "client-v17-maintained"
         and (.HostConfig.Privileged|not) and .HostConfig.NetworkMode != "host"
         and ((.HostConfig.PortBindings // {})|length) == 0)') ||
         fail container_identity_changed '同名容器的工作台或运行边界不符，保留现场。'
@@ -263,8 +262,7 @@ exec_cli() {
         exec_directory=(--workdir /work/scripts)
     fi
     token=$(tr -d '-' </proc/sys/kernel/random/uuid)
-    cli_user=$(jq -r .Config.User <<<"$inspect")
-    if [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = beidou ]; then cli_user=1000:1000; fi
+    cli_user=1000:1000
     forward_cancel() {
         interrupted=true
         docker exec --user "$cli_user" "$id" beidou-pilot --cancel-exec "$token" >/dev/null ||
@@ -386,7 +384,7 @@ settings='{}'
 if [ -f "$workbench/workbench.json" ]; then
     settings=$(jq -e 'select(type == "object") | select(
         ((keys - ["backend", "ref", "timeout", "bridge_artifact", "cache_dir"]) | length) == 0
-        and (if has("backend") then .backend == "headless" or .backend == "beidou" else true end)
+        and (if has("backend") then .backend == "beidou" else true end)
         and (if has("ref") then (.ref | type == "string" and length > 0) else true end)
         and (if has("timeout") then (.timeout | type == "number" and . >= 5 and . <= 180) else true end)
         and (if has("bridge_artifact") then (.bridge_artifact | type == "string" and length > 0) else true end)
@@ -402,7 +400,7 @@ fi
 if [ -f "$workbench/server.json" ] || [ -f "$workbench/resources.json" ]; then
     fail workbench_migration_required '目录含旧 server.json/resources.json；服务器和资源只从 private/workbenches/config 读取。'
 fi
-backend=$(jq -r '.backend // "headless"' <<<"$settings")
+backend=beidou
 source_ref=$(jq -r '.ref // "main"' <<<"$settings")
 timeout=$(jq -r '.timeout // 90' <<<"$settings")
 if [ "$command" = login ] && "$running"; then
@@ -415,7 +413,6 @@ bridge=$(jq -r '.bridge_artifact // empty' <<<"$settings")
 if [ -n "$bridge" ]; then
     case "$bridge" in /*) ;; *) bridge="$workbench/$bridge" ;; esac
 fi
-if [ "$command" = resources-check ]; then backend=headless; fi
 account="$workbench/account.json"
 resources="$config_root/resources.json"
 
@@ -437,16 +434,10 @@ fi
 
 begin_preparation_stage context
 revision=$(git -C "$repository" rev-parse --verify "$source_ref^{commit}")
-image_tag="local/beidou-pilot-$backend:$revision"
+image_tag="local/beidou-pilot-beidou:$revision"
 context="$main_root/tmp/client-images/$revision"
-native_paths=(docker/headless/Dockerfile headless/Makefile headless/src shared/lua-runtime
-    third_party/maplestory-client third_party/json third_party/lua)
-if [ "$backend" = beidou ]; then
-    native_paths=(beidou-ijl15/ezorsia beidou-ijl15/ezorsia.sln beidou-ijl15/tools/build-agent-bridge.ps1
-        shared/lua-runtime headless/src/ImgResources.cpp headless/src/ImgResources.h headless/src/ImgKeys.cpp
-        headless/src/WorldMapImage.cpp headless/src/WorldMapImage.h
-        third_party/lua third_party/detours .github/workflows/agent-bridge.yml)
-fi
+native_paths=(beidou-ijl15/ezorsia beidou-ijl15/ezorsia.sln beidou-ijl15/tools/build-agent-bridge.ps1
+    shared/lua-runtime shared/img third_party/lua third_party/detours .github/workflows/agent-bridge.yml)
 build_image() {
     mkdir -p "$main_root/tmp/client-images"
     exec 9>"$main_root/tmp/client-images/$revision.lock"
@@ -466,7 +457,7 @@ build_image() {
     fi
     if [ "$command" = build ]; then
         source_tree=$(git -C "$repository" rev-parse "$revision^{tree}")
-        if [ -n "$id" ] && [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = "$backend" ]; then
+        if [ -n "$id" ] && [ "$(jq -r '.Config.Labels["beidou.backend"]' <<<"$inspect")" = beidou ]; then
             instance_revision=$(jq -r .source_revision <<<"$current_instance")
             if git -C "$repository" cat-file -e "$instance_revision^{commit}" 2>/dev/null; then
                 if git -C "$repository" diff --quiet "$instance_revision" "$revision" -- "${native_paths[@]}"; then
@@ -489,7 +480,7 @@ build_image() {
             fail image_identity_changed '版本标签的实际镜像身份不符。'
         image=$(docker image inspect "$image_tag" --format '{{.Id}}')
         complete_preparation_stage reused "$(jq -nc --arg tag "$image_tag" --arg image "$image" '{tag:$tag,image:$image}')"
-        if [ "$command" = build ] && [ "$backend" = beidou ]; then
+        if [ "$command" = build ]; then
             begin_preparation_stage bridge
             bridge_manifest=$(docker run --rm --network none --read-only --entrypoint cat "$image" /opt/beidou-pilot/native/manifest.json)
             complete_preparation_stage reused "$(jq -nc --argjson manifest "$bridge_manifest" '{source:"image",manifest:$manifest}')"
@@ -497,33 +488,30 @@ build_image() {
         flock -u 9
         return
     fi
-    dockerfile=docker/headless/Dockerfile
-    if [ "$backend" = beidou ]; then
-        begin_preparation_stage bridge
-        dockerfile=docker/gui/Dockerfile
-        bridge_outcome=reused
-        bridge_source=artifact
-        bridge_run=null
-        if [ -z "$bridge" ]; then
-            bridge="$main_root/tmp/client-images/bridges/$revision"
-            if [ ! -f "$bridge/manifest.json" ]; then
-                run=$(gh run list --repo Diluka/beidou-pilot --workflow agent-bridge.yml --commit "$revision" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-                [ -n "$run" ] || fail bridge_build_required '该提交的 Windows 桥工件尚未就绪；可等待 CI，或在 workbench.json 中指定匹配的 bridge_artifact。'
-                mkdir -p "$bridge"
-                gh run download "$run" --repo Diluka/beidou-pilot --name maple-agent-bridge-win32 --dir "$bridge" >&2
-                bridge_outcome=downloaded
-                bridge_source=ci
-                bridge_run=$run
-            fi
+    begin_preparation_stage bridge
+    dockerfile=docker/gui/Dockerfile
+    bridge_outcome=reused
+    bridge_source=artifact
+    bridge_run=null
+    if [ -z "$bridge" ]; then
+        bridge="$main_root/tmp/client-images/bridges/$revision"
+        if [ ! -f "$bridge/manifest.json" ]; then
+            run=$(gh run list --repo Diluka/beidou-pilot --workflow agent-bridge.yml --commit "$revision" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "$run" ] || fail bridge_build_required '该提交的 Windows 桥工件尚未就绪；可等待 CI，或在 workbench.json 中指定匹配的 bridge_artifact。'
+            mkdir -p "$bridge"
+            gh run download "$run" --repo Diluka/beidou-pilot --name maple-agent-bridge-win32 --dir "$bridge" >&2
+            bridge_outcome=downloaded
+            bridge_source=ci
+            bridge_run=$run
         fi
-        bridge=$(realpath "$bridge")
-        mkdir -p "$context/build-input"
-        cp "$bridge/ijl15.dll" "$bridge/manifest.json" "$context/build-input/"
-        if [ "$command" = build ]; then
-            complete_preparation_stage "$bridge_outcome" "$(jq -nc --arg source "$bridge_source" --argjson run "$bridge_run" \
-                --slurpfile manifest "$context/build-input/manifest.json" '{source:$source,manifest:$manifest[0]} +
-                (if $run == null then {} else {ci_run_id:$run} end)')"
-        fi
+    fi
+    bridge=$(realpath "$bridge")
+    mkdir -p "$context/build-input"
+    cp "$bridge/ijl15.dll" "$bridge/manifest.json" "$context/build-input/"
+    if [ "$command" = build ]; then
+        complete_preparation_stage "$bridge_outcome" "$(jq -nc --arg source "$bridge_source" --argjson run "$bridge_run" \
+            --slurpfile manifest "$context/build-input/manifest.json" '{source:$source,manifest:$manifest[0]} +
+            (if $run == null then {} else {ci_run_id:$run} end)')"
     fi
     begin_preparation_stage client_image
     docker build --file "$context/$dockerfile" --build-arg "SOURCE_REVISION=$revision" \
@@ -545,11 +533,19 @@ if [ "$command" = build ]; then
 fi
 
 if [ "$command" = resources-check ]; then
-    [ "$backend" = headless ] || fail unsupported_capability 'IMG 离线检查使用 headless 镜像。'
     data=$(resource_path game_data)
-    exec docker run --rm --network none --read-only --cpus 2 --memory 1g --pids-limit 128 \
+    exec docker run -i --rm --network none --read-only --cpus 2 --memory 1g --pids-limit 128 \
         --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
-        --mount "type=bind,src=$data,dst=/data,readonly" --entrypoint /bin/beidou-headless "$image" --check-resources /data
+        --mount "type=bind,src=$data,dst=/data,readonly" \
+        --env BEIDOU_IMG_LIBRARY=/opt/beidou-pilot/lib/libbeidou-img.so \
+        --entrypoint python3 "$image" - <<'PYCODE'
+import json
+from pathlib import Path
+from beidou_pilot.img_resources import ImgDirectory
+
+directory = ImgDirectory(Path("/data"))
+print(json.dumps({"ok": True, **directory.summary()}, ensure_ascii=False, separators=(",", ":")))
+PYCODE
 fi
 
 [ -f "$account" ] && [ "$(stat -Lc %a "$account")" = 600 ] || fail private_file_permissions 'account.json 须存在且权限为 0600。'
@@ -558,10 +554,8 @@ account=$(realpath "$account")
 resources=$(realpath "$resources")
 data=$(resource_path game_data)
 [ -d "$data" ] || fail resources_missing '原版 Data/IMG 资源目录不可用。'
-if [ "$backend" = beidou ]; then
-    gui=$(resource_path gui_client)
-    [ -d "$gui" ] && [ -c /dev/dri/renderD128 ] || fail gui_unavailable '原客户端资源或 GUI 渲染设备不可用。'
-fi
+gui=$(resource_path gui_client)
+[ -d "$gui" ] && [ -c /dev/dri/renderD128 ] || fail gui_unavailable '原客户端资源或 GUI 渲染设备不可用。'
 mkdir -p "$state"
 exec 8>"$state/lifecycle.lock"
 flock -n 8 || fail lifecycle_busy '该实例正在启停。'
@@ -613,38 +607,16 @@ rm -f "$record" "$state/exit.json"
 target="$run_root/server.json"
 jq -nc --arg project "$project" --arg service "$service" --arg network "$network" \
     '{project:$project,service:$service,network:$network}' >"$target"
-if [ "$backend" = headless ]; then
-    set -- docker run -d --init --name "$name" --network "$network" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=64m \
-        --cpus 2 --memory 1g --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges \
-        --user "$(id -u):$(id -g)" --label beidou.task=maple-headless-maintained \
-        --label "beidou.workbench=$workbench" --label "beidou.client.root=$run_root" --label "beidou.client.instance=$instance" \
-        --label "beidou.target.id=$server_id" --label "beidou.world=$world" \
-        --env "CLIENT_IMAGE_ID=$image" --env "RUN_ID=$run_id" --env "MAPLE_INSTANCE=$instance" \
-        --env "CLIENT_ROOT=$container_root" --env "MAPLE_RESOURCES_CONFIG=$container_root/config/resources.json" \
-        --add-host host.docker.internal:host-gateway \
-        --env "TARGET_IP=$target_ip" --env "TARGET_CONTAINER_ID=$server_id" \
-        --env "BEIDOU_CACHE_DIR=/cache" \
-        --mount "type=bind,src=$workbench,dst=/work" --mount "type=bind,src=$cache_dir,dst=/cache" \
-        --mount "type=bind,src=$data,dst=/data,readonly"
-    if [ "$command" = login ]; then
-        set -- "$@" --env MAPLE_LOGIN_MODE=account --env "MAPLE_ACCEPT_TERMS=$accept_terms"
-        if [ -n "$female" ]; then set -- "$@" --env "MAPLE_FEMALE=$female"; fi
-    else
-        set -- "$@" --label "beidou.character.id=$character_id"
-    fi
-    "$@" "$image" >/dev/null
-else
-    export CLIENT_IMAGE="$image" CLIENT_IMAGE_ID="$image" CLIENT_CONTAINER_NAME="$name" WORKBENCH_ROOT="$workbench"
-    export CLIENT_ROOT="$run_root" CLIENT_RUNTIME_ROOT="$container_root"
-    export BEIDOU_CLIENT_DIR="$gui" GAME_DATA_DIR="$data" TARGET_IP="$target_ip" TARGET_NETWORK="$network"
-    export TARGET_CONTAINER_ID="$server_id" RUN_ID="$run_id" MAPLE_INSTANCE="$instance" CHARACTER_ID="$character_id" WORLD_ID="$world"
-    export MAPLE_LOGIN_MODE=character
-    if [ "$command" = login ]; then export MAPLE_LOGIN_MODE=account; fi
-    export RENDER_GID="$(stat -c %g /dev/dri/renderD128)"
-    export BEIDOU_CACHE_DIR_HOST="$cache_dir"
-    set -- docker compose --project-name "$name" -f "$repository/docker/compose.yaml"
-    "$@" up -d --no-build --pull never client >&2
-fi
+export CLIENT_IMAGE="$image" CLIENT_IMAGE_ID="$image" CLIENT_CONTAINER_NAME="$name" WORKBENCH_ROOT="$workbench"
+export CLIENT_ROOT="$run_root" CLIENT_RUNTIME_ROOT="$container_root"
+export BEIDOU_CLIENT_DIR="$gui" GAME_DATA_DIR="$data" TARGET_IP="$target_ip" TARGET_NETWORK="$network"
+export TARGET_CONTAINER_ID="$server_id" RUN_ID="$run_id" MAPLE_INSTANCE="$instance" CHARACTER_ID="$character_id" WORLD_ID="$world"
+export MAPLE_LOGIN_MODE=character
+if [ "$command" = login ]; then export MAPLE_LOGIN_MODE=account; fi
+export RENDER_GID="$(stat -c %g /dev/dri/renderD128)"
+export BEIDOU_CACHE_DIR_HOST="$cache_dir"
+set -- docker compose --project-name "$name" -f "$repository/docker/compose.yaml"
+"$@" up -d --no-build --pull never client >&2
 id=$(docker inspect "$name" --format '{{.Id}}')
 jq -nc --arg id "$id" --arg image "$image" --arg revision "$revision" --arg backend "$backend" --arg run "$run_id" \
     --arg server "$server_id" --slurpfile target "$target" --argjson identity "$identity" \
@@ -655,12 +627,10 @@ flock -u 8
 locate
 wait_runtime
 if [ "$command" = login ]; then
-    if [ "$backend" = beidou ]; then
-        login_args=(login --timeout "$timeout")
-        if [ "$accept_terms" = 1 ]; then login_args+=(--accept-terms); fi
-        if [ -n "$female" ]; then
-            if [ "$female" = 1 ]; then login_args+=(--gender female); else login_args+=(--gender male); fi
-        fi
-        exec_cli "${login_args[@]}"
-    else exec_cli login --timeout "$timeout"; fi
+    login_args=(login --timeout "$timeout")
+    if [ "$accept_terms" = 1 ]; then login_args+=(--accept-terms); fi
+    if [ -n "$female" ]; then
+        if [ "$female" = 1 ]; then login_args+=(--gender female); else login_args+=(--gender male); fi
+    fi
+    exec_cli "${login_args[@]}"
 else exec_open; fi

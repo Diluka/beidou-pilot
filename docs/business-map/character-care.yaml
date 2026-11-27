@@ -19,7 +19,7 @@ nodes:
   - id: character-care.equip
     kind: operation
     name: 在 GUI 背包中更换装备
-    summary: 通过原版背包界面点击更换指定装备，随后读取已装备槽位确认物品；无头与 Lua 不提供该语义入口。
+    summary: 通过原版背包界面点击更换指定装备，随后读取已装备槽位确认物品；Lua 不提供该语义入口。
     aliases: [equip, 换装]
     anchors:
       - kind: file
@@ -48,7 +48,7 @@ nodes:
     anchors:
       - kind: file
         value: cli/beidou_pilot/cli.py
-        description: revive 命令的 GUI 分派与无头明确拒绝。
+        description: revive 命令的 GUI 分派与恢复确认。
       - kind: document
         value: docs/CLI.md
         description: 复活的前提、一次确认和结果核对。
@@ -67,7 +67,7 @@ nodes:
   - id: character-care.support-boundary
     kind: invariant
     name: 角色维护入口限于原版 GUI
-    summary: 装备、复活与快捷键是 GUI CLI 的现有能力；无头端明确拒绝，Lua 只保留动作槽意图，不提供窗口、加点或药品命令。
+    summary: 装备、复活与快捷键是 GUI CLI 的现有能力；Lua 只保留动作槽意图，不提供窗口、加点或药品命令。
     aliases: [GUI专属, 能力边界]
     anchors:
       - kind: document

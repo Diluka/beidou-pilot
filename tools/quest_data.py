@@ -61,7 +61,7 @@ def _library(path: Path | None) -> CDLL:
         [path]
         if path
         else [
-            Path(__file__).resolve().parents[1] / "headless/build/libbeidou-img.so",
+            Path(__file__).resolve().parents[1] / "shared/img/build/libbeidou-img.so",
             Path(__file__).resolve().parents[1] / "lib/libbeidou-img.so",
         ]
     )

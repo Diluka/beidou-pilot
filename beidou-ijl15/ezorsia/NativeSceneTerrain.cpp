@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "NativeSceneTerrain.h"
 #include "SceneTerrain.h"
-#include "../../headless/src/ImgResources.h"
+#include "../../shared/img/ImgResources.h"
 
 #include <array>
 #include <filesystem>

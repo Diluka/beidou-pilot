@@ -29,8 +29,8 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
         result.update(stage="TRANSITION", unavailable=observation["unavailable"])
         return result
     scene = backend.read("scene")
-    dialog = None if backend.name == "headless" else backend.read("dialog")
-    interaction = backend.read("interaction") if backend.name == "headless" else None
+    dialog = backend.read("dialog")
+    interaction = None
     inventory = backend.read("inventory", "--type", "1", "--type", "2", "--type", "3", "--type", "4", "--type", "5", "--equipped")
     quests = backend.read("quests")
     character_data = backend.read("character")
@@ -87,13 +87,10 @@ def collect(backend: Backend, *, all_entities: bool = False, debug: bool = False
             entity["visible"] = visible
             entity["dx"] = x - cast(int | float, player["x"])
             entity["dy"] = y - cast(int | float, player["y"])
-            if group == "npcs" and backend.name == "headless":
-                entity["ref"] = original.get("ref")
-            else:
-                identity = (original.get("character_id") if group == "players" else original["object_id"])
-                if group == "players" and identity is None:
-                    identity = original.get("reference") or original.get("name")
-                entity["ref"] = reference(prefix, identity, {"kind": group, **entity})
+            identity = (original.get("character_id") if group == "players" else original["object_id"])
+            if group == "players" and identity is None:
+                identity = original.get("reference") or original.get("name")
+            entity["ref"] = reference(prefix, identity, {"kind": group, **entity})
             entities[group].append(entity)
         entities[group].sort(key=lambda item: abs(cast(int | float, item["dx"])) + abs(cast(int | float, item["dy"])))
 

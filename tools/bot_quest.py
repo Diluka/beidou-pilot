@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""按任务条件打怪：读取原版 Quest.wz 目标，驱动 headless 客户端执行任务狩猎。
+"""按任务条件打怪：读取原版 Quest.wz 目标，驱动 GUI 客户端执行任务狩猎。
 
 子命令：
 - `objectives WORKBENCH`：列出已开始任务的击杀目标（mob id/count）与 NPC。

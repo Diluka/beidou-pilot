@@ -20,7 +20,7 @@ inline bool ReadTerrainIndex(const std::string& name, std::int64_t& value) {
 // Node is a read-only IMG view: bool for presence, operator[](const char*),
 // name(), and range-for children. readInteger(node, out) must accept only an
 // actual integer property, never a missing node's default conversion. This
-// keeps the hot headless tree and the GUI's single-IMG view on one contract.
+// keeps the restricted IMG view and the GUI's single-IMG view on one contract.
 // Scene identity/lifetime belongs to the caller, not to static resource data.
 template <class Node, class ReadInteger>
 Observation ReadSceneTerrain(const Node& map, std::uint32_t mapId, const std::string& source, ReadInteger readInteger) {

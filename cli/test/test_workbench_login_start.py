@@ -69,14 +69,21 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
             self.workbench.mkdir(parents=True)
         data = self.directory / 'data'
         data.mkdir()
-        (self.config / 'resources.json').write_text(json.dumps({'game_data': str(data)}))
+        gui = self.directory / 'gui'
+        gui.mkdir()
+        bridge = self.directory / 'bridge'
+        bridge.mkdir()
+        (bridge / 'manifest.json').write_text('{}')
+        (bridge / 'ijl15.dll').write_bytes(b'bridge fixture')
+        (self.config / 'resources.json').write_text(json.dumps({'game_data': str(data), 'gui_client': str(gui)}))
         account = {'username': 'fixture-secret-user', 'password': 'fixture-secret-password', 'world': 1, 'channel': 2}
         if cid:
             account['character_id'] = 42
         path = self.workbench / 'account.json'
         path.write_text(json.dumps(account))
         path.chmod(0o600)
-        (self.workbench / 'workbench.json').write_text(json.dumps({'ref': self.revision, 'timeout': 37}))
+        (self.workbench / 'workbench.json').write_text(json.dumps({
+            'ref': self.revision, 'timeout': 37, 'backend': 'beidou', 'bridge_artifact': str(bridge)}))
         image_id = 'sha256:' + '1' * 64
         project = 'fixture-' + env
         (self.config / (env + '.server.json')).write_text(json.dumps({'project': project, 'service': 'beidou-server-all'}))
@@ -87,31 +94,18 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
             'Config': {'Labels': labels},
             'HostConfig': {'NetworkMode': network, 'PortBindings': {}},
             'NetworkSettings': {'Networks': {network: {'IPAddress': '172.20.0.2'}}}})
-        state['images'][f'local/beidou-pilot-headless:{self.revision}'] = {'Id': 'client-image', 'Config': {'Labels': {'org.opencontainers.image.revision': self.revision, 'beidou.backend': 'headless'}}}
+        state['images'][f'local/beidou-pilot-beidou:{self.revision}'] = {'Id': 'gui-image', 'Config': {'Labels': {'org.opencontainers.image.revision': self.revision, 'beidou.backend': 'beidou'}}}
         self.state_path.write_text(json.dumps(state))
         docker = self.directory / 'bin/docker'
         docker.write_text(f'#!{sys.executable}\n' + DOCKER)
         docker.chmod(0o700)
         self.environment['WB'] = str(self.workbench)
-
-    def prepare_gui(self, cid=False, env='dev'):
-        self.prepare(cid=cid, env=env)
         # 仅夹具中替换宿主设备边界；不影响生产脚本的设备检查。
         self.entry.write_text(self.entry.read_text().replace('[ -c /dev/dri/renderD128 ]', 'true')
                               .replace('$(stat -c %g /dev/dri/renderD128)', '1000'))
-        gui = self.directory / 'gui'
-        gui.mkdir()
-        resources = self.config / 'resources.json'
-        value = json.loads(resources.read_text())
-        value['gui_client'] = str(gui)
-        resources.write_text(json.dumps(value))
-        settings = self.workbench / 'workbench.json'
-        value = json.loads(settings.read_text())
-        value['backend'] = 'beidou'
-        settings.write_text(json.dumps(value))
-        state = json.loads(self.state_path.read_text())
-        state['images'][f'local/beidou-pilot-beidou:{self.revision}'] = {'Id': 'gui-image', 'Config': {'Labels': {'org.opencontainers.image.revision': self.revision, 'beidou.backend': 'beidou'}}}
-        self.state_path.write_text(json.dumps(state))
+
+    def prepare_gui(self, cid=False, env='dev'):
+        self.prepare(cid=cid, env=env)
 
     def test_login_starts_account_instance_without_exposing_credentials(self):
         self.prepare()
@@ -122,16 +116,16 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         profile = next(c for c in calls if c[0] == 'run' and '--entrypoint' in c)
         self.assertEqual(['--mode', 'account'], profile[-2:])
         client = state['client']
-        self.assertIn('MAPLE_LOGIN_MODE=account', client['Config']['Env'])
-        self.assertIn('MAPLE_ACCEPT_TERMS=1', client['Config']['Env'])
-        self.assertIn('MAPLE_FEMALE=1', client['Config']['Env'])
+        self.assertEqual('account', state['compose_env']['MAPLE_LOGIN_MODE'])
+        self.assertEqual('', state['compose_env']['CHARACTER_ID'])
         self.assertEqual(str(self.workbench), client['Config']['Labels']['beidou.workbench'])
         self.assertEqual('default', client['Config']['Labels']['beidou.client.instance'])
-        self.assertNotIn('beidou.character.id', client['Config']['Labels'])
+        self.assertEqual('', client['Config']['Labels']['beidou.character.id'])
         execution = next(c for c in calls if c[0] == 'exec')
-        self.assertEqual(['beidou-pilot', '--json', 'login', '--timeout', '37'], execution[execution.index('beidou-pilot'):])
+        self.assertEqual(['beidou-pilot', '--json', 'login', '--timeout', '37', '--accept-terms', '--gender', 'female'],
+                         execution[execution.index('beidou-pilot'):])
         record = json.loads((self.workbench / 'runtime/default/host.json').read_text())
-        self.assertEqual(('client', 'client-image', 'server'), (record['container_id'], record['image'], record['target_container_id']))
+        self.assertEqual(('client', 'gui-image', 'server'), (record['container_id'], record['image'], record['target_container_id']))
         for secret in ('fixture-secret-user', 'fixture-secret-password'):
             self.assertNotIn(secret, json.dumps(calls) + result.stdout + result.stderr)
 
@@ -142,8 +136,9 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         state = json.loads(self.state_path.read_text())
         profile = next(c for c in state['calls'] if c[0] == 'run' and '--entrypoint' in c)
         self.assertNotIn('--mode', profile)
+        self.assertEqual('character', state['compose_env']['MAPLE_LOGIN_MODE'])
+        self.assertEqual('42', state['compose_env']['CHARACTER_ID'])
         self.assertEqual('42', state['client']['Config']['Labels']['beidou.character.id'])
-        self.assertFalse(any(x.startswith('MAPLE_LOGIN_MODE=') for x in state['client']['Config']['Env']))
         execution = next(c for c in state['calls'] if c[0] == 'exec')
         self.assertIn('open', execution)
 

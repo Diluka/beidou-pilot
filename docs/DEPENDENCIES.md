@@ -5,7 +5,6 @@
 | 组件 | 管理方式 |
 | --- | --- |
 | JSON、Lua、Detours | 固定官方提交的子模块，保持上游源码原样 |
-| MapleStory-Client | 保留含HEADLESS、Linux及北斗接线的派生源码 |
 | NoLifeWzToNx 派生 IMG 解码逻辑 | 已并入资源适配器内部，不再维护独立转换器目录；来源与许可保留于 NOTICE，密钥数据单独存放于 ImgKeys.cpp |
 | BeiDou-ijl15 | 本仓库直接维护的DLL工程及共享 tick Lua Runtime |
 
@@ -24,9 +23,8 @@ git submodule update --init --recursive
 - JSON使用官方 `single_include/nlohmann/json.hpp`。
 - Lua官方Git源码在仓库根，Runtime通过 `extern "C"` 引入C标准头；解释器、测试及聚合源保留在源码树中，运行体只引入需要的部分。
 - Detours固定与本项目头接口匹配的官方快照。Windows桥构建将对应源码复制到忽略的 `beidou-ijl15/out/detours/`，生成其中的 `lib.X86/`，不改写子模块；版本依据统一来源清单。
-- 引擎内自带的NoLifeNx、GLFW和LZ4头保留上游树结构，随派生引擎维护。无头构建阶段安装 `liblz4-dev`，Bookworm 运行层通过 apt 安装 `libstdc++6` 与 `liblz4-1`，由发行版处理 glibc/libgcc 和加载器；系统库二进制不进入源码。生产 GBK 转换直接使用 glibc 的 iconv/gconv。
 
-客户端镜像统一由[工作台入口](../workbenches/workbench) 的 `build` 或新实例 `open` 准备，按选定提交调用两份 Dockerfile。无头原生编译由 [Dockerfile](../docker/headless/Dockerfile) 内部调用 [Makefile](../headless/Makefile)；GUI 完整镜像使用 [GUI Dockerfile](../docker/gui/Dockerfile)，桥工件由 Windows/MSVC 工作流构建，统一入口默认经 `gh` 下载所选提交成功的 CI 工件；开发时可在工作目录配置中指定原生输入匹配的工件目录。Makefile 与 MSVC 保留为镜像交付链内部的编译工具，客户端构建与启动使用统一入口。基础环境和 VirtualGL 版本由 Docker 定义固定，运行资源与镜像职责见 [ARCHITECTURE](ARCHITECTURE.md)。
+客户端镜像统一由[工作台入口](../workbenches/workbench) 的 `build` 或新实例 `open` 准备，按选定提交调用 [GUI Dockerfile](../docker/gui/Dockerfile)。共享 IMG 解析库由 [shared/img/Makefile](../shared/img/Makefile) 在本地离线构建，镜像构建时直接编译同一份源码。桥工件由 Windows/MSVC 工作流构建，统一入口默认经 `gh` 下载所选提交成功的 CI 工件；开发时可在工作目录配置中指定原生输入匹配的工件目录。MSVC 保留为镜像交付链内部的编译工具，客户端构建与启动使用统一入口。基础环境和 VirtualGL 版本由 Docker 定义固定，运行资源与镜像职责见 [ARCHITECTURE](ARCHITECTURE.md)。
 
 GUI 使用带日期标签的 Wine 镜像，并安装上游发布的 VirtualGL deb。客户端镜像保留组件版本、标签及适用许可，使用包管理器的默认校验。
 
@@ -56,6 +54,6 @@ HTTP_PROXY=http://PROXY_HOST:PORT HTTPS_PROXY=http://PROXY_HOST:PORT \
 
 项目级 [LICENSE](../LICENSE) 为AGPL-3.0-only；第三方保留各自版权与授权，汇总见 [NOTICE](../NOTICE)，其中包含Lua版权和MIT全文。分发构建需要携带适用许可。
 
-无头运行层沿用 Debian 的系统版权与公共许可目录，另保留项目及编入客户端的第三方声明；GUI 镜像也携带项目和实际分发组件的适用许可。
+GUI 运行层沿用 Debian 的系统版权与公共许可目录，另保留项目及实际分发组件的适用许可。
 
 北斗原始客户端、7z、EXE/DLL、IMG/WZ、账号和运行状态继续外部提供；运行时直接读取只读 IMG。

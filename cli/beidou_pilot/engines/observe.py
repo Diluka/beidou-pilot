@@ -11,7 +11,7 @@ from ..observations import NativeObserver
 def read_observation(observer: NativeObserver) -> JsonObject:
     sampled = observer.snapshot()
     ready = sampled["ready"] is True
-    # 北斗桥仅发布通过安全值校验的字段；无头端没有 TSecType 校验。
+    # 北斗桥仅发布通过安全值校验的字段；未执行的校验保持未知。
     native_checksums = observer.backend == "beidou"
     return {**observer.metadata(sampled), "read_seconds": 0,
             "bridge_instance_id": sampled["instance_id"],

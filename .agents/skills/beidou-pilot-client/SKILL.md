@@ -7,7 +7,7 @@ description: "通过 beidou-pilot CLI 登录已有北斗角色、观察游戏状
 
 > 项目当前方向是“客户端自动化工具 + 伴游机器人应用层”。旧 Issue/PR 是历史记录，不是路线图；机器人设计、当前缺口和阶段见 [伴游机器人设计与路线](../../../docs/COMPANION_BOT.md) 与 [客户端能力边界](../../../docs/CLIENT_LIMITATIONS.md)。本技能只讲已交付的 CLI/Lua 操作，不把计划写成可用能力。
 
-`beidou-pilot` 是 headless 与 GUI 共用的容器内入口。宿主用 `workbenches/workbench list [live|dev]` 查找角色：常驻养成用已授权的 `live/NAME`；开发、复现和验收按[开发约定](../../../AGENTS.md)复用空闲的 `dev/NAME`，没有合适角色时可自行建号建角。在所属实例内直接运行以下命令。同一目标同一角色只有一名控制者，GUI 保持一名明确操作者。
+`beidou-pilot` 是 GUI 容器内的入口。宿主用 `workbenches/workbench list [live|dev]` 查找角色：常驻养成用已授权的 `live/NAME`；开发、复现和验收按[开发约定](../../../AGENTS.md)复用空闲的 `dev/NAME`，没有合适角色时可自行建号建角。在所属实例内直接运行以下命令。同一目标同一角色只有一名控制者，GUI 保持一名明确操作者。
 
 ## 观察当前实例
 
@@ -31,7 +31,7 @@ beidou-pilot --json snapshot
 beidou-pilot --json open --account ACCOUNT_PATH
 ```
 
-两端读取同一份账号 schema，文件权限必须为 `0600`：
+客户端读取同一份账号 schema，文件权限必须为 `0600`：
 
 | 字段 | 要求 |
 | --- | --- |
@@ -39,7 +39,7 @@ beidou-pilot --json open --account ACCOUNT_PATH
 | `character_id` | 已有角色的真实正 int32 ID |
 | `world/channel` | 可选的 0 基整数索引，默认各为 0；第 1 频道写 `channel=0` |
 
-GUI 自动登录仅支持世界 0 和第 1 至 20 频道。`open` 要求已有真实 CID；首次登录和建角使用独立命令，两端都经客户端内部路径完成：GUI 由原生桥在游戏线程调用原版客户端内部动作，不再使用桌面键鼠坐标。GUI 建角仅支持空角色列表、`job=1` 和可打印 ASCII 角色名，外观候选须在当前界面实际核验。不存在的短 ASCII 用户名登录后会按注册流程创建账号；建议用户名不超过 10 个 ASCII 字符。没有真实 CID、停在首次声明、性别选择或空角色列表时，读[账号输入与首次登录](references/first-login.md)。
+GUI 自动登录仅支持世界 0 和第 1 至 20 频道。`open` 要求已有真实 CID；首次登录和建角使用独立命令，经客户端内部路径完成：GUI 由原生桥在游戏线程调用原版客户端内部动作，不使用桌面键鼠坐标。GUI 建角仅支持空角色列表、`job=1` 和可打印 ASCII 角色名，外观候选须在当前界面实际核验。不存在的短 ASCII 用户名登录后会按注册流程创建账号；建议用户名不超过 10 个 ASCII 字符。没有真实 CID、停在首次声明、性别选择或空角色列表时，读[账号输入与首次登录](references/first-login.md)。
 
 可选的 `open --server SERVER_PATH` 读取服务器 JSON，仅核对当前实例的服务器，不更换连接。必填非空字符串 `project/service/expected_image`，可选非空字符串 `network`；提供的字段必须与本实例登记一致。
 
@@ -66,7 +66,7 @@ beidou-pilot --json bridge status
 
 确认角色、技能及明确的加点授权后，可用 `beidou-pilot --json skill-up SKILL_ID --points N`；`--points` 默认 1。逐点核对技能等级和 SP 后继续，失败时查看 `details.confirmed`。结果已发布但未知时先观察，不重放；可在同一运行实例用 `beidou-pilot --json skill-up-reconcile SKILL_ID --request-id REQUEST_ID` 只读核对（`confirmed`/`unresolved`），未决记录会阻断当前 run 的后续加点。重启不证明旧请求失败，不得自动重发。
 
-当前目标是冒险家职业群：`100`–`522` 的祖先组技能及初学者技能 `1000`、`1001`、`1002`；其他职业群不在本阶段范围，GUI 会拒绝，headless 不承诺。完整范围、门禁与已知限制见 [CLI 技能加点](../../../docs/CLI.md#技能加点)。
+当前目标是冒险家职业群：`100`–`522` 的祖先组技能及初学者技能 `1000`、`1001`、`1002`；其他职业群不在本阶段范围，GUI 会拒绝。完整范围、门禁与已知限制见 [CLI 技能加点](../../../docs/CLI.md#技能加点)。
 
 ## AP 自动分配
 
@@ -85,7 +85,7 @@ beidou-pilot --json bridge status
 
 - 有界执行使用 `--seconds N`；操作者明确选择长期持续脚本时使用 `script start LUA_PATH --continuous`。原生受理后 CLI 返回，脚本继续执行。
 - 取消只针对匹配的当前 `script.id`。核对同一 `instance_id/run_id` 的终态与会话级 `control_released`；全局 `held_keys` 可能仍包含其他会话的合法持键。旧会话 ID 只对应历史脚本。活动 Lua 期间普通 GUI 输入遇到 `input_busy` 时先确认控制者。
-- `script run` 同步等待结果。`run/start` 等待期间收到 Ctrl+C/SIGINT/SIGTERM 只结束 CLI 等待；已发布任务继续由原生执行，两端语义相同。等待超时或陈旧观察错误时，任务是否受理与停止以当前状态为准。先用 `script status` 核对当前任务与身份，不重放 `start`；主动取消使用 `script cancel --session`，再核对终态和放键。
+- `script run` 同步等待结果。`run/start` 等待期间收到 Ctrl+C/SIGINT/SIGTERM 只结束 CLI 等待；已发布任务继续由原生执行。等待超时或陈旧观察错误时，任务是否受理与停止以当前状态为准。先用 `script status` 核对当前任务与身份，不重放 `start`；主动取消使用 `script cancel --session`，再核对终态和放键。
 - 脚本入口须声明 `main(context)`；需要调整调度或预算时在前导注释用 `@tick.*`。例如将下例保存为该角色的 `scripts/observe-tick.lua`：
 
 ```lua

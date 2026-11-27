@@ -24,8 +24,8 @@ class LegacyScriptForwardingContract(WorkbenchFixture):
                 "Labels": {
                     "beidou.workbench": str(self.workbench),
                     "beidou.client.instance": "default",
-                    "beidou.task": "maple-headless-maintained",
-                    "beidou.backend": "headless",
+                    "beidou.task": "client-v17-maintained",
+                    "beidou.backend": "beidou",
                 },
             },
             "HostConfig": {"Privileged": False, "NetworkMode": "isolated", "PortBindings": {}},
@@ -49,7 +49,6 @@ class LegacyScriptForwardingContract(WorkbenchFixture):
         # 旧镜像的文件参数是 Path，不像当前 CLI 那样带工作台前缀。
         legacy = argparse.ArgumentParser(allow_abbrev=False)
         legacy.add_argument("--debug", action="store_true")
-        legacy.add_argument("--backend")
         legacy.add_argument("--seconds")
         legacy.add_argument("action", choices=("describe", "run", "start"))
         legacy.add_argument("file", type=Path, nargs="?")
@@ -68,7 +67,7 @@ class LegacyScriptForwardingContract(WorkbenchFixture):
             (package / "main.lua").write_text(marker)
         for arguments in (
             ("--debug", "describe", "sample.lua"),
-            ("--backend", "headless", "run", "nested/policy", "--steps", "7"),
+            ("--debug", "run", "nested/policy", "--steps", "7"),
             ("--seconds=8", "start", "sample.lua", "--steps=9"),
         ):
             with self.subTest(arguments=arguments):

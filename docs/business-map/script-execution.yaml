@@ -92,9 +92,9 @@ nodes:
         value: TickRuntime::StartPackage
         description: 把包根加入会话 require 搜索，跟踪实际装载模块并保留包会话的 Lua traceback。
       - kind: symbol
-        file: headless/src/SharedLuaAdapter.cpp
+        file: beidou-ijl15/ezorsia/AgentBridge.cpp
         value: SharedLuaAdapter::ReadCommand
-        description: 读取可选包根并交给 tick 引擎；无头端按同一容器路径直接读取模块源文件。
+        description: 读取可选包根并交给 tick 引擎；GUI 端由原生桥映射包根并读取模块源文件。
       - kind: symbol
         file: beidou-ijl15/ezorsia/AgentBridge.cpp
         value: ReadCommand
@@ -157,8 +157,8 @@ nodes:
         value: shared/lua-runtime/WorldMap.h
         description: 静态世界门户模型、有向门户边合并、BFS 路线与版本化缓存格式，不含角色或服务端状态。
       - kind: file
-        value: headless/src/WorldMapImage.h
-        description: 枚举只读 Map002/Map 地图 IMG 的门户记录，构建并读写版本化缓存；GUI 与 headless 共用。
+        value: shared/lua-runtime/WorldMapImage.h
+        description: 枚举只读 Map002/Map 地图 IMG 的门户记录，构建并读写版本化缓存；GUI 使用。
       - kind: symbol
         file: cli/beidou_pilot/observations.py
         value: NativeObserver.route

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "stdafx.h"
 #include "NativeObservation.h"
-#include "../../headless/src/WorldMapImage.h"
+#include "../../shared/lua-runtime/WorldMapImage.h"
 
 #include <array>
 #include <chrono>

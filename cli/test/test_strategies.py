@@ -71,7 +71,7 @@ class LuaStrategyContract(unittest.TestCase):
         (package / "main.lua").write_text(source, encoding="utf-8")
         with chdir(self.files.root), patch("beidou_pilot.cli.WORKBENCH_SCRIPTS", scripts):
             for backend, action, target, entry, package_root in (
-                ("headless", "run", self.path.name, scripts / self.path.name, None),
+                ("beidou", "run", self.path.name, scripts / self.path.name, None),
                 ("beidou", "start", "nested/policy", package / "main.lua", str(package)),
             ):
                 self.files.register(backend)

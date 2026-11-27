@@ -26,12 +26,11 @@ def auto_ap(backend: Backend) -> JsonObject:
     scene = scene_context(snapshot)
     if scene["character_id"] != character["id"]:
         raise ClientError("character_changed", "提交期间角色已变化，停止操作。")
-    if backend.name == "beidou":
-        from .ui import open_window
+    from .ui import open_window
 
-        open_window(backend, "stats")
-        if scene_context(bridge.snapshot()) != scene:
-            raise ClientError("character_changed", "打开属性窗口期间角色或场景已变化，未发送加点请求。")
+    open_window(backend, "stats")
+    if scene_context(bridge.snapshot()) != scene:
+        raise ClientError("character_changed", "打开属性窗口期间角色或场景已变化，未发送加点请求。")
     script = '''local requested = false
 local function main(context)
     if requested then

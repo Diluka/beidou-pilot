@@ -510,15 +510,6 @@ class GuiLoginExecuteTests(unittest.TestCase):
                 self.require_idle.assert_not_called()
                 self.bridge.login_action.assert_not_called()
 
-    def test_non_beidou_backend_never_uses_native_login_actions(self):
-        self.backend.name = "headless"
-        with self.assertRaises(ClientError) as error:
-            self.run_login()
-        self.assertEqual(error.exception.code, "gui_login_identity_unconfirmed",
-                         "原生 GUI 登录动作只允许北斗图形端")
-        self.bridge_factory.assert_not_called()
-        self.bridge.login_action.assert_not_called()
-
     def test_busy_input_stops_before_observation(self):
         self.require_idle.side_effect = ClientError("input_busy", "脚本占用输入")
         self.backend.read.return_value = terms_stage()

@@ -52,59 +52,6 @@ class SnapshotConsumerContract(unittest.TestCase):
         self.catalog.map_name.return_value = "训练场"
         self.catalog.item_name.return_value = "红色药水"
 
-    def test_headless_keeps_common_state_and_refs_without_inventing_ui_visibility(self) -> None:
-        self.backend.name = "headless"
-        self.domains["observe"].update(dead=True, revive_requestable=True)
-        self.domains["observe"]["character"]["hp"] = 0
-        report = collect(self.backend)
-        self.assertIs(report["dead"], True)
-        self.assertIs(report["revive_requestable"], True)
-        self.assertNotIn("dialog", [call.args[0] for call in self.backend.read.call_args_list])
-        self.assertIn("interaction", [call.args[0] for call in self.backend.read.call_args_list])
-        self.assertNotIn("dialog", report)
-        self.assertIsNone(report["interaction"]["page"])
-        self.assertIsNone(report["viewport"])
-        self.assertIsNone(report["monsters"][0]["visible"])
-        self.assertIsNone(report["monsters"][0]["name"])
-        self.assertEqual(200.0, report["monsters"][0]["dx"])
-        self.assertIn(report["monsters"][0]["ref"], report["refs"])
-        self.assertIn(report["inventory"][0]["ref"], report["refs"])
-        self.assertEqual(2, report["inventory"][0]["quantity"])
-        self.assertEqual(self.domains["quests"]["quests"], report["quests"])
-        self.assertEqual(self.domains["character"]["skills"], report["character"]["skills"])
-        text = format_snapshot(report)
-        self.assertIn("当前没有交互页面", text)
-        self.assertIn("可见性未知", text)
-        self.assertNotIn("画外", text)
-
-    def test_native_control_and_npc_refs_are_preserved_without_python_payloads(self) -> None:
-        self.backend.name = "headless"
-        self.domains["scene"]["npcs"] = [{"object_id": 12, "template_id": 12101, "name": "瑞恩",
-                                           "x": .5, "y": 0, "ref": "native-npc-ref"}]
-        page = {"source": "server", "title": "瑞恩", "text": "你好",
-                "controls": [{"role": "button", "text": "继续", "enabled": None, "ref": "native-button-ref"}]}
-        self.domains["interaction"]["page"] = page
-        report = collect(self.backend)
-        self.assertEqual(page, report["interaction"]["page"])
-        self.assertIsNone(report["interaction"]["page"]["controls"][0]["enabled"])
-        self.assertEqual("native-npc-ref", report["npcs"][0]["ref"])
-        self.assertNotIn("native-npc-ref", report["refs"])
-        self.assertNotIn("native-button-ref", report["refs"])
-        self.assertIn("启用状态未知", format_snapshot(report))
-
-    def test_unknown_interaction_text_and_controls_stay_unknown(self) -> None:
-        self.backend.name = "headless"
-        page = {"source": "server", "title": "NPC对话", "text": None, "controls": None}
-        self.domains["interaction"].update(page=page, unavailable=["interaction_page_layout_not_supported"],
-                                           not_covered=[], client={"container_id": "native-metadata"})
-        report = collect(self.backend)
-        self.assertEqual(page, report["interaction"]["page"])
-        self.assertEqual(["interaction_page_layout_not_supported"], report["interaction"]["unavailable"])
-        self.assertEqual([], report["interaction"]["not_covered"])
-        self.assertNotIn("client", report["interaction"])
-        self.assertIn("交互正文：未知", format_snapshot(report))
-        self.assertIn("交互控件：未知", format_snapshot(report))
-
     def test_beidou_preserves_dialog_and_filters_only_known_invisible_entities(self) -> None:
         self.backend.name = "beidou"
         self.domains["dialog"] = {"camera_viewport": None, "dialog_open": True, "npc_id": 1000,
@@ -119,34 +66,6 @@ class SnapshotConsumerContract(unittest.TestCase):
         full = collect(self.backend, all_entities=True)
         self.assertFalse(full["monsters"][0]["visible"])
         self.assertIn("画外", format_snapshot(full))
-
-    def test_other_players_keep_identity_completeness_and_unknown_fields(self) -> None:
-        self.backend.name = "headless"
-        self.domains["scene"]["players"] = [
-            {"reference": "7", "character_id": 7, "name": "同伴", "level": 10,
-             "x": 30.5, "y": -2.0, "facing": "Left"},
-            {"reference": "0x1234", "character_id": None, "name": None, "level": None,
-             "x": 1.0, "y": 2.0, "facing": None}]
-        self.domains["scene"]["players_complete"] = True
-        report = collect(self.backend)
-        self.assertIs(report["players_complete"], True)
-        first = next(player for player in report["players"] if player.get("character_id") == 7)
-        self.assertEqual("同伴", first["name"])
-        self.assertEqual(10, first["level"])
-        self.assertEqual(30.0, first["dx"])
-        self.assertIsNone(first["visible"])
-        self.assertIn(first["ref"], report["refs"])
-        second = next(player for player in report["players"] if player.get("character_id") is None)
-        self.assertIsNone(second["character_id"])
-        self.assertIsNone(second["name"])
-        self.assertIsNone(second["level"])
-        self.assertEqual(0.5, second["dx"])
-        self.assertIn(second["ref"], report["refs"])
-        text = format_snapshot(report)
-        self.assertIn("玩家 同伴 Lv10", text)
-        self.assertIn("玩家 未知 Lv?", text)
-        self.domains["scene"]["players_complete"] = False
-        self.assertIs(collect(self.backend)["players_complete"], False)
 
     def test_beidou_players_use_native_identity_completeness_and_viewport(self) -> None:
         self.backend.name = "beidou"
@@ -171,7 +90,7 @@ class SnapshotConsumerContract(unittest.TestCase):
     def test_beginner_snapshot_lists_candidates_without_inventing_a_route(self) -> None:
         self.domains["dialog"] = {"camera_viewport": None, "dialog_open": False, "npc_id": None,
                                   "dialog_type": None, "lines": [], "choices": [], "buttons": []}
-        for backend in ("headless", "beidou"):
+        for backend in ("beidou",):
             for level in (7, 8, 10):
                 with self.subTest(backend=backend, level=level):
                     self.backend.name = backend

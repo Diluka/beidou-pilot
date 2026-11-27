@@ -2,7 +2,7 @@
 
 本页描述 **tick 引擎**（逐次决策）。脚本无需声明引擎，统一按 tick 执行；前导注释按需写 `@tick.*` 运行配置与 `@option` 参数。入口按档位到期执行，以 `context.state` 保存跨调用状态，通过只读领域观察和非阻塞 `player` 状态机提交意图。本引擎不提供阻塞动作、`game.sleep()`、任务控制或按键接口；导航入口见 [Lua API](LUA_API.md)。
 
-两端使用本页同一公开契约，能力缺口和未知事实按后端如实保留。脚本组织与传输见 [控制协议](CONTROL.md)，维护约定见 [共享脚本约定](../shared/scripts/AGENTS.md)。修改 tick 公共 API 时同步维护本页。
+本页描述唯一 GUI 后端的公开契约；能力缺口和未知事实按后端如实保留。脚本组织与传输见 [控制协议](CONTROL.md)，维护约定见 [共享脚本约定](../shared/scripts/AGENTS.md)。修改 tick 公共 API 时同步维护本页。
 
 ## 启动与基本约定
 
@@ -59,22 +59,22 @@ end
 ```
 
 - 模块名是包内相对路径去掉 `.lua`、目录用 `.` 分隔：`lib/terrain.lua` → `require("lib.terrain")`；也接受 `lib/terrain/init.lua`。`require` 保持 Lua 原生语义，`package.loaded` 缓存使同一模块只执行一次并返回模块值。
-- 模块文件直接按提交的包目录读取，不复制进会话目录：headless 端使用同一容器路径（如 `/work/scripts/travel-policy`）；GUI 端由原生桥映射为 Wine 的 `Z:\work\...`。脚本只写包内相对名称、不写绝对路径，因此同一份入口与模块在两端都能装载，错误位置里的路径按本端原生形式显示。
+- 模块文件直接按提交的包目录读取，不复制进会话目录：GUI 端由原生桥映射为 Wine 的 `Z:\work\...`。脚本只写包内相对名称、不写绝对路径，错误位置里的路径按本端原生形式显示。
 - 会话状态 `scripts[]` 中，包会话额外提供 `module_root`（本端原生包根）和 `modules`（按 `require` 顺序记录的实际装载模块，每项含 `name` 与解析到的源文件 `file`）。单文件 `script run FILE` 不产生这两个字段，装载方式和行为保持不变。
 - 模块缺失、模块编译错误、模块装载或调用时的运行错误都带来源模块与行号：包入口 chunk 名固定为 `main.lua`，模块 chunk 名是实际解析到的源文件，错误文本保留 Lua `stack traceback`，可看到 `require` 调用行与模块内部位置。单文件的错误文本保持原样。
 - 目录脚本包与单文件入口使用同一 tick 引擎和运行配置规则；模块由入口自己按包内路径装载。
 - 包内目录结构、模块依赖清单和组装方式由写策略时决定，引擎不解析依赖声明；模块在入口第一次 `require` 时装载，加载失败按脚本错误结束会话。
 
-宿主每次更新都推进原生生命周期；`main` 按每会话工作频率档位到期调用，首次稳定帧立即调用，返回后统一提交差异供后续帧消费。GUI 使用 `ClientApplication::Update` 主循环渲染帧，无头使用 `Stage::update` 逻辑步进，不假设渲染与角色物理更新 1:1。
+宿主每次更新都推进原生生命周期；`main` 按每会话工作频率档位到期调用，首次稳定帧立即调用，返回后统一提交差异供后续帧消费。GUI 使用 `ClientApplication::Update` 主循环渲染帧，不假设渲染与角色物理更新 1:1。
 
 | 档位 | 工作频率 | 用途 |
 | --- | --- | --- |
 | 1 | 10Hz | 较慢的观察和简单判断，最多约100ms的调度等待 |
 | 2 | 20Hz | 中等响应，最多约50ms的调度等待 |
 | 3（默认） | 30Hz | 常规即时决策，最多约33ms的调度等待 |
-| 4 | 每个本端宿主更新，不节流 | 需要最高采样频率时使用；无头宿主更新约125Hz、GUI约60Hz，而两端本地角色普通运动都约33Hz，不是固定保证 |
+| 4 | 每个本端宿主更新，不节流 | 需要最高采样频率时使用；GUI 宿主更新约60Hz，而本地角色普通运动约33Hz，不是固定保证 |
 
-表中固定频率是目标，实际调用还受宿主更新、工作负载及脚本执行时间影响，不保证严格最大延迟。四档依据两端实际节奏和成本设计：GUI角色物理更新约33Hz，渲染约60Hz会复用样本；无头宿主步为8ms，本地角色普通运动每30ms提交一次。30Hz默认减少重复决策，同时保留普通跳跃动作窗口的多个观察机会。两端逐档数据与测量限制见[工作频率实测依据](TICK_FREQUENCY.md)。档位不改变游戏物理速度、原生输入重复节奏或动作动画生命周期。`@tick.gear` 只接受单字符整数 `1/2/3/4`，不接受前导零、符号、小数、指数、任意Hz或裸tick倍率。
+表中固定频率是目标，实际调用还受宿主更新、工作负载及脚本执行时间影响，不保证严格最大延迟。四档依据本端实际节奏和成本设计：GUI角色物理更新约33Hz，渲染约60Hz会复用样本；本地角色普通运动每30ms提交一次。30Hz默认减少重复决策，同时保留普通跳跃动作窗口的多个观察机会。逐档数据与测量限制见[工作频率实测依据](TICK_FREQUENCY.md)。档位不改变游戏物理速度、原生输入重复节奏或动作动画生命周期。`@tick.gear` 只接受单字符整数 `1/2/3/4`，不接受前导零、符号、小数、指数、任意Hz或裸tick倍率。
 
 每会话使用绝对周期相位；慢帧或长回调错过周期时跳过已过区间，不补跑旧判断。取消、总期限、原生输入保持/消费和释放每宿主更新继续推进，不等待下次Lua调用；降频期间方向和动作意图都不必重复提交。瞬态事实仍需在到期回调重新观察，不承诺所有档都在下一宿主帧停止。返回 `nil` 继续；`"done"` 或 `{done=true}` 停止入口，清除该会话仍拥有的持续输入，原生确认释放后发布完成，不等待或强制中断已经发生的动画。最后一次草稿可能在客户端消费前就被结束清理撤下，不保证“设置动作并立即done”至少执行一次。Lua错误以 `cancelled/script_error` 结束并执行同样清理；每次会话重启新建上下文。
 
@@ -103,12 +103,12 @@ end
 | --- | --- |
 | `game.character` | 当前玩家实体：共享可移动物体的 `x/y/velocity`，以及 `id/name/level/job/hp/max_hp/mp/max_mp`；长字段 `strength/dexterity/intelligence/luck/ability_points/skill_points/experience` 及简写 `str/dex/int/luk/ap/sp/exp`；`movement` 是角色能力参考，`on_ground/attacking/action_idle/native_updates` 是本角色原生事实，未知时为 `nil`；与本端可读取的角色领域事实合并。`skills` 是已学技能等级映射（技能 ID 字符串 → `{level,master_level}`），`skills_complete` 表明该映射是否完整；缺失或为 `false` 时表示观察不完整，不能当成未学习 |
 | `game.world` | `instance_id/scene_generation/ready/in_game/map_id`；既有角色快照位置仍提供 `x/y` 和 `position={x,y}`，`facing` 沿用 `Left/Right`；`settled/dead/revive_requestable` 未知时不提供。新实体运动字段不挂在此领域，GUI `settled` 保持未知 |
-| `game.scene` | `players/monsters/npcs/projectiles/drops` 的实体列表按本端支持范围提供，各行共享可移动物体的位置与向量契约；怪物项可带 `controlled`（本端是否持有该怪物控制权）：无头端按本地控制标记给出 true/false，GUI 端保持未知；集合或字段不可读保留未知，不把不支持的集合写成空列表；完整性按本端实际能力声明 |
+| `game.scene` | `players/monsters/npcs/projectiles/drops` 的实体列表按本端支持范围提供，各行共享可移动物体的位置与向量契约；怪物项可带 `controlled`（本端是否持有该怪物控制权）：GUI 端保持未知；集合或字段不可读保留未知，不把不支持的集合写成空列表；完整性按本端实际能力声明 |
 | `game.inventory`、`game.quests` | 本端原生背包/装备和任务领域；任务动态性仍遵循本端来源声明 |
 | `game.chat` | 按本端可读能力；不支持时明确 `status="unsupported"`，不是空聊天记录 |
-| `game.dialog/shop/ui/hotkeys/interaction/notifications` | 按需只读观察；支持范围与原生领域一致，不增加窗口动作 API。headless 的交互引用激活目前仅由 CLI 提供，tick Lua 暂无入口 |
+| `game.dialog/shop/ui/hotkeys/interaction/notifications` | 按需只读观察；支持范围与原生领域一致，不增加窗口动作 API。tick Lua 暂无 `player.interact` 入口，GUI 的原生对话命令另行可用 |
 
-buff 归 `game.character`，不在 `player.status()`。首版两端都没有可靠的完整 buff 效果及剩余时间来源，返回 `buffs=nil`（JSON `null`）、`buffs_status="unsupported"` 和 `buffs_unavailable="native_buff_details_unavailable"`；不把未知列表伪造成 `{}`，不通过服务端查询补齐。
+buff 归 `game.character`，不在 `player.status()`。当前没有可靠的完整 buff 效果及剩余时间来源，返回 `buffs=nil`（JSON `null`）、`buffs_status="unsupported"` 和 `buffs_unavailable="native_buff_details_unavailable"`；不把未知列表伪造成 `{}`，不通过服务端查询补齐。
 
 ### 当前静态场景与跨图
 
@@ -129,7 +129,7 @@ buff 归 `game.character`，不在 `player.status()`。首版两端都没有可�
 
 跨图路线不由场景几何生成：需要路线时，调用方先用原生只读查询 `world-map route START GOAL` 获得腿序列（每段 `from/portal/to` 与门户坐标 `portal_at`），再由**显式注入的调用方**把它放入 `context.route`。当前普通 `script run/start` 不自动查询、也不自动注入路线，运行时也没有 Lua 路线查询入口；没有注入时 `context.route` 为 `nil`。tick 引擎不生成、不更新路线，Lua 只消费注入的腿序列；门户模型、有向 BFS 与版本化文件缓存都在原生/CLI 侧，不放进 `context`，Lua 不解析模型也不搜索。查询按有向门户、最多 24 段返回，script 门户与外部目标不参与；付费交通不在路线模型内。
 
-headless 使用本端已加载的 IMG 地图树；GUI 原生桥按显式配置的同端只读 `game_data` 目录读取单张 IMG，不按工作目录猜资源根，不经 Python 换图回填。`game.scene` 仍只负责动态实体观察，不增加公开的 `game.terrain` 查询。
+GUI 原生桥按显式配置的同端只读 `game_data` 目录读取单张 IMG，不按工作目录猜资源根，不经 Python 换图回填。`game.scene` 仍只负责动态实体观察，不增加公开的 `game.terrain` 查询。
 
 ```lua
 local scene = context.scene
@@ -147,29 +147,29 @@ end
 
 ### 运动观察与静止参考
 
-移动状态属于实体，不属于世界。共享观察模型的 `MovableObject` 是自己、其他玩家、怪物、NPC、投射物和会移动的掉落物的共同基类，各自拥有 `x/y/velocity`；角色自己的位置和运动向量从 `game.character` 读取，其余从对应 `game.scene` 列表中的实体读取。该统一发生在观察模型，不重写两端不同的原生继承树。`position_source` 标记位置来源；原生位置投影可能为整数，与内部未舍入的运动采样不混用。GUI掉落物现有 `x/y` 是原生目标落点锚点，标为 `native_drop_destination`，不是悬浮或拾取飞行的当前显示位置，其向量保持未知；不为填满共同字段而伪造当前位置或零速度。
+移动状态属于实体，不属于世界。共享观察模型的 `MovableObject` 是自己、其他玩家、怪物、NPC、投射物和会移动的掉落物的共同基类，各自拥有 `x/y/velocity`；角色自己的位置和运动向量从 `game.character` 读取，其余从对应 `game.scene` 列表中的实体读取。该统一发生在观察模型，不重写原生继承树。`position_source` 标记位置来源；原生位置投影可能为整数，与内部未舍入的运动采样不混用。GUI掉落物现有 `x/y` 是原生目标落点锚点，标为 `native_drop_destination`，不是悬浮或拾取飞行的当前显示位置，其向量保持未知；不为填满共同字段而伪造当前位置或零速度。
 
-`entity.velocity={x,y,source}` 单位为**地图像素/秒**，右、下为正，上升时 `y<0`。`source="native"` 表示本端当前速度字段的已校验读取；`source="native_update_delta"` 表示同一实体完整原生更新前后未舍入坐标的位移除以该逻辑步长，并附 `interval_ms`，是这段更新的平均运动向量。无头其他实体完整更新为8ms，本地角色普通运动为30ms提交，`interval_ms` 随样本给出。坐标和速度不使用重复渲染的整数像素作差。初次样本或原生显式重定位无法形成连续区间时保持未知。`nil` 与实际已测得的 `{x=0,y=0}` 不同，不借用自己或另一实体的向量，也不按物体类型硬填零。
+`entity.velocity={x,y,source}` 单位为**地图像素/秒**，右、下为正，上升时 `y<0`。`source="native"` 表示本端当前速度字段的已校验读取；`source="native_update_delta"` 表示同一实体完整原生更新前后未舍入坐标的位移除以该逻辑步长，并附 `interval_ms`，是这段更新的平均运动向量。`interval_ms` 随样本给出。坐标和速度不使用重复渲染的整数像素作差。初次样本或原生显式重定位无法形成连续区间时保持未知。`nil` 与实际已测得的 `{x=0,y=0}` 不同，不借用自己或另一实体的向量，也不按物体类型硬填零。
 
-向量描述本客户端的运动，不承诺服务器权威速度或下一步轨迹。无头远端玩家存在延迟后追赶目标坐标的跳步；相应区间向量可呈脉冲，不能解释成服务端连续跑速。投射物条目不自动表示碰撞或伤害，也不伪造跨帧稳定ID。已支持的原生飞行集合不代表全部怪物投射物、召唤物或地图危险物，需查看覆盖范围与 `projectiles_complete`；不支持的集合保持未知。掉落物即使 `landed=true` 仍可能悬浮移动，不能据此推断向量为零。
+向量描述本客户端的运动，不承诺服务器权威速度或下一步轨迹。远端玩家位置可能出现追赶跳步；相应区间向量可呈脉冲，不能解释成服务端连续跑速。投射物条目不自动表示碰撞或伤害，也不伪造跨帧稳定ID。已支持的原生飞行集合不代表全部怪物投射物、召唤物或地图危险物，需查看覆盖范围与 `projectiles_complete`；不支持的集合保持未知。掉落物即使 `landed=true` 仍可能悬浮移动，不能据此推断向量为零。
 
-`character.on_ground` 来自本端地面事实，未知时不能靠重复坐标推断；`character.attacking` 的攻击动画仅在无头已知，GUI保持未知，不把任意单次动画伪装成攻击。`character.action_idle` 是独立的原生动作锁事实：无头读取本地Player攻击动画锁，GUI读取已校验Avatar单次动作索引及其原生结束清理；负值代表无该单次动作。行走、腾空、输入保持或按键释放不单独决定此值。它不承诺MP、武器、目标、冷却、攀爬或UI等其他准入条件满足；未知时为nil。`character.native_updates` 只随真实角色更新增加（本地角色普通运动与攀爬约每30ms一次、游泳等其他附加模式每8ms一次），不是输入消费或服务器效果成功的凭据。
+`character.on_ground` 来自本端地面事实，未知时不能靠重复坐标推断；`character.attacking` 的攻击动画在当前 GUI 保持未知，不把任意单次动画伪装成攻击。`character.action_idle` 是独立的原生动作锁事实：GUI 读取已校验 Avatar 单次动作索引及其原生结束清理；负值代表无该单次动作。行走、腾空、输入保持或按键释放不单独决定此值。它不承诺MP、武器、目标、冷却、攀爬或UI等其他准入条件满足；未知时为nil。`character.native_updates` 只随真实角色更新增加，不是输入消费或服务器效果成功的凭据。
 
 `character.physics` 是本角色**同一次原生更新**的整份物理末态，与显示位置、区间均速向量和静止参考分开：
 
 | 字段 | 含义 |
 | --- | --- |
-| `update_id` | 该样本对应的真实角色更新号，与 `character.native_updates` 复用同一更新源，不新增计数器。GUI 为原生角色更新计数；无头为真实运动提交号（普通/攀爬30ms步或游泳等附加模式8ms步各推进一次，世界tick不推进）。不能在混合模式里用更新号差乘固定30ms换算全部时间 |
-| `step_ms` | 本样本实际模拟积分时间，不是宿主发布间隔。GUI 为 V17 固定30ms角色逻辑步；无头普通运动与攀爬为30ms、游泳附加模式为8ms，坐下/死亡等无运动样本 |
+| `update_id` | 该样本对应的真实角色更新号，与 `character.native_updates` 复用同一更新源，不新增计数器；GUI 为原生角色更新计数。不能在混合模式里用更新号差乘固定30ms换算全部时间 |
+| `step_ms` | 本样本实际模拟积分时间，不是宿主发布间隔；GUI 为 V17 固定30ms角色逻辑步 |
 | `x`、`y` | 当前未插值、未圆整的物理脚点，地图像素坐标。不是 `character.x/y` 的显示/插值缓存，两者不能混用参考点 |
 | `velocity` | 同一步末态的世界瞬时速度 `{x,y}`（px/s，右/下为正）。本端不能如实给出时为 `nil`，不用完整步位移均值或另一后端补齐 |
 | `on_ground` | 同一步末态的原生接地事实；不能靠重复坐标、显示位置或另一后端推断 |
 
 整个记录未知时 `character.physics=nil`；记录存在但单个字段未知时为 `nil`，不填0。旧 `character.x/y`、`game.world.position/x/y` 与 `character.velocity` 语义保持不变：`character.velocity` 仍是本端原生速度或完整原生更新位移均值（`source="native_update_delta"` 且带 `interval_ms`），不能当作 `physics.velocity` 的替代。
 
-GUI 在真实原生角色更新之后缓存整份记录，重复宿主帧和 CLI 读取复用同一样本，不重新拼装不同参考点。无头在普通运动模式下给出同一步末态的世界瞬时速度（含坡面世界速度投影）；攀爬按原版30ms规则提交但瞬时速度保持未知（原版攀爬分支只写 y，普通世界速度字段不适用）；游泳附加模式保留逐8ms位移实现，瞬时速度保持未知；坐下/死亡等无运动样本时整份记录为未知。两端校准前先按[运动校准脚本与离线比较器](#运动校准脚本与离线比较器)采样。
+GUI 在真实原生角色更新之后缓存整份记录，重复宿主帧和 CLI 读取复用同一样本，不重新拼装不同参考点。校准前先按[运动校准脚本与离线比较器](#运动校准脚本与离线比较器)采样。
 
-攀爬观察有已确认的适用性缺口：GUI原版攀爬直接更新y，普通世界速度字段不适用（实测每30ms移动3px而`physics.velocity.y=0`）。GUI桥现读取绳梯关联（`0x9CC0F5`）并在附着时把速度保持未知，不再把不适用零值发布为已知0；headless攀爬按原版30ms规则提交，瞬时速度同样保持未知。攀爬对账需分别记录位置变化、附着与实际步长，具体规则和后续观察调整见[其余运动规则第2节](V17_EXTENDED_MOTION_RULES.md#climb)。攀爬跳梯解绑的首个30ms样本是原版分支写入态：速度已知、位置尚未积分（下一步才移动），按普通 update 对齐即可，不把它当作位置异常或零速度。
+攀爬观察有已确认的适用性缺口：GUI原版攀爬直接更新y，普通世界速度字段不适用（实测每30ms移动3px而`physics.velocity.y=0`）。GUI桥读取绳梯关联（`0x9CC0F5`）并在附着时把速度保持未知，不再把不适用零值发布为已知0。攀爬对账需分别记录位置变化、附着与实际步长，具体规则和后续观察调整见[其余运动规则第2节](V17_EXTENDED_MOTION_RULES.md#climb)。攀爬跳梯解绑的首个30ms样本是原版分支写入态：速度已知、位置尚未积分（下一步才移动），按普通 update 对齐即可，不把它当作位置异常或零速度。
 
 `game.character.movement` 与当前速度分开，是**静止平地、正常行走/普通跳跃、无额外外力和障碍**的模型参考。已知时提供：
 
@@ -180,29 +180,29 @@ GUI 在真实原生角色更新之后缓存整份记录，重复宿主帧和 CLI
 | `max_speed` | 正常平地完整方向输入的参考最大移速，地图像素/秒；不是所有状态下的硬速度截断 |
 | `max_jump_height` | 从静止起跳可上升的参考高度，地图像素；不是当前位置相对目标平台的可达保证 |
 
-两端都使用 `v17_normal_continuous_v1`：以本端已加载 `Data/Map/Physics.img` 系数、有效 SPEED/JUMP 属性和构造缺省倍率，在正常场地系数为1、平地坡度为0条件下推算连续参考（`max_speed=walkSpeed×SPEED/100`，`max_jump_height=起跳速度²/(2×重力加速度)`）；实际30ms离散更新及整数位置可造成高度差异。参考不替换真实物理，也不作为所有状态下的硬截断。有效属性变化后随采样更新；来源或校验不可用时为 `nil`，不用另一后端、静态模板或属性cap补齐。
+使用 `v17_normal_continuous_v1`：以本端已加载 `Data/Map/Physics.img` 系数、有效 SPEED/JUMP 属性和构造缺省倍率，在正常场地系数为1、平地坡度为0条件下推算连续参考（`max_speed=walkSpeed×SPEED/100`，`max_jump_height=起跳速度²/(2×重力加速度)`）；实际30ms离散更新及整数位置可造成高度差异。参考不替换真实物理，也不作为所有状态下的硬截断。有效属性变化后随采样更新；来源或校验不可用时为 `nil`，不用静态模板或属性cap补齐。
 
-无头行走渐近趋于稳态，不能用速度严格等于参考值作为起跳条件；示例按目标方向达到参考移速的99%判断，不用固定时长、距离或仅凭速度不再变化。斜坡、墙、绳梯、水下、技能、推力、平台运动、天花板等不符合参考条件，需另行判断。
+行走渐近趋于稳态，不能用速度严格等于参考值作为起跳条件；示例按目标方向达到参考移速的99%判断，不用固定时长、距离或仅凭速度不再变化。斜坡、墙、绳梯、水下、技能、推力、平台运动、天花板等不符合参考条件，需另行判断。
 
 ### 运动校准脚本与离线比较器
 
-`shared/scripts/calibration/tick-motion-calibration.lua` 是随镜像固定的有界运动采样探针，用于建立双端物理pose基线；它不修改运动规则、导航控制阈值或任何观察语义。脚本固定 `@tick.gear 4`，只通过 `player.move/jump` 施加一次行走、制动、反向、静止跳、方向跳、空中松向或空中反向输入，不攻击、不用药、不换图。开始前要求：世界就绪、本图怪物列表可读且为空、`character.physics` 的 x/y 与 `character.movement` 可用、`character.on_ground=true`；会话用 `--seconds` 限时，脚本另按 `timeout_ms` 主动放键结束。只在安全平地、无怪且仅本脚本控制角色时使用。
+`shared/scripts/calibration/tick-motion-calibration.lua` 是随镜像固定的有界运动采样探针，用于建立 GUI 物理pose基线；它不修改运动规则、导航控制阈值或任何观察语义。脚本固定 `@tick.gear 4`，只通过 `player.move/jump` 施加一次行走、制动、反向、静止跳、方向跳、空中松向或空中反向输入，不攻击、不用药、不换图。开始前要求：世界就绪、本图怪物列表可读且为空、`character.physics` 的 x/y 与 `character.movement` 可用、`character.on_ground=true`；会话用 `--seconds` 限时，脚本另按 `timeout_ms` 主动放键结束。只在安全平地、无怪且仅本脚本控制角色时使用。
 
 每个 tick 通过 `game.log` 输出一行稳定前缀 `BEIDOU_MOTION_CAL v1 ` 的 JSON，字段包括：场景身份、tick 时间/档位、`character.physics`、旧 `character.x/y` 与 `character.velocity`、`movement` 有效属性、当前输入与意图边沿，以及本帧样本相对上一样本的 `first/new/repeat/gap/missing/regressed` 标记。脚本不插值、不补造掉样，样本缺失或更新号跳变由比较器判证据不足并重采。
 
 ```bash
-# 两端各选一个安全平地场景，按同一 scenario 和 direction 分别运行一次。
+# 在两个 GUI 实例或两个版本上各选一个安全平地场景，按同一 scenario 和 direction 分别运行一次。
 workbenches/workbench dev/GUI_NAME script run \
   /opt/beidou-pilot/shared/scripts/calibration/tick-motion-calibration.lua \
   --scenario walk --direction right --seconds 10
 workbenches/workbench dev/NAME script run \
   /opt/beidou-pilot/shared/scripts/calibration/tick-motion-calibration.lua \
   --scenario walk --direction right --seconds 10
-# 记录写入所属实例桥目录的 script-events.jsonl（容器内 `$CLIENT_ROOT/runtime/bridge/script-events.jsonl`），复制两端该文件后离线比较。
-python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.jsonl
+# 记录写入所属实例桥目录的 script-events.jsonl（容器内 `$CLIENT_ROOT/runtime/bridge/script-events.jsonl`），复制两份后离线比较。
+python3 tools/motion_compare.py --left gui-events.jsonl --right other-events.jsonl
 ```
 
-比较器按物理 `update_id` 去重（同一更新号的多条宿主帧记录只取一份并校验位姿一致），以意图变化后的第一份物理样本作为输入消费边沿、用 `update_id - edge_update_id` 对齐相同物理步，不按 Lua tick 或墙钟对齐。逐物理步比较相对轨迹、速度和离地/落地事件；默认候选门槛为对应物理步相对轨迹≤1px、速度≤1px/s、接触事件≤1步，真机物理pose基线确认前这些仍是候选值，确认后才冻结。`step_ms` 不同、更新号缺口、物理样本/接地事实缺失或记录跨越地图/场景代次时输出 `evidence_insufficient`（退出码3）要求重采，不通过平移整段轨迹或放宽容差掩盖。两端本地角色普通运动与攀爬的 `step_ms` 现均为30ms，可逐步比较；无头游泳等附加模式仍为8ms、且其速度事实未知，混入这些样本时按证据不足拒绝，不混算。
+比较器按物理 `update_id` 去重（同一更新号的多条宿主帧记录只取一份并校验位姿一致），以意图变化后的第一份物理样本作为输入消费边沿、用 `update_id - edge_update_id` 对齐相同物理步，不按 Lua tick 或墙钟对齐。逐物理步比较相对轨迹、速度和离地/落地事件；默认候选门槛为对应物理步相对轨迹≤1px、速度≤1px/s、接触事件≤1步，真机物理pose基线确认前这些仍是候选值，确认后才冻结。`step_ms` 不同、更新号缺口、物理样本/接地事实缺失或记录跨越地图/场景代次时输出 `evidence_insufficient`（退出码3）要求重采，不通过平移整段轨迹或放宽容差掩盖。GUI 本地角色普通运动的 `step_ms` 为30ms，可逐步比较；步长不同或事实缺失的样本按证据不足拒绝，不混算。
 
 ### 角色状态机与动作槽
 
@@ -228,7 +228,7 @@ python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.
 | `action`、`skill_id/item_id` | 能归属的已开始原生动作，不被新输入B覆盖；无已知动作时为nil，不用意图猜测 |
 | `busy`、`phase` | 原生动作已知忙为true/running，已知闲为false/idle，否则nil/unknown；输入非空不等于busy |
 | `held` | 持续保持的方向与动作语义集合，不是GUI物理键或命中结果；一次性 `revive` 请求不计入 |
-| `reason/effect/dispatched` | 已有的最近原生输入处理反馈；不承诺逐帧解释全部准入条件。无头等待原生准入时可保持intent_accepted、dispatched=false；`effect="unknown"` 不表示成功或失败 |
+| `reason/effect/dispatched` | 已有的最近原生输入处理反馈；不承诺逐帧解释全部准入条件。GUI 等待原生准入时可保持intent_accepted、dispatched=false；`effect="unknown"` 不表示成功或失败 |
 
 `player` 不提供 `input_settled/control_released` 等内部握手字段。`skill(nil)` 或 `input_action=nil` 只表示槽已撤下，不证明所属持续输入已停止；脚本结束直接返回 `"done"`，由Runtime确认停止所属持续输入（持键路径包含真实释放）后发布终态，外部消费者读取会话顶层 `control_released`。按ID技能保持的是持续意图，有可读取动作锁时原生在动作结束且准入允许时继续派发；撤下移除意图和未执行派发，不制造技能实体键或技能key-up。`pending_action`已删除。A执行中放入B，当前输入为B、当前已知动作仍为A；撤下B或替换C后，只消费仍有效的输入，不在A结束后补发历史B。相同意图重复提交不重置按下边沿或原生重复节奏。方向独立保持，不为拾取/用药人工暂停；原生自行裁决哪些动作能同时发生。
 
@@ -237,14 +237,14 @@ python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.
 - **普通攻击/有动作锁技能**：保持后由原生消费者在真实动作结束、满足准入时继续；换档或重复同值不增加施放。GUI技能按ID直调，不依赖快捷键；首次尚未开始的普攻或明确被拒技能，在新鲜原生idle为true时按CInputSystem实际首延迟/重复间隔重试当前意图，设置不可读时不伪造重试频率。
 - **无动作锁技能**：成功但没有建立可读取动作锁时，每段连续保持只派发一次；没有可靠busy→idle依据不逐帧耗蓝。GUI需要原生按键释放的蓄力/引导类别明确不支持，不伪造真保持/释放。
 - **跳跃**：保持一次原生down，直到撤下才up；不新增地面轮询制造连跳。攀爬态按原版规则消费：jump+方向脱梯起跳，jump无方向被丢弃且不脱梯。需要再次按下时先撤下/换为其他输入，再设置jump。
-- **拾取**：无头复用原生持键消费，GUI复用已核实CInputSystem实际首延迟/重复间隔，原生时钟缺失时不自动重复；不加统一100ms。
-- **用药**：连续保持会尝试重复消耗，两端公共范围为200类恢复品，无头另保留既有201类食品支持；仅此路径增加100ms最小派发保护，换物品或撤下重设不能重置保护。目标达到时策略必须撤下，不能把一次调用理解为只喝一瓶。
+- **拾取**：GUI复用已核实CInputSystem实际首延迟/重复间隔，原生时钟缺失时不自动重复；不加统一100ms。
+- **用药**：连续保持会尝试重复消耗，当前覆盖200类恢复品；仅此路径增加100ms最小派发保护，换物品或撤下重设不能重置保护。目标达到时策略必须撤下，不能把一次调用理解为只喝一瓶。
 
 清槽、停止、取消和放键不受药品间隔限制。清空输入不停止空中运动、受击惯性或已经发生的动画；跳跃飞行/落地看物理事实。用药、拾取、技能派发以及 `action_idle=true` 均不是命中、消耗、恢复或buff生效凭据。
 
 完成、取消、期限、角色变化、离开游戏或错误只结束对应会话；清除该会话仍拥有的方向与动作输入，确认最新原生释放后发布终态，不清后来者的有效输入。换图清旧意图，稳定后的新main须根据当前[只读静态场景](#当前静态场景与跨图)重新决定；地形刷新不将旧动作输入带入新图，也不以输入变更改写已知原生动作。普通控件、对话、商店和装备交互由 CLI 操作；AP 自动分配接口见下文，手动 AP/SP 分配不属于该接口。`player.revive()` 不暴露通用窗口控件操作。
 
-`context.game.player.auto_ap(instance_id, character_id, scene_generation)` 是一次性自动分配接口，返回 `ok, reason`。三个身份参数必须取自打开属性窗口前或发起请求前的场景快照，用于绑定操作对象。`instance_id` 必须是非空且不含 NUL 的字符串；`character_id` 和 `scene_generation` 必须是可精确表示的整数数值，范围分别为 1–2147483647 和 1–9007199254740991，数值字符串不接受。参数无效时产生 Lua 错误。CLI 的 `auto-ap` 命令仍无参数。GUI 调用原版自动分配流程，无头按已实现的职业规则处理，不保证完整职业覆盖。意图受理或单次派发成功都不代表服务端已完成分配；结果不明时先观察同一角色的属性和剩余 AP，不重试。
+`context.game.player.auto_ap(instance_id, character_id, scene_generation)` 是一次性自动分配接口，返回 `ok, reason`。三个身份参数必须取自打开属性窗口前或发起请求前的场景快照，用于绑定操作对象。`instance_id` 必须是非空且不含 NUL 的字符串；`character_id` 和 `scene_generation` 必须是可精确表示的整数数值，范围分别为 1–2147483647 和 1–9007199254740991，数值字符串不接受。参数无效时产生 Lua 错误。CLI 的 `auto-ap` 命令仍无参数。GUI 调用原版自动分配流程，不保证完整职业覆盖。意图受理或单次派发成功都不代表服务端已完成分配；结果不明时先观察同一角色的属性和剩余 AP，不重试。
 
 以下示例对应 CLI 的内部脚本：调用方在开窗前单独保存三个快照值，开窗后核对身份未变，并将保存的锚点注入 `context.auto_ap_anchor`。`context.scene` 会由运行时重置，不能在开窗后拿它替代原锚点；`auto_ap_anchor` 是该调用方提供的数据，并非所有脚本自动拥有的字段。脚本在一个会话内只提交一次并等待派发反馈，派发后仍须另行核对实际属性：
 
@@ -295,4 +295,4 @@ CLI 提供的初始场景身份不能作为普通 `@option` 覆盖；核验后�
 
 从 [tick-held-skill.lua](<../shared/scripts/examples/tick-held-skill.lua>) 学习只设置一次技能、保持后撤下并由Runtime确认停止所属持续输入，再用 [tick-jump-attack.lua](<../shared/scripts/examples/tick-jump-attack.lua>) 学习按真实速度起跳、撤下攻击保持及落地确认；运行命令见 [共享脚本README](<../shared/scripts/README.md#示例examples>)。例子按真实事实推进，不以动作接纳代替游戏效果。
 
-实现入口：[TickRuntime.cpp](../shared/lua-runtime/TickRuntime.cpp)、[无头tick适配器](../headless/src/TickNativeAdapter.cpp)、[GUI桥](../beidou-ijl15/ezorsia/AgentBridge.cpp)。领域与预算、状态机和停止语义以本页为准。
+实现入口：[TickRuntime.cpp](../shared/lua-runtime/TickRuntime.cpp)、[GUI桥](../beidou-ijl15/ezorsia/AgentBridge.cpp)。领域与预算、状态机和停止语义以本页为准。

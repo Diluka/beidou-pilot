@@ -1,6 +1,6 @@
 # 共享 Lua 脚本
 
-这里保存随客户端镜像固定的 tick 脚本示例，供 headless 与 GUI 客户端使用。客户端只有一套 tick 引擎，示例统一按 tick 执行、无需声明引擎，只在前导注释按需声明 `@tick.*`。旧的内置策略及其函数库已移除。各示例用途见下表，公共接口以 [Tick Lua API](../../docs/LUA_TICK_API.md) 为准。
+这里保存随客户端镜像固定的 tick 脚本示例，供 GUI 客户端使用。客户端只有一套 tick 引擎，示例统一按 tick 执行、无需声明引擎，只在前导注释按需声明 `@tick.*`。旧的内置策略及其函数库已移除。各示例用途见下表，公共接口以 [Tick Lua API](../../docs/LUA_TICK_API.md) 为准。
 
 示例不由内置策略自动加载，阅读或试用时按用途显式选择。示例会实际移动、跳跃、消耗 MP 或普攻，运行前确认角色、场景和操作者，并按实际游戏结果核对。
 
@@ -43,7 +43,7 @@ workbenches/workbench "$ROLE" script cancel --session SCRIPT_ID
 
 阅读时关注四点：入口默认按第 3 档（30Hz）执行、无需声明引擎；`main` 只做短判断，返回 nil 后下次继续；`context.state.phase` 保存“助跑 → 空中 → 攻击输入消费 → 撤下保持 → 落地停止”阶段；方向和动作都只需设置一次，当前原生 `action="attack"` 且 `dispatched=true` 后用 `player.skill(nil)` 撤下，已经发生的动画继续，落地后用 `move(nil)` 清方向，速度接近零再返回 done。
 
-`character.velocity` 是角色自己的当前运动向量，`character.movement` 是按当前有效属性及本端物理模型推断的静止平地参考能力，两者不混用。自己、其他玩家、怪物、NPC、投射物和掉落物共享可移动物体的观察基类，每个实体各自拥有向量，世界不是运动主体。向量保留原生或原生更新区间差分的来源，未知不填零。沿目标方向达到参考移速的 99% 后才提交 jump：无头速度渐近稳态，不能严格比较相等，也不用固定助跑时长/距离或仅凭速度平台。完整运动参考及最大跳高的适用条件见 [运动观察](../../docs/LUA_TICK_API.md#运动观察与静止参考)。
+`character.velocity` 是角色自己的当前运动向量，`character.movement` 是按当前有效属性及本端物理模型推断的静止平地参考能力，两者不混用。自己、其他玩家、怪物、NPC、投射物和掉落物共享可移动物体的观察基类，每个实体各自拥有向量，世界不是运动主体。向量保留原生或原生更新区间差分的来源，未知不填零。沿目标方向达到参考移速的 99% 后才提交 jump：速度渐近稳态，不能严格比较相等，也不用固定助跑时长/距离或仅凭速度平台。完整运动参考及最大跳高的适用条件见 [运动观察](../../docs/LUA_TICK_API.md#运动观察与静止参考)。
 
 空中阶段要求真实 `character.on_ground=false`、Y 小于原平地 Y 且 `character.action_idle=true`；输入保持与角色动作分开，不用“槽空”猜落地。地面/动作事实未知时不以重复坐标推断。速度/能力参考只阻断助跑或停止确认，不阻断已具备离地事实的攻击。当前原生普攻与派发事实确认后撤下保持，不能把上次跳跃的 `dispatched` 或仍在空中当作普攻已派发。槽空也不表示所属输入已停止；最终返回 done 后由 Runtime 确认停止所属持续输入（持键路径包含真实释放）。低频可能错过原生重复边界，所以本例不承诺精确一次出手。`settled` 包含停止移动，不能用于全程移动的落地判断；派发、释放或动画结束也不等于命中。
 
@@ -59,20 +59,20 @@ workbenches/workbench "$ROLE" script cancel --session SCRIPT_ID
 
 ### 运动校准采样
 
-`calibration/tick-motion-calibration.lua` 用于建立双端物理pose基线，不参与玩法控制。先确认角色站在安全平地、本图没有可见怪物且没有其他脚本控制角色，再在两端各运行一次同场景同方向的会话：
+`calibration/tick-motion-calibration.lua` 用于建立 GUI 物理pose基线，不参与玩法控制。先确认角色站在安全平地、本图没有可见怪物且没有其他脚本控制角色，再在两个 GUI 实例或版本上各运行一次同场景同方向的会话：
 
 ```bash
 SCRIPT=/opt/beidou-pilot/shared/scripts/calibration/tick-motion-calibration.lua
 workbenches/workbench dev/NAME script run "$SCRIPT" --scenario walk --direction right --seconds 10
 ```
 
-场景可选 `walk/brake/reverse/jump_stationary/jump_directional/air_release/air_reverse`，方向为 `left/right`；`runup_ms/hold_ms/air_release_ms/timeout_ms` 控制各阶段时长。每个宿主帧通过 `game.log` 输出一行前缀 `BEIDOU_MOTION_CAL v1 ` 的 JSON，写入该实例桥目录的 `script-events.jsonl`；把两端文件复制到同一开发环境后运行离线比较器：
+场景可选 `walk/brake/reverse/jump_stationary/jump_directional/air_release/air_reverse`，方向为 `left/right`；`runup_ms/hold_ms/air_release_ms/timeout_ms` 控制各阶段时长。每个宿主帧通过 `game.log` 输出一行前缀 `BEIDOU_MOTION_CAL v1 ` 的 JSON，写入该实例桥目录的 `script-events.jsonl`；把两份文件复制到同一开发环境后运行离线比较器：
 
 ```bash
-python3 tools/motion_compare.py --left gui-events.jsonl --right headless-events.jsonl
+python3 tools/motion_compare.py --left gui-events.jsonl --right other-events.jsonl
 ```
 
-比较器按真实 `physics.update_id` 去重（重复宿主帧校验位姿一致）、以意图变化后的第一份物理样本为消费边沿对齐，逐物理步比较相对轨迹、速度和离地/落地事件；`step_ms` 不同、更新号缺口、字段缺失或记录跨场景时返回证据不足并要求重采，不通过平移或放宽容差掩盖。当前 GUI `step_ms=30`、无头 `step_ms=8`，跨端逐步比较在本地运动统一30ms物理步后才成立。
+比较器按真实 `physics.update_id` 去重（重复宿主帧校验位姿一致）、以意图变化后的第一份物理样本为消费边沿对齐，逐物理步比较相对轨迹、速度和离地/落地事件；`step_ms` 不同、更新号缺口、字段缺失或记录跨场景时返回证据不足并要求重采，不通过平移或放宽容差掩盖。当前 GUI `step_ms=30`；步长不同、更新号缺口或字段缺失的样本按证据不足拒绝，不混算。
 
 ## 调用与维护
 

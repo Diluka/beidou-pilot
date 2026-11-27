@@ -16,7 +16,7 @@ server.json
 /cli/config/resources.json
 /cli/config/target.json
 /cli/account.private.json
-/headless/resources/
+/shared/img/build/
 /beidou-ijl15/out/
 /LOCAL.md
 /tmp/

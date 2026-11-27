@@ -11,7 +11,7 @@
 生成器只依赖本目录的 world_map_data.py，不导入 beidou_pilot 包，也不读取客户端运行状态。
 需要共享 IMG 解析库，CI 生成的库不会留在检出目录里，本地运行时显式给出：
 
-    BEIDOU_IMG_LIBRARY=<检出>/headless/build/libbeidou-img.so \
+    BEIDOU_IMG_LIBRARY=<检出>/shared/img/build/libbeidou-img.so \
         MAPLE_RESOURCES_CONFIG=<主检出>/private/workbenches/config/resources.json \
         PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/beidou-game-guide/tools/world_map.py
 

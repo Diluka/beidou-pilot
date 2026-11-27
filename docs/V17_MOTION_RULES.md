@@ -3,9 +3,9 @@
 > **文档类别：研究记录。** 本文用于理解原版行为和复核证据，不是当前产品契约，也不表示相关能力已经交付。当前接口以 [Tick Lua API](LUA_TICK_API.md) 为准，当前能力与缺口以[客户端能力边界](CLIENT_LIMITATIONS.md)为准。文中 `tmp/` 路径是当时本机证据索引，目录已清理；不要按路径查找，结论以正文中的版本、VA、公式和符号为准。
 
 
-本文整理原版 V17 GUI 客户端（`BeiDou.exe`，SHA256 `1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df`）的**普通地面/普通跳跃/普通空中运动**规则，供 [#239](https://github.com/Diluka/beidou-pilot/issues/239) 的 headless 运动对齐与 [#243](https://github.com/Diluka/beidou-pilot/issues/243) 的 C++ 普通运动预测器共同使用。它是规则依据文档，不定义公共 API；实际实现以对应任务的代码为准。
+本文整理原版 V17 GUI 客户端（`BeiDou.exe`，SHA256 `1198fa57ca5a7c489bae43ec13c69681d9cabe0f96762f3dc0357facf2e7d4df`）的**普通地面/普通跳跃/普通空中运动**规则，供原版运动理解、GUI 桥实现与历史 headless 对齐记录共同参考。它是规则依据文档，不定义公共 API；实际实现以对应任务的代码为准。
 
-攀爬、受击、移动技能、场地特例、其他实体及运动包的后续取证统一见 [V17 其余运动规则与 headless 差异](V17_EXTENDED_MOTION_RULES.md)（#250，仅调查记录）；该文同时更正了本文早期的 G1/G4、场地倍率和包尾推断。
+攀爬、受击、移动技能、场地特例、其他实体及运动包的后续取证统一见 [V17 其余运动规则与历史差异](V17_EXTENDED_MOTION_RULES.md)（#250，仅调查记录）；该文同时更正了本文早期的 G1/G4、场地倍率和包尾推断。
 
 - 来源任务：[#236](https://github.com/Diluka/beidou-pilot/issues/236)（对齐总任务）、[#237](https://github.com/Diluka/beidou-pilot/issues/237)（参数/规则证据）、[#238](https://github.com/Diluka/beidou-pilot/issues/238)（同步物理末态与真机基线）；上层用户故事 [#176](https://github.com/Diluka/beidou-pilot/issues/176)，算法总任务 [#242](https://github.com/Diluka/beidou-pilot/issues/242)。
 - 基线：仓库 `main=639c700`；规则来自 2026-11-16 的静态逆向与 GUI 运行期只读探针。
@@ -425,7 +425,7 @@ StepAir(state, input, dt):
 
 ---
 
-## 8. headless 实现映射
+## 8. 历史 headless 实现映射（已移除）
 
 ### 8.1 #239 之前的 headless（历史对照，不再对应当前 main）
 

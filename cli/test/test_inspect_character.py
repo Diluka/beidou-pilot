@@ -7,7 +7,7 @@ from beidou_pilot.errors import ClientError
 
 class InspectCharacterTest(unittest.TestCase):
     def test_both_backends_return_native_observation_unchanged(self):
-        for name in ("headless", "beidou"):
+        for name in ("beidou",):
             for character, valid in (({"id": 1, "strength": 10, "dexterity": 4,
                                       "intelligence": 4, "luck": 4, "ability_points": 2}, True),
                                      (None, False)):
@@ -22,7 +22,7 @@ class InspectCharacterTest(unittest.TestCase):
                     backend.read.assert_called_once_with("observe")
 
     def test_observation_errors_propagate(self):
-        for name in ("headless", "beidou"):
+        for name in ("beidou",):
             with self.subTest(backend=name):
                 backend = Mock()
                 backend.name = name
@@ -33,7 +33,7 @@ class InspectCharacterTest(unittest.TestCase):
                 self.assertIs(caught.exception, error)
 
     def test_skills_keeps_character_domain(self):
-        for name in ("headless", "beidou"):
+        for name in ("beidou",):
             with self.subTest(backend=name):
                 backend = Mock()
                 backend.name = name
@@ -42,7 +42,7 @@ class InspectCharacterTest(unittest.TestCase):
 
     def test_character_rejects_identifier(self):
         backend = Mock()
-        backend.name = "headless"
+        backend.name = "beidou"
         with self.assertRaises(ClientError) as caught:
             dispatch(backend, parser().parse_args(["inspect", "character", "123"]))
         self.assertEqual(caught.exception.code, "usage")

@@ -110,7 +110,7 @@ source=host
 
 脚本在约 0.5 秒间隔扫描队列。命令处理后移动到 `queue/done/<id>`（内容 `ok`）或 `queue/rejected/<id>`（内容 `rejected=<reason>`）；重复 ID 不会再次执行，最近 100 个 ID 会留在会话内去重。`ttl=0` 不过期；正 TTL 从命令文件修改时间起计时，过期命令写入拒绝回执。`status` 立即发布状态。
 
-follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代次变化，或 owner 的期望位置移动达到 `stop_distance` 时重算路径，同平台内的小幅位置变化继续复用路径。自然场景中 owner 与 bot 位于不同平台且路径规划返回 `no_path` 时，跟随不能保证接近目标；dev headless 冒烟在修复后仍观察到 `follow/wait: owner_platform_unreachable`，30 分钟跟随验收尚未完成。
+follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代次变化，或 owner 的期望位置移动达到 `stop_distance` 时重算路径，同平台内的小幅位置变化继续复用路径。自然场景中 owner 与 bot 位于不同平台且路径规划返回 `no_path` 时，跟随不能保证接近目标；原 headless dev 冒烟在修复后仍观察到 `follow/wait: owner_platform_unreachable`；headless 已退役，GUI 迁移后的 30 分钟跟随验收尚未完成。
 
 ### 一次性场景目标与无目标等待
 

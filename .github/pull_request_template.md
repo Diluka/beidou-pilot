@@ -8,7 +8,7 @@
 
 ## CI 验收
 
-<!-- 记录对应提交、CI 运行链接，以及 Python offline tests 和 Headless image build 的实际结果。检查失败、缺失、未运行或被跳过时如实记录并处理，本地成功不能记为 CI 通过。 -->
+<!-- 记录对应提交、CI 运行链接，以及 Python offline tests 和 GUI image build 的实际结果。检查失败、缺失、未运行或被跳过时如实记录并处理，本地成功不能记为 CI 通过。 -->
 
 ## 真实客户端试用
 

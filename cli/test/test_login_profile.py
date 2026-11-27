@@ -116,35 +116,18 @@ class LoginProfileContract(unittest.TestCase):
                     validate_character_creation(replace(creation, **{field_name: value}))
 
     def test_open_requires_account_and_rejects_retired_login_options(self) -> None:
-        for backend in ("beidou", "headless"):
-            for options in (
-                [],
-                ["--account", str(self.account), "--character", "First", "--character-index", "0", "--channel", "1"],
-                ["--account", str(self.account), "--profile", str(self.account), "--target", str(self.server)],
-            ):
-                with self.subTest(backend=backend, options=options), patch("beidou_pilot.cli.dispatch") as dispatch:
-                    output = io.StringIO()
-                    with redirect_stdout(output):
-                        code = main(["--root", str(self.root), "--json", "--backend", backend, "open", *options])
-                    self.assertEqual(2, code)
-                    self.assertEqual("usage", json.loads(output.getvalue())["error"]["code"])
-                    dispatch.assert_not_called()
-
-    def test_rejects_a_cid_that_would_be_truncated_by_the_native_client(self) -> None:
-        self.account.write_text('{"username":"fixture","password":"fixture","character_id":4294967298}')
-        native = BridgeFiles(self.root / "headless", "headless")
-        output = io.StringIO()
-        with (
-            patch.dict(os.environ, native.environment),
-            patch("beidou_pilot.headless.open_game") as open_client,
-            redirect_stdout(output),
+        for options in (
+            [],
+            ["--account", str(self.account), "--character", "First", "--character-index", "0", "--channel", "1"],
+            ["--account", str(self.account), "--profile", str(self.account), "--target", str(self.server)],
         ):
-            code = main(
-                ["--root", str(native.root), "--json", "--backend", "headless", "open", "--account", str(self.account)]
-            )
-        self.assertEqual(2, code)
-        self.assertEqual("profile_invalid", json.loads(output.getvalue())["error"]["code"])
-        open_client.assert_not_called()
+            with self.subTest(options=options), patch("beidou_pilot.cli.dispatch") as dispatch:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    code = main(["--root", str(self.root), "--json", "open", *options])
+                self.assertEqual(2, code)
+                self.assertEqual("usage", json.loads(output.getvalue())["error"]["code"])
+                dispatch.assert_not_called()
 
     def test_gui_selects_the_account_cid(self) -> None:
         first = {"id": 6, "name": "First", "index": 0}
