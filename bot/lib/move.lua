@@ -191,9 +191,7 @@ function M.step(mover, ctx, world)
                 end
             end
             if not finite(edge.x) or not finite(edge.destination) or not finite(left) or not finite(right)
-                or left > right or not character.on_ground or not on_source
-                or edge.x < left + 8 or edge.x > right - 8
-                or character.x < left + 8 or character.x > right - 8 then
+                or left > right or not character.on_ground or not on_source then
                 failure = "runup_unavailable"
             else
                 local target
@@ -204,23 +202,42 @@ function M.step(mover, ctx, world)
                 if not target then failure = "runup_unavailable" else
                     mover.runup_direction = sign == 1 and "right" or "left"
                     mover.runup_sign, mover.runup_target = sign, target
-                    mover.runup_left, mover.runup_right = left + 8, right - 8
-                    mover.phase, mover.phase_time = "retreat", now
+                    local movement = ctx.game.character and ctx.game.character.movement
+                    local speed = movement and movement.max_speed
+                    if type(speed) ~= "number" or speed <= 0 or speed ~= speed or speed == math.huge then speed = 100 end
+                    mover.runup_left, mover.runup_right = left, right
+                    mover.phase, mover.phase_time = "to_runup_start", now
+                    mover.runup_timeout = 2 + 2 * math.abs(character.x - target) / speed
                 end
             end
-        elseif not failure and mover.phase == "retreat" then
-            local sign = mover.runup_sign
+        elseif not failure and mover.phase == "to_runup_start" then
             if not character.on_ground or character.x < mover.runup_left or character.x > mover.runup_right
-                or now - mover.phase_time >= 1.5 then
+                or now - mover.phase_time >= mover.runup_timeout then
                 failure = "runup_unavailable"
-            elseif (character.x - mover.runup_target) * sign <= 0 then
-                mover.phase, mover.phase_time = "approach", now
-                mover.runup_x, mover.runup_time = character.x, now
-                if not p.move(mover.runup_direction) then failure = "unsupported_edge" end
-            elseif not p.move(sign == 1 and "left" or "right") then
+            elseif math.abs(character.x - mover.runup_target) <= 4 then
+                if not p.move(nil) then failure = "unsupported_edge" else
+                    mover.phase, mover.phase_time = "runup_settle", now
+                    mover.runup_x, mover.runup_time = character.x, now
+                end
+            elseif not p.move(character.x < mover.runup_target and "right" or "left") then
                 failure = "unsupported_edge"
             end
-        elseif not failure and mover.phase == "approach" then
+        elseif not failure and mover.phase == "runup_settle" then
+            local physics = ctx.game.character and ctx.game.character.physics
+            local velocity = physics and physics.velocity and physics.velocity.x
+            local stable = type(velocity) ~= "number" and now > mover.runup_time and character.x == mover.runup_x
+            if not character.on_ground or character.x < mover.runup_left or character.x > mover.runup_right
+                or now - mover.phase_time >= 0.5 then
+                failure = "runup_unavailable"
+            elseif not p.move(nil) then
+                failure = "unsupported_edge"
+            elseif (type(velocity) == "number" and math.abs(velocity) < 1) or stable then
+                mover.phase, mover.phase_time = "runup", now
+                mover.runup_x, mover.runup_time = character.x, now
+            else
+                mover.runup_x, mover.runup_time = character.x, now
+            end
+        elseif not failure and mover.phase == "runup" then
             local dt = now - mover.runup_time
             local speed = dt > 0 and (character.x - mover.runup_x) * mover.runup_sign / dt or 0
             if not character.on_ground or character.x < mover.runup_left or character.x > mover.runup_right
