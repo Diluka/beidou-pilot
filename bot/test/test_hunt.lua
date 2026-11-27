@@ -41,4 +41,39 @@ ctx.game.character.attacking = false
 ctx.game.character.action_idle = false
 at(10.1, "stop")
 io_module.poll, io_module.publish, io_module.event, game = saved_poll, saved_publish, saved_event, saved_game
+local hunt = require("lib.hunt")
+local terrain, move = require("lib.terrain"), require("lib.move")
+local old_plan, old_set, old_step, old_stop = terrain.plan, move.set_path, move.step, move.stop
+local plans, patrol_events = 0, {}
+io_module.event = function(_, name, data) patrol_events[#patrol_events + 1] = {name, data} end
+terrain.plan = function(_, from, to)
+    plans = plans + 1
+    if to == 3 then return nil, "no_path" end
+    return {{kind = "jumpup", from = from, to = to, x = 0, destination = 0, rise = 40}}
+end
+move.set_path = function(m, path) m.status, m.edges, m.index = "running", path, 1; return true end
+move.step = function() return "running" end
+move.stop = function(m) m.status = "done" end
+local graph = {platforms = {{}, {}, {}}, candidates = {jumpup = {1, 2, 0, 0, 40}}}
+local w = {map_id = 1, scene_generation = 1, character = {platform = 1, on_ground = true}}
+local c = {state = {}, tick = {time = 0}}
+local m = {status = "done"}
+assert(hunt.step(c, w, graph, m) == "running" and plans == 1)
+assert(hunt.step(c, w, graph, m) == "running" and plans == 1, "active route is cached")
+w.character.platform = 3
+assert(select(2, hunt.step(c, w, graph, m)) == "plan_throttled" and plans == 1)
+c.tick.time = 1
+assert(hunt.step(c, w, graph, m) == "running" and plans == 2, "displacement replans target")
+w.character.platform = 2
+local result, why = hunt.step(c, w, graph, m)
+assert(result == "waiting" and why == "arrived")
+c.tick.time = 2
+result, why = hunt.step(c, w, graph, m)
+assert(why == "no_path" and plans == 3, "unreachable platform is skipped")
+assert(select(2, hunt.step(c, w, graph, m)) == "refresh")
+c.tick.time = 8
+hunt.step(c, w, graph, m)
+assert(plans == 4, "next cycle revisits reachable platforms")
+terrain.plan, move.set_path, move.step, move.stop = old_plan, old_set, old_step, old_stop
+io_module.event = saved_event
 print("hunt tests passed")
