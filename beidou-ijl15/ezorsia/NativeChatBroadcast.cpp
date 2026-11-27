@@ -90,6 +90,22 @@ std::string BridgeDirectory() {
     return std::string(value.data(), length);
 }
 
+// Announcement literals are CP936 for the chat packet; the log file is UTF-8
+// like the rest of the bridge logs.
+std::string Cp936ToUtf8(const std::string& text) {
+    if (text.empty()) return {};
+    const int wideCount =
+        MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (wideCount <= 0) return {};
+    std::wstring wide(wideCount, L'\0');
+    MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), &wide[0], wideCount);
+    const int utf8Count = WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideCount, nullptr, 0, nullptr, nullptr);
+    if (utf8Count <= 0) return {};
+    std::string result(utf8Count, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideCount, &result[0], utf8Count, nullptr, nullptr);
+    return result;
+}
+
 std::string Timestamp() {
     SYSTEMTIME now{};
     GetLocalTime(&now);
@@ -314,7 +330,7 @@ void Tick() {
     }
     lastAnnounceAt = now;
     announcedOnce = true;
-    AppendLog(Timestamp() + " strategy announced: " + announcement + " [mode " + mode + ", party "
+    AppendLog(Timestamp() + " strategy announced: " + Cp936ToUtf8(announcement) + " [mode " + mode + ", party "
               + (partyActive ? "yes]" : "no]"));
 }
 
