@@ -224,6 +224,23 @@ local function main(context)
         return
     end
 
+    local function loot_step(drop, mover)
+        local edge = mover.edges and mover.edges[mover.index or 1]
+        local key = edge and edge.from and edge.to and tostring(edge.from) .. ":" .. tostring(edge.to)
+        local was_blocked = key and memory.blocked and memory.blocked[key]
+        local status, reason = loot.step(context, world, drop, mover)
+        if not key then
+            edge = mover.edges and mover.edges[mover.index or 1]
+            key = edge and edge.from and edge.to and tostring(edge.from) .. ":" .. tostring(edge.to)
+        end
+        if status == "failed" and key and not was_blocked and memory.blocked
+            and (reason == "landing_mismatch" or reason == "timeout" or reason == "no_progress"
+                or reason == "rope_mismatch") then
+            memory.blocked[key] = nil
+        end
+        return status, reason
+    end
+
     if bot.mode == "hunt" and terrain_ready then
         -- Do not interrupt an in-flight navigation edge when platform_at is unknown.
         if character.on_ground == false and memory.mover and memory.hunt_action then
@@ -237,7 +254,7 @@ local function main(context)
                 io_module.publish(context, world, now)
                 return
             elseif memory.hunt_action == "loot" and memory.hunt_drop then
-                loot.step(context, world, memory.hunt_drop, memory.mover)
+                loot_step(memory.hunt_drop, memory.mover)
                 memory.hunt_drop = nil
                 io_module.publish(context, world, now)
                 return
@@ -247,7 +264,9 @@ local function main(context)
         if memory.hunt_blocked_scope ~= scope then
             memory.blocked, memory.hunt_failures, memory.hunt_blocked_scope = nil, nil, scope
         end
-        local mob = combat.select(world, {hunt = true, platform_only = (memory.hunt_failures or 0) >= 3})
+        local local_only = (memory.hunt_failures or 0) >= 3
+            or memory.hunt_patrol and memory.hunt_patrol.fallback_until and now < memory.hunt_patrol.fallback_until
+        local mob = combat.select(world, {hunt = true, platform_only = local_only})
         local drop
         if memory.loot_abandoned_scope ~= scope then
             memory.loot_abandoned, memory.loot_abandoned_scope = {}, scope
@@ -258,7 +277,7 @@ local function main(context)
                 for _, edge in ipairs(memory.mover.edges) do route[edge.to] = true end
             end
             local options = {graph = memory.graph, route_platforms = route, abandoned = memory.loot_abandoned,
-                local_only = (memory.hunt_failures or 0) >= 3}
+                local_only = local_only}
             if memory.hunt_drop then
                 for _, observed in ipairs(world.drops or {}) do
                     if observed.object_id == memory.hunt_drop.object_id then
@@ -293,7 +312,7 @@ local function main(context)
                 status, reason = combat.step(context, world, mob, mover)
             elseif action == "loot" then
                 memory.hunt_drop = drop
-                status, reason = loot.step(context, world, drop, mover)
+                status, reason = loot_step(drop, mover)
                 if status ~= "running" then memory.hunt_drop = nil end
             else
                 status, reason = hunt.step(context, world, memory.graph, mover)
@@ -304,7 +323,9 @@ local function main(context)
                     local edge = mover.status == "failed" and mover.edges and mover.edges[mover.index or 1]
                     if edge then
                         memory.hunt_failures = (memory.hunt_failures or 0) + 1
-                        if edge.from and edge.to and edge.from ~= edge.to then
+                        local structural = reason == "no_path" or reason == "unsupported_edge"
+                            or reason == "invalid_edge" or reason == "character_unavailable"
+                        if structural and edge.from and edge.to and edge.from ~= edge.to then
                             memory.blocked = memory.blocked or {}
                             memory.blocked[tostring(edge.from) .. ":" .. tostring(edge.to)] = true
                         end

@@ -83,17 +83,37 @@ assert(hunt.step(failures, failed_world, failed_graph, fm) == "running")
 move.step = function(mover) mover.status, mover.reason = "failed", "no_progress"; return "failed", "no_progress" end
 failures.tick.time = 1
 hunt.step(failures, failed_world, failed_graph, fm)
-assert(failures.state.blocked["1:2"], "failed edge must be blocked")
+assert(not failures.state.blocked and failures.state.hunt_patrol.attempts[2] == 1,
+    "transient failure must not block an edge")
 local found_edge = false
 for _, e in ipairs(patrol_events) do
-    if e[1] == "hunt/recover" and e[2].edge_kind == "jumpup" and e[2].edge_x == 7 then found_edge = true end
+    if e[1] == "hunt/retry" and e[2].edge_kind == "jumpup" and e[2].edge_x == 7
+        and e[2].attempts == 1 and e[2].next_attempt == 2 then found_edge = true end
 end
-assert(found_edge, "failure event must describe the failed edge")
-failures.state.hunt_failures = 3
-failures.tick.time = 2
-assert(select(2, hunt.step(failures, failed_world, failed_graph, fm)) == "fallback")
+assert(found_edge, "retry event must describe the failed edge and attempt")
 failures.tick.time = 10
 assert(select(2, hunt.step(failures, failed_world, failed_graph, fm)) == "fallback")
+failures.tick.time = 31
+assert(hunt.step(failures, failed_world, failed_graph, fm) == "running")
+failures.tick.time = 32
+hunt.step(failures, failed_world, failed_graph, fm)
+assert(failures.state.hunt_patrol.attempts[2] == 2 and not failures.state.hunt_patrol.skipped[2])
+failures.tick.time = 62
+assert(hunt.step(failures, failed_world, failed_graph, fm) == "running")
+failures.tick.time = 63
+hunt.step(failures, failed_world, failed_graph, fm)
+assert(failures.state.hunt_patrol.skipped[2] and failures.state.hunt_patrol.attempts[2] == 3)
+assert(not failures.state.blocked, "transient retries must never block the edge")
+local last = patrol_events[#patrol_events]
+assert(last[1] == "hunt/skip" and last[2].attempts == 3)
+local structural = {state = {}, tick = {time = 0}, game = failures.game}
+local sm = {status = "done"}
+assert(hunt.step(structural, failed_world, failed_graph, sm) == "running")
+move.step = function(mover) mover.status, mover.reason = "failed", "unsupported_edge"; return "failed", "unsupported_edge" end
+structural.tick.time = 1
+hunt.step(structural, failed_world, failed_graph, sm)
+assert(structural.state.blocked["1:2"] and structural.state.hunt_patrol.skipped[2],
+    "structural edge failure blocks and skips")
 
 local empty = {state = {}, tick = {time = 0}, game = failures.game}
 local em = {status = "done"}
@@ -102,13 +122,15 @@ hunt.step(empty, failed_world, failed_graph, em)
 empty.tick.time = 1
 hunt.step(empty, failed_world, failed_graph, em)
 empty.tick.time = 2
-assert(select(2, hunt.step(empty, failed_world, failed_graph, em)) == "refresh")
+assert(select(2, hunt.step(empty, failed_world, failed_graph, em)) == "fallback")
 local cycle_events = #patrol_events
-for t = 3, 31 do empty.tick.time = t; hunt.step(empty, failed_world, failed_graph, em) end
-assert(#patrol_events == cycle_events, "refresh wait must not emit extra cycles")
-empty.tick.time = 32
-assert(select(2, hunt.step(empty, failed_world, failed_graph, em)) == "refresh_complete")
-assert(next(empty.state.hunt_patrol.skipped) == nil, "new cycle clears skips")
+for t = 3, 120 do empty.tick.time = t; hunt.step(empty, failed_world, failed_graph, em) end
+assert(#patrol_events == cycle_events, "exhausted targets must not emit extra cycles")
+assert(empty.state.hunt_patrol.skipped[2] and empty.state.blocked["1:2"], "no_path is scoped skip and block")
+failed_world.scene_generation = 2
+hunt.step(empty, failed_world, failed_graph, em)
+assert(empty.state.hunt_patrol.scope == "2:2" and not empty.state.hunt_patrol.skipped[3],
+    "scene change rebuilds patrol state")
 terrain.plan, move.set_path, move.step, move.stop = old_plan, old_set, old_step, old_stop
 hunt_io.event = old_hunt_event
 io_module.event = saved_event

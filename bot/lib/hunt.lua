@@ -10,7 +10,7 @@ function M.step(ctx, world, graph, mover)
     local scope = tostring(world.map_id) .. ":" .. tostring(world.scene_generation)
     local patrol = memory.hunt_patrol
     if not patrol or patrol.scope ~= scope then
-        patrol = {scope = scope, visited = {}, skipped = {}, index = 1}
+        patrol = {scope = scope, visited = {}, skipped = {}, attempts = {}, index = 1}
         memory.hunt_patrol = patrol
     end
     if patrol.target and mover.status == "running" and not character.on_ground then
@@ -63,7 +63,7 @@ function M.step(ctx, world, graph, mover)
     end
     if patrol.wait_until then
         if now < patrol.wait_until then return "waiting", "refresh" end
-        patrol.visited, patrol.skipped, patrol.index, patrol.wait_until, patrol.order, patrol.arrivals = {}, {}, 1, nil, nil, 0
+        patrol.visited, patrol.index, patrol.wait_until, patrol.order, patrol.arrivals = {}, 1, nil, nil, 0
         return "waiting", "refresh_complete"
     end
     if patrol.target then
@@ -85,22 +85,29 @@ function M.step(ctx, world, graph, mover)
         if status == "running" then return status, reason end
         if status == "failed" then
             local failed = mover.edges and mover.edges[mover.index or 1]
-            if failed and failed.from and failed.to and failed.from ~= failed.to then
+            local structural = reason == "no_path" or reason == "unsupported_edge"
+                or reason == "invalid_edge" or reason == "character_unavailable"
+            if structural and failed and failed.from and failed.to and failed.from ~= failed.to then
                 memory.blocked = memory.blocked or {}
                 memory.blocked[tostring(failed.from) .. ":" .. tostring(failed.to)] = true
             end
-            memory.hunt_failures = (memory.hunt_failures or 0) + 1
-            patrol.failures = (patrol.failures or 0) + 1
-            local detail = {from = character.platform, to = patrol.target, reason = reason,
+            local target = patrol.target
+            patrol.attempts[target] = (patrol.attempts[target] or 0) + 1
+            local attempts = patrol.attempts[target]
+            local detail = {from = character.platform, to = target, reason = reason, attempts = attempts,
                 edge_kind = failed and failed.kind, edge_from = failed and failed.from,
                 edge_to = failed and failed.to, edge_x = failed and failed.x}
             mover.status = "done"
-            if patrol.failures >= 2 then
+            if structural or attempts >= 3 then
                 io_module.event(ctx, "hunt/skip", detail)
-                patrol.skipped[patrol.target], patrol.target, patrol.failures, patrol.route_started = true, nil, nil, nil
+                patrol.skipped[target], patrol.target, patrol.route_started = true, nil, nil
                 return "waiting", reason
             end
-            io_module.event(ctx, "hunt/recover", detail)
+            detail.next_attempt = attempts + 1
+            io_module.event(ctx, "hunt/retry", detail)
+            patrol.fallback_until = now + 30
+            io_module.event(ctx, "hunt/fallback", {platform = character.platform, reason = reason, attempts = attempts})
+            return "waiting", "fallback"
         end
         -- A knockback or failed edge invalidates the old route; replan on the next tick.
         patrol.recovering = patrol.route_started or nil
@@ -113,8 +120,19 @@ function M.step(ctx, world, graph, mover)
             if not patrol.visited[index] and not patrol.skipped[index] then target = index; break end
         end
         if not target then
-            patrol.wait_until = now + ((patrol.arrivals or 0) > 0 and 5 or 30)
+            local remaining, skipped = false, false
+            for index in ipairs(graph.platforms) do
+                if index ~= character.platform then
+                    if patrol.skipped[index] then skipped = true else remaining = true end
+                end
+            end
             io_module.event(ctx, "hunt/cycle", {map_id = world.map_id, arrivals = patrol.arrivals or 0})
+            if skipped and not remaining then
+                patrol.fallback_until = math.huge
+                io_module.event(ctx, "hunt/fallback", {platform = character.platform, reason = "targets_exhausted"})
+                return "waiting", "fallback"
+            end
+            patrol.wait_until = now + ((patrol.arrivals or 0) > 0 and 5 or 30)
             return "waiting", "refresh"
         end
         patrol.target = target
@@ -130,15 +148,21 @@ function M.step(ctx, world, graph, mover)
     local elapsed = started and (clock() - started) * 1000
     if elapsed and elapsed > 5 then patrol.slow_plan = true end
     if not path or #path == 0 then
+        if reason == "no_path" and from ~= target then
+            memory.blocked = memory.blocked or {}
+            memory.blocked[tostring(from) .. ":" .. tostring(target)] = true
+        end
         if not patrol.skipped[target] then
-            io_module.event(ctx, "hunt/skip", {from = from, to = target, reason = reason or "no_path", plan_ms = elapsed})
+            io_module.event(ctx, "hunt/skip", {from = from, to = target, reason = reason or "no_path",
+                attempts = patrol.attempts[target] or 0, plan_ms = elapsed})
         end
         patrol.skipped[target], patrol.target, patrol.recovering, patrol.route_started, patrol.failures = true, nil, nil, nil, nil
         return "waiting", reason or "no_path"
     end
     local ok, err = move.set_path(mover, path)
     if not ok then
-        io_module.event(ctx, "hunt/skip", {from = from, to = target, reason = err})
+        io_module.event(ctx, "hunt/skip", {from = from, to = target, reason = err,
+            attempts = patrol.attempts[target] or 0})
         patrol.skipped[target], patrol.target, patrol.recovering, patrol.route_started, patrol.failures = true, nil, nil, nil, nil
         return "waiting", err
     end
