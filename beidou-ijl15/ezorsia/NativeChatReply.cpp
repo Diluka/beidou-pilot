@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Native whisper location reply.
 //
@@ -45,11 +45,13 @@ struct InPacket {
 
 struct OutPacket {
     int loopback;
+
     union {
         unsigned char* data;
         void* unknown;
         unsigned short* header;
     };
+
     unsigned long size;
     unsigned int offset;
     int encryptedByShanda;
@@ -89,8 +91,8 @@ std::string BridgeDirectory() {
 
 std::string GbkToUtf8(const std::string& text) {
     if (text.empty()) return {};
-    const int wideCount = MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()),
-                                              nullptr, 0);
+    const int wideCount =
+        MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
     if (wideCount <= 0) return {};
     std::wstring wide(wideCount, L'\0');
     MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), &wide[0], wideCount);
@@ -103,8 +105,8 @@ std::string GbkToUtf8(const std::string& text) {
 
 std::string Utf8ToGbk(const std::string& text) {
     if (text.empty()) return {};
-    const int wideCount = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
-                                              static_cast<int>(text.size()), nullptr, 0);
+    const int wideCount =
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
     if (wideCount <= 0) return {};
     std::wstring wide(wideCount, L'\0');
     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), &wide[0], wideCount);
@@ -130,12 +132,12 @@ void AppendLog(const std::string& line) {
     if (directory.empty()) return;
     const std::string path = directory + "\\chat.log";
     WIN32_FILE_ATTRIBUTE_DATA attributes{};
-    if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attributes)
-        && attributes.nFileSizeHigh == 0 && attributes.nFileSizeLow > kLogLimitBytes) {
+    if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attributes) && attributes.nFileSizeHigh == 0
+        && attributes.nFileSizeLow > kLogLimitBytes) {
         DeleteFileA(path.c_str());
     }
-    HANDLE file = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE file = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return;
     const std::string record = line + "\r\n";
     DWORD written = 0;
@@ -160,7 +162,7 @@ MapNames ReadMapNames(std::uint32_t mapId) {
     BeidouImgDirectory* opened = nullptr;
     if (!beidou_img_file_open(path.c_str(), &opened, message.data(), message.size())) return result;
     const std::unique_ptr<BeidouImgDirectory, decltype(&beidou_img_directory_close)> image(opened,
-                                                                                          beidou_img_directory_close);
+                                                                                           beidou_img_directory_close);
     BeidouImgNodeInfo imageRoot{};
     if (!beidou_img_directory_node(image.get(), 0, &imageRoot)) return result;
     const std::string key = std::to_string(mapId);
@@ -181,8 +183,10 @@ MapNames ReadMapNames(std::uint32_t mapId) {
             const char* value = beidou_img_directory_string(image.get(), property.value_string_id, &valueLength);
             if (propertyName == nullptr || value == nullptr) continue;
             const std::string propertyString(propertyName, propertyNameLength);
-            if (propertyString == "mapName") result.mapName.assign(value, valueLength);
-            else if (propertyString == "streetName") result.streetName.assign(value, valueLength);
+            if (propertyString == "mapName")
+                result.mapName.assign(value, valueLength);
+            else if (propertyString == "streetName")
+                result.streetName.assign(value, valueLength);
         }
         break;
     }
@@ -215,7 +219,7 @@ bool ContainsKeyword(const std::string& text, const char* keyword) {
 // English forms are matched on the UTF-8 text; English matching ignores ASCII
 // case so the keyword list stays small.
 bool AsksLocation(const std::string& utf8) {
-    static const char* const keywords[] = {"在哪", "哪里", "哪儿", "什么地方", "什么图", "哪张图", "哪个图",
+    static const char* const keywords[] = {"在哪", "哪里", "哪儿",  "什么地方", "什么图",    "哪张图",  "哪个图",
                                            "位置", "坐标", "where", "location", "which map", "what map"};
     std::string lowered = utf8;
     for (char& character : lowered)
@@ -231,7 +235,8 @@ bool AsksLocation(const std::string& utf8) {
 
 bool ReadString(const unsigned char* data, std::size_t size, std::size_t& offset, std::string& value) {
     if (offset + 2 > size) return false;
-    const std::size_t length = static_cast<std::size_t>(data[offset]) | (static_cast<std::size_t>(data[offset + 1]) << 8);
+    const std::size_t length =
+        static_cast<std::size_t>(data[offset]) | (static_cast<std::size_t>(data[offset + 1]) << 8);
     offset += 2;
     if (offset + length > size) return false;
     value.assign(reinterpret_cast<const char*>(data + offset), length);
@@ -305,8 +310,8 @@ void HandleReceiveWhisper(const unsigned char* data, std::size_t size) {
     }
     lastReplyAt = now;
     repliedOnce = true;
-    AppendLog(Timestamp() + " location reply sent to " + senderUtf8 + ": " + replyUtf8 + " [map " + std::to_string(mapId)
-                                + "]");
+    AppendLog(Timestamp() + " location reply sent to " + senderUtf8 + ": " + replyUtf8 + " [map "
+              + std::to_string(mapId) + "]");
 }
 
 } // namespace
