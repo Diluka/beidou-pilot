@@ -45,6 +45,13 @@ game.log("platform=" .. tostring(platform))
 | `owner_name` | `""` |
 | `owner_character_id` | `0` |
 | `attack_skill_id` | `0` |
+| `attack_mode` | `"melee"` |
+| `attack_range` | `110` |
+| `min_range` | `60` |
+| `ranged_skill_id` | `3000002` |
+| `ranged_skill_bonus_per_level` | `15` |
+| `ranged_skill_level` | `0` |
+| `skill_mp_cost` | `10` |
 | `hp_item` | `0` |
 | `mp_item` | `0` |
 | `follow_distance` | `80` |
@@ -124,6 +131,48 @@ workbenches/workbench dev/NAME script run bot/travel.lua --seconds 240
 - 航点来源是客户端原生 `world-map route`（只覆盖普通门户）；出租车、船等脚本交通返回 `no_route`，需要人工分段并单独处理。
 - 每个航点执行 `terrain.plan` + `move.step` 到传送门坐标，再按上换图；失败/超时释放输入并返回可读原因。
 - 执行日志会记录 `leg i/N map=... plan ... -> portal ...` 与换图结果，便于核对。
+
+## 持久化状态（memory）
+
+- 路径 `/work/bot/memory.lua`（可读 Lua 表，`schema = 1`），原子写（`.tmp` + rename），上限 64KB；
+- API：`lib.memory` 的 `load/save/get/set/unset/flush/clear/reconcile/repair_meta`；命名空间约定 `bot`（模式/目标/地图等）、`supply`（补给阶段/上次商店）、`quest`（任务进度缓存）；
+- 损坏文件自动改名为 `.bak` 并重置，不崩溃；`schema` 变化由 `repair_meta` 迁移；
+- **客户端状态是唯一权威**：启动时与运行中定期用 `character/scene/inventory/quests` 的实时观察调用 `reconcile(store, namespace, live)`，冲突字段一律覆盖为 live 值并记录修复项；调用方应发布 `memory/repair` 事件；
+- `flush` 节流 ≥1 秒；只缓存"客户端无法直接观察"的事实（巡逻进度、上次商店图、阶段），可观察事实每 tick 以 live 覆盖，禁止用旧缓存代替观察。
+
+### 装备换装与待卖清单（equipment）
+
+- 命名空间 `equipment`：`equipped`（客户端权威快照）、`sell_list`（待卖清单，含 `approved`）、`candidates`；
+- 换装对账：客户端 `equipped` 变化时，被替换的旧装备自动加入 `sell_list`（`approved=false`，不自动卖），新增装备更新快照；
+- 离线重登：`reconcile` 以客户端 `inventory/equipped` 为准——清单/候选里已不存在的物品自动移除，仍存在的保留；**清单持久化在 `/work/bot/memory.lua`，重登不丢**；
+- 自动清包只处理 `approved=true` 的清单项；新获得/未确认装备永不自动卖；人工确认用 `equipment.approve(store, item_id)`。
+
+## 战斗模式（近战/远程/技能）
+
+`config.conf`（或 defaults）可配置：
+
+```ini
+attack_mode=ranged                 # melee | ranged | skill
+attack_range=110                   # 弓/弩基础射程，不含技能加成
+min_range=60                       # 过近后撤阈值
+ranged_skill_id=3000002            # 远程箭（弓箭手 1 转）
+ranged_skill_bonus_per_level=15    # 远程箭每级射程增量
+ranged_skill_level=0               # 技能列表不可读时的手动档位
+attack_skill_id=1000               # skill 模式主攻技能；MP 不足回退普攻
+skill_mp_cost=10
+```
+
+远程/技能模式的有效射程按武器与已学技能计算：`attack_range + 已学远程箭等级 × ranged_skill_bonus_per_level`。
+
+- 技能等级优先取客户端观察 `game.character.skills`；`skills_complete=false` 或技能列表不可读时使用配置的 `ranged_skill_level`；
+- 远程箭 `3000002` 数据来自客户端 `Data/Skill/300.img/skill/3000002`：最高 8 级，`range` 依次为 15/30/…/120，即每级 +15；
+- 弓/弩基础射程 110 来自真机距离预判，原版客户端公式待核实；其他武器可按实测改 `attack_range`；
+- 弓箭手默认：未学远程箭时射程 110px，远程箭 8 级后 230px。
+
+- `ranged`：进入有效射程即停、转向、`player.attack()`（弓/弩消耗箭矢），`< min_range` 先后撤，不贴脸；
+- `skill`：MP 足够时 `player.skill(attack_skill_id)`，否则普攻；目标丢失/切换时释放技能意图；
+- `melee`：保持旧行为（60px 内普攻）。
+弓箭手推荐：`attack_mode=ranged`，技能可用后改 `skill`。
 
 ## 离线测试
 

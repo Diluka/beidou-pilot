@@ -247,6 +247,102 @@ status, reason = combat.step(ctx, world, locked_a, path_mover)
 assert(status == "failed" and reason == "target_platform_unreachable" and combat.select(world, {}) == closer_b,
     "step failure must clear the lock before selecting another target")
 
+-- 远程/技能：有效射程 = 弓弩基础射程 110 + 已学「远程箭」（3000002）每级 15。
+local function ranged_fixture(object_id, target_x, config, skills, complete)
+    world = make_world()
+    world.owner = {present = false}
+    world.config = config
+    local current = entity(object_id, target_x, 1)
+    world.mobs = {current}
+    ctx, path_mover = player_context(), mover()
+    ctx.game.character = {skills = skills or {}, skills_complete = complete ~= false}
+    return current
+end
+
+local target_in_base = ranged_fixture(40, 100, {attack_mode = "ranged"})
+status, reason = combat.step(ctx, world, target_in_base, path_mover)
+assert(status == "running" and reason == "facing" and #edges == 0,
+    "a target inside the 110px base range must stop and face instead of approaching")
+ctx.tick.time = 0.1
+status, reason = combat.step(ctx, world, target_in_base, path_mover)
+assert(status == "running" and reason == "attacking" and calls[#calls] == "attack",
+    "a target inside the base range must be attacked without a skill")
+
+local target_mid = ranged_fixture(41, 150, {attack_mode = "ranged"})
+status, reason = combat.step(ctx, world, target_mid, path_mover)
+assert(status == "running" and reason == "approaching" and #edges == 1
+    and edges[1].destination == 150, "a target beyond the base range must be approached")
+local fired = false
+for _, call in ipairs(calls) do
+    if call == "attack" or call:match("^skill_%d+$") then fired = true end
+end
+assert(not fired, "no attack may be issued while the target is out of range")
+
+local target_far = ranged_fixture(42, 200, {attack_mode = "ranged"})
+status, reason = combat.step(ctx, world, target_far, path_mover)
+assert(status == "running" and reason == "approaching" and #edges == 1,
+    "the old 200px default must no longer be used as a base range")
+
+local learned = {["3000002"] = {level = 4}}
+local target_partial = ranged_fixture(43, 180, {attack_mode = "ranged"}, learned)
+status, reason = combat.step(ctx, world, target_partial, path_mover)
+assert(status == "running" and reason == "approaching",
+    "4/8 ranged skill levels add 60px, so 180px is still out of range")
+
+learned = {["3000002"] = {level = 8}}
+local target_learned = ranged_fixture(44, 200, {attack_mode = "ranged"}, learned)
+status, reason = combat.step(ctx, world, target_learned, path_mover)
+assert(status == "running" and reason == "facing",
+    "8/8 ranged skill levels add 120px, so 200px is inside the effective range")
+ctx.tick.time = 0.1
+status, reason = combat.step(ctx, world, target_learned, path_mover)
+assert(status == "running" and reason == "attacking" and calls[#calls] == "attack",
+    "a learned ranged skill must raise the attack range")
+
+local target_fallback = ranged_fixture(45, 200,
+    {attack_mode = "ranged", ranged_skill_level = 8}, nil, false)
+status, reason = combat.step(ctx, world, target_fallback, path_mover)
+assert(status == "running" and reason == "facing",
+    "when the skill list is unreadable the configured skill level must be used")
+ctx.tick.time = 0.1
+status, reason = combat.step(ctx, world, target_fallback, path_mover)
+assert(status == "running" and reason == "attacking" and calls[#calls] == "attack")
+
+local target_close = ranged_fixture(46, 40, {attack_mode = "ranged"})
+status, reason = combat.step(ctx, world, target_close, path_mover)
+assert(status == "running" and reason == "retreating" and calls[#calls] == "move_left",
+    "a target closer than the 60px min range must be left by moving away")
+
+local target_edge = ranged_fixture(47, 65, {attack_mode = "ranged"})
+status, reason = combat.step(ctx, world, target_edge, path_mover)
+assert(status == "running" and reason == "facing" and calls[#calls] == "move_right",
+    "65px is inside range with the 60px min range and must not retreat")
+
+local target_mp = ranged_fixture(48, 100,
+    {attack_mode = "skill", attack_skill_id = 3001004, skill_mp_cost = 10})
+world.character.mp = 5
+status, reason = combat.step(ctx, world, target_mp, path_mover)
+assert(status == "running" and reason == "facing")
+ctx.tick.time = 0.1
+status, reason = combat.step(ctx, world, target_mp, path_mover)
+assert(status == "running" and reason == "attacking" and calls[#calls] == "attack",
+    "insufficient MP must fall back to a normal attack")
+world.character.mp = 20
+ctx.tick.time = 0.2
+status, reason = combat.step(ctx, world, target_mp, path_mover)
+assert(status == "running" and reason == "attacking" and calls[#calls] == "skill_3001004",
+    "restored MP must switch the skill mode back to the skill")
+
+learned = {["3000002"] = {level = 8}}
+local target_skill_range = ranged_fixture(49, 200,
+    {attack_mode = "skill", attack_skill_id = 3001004}, learned)
+status, reason = combat.step(ctx, world, target_skill_range, path_mover)
+assert(status == "running" and reason == "facing")
+ctx.tick.time = 0.1
+status, reason = combat.step(ctx, world, target_skill_range, path_mover)
+assert(status == "running" and reason == "attacking" and calls[#calls] == "skill_3001004",
+    "skill mode must use the same skill-derived range")
+
 movement.set_path, movement.step, movement.stop = original_set_path, original_step, original_stop
 combat_io.event = original_event
 print("combat tests passed")

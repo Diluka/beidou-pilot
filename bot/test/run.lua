@@ -68,7 +68,7 @@ end
 
 local main_chunk, main_error = loadfile("bot/main.lua")
 assert(main_chunk, main_error)
-for _, path in ipairs({"bot/test/capture_terrain.lua", "bot/test/owner_drive.lua", "bot/test/test_terrain.lua", "bot/test/test_move.lua", "bot/test/test_sustain.lua", "bot/test/test_follow.lua", "bot/test/test_loot.lua", "bot/test/test_combat.lua"}) do
+for _, path in ipairs({"bot/test/capture_terrain.lua", "bot/test/owner_drive.lua", "bot/test/test_terrain.lua", "bot/test/test_move.lua", "bot/test/test_sustain.lua", "bot/test/test_follow.lua", "bot/test/test_loot.lua", "bot/test/test_combat.lua", "bot/test/test_memory.lua", "bot/test/test_equipment.lua"}) do
     local chunk, load_error = loadfile(path)
     assert(chunk, load_error)
 end
@@ -271,6 +271,15 @@ local expected_defaults = {
     pot_hp = 60,
     pot_mp = 30,
     loot_radius = 150,
+    attack_mode = "melee",
+    attack_range = 110,
+    min_range = 60,
+    ranged_skill_id = 3000002,
+    ranged_skill_bonus_per_level = 15,
+    ranged_skill_level = 0,
+    skill_mp_cost = 10,
+    ammo_item_id = 2060000,
+    ammo_low = 50,
 }
 local default_count = 0
 for key, value in pairs(defaults) do
@@ -295,4 +304,6 @@ dofile("bot/test/test_sustain.lua")
 dofile("bot/test/test_follow.lua")
 dofile("bot/test/test_loot.lua")
 dofile("bot/test/test_combat.lua")
+dofile("bot/test/test_memory.lua")
+dofile("bot/test/test_equipment.lua")
 print("bot smoke ok: 10 modules")
