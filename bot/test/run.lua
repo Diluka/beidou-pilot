@@ -68,7 +68,7 @@ end
 
 local main_chunk, main_error = loadfile("bot/main.lua")
 assert(main_chunk, main_error)
-for _, path in ipairs({"bot/test/capture_terrain.lua", "bot/test/owner_drive.lua", "bot/test/test_terrain.lua", "bot/test/test_move.lua", "bot/test/test_sustain.lua", "bot/test/test_follow.lua", "bot/test/test_loot.lua", "bot/test/test_combat.lua"}) do
+for _, path in ipairs({"bot/test/capture_terrain.lua", "bot/test/owner_drive.lua", "bot/test/test_terrain.lua", "bot/test/test_move.lua", "bot/test/test_sustain.lua", "bot/test/test_follow.lua", "bot/test/test_loot.lua", "bot/test/test_combat.lua", "bot/test/test_memory.lua", "bot/test/test_equipment.lua"}) do
     local chunk, load_error = loadfile(path)
     assert(chunk, load_error)
 end
@@ -295,4 +295,6 @@ dofile("bot/test/test_sustain.lua")
 dofile("bot/test/test_follow.lua")
 dofile("bot/test/test_loot.lua")
 dofile("bot/test/test_combat.lua")
+dofile("bot/test/test_memory.lua")
+dofile("bot/test/test_equipment.lua")
 print("bot smoke ok: 10 modules")

@@ -9,6 +9,7 @@ local combat = require("lib.combat")
 local sustain = require("lib.sustain")
 local loot = require("lib.loot")
 local defaults = require("defaults")
+local memory_module = require("lib.memory")
 
 local function main(context)
     local memory = context.state
@@ -31,7 +32,24 @@ local function main(context)
 
     local bot = memory.bot
     local now = context.tick.time
+    if (bot.config or defaults).memory_enabled and not memory.store then
+        memory.store = memory_module.load("/work/bot/memory.lua", now)
+        memory.store_path = "/work/bot/memory.lua"
+    end
     local world, observe_error = world_module.observe(context)
+    if (bot.config or defaults).memory_enabled and world and world.ready and world.character then
+        -- 客户端观察为唯一权威：启动/运行中以 live 覆盖 memory 冲突字段并发布修复事件
+        local live = {
+            mode = bot.mode, map_id = world.map_id, level = world.character.level,
+            x = world.character.x, y = world.character.y, hp = world.character.hp,
+            on_ground = world.character.on_ground,
+        }
+        local repairs = memory_module.reconcile(memory.store, "bot", live)
+        if #repairs > 0 and memory.store.__synced then
+            io_module.event(context, "memory/repair", {repairs = repairs, map_id = world.map_id})
+        end
+        memory.store.__synced = true
+    end
     if not world then
         bot.last_error = observe_error or "world_unavailable"
         io_module.event(context, "error", {reason = bot.last_error})
@@ -144,7 +162,10 @@ local function main(context)
     if bot.mode == "follow" then kind, name = navigate.selector(bot.target) end
     local handled, sustain_error = sustain.step(context, world)
     if handled and not kind then
-        io_module.publish(context, world, now)
+        if (bot.config or defaults).memory_enabled and memory.store then
+        memory_module.flush(memory.store, memory.store_path or "/work/bot/memory.lua", now)
+    end
+    io_module.publish(context, world, now)
         return
     elseif not handled and sustain_error and sustain_error ~= "not_implemented" then
         bot.last_error = sustain_error
