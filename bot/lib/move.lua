@@ -179,6 +179,11 @@ function M.step(mover, ctx, world)
                     direction = character.x < edge.destination and "right" or (character.x > edge.destination and "left" or nil)
                 end
                 local moved = p.move(direction)
+                if moved and direction then
+                    mover.phase, mover.runup_direction = "brake", direction
+                    mover.runup_x, mover.runup_time = character.x, now
+                    return "running"
+                end
                 if moved and vertical then
                     -- A neutral jump inherits the approach velocity until ground friction stops it.
                     if not physics or not physics.velocity or physics.velocity.x == nil then
@@ -220,6 +225,23 @@ function M.step(mover, ctx, world)
                 mover.progress_time, mover.progress_y = now, character.y
                 if not p.move(edge.rise < 0 and "up" or "down") then failure = "unsupported_edge" end
             end
+        elseif not failure and (mover.phase == "brake" or mover.phase == "runup") then
+            local direction = mover.runup_direction
+            local delta = character.x - mover.runup_x
+            local forward = direction == "right" and delta > 0 or direction == "left" and delta < 0
+            if not p.move(direction) then
+                failure = "unsupported_edge"
+            elseif now - mover.runup_time >= 2 then
+                failure = "runup_unavailable"
+            elseif character.on_ground and forward then
+                mover.phase = "runup"
+                if math.abs(character.x - edge.x) <= 8 then
+                    if not p.jump() then failure = "unsupported_edge" else
+                        mover.phase, mover.phase_time, mover.start_y, mover.jump_held = "launch", now, character.y, true
+                    end
+                end
+            end
+            mover.runup_x = character.x
         elseif not failure and mover.phase == "launch" then
             if edge.kind == "drop" then
                 if character.on_ground == false or character.y - mover.start_y >= 10 then

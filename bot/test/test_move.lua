@@ -582,4 +582,31 @@ status,reason=step(mover,ctx,world)
 assert(status=="failed" and reason=="landing_mismatch" and direction==nil,
     "a horizontal jump landing on a different platform must fail explicitly")
 
+-- Reverse momentum on the ground before a directional jumpup.
+terrain.platform_at = function() return 2 end
+for _, sign in ipairs({1, -1}) do
+    mover = move.new({})
+    begin({kind="jumpup",x=0,destination=sign*40,to=2})
+    direction, action = nil, nil
+    game.character = {physics={velocity={x=-sign*125}}}
+    assert(step(mover,ctx,world)=="running" and action==nil and direction==(sign==1 and "right" or "left"))
+    world.character.x = -sign*10
+    game.character.physics.velocity.x = sign*42
+    assert(step(mover,ctx,world)=="running" and action==nil)
+    world.character.x = -sign*5
+    assert(step(mover,ctx,world)=="running" and action=="jump")
+    world.character.on_ground=false; world.character.y=-11
+    step(mover,ctx,world)
+    world.character.on_ground=true; world.character.x=sign*40
+    assert(step(mover,ctx,world)=="done")
+end
+mover = move.new({})
+begin({kind="jumpup",x=0,destination=40,to=2})
+game.character = {physics={velocity={x=-125}}}
+action=nil
+step(mover,ctx,world)
+ctx.tick.time=10
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="timeout" and action==nil)
+terrain.platform_at = platform_at
 print("move tests ok")
