@@ -21,6 +21,21 @@
 
 未实现的行为模块按签名返回 `nil, "not_implemented"`、`false, "not_implemented"` 或 `"failed", "not_implemented"`。terrain 的 `build`、`platform_at` 和 `plan` 已实现；接口及数据结构契约以 [`docs/PHASE1.md`](../docs/PHASE1.md) 为准，terrain 与邮箱/状态/世界行为均有离线用例覆盖。
 
+## 低补给停手
+
+可选的 `/work/bot/supply.conf` 启用低水位检查。例如：
+
+```ini
+red_item=2000000
+red_low=5
+blue_item=2000003
+blue_low=3
+arrow_item=2060000
+arrow_low=50
+```
+
+只检查配置的物品，每种的 item 与 low 必须成对且为正整数；不写文件则不启用。狩猎时低于阈值、库存不可读或配置错误会发布 `supply/low`、撤下动作并结束脚本。事件发生不代表已确认放键，须查询该会话终态和 `control_released`。停止的位置不保证安全；当前尚无自动补给与回图编排，切勿在活动脚本期间操作商店。
+
 ## 地形平台定位
 
 `lib.terrain.build(navigation)` 直接消费 `context.scene.terrain.navigation`，返回引用原始数据的 graph；成功时包含 1 基平台数组以及原样保留的 `walls`、`ropes`、`candidates`、`model` 和地形边界。输入缺失时返回 `nil, "navigation_unavailable"`；必需字段或结构无效时返回 `nil, "navigation_invalid:<field>"`，不会重新从 footholds 派生平台。

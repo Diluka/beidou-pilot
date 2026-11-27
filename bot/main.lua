@@ -7,6 +7,7 @@ local follow = require("lib.follow")
 local navigate = require("lib.target")
 local combat = require("lib.combat")
 local sustain = require("lib.sustain")
+local supply = require("lib.supply")
 local loot = require("lib.loot")
 local hunt = require("lib.hunt")
 local travel = require("lib.travel")
@@ -118,6 +119,22 @@ local function main(context)
     elseif bot.mode == "dead" and character.hp ~= nil and character.hp > 0 then
         state_module.transition(bot, "recover", "revived")
         io_module.event(context, "mode", {from = "dead", mode = "recover", reason = "revived"})
+    end
+
+    if bot.mode == "hunt" and world.ready then
+        local low = supply.check(memory.bot_root or "/work/bot", world.inventory)
+        if low then
+            if memory.mover then move.stop(memory.mover) end
+            if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
+            context.game.player.stop()
+            bot.last_error = "supply_" .. low.reason
+            low.session_id = context.tick.script_id
+            low.map_id = world.map_id
+            io_module.event(context, "supply/low", low)
+            memory.force_publish = true
+            io_module.publish(context, world, now)
+            return "done"
+        end
     end
 
     local scene = context.scene
