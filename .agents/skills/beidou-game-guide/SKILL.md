@@ -11,7 +11,9 @@ description: "查阅和维护北斗冒险岛玩法攻略。覆盖商店位置与
 
 - [彩虹岛新手任务](references/newbie.md)：两套任务的入口、顺序、奖励、返回原版流程、快捷跳过条件和正常乘船路线。回答新手任务问题或继续研究这条路线时，先读此文及其核验范围。
 
-- [一转后的职业任务](references/first-job-class-quests.md)：五系基础修炼与职业剧情、骑士团派遣及战神早期剧情，静态整理，尚未逐职业试玩。
+- [冒险家一转职业任务](references/adventurer-first-job-quests.md)：五系基础修炼、职业剧情与后续任务；静态整理，尚未逐职业试玩。
+
+- [一转职业群索引](references/first-job-class-quests.md)：分别前往冒险家、骑士团、战神的攻略。
 
 - [冒险家二转任务](references/adventurer-second-job-quest.md)：五系传统试炼与职业选择；静态整理，尚未逐职业实测。
 
