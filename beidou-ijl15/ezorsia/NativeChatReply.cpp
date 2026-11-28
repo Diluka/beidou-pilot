@@ -337,7 +337,7 @@ bool WriteBotCommand(const std::string& kind, const std::string& targetUtf8) {
         if (GetFileAttributesExA((path + ".processing").c_str(), GetFileExInfoStandard, &attributes)) continue;
         std::string content =
             "id=chat_" + std::to_string(NowMilliseconds()) + "\nkind=" + kind + "\nttl=0\nsource=host\n";
-        if (!targetUtf8.empty() && kind == "follow") content += "target=" + targetUtf8 + "\n";
+        if (!targetUtf8.empty() && (kind == "follow" || kind == "travel")) content += "target=" + targetUtf8 + "\n";
         const std::string temporary = path + ".tmp";
         HANDLE file =
             CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
