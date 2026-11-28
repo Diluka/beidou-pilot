@@ -171,7 +171,11 @@ local function step(mover, ctx, world)
         local failure
         if (edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop") and mover.phase ~= "align" and character.on_ground == false then mover.airborne = true end
         if now - mover.edge_started >= mover.edge_timeout then failure = "timeout" end
-        if not failure and mover.phase == "prepare_runup" then
+        if not failure and mover.phase == "prepare_runup" and character.on_ground == false then
+            -- A newly planned edge can begin while the actor is still falling.
+            -- Keep the original edge deadline and wait without issuing movement.
+            if not p.move(nil) then failure = "unsupported_edge" end
+        elseif not failure and mover.phase == "prepare_runup" then
             local platforms = type(mover.graph) == "table" and mover.graph.platforms
             local source = type(platforms) == "table" and platforms[edge.from] or nil
             local left = type(source) == "table" and source.left or nil
@@ -512,6 +516,8 @@ function M.step(mover, ctx, world)
             on_ground = character and character.on_ground,
             velocity_x = ctx and ctx.game and ctx.game.character and ctx.game.character.physics
                 and ctx.game.character.physics.velocity and ctx.game.character.physics.velocity.x,
+            velocity_y = ctx and ctx.game and ctx.game.character and ctx.game.character.physics
+                and ctx.game.character.physics.velocity and ctx.game.character.physics.velocity.y,
         }
     end
     return status, reason

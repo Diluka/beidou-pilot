@@ -634,6 +634,31 @@ assert(step(mover,ctx,world)=="running" and action==nil)
 world.character.x=-7; ctx.tick.time=1.125
 assert(step(mover,ctx,world)=="running" and action=="jump")
 move.stop(mover)
+-- A path may be planned while descending inside platform_at's tolerance.
+mover=move.new({platforms={{left=-100,right=100,segments={-100,100,0,0}}}})
+begin({kind="jumpup",from=1,to=2,x=0,destination=40})
+world.character={x=-50,y=-5,on_ground=false}
+game.character={physics={velocity={x=0,y=210}},movement={max_speed=125}}
+action,direction=nil,nil
+assert(step(mover,ctx,world)=="running" and mover.phase=="prepare_runup" and direction==nil and action==nil,
+    "airborne start must wait instead of failing")
+ctx.tick.time=0.1; world.character.y=0; world.character.on_ground=true
+assert(step(mover,ctx,world)=="running" and mover.phase=="to_runup_start")
+assert(step(mover,ctx,world)=="running" and direction=="right")
+world.character.x=-32; ctx.tick.time=0.2
+assert(step(mover,ctx,world)=="running" and mover.phase=="runup_settle")
+ctx.tick.time=0.23; assert(step(mover,ctx,world)=="running" and mover.phase=="runup")
+ctx.tick.time=0.3; world.character.x=-8
+assert(step(mover,ctx,world)=="running" and action=="jump", "runup launches after landing")
+move.stop(mover)
+-- An actor that never lands remains bounded by the existing edge deadline.
+mover=move.new({platforms={{left=-100,right=100,segments={-100,100,0,0}}}})
+begin({kind="jumpup",from=1,to=2,x=0,destination=40})
+world.character={x=-50,y=-5,on_ground=false}; game.character={physics={velocity={x=1,y=210}}}
+assert(step(mover,ctx,world)=="running")
+ctx.tick.time=20
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="timeout" and mover.last_failure.velocity_y==210)
 -- Too little safe source space fails after the retry, without jumping.
 mover=move.new({platforms={{left=-19,right=100,segments={-19,100,0,0}}}})
 begin({kind="jumpup",from=1,to=2,x=0,destination=40}); action=nil
