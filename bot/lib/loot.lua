@@ -104,6 +104,43 @@ local function capacity_event(context, world, info)
     require("lib.io").event(context, full and "loot/inventory_full" or "loot/inventory_unknown", info)
 end
 
+-- Capacity abandonment is reversible independently of movement failures.
+local function capacity_abandon(context, world, drops, blockers)
+    if not context or not context.state then return 0 end
+    local state = context.state
+    local scope = tostring(world.map_id) .. ":" .. tostring(world.scene_generation)
+    if state.loot_abandoned_scope ~= scope then
+        state.loot_abandoned = state.loot_abandoned or {}
+        for id in pairs(state.loot_abandoned) do state.loot_abandoned[id] = nil end
+        state.loot_abandoned_scope = scope
+        state.loot_capacity_abandoned = {}
+    end
+    state.loot_abandoned = state.loot_abandoned or {}
+    if state.loot_capacity_abandoned_scope ~= scope then
+        state.loot_capacity_abandoned, state.loot_capacity_abandoned_scope = {}, scope
+    end
+    state.loot_capacity_abandoned = state.loot_capacity_abandoned or {}
+    for id, dependencies in pairs(state.loot_capacity_abandoned) do
+        local recovered = true
+        for _, drop in ipairs(dependencies) do
+            if not capacity_check(world, drop) then recovered = false; break end
+        end
+        if recovered then
+            state.loot_abandoned[id] = nil
+            state.loot_capacity_abandoned[id] = nil
+        end
+    end
+    local count = 0
+    for _, drop in ipairs(drops) do
+        if drop.object_id ~= nil and not state.loot_abandoned[drop.object_id] then
+            state.loot_abandoned[drop.object_id] = true
+            state.loot_capacity_abandoned[drop.object_id] = blockers or drops
+            count = count + 1
+        end
+    end
+    return count
+end
+
 function M.select(world, options)
     options = type(options) == "table" and options or {}
     if low_hp(world) then return nil, "unsafe" end
@@ -117,6 +154,8 @@ function M.select(world, options)
     end
     -- Pickup is untargeted: a blocked nearby object can be chosen even when a
     -- different object is selected. Do not sweep or pick through that cluster.
+    capacity_abandon(options.context, world, {})
+    local blocked, blocked_info, blocked_nearby = {}, nil, false
     for _, drop in ipairs(world.nearby_drops or world.drops) do
         local range = distance(character, drop)
         if drop.landed == true and not range then
@@ -125,8 +164,25 @@ function M.select(world, options)
         end
         if drop.landed == true and range <= SWEEP_RADIUS then
             local allowed, info = capacity_check(world, drop)
-            if not allowed then capacity_event(options.context, world, info); return nil, info.reason end
+            if not allowed then
+                blocked_nearby = true
+                if not (options.abandoned and options.abandoned[drop.object_id]) then
+                    blocked[#blocked + 1] = drop; blocked_info = blocked_info or info
+                end
+            end
         end
+    end
+    if blocked_info then
+        local cluster = {}
+        for _, current in ipairs(world.drops) do
+            local range = distance(character, current)
+            if current.landed == true and current.platform == character.platform and range and range <= SWEEP_RADIUS then
+                cluster[#cluster + 1] = current
+            end
+        end
+        blocked_info.abandoned_count = capacity_abandon(options.context, world, cluster, blocked)
+        capacity_event(options.context, world, blocked_info)
+        return nil, blocked_info.reason
     end
     local candidates = {}
     for _, drop in ipairs(world.drops) do
@@ -136,7 +192,8 @@ function M.select(world, options)
             local drop_distance = distance(character, drop)
             local allowed, info = capacity_check(world, drop)
             if not allowed then capacity_event(options.context, world, info) end
-            if allowed and drop_distance and (drop_distance <= radius or options.graph) then
+            if allowed and drop_distance and (not blocked_nearby or drop_distance > SWEEP_RADIUS)
+                and (drop_distance <= radius or options.graph) then
                 local priority = drop.platform == character.platform and 1
                     or options.route_platforms and options.route_platforms[drop.platform] and 2 or 3
                 candidates[#candidates + 1] = {drop = drop, distance = drop_distance, priority = priority}
@@ -222,7 +279,7 @@ local function abort_sweep(ctx, mover, reason, preserve_action, world)
         count = sweep.count, elapsed = ctx.tick.time - sweep.started_at, attempts = sweep.submissions,
         initial_drops = sweep.initial_drops, remaining_drops = sweep.remaining_drops,
         accepted = sweep.accepted, rejected = sweep.rejected, last_rejection = sweep.last_rejection,
-        fallback = sweep.fallback or false})
+        fallback = sweep.fallback or false, abandoned_count = sweep.abandoned_count or 0})
     return true
 end
 
@@ -243,6 +300,7 @@ local function fail(ctx, world, drop, mover, state, reason)
             ctx.state.loot_abandoned, ctx.state.loot_abandoned_scope = {}, scope
         end
         ctx.state.loot_abandoned[drop.object_id] = true
+        if ctx.state.loot_capacity_abandoned then ctx.state.loot_capacity_abandoned[drop.object_id] = nil end
     end
     require("lib.io").event(ctx, "loot", {
         object_id = drop.object_id, item_id = drop.item_id, reason = reason,
@@ -273,9 +331,10 @@ function M.step(ctx, world, drop, mover)
     if low_hp(world) then
         return fail(ctx, world, drop, mover, mover.loot or {attempt = 0}, "unsafe")
     end
-    local blocked_info
+    capacity_abandon(ctx, world, {})
+    local blocked_info, blocked = nil, {}
     local allowed, info = capacity_check(world, drop)
-    if not allowed then blocked_info = info end
+    if not allowed then blocked_info = info; blocked[#blocked + 1] = drop end
     for _, current in ipairs(world.drops or {}) do
         local range = distance(character, current)
         if current.landed == true and not range then
@@ -283,10 +342,22 @@ function M.step(ctx, world, drop, mover)
         end
         if current.landed == true and range <= SWEEP_RADIUS then
             local can_pick, detail = capacity_check(world, current)
-            if not can_pick then blocked_info = detail; break end
+            if not can_pick then blocked_info = blocked_info or detail; blocked[#blocked + 1] = current end
         end
     end
     if blocked_info then
+        local cluster = {}
+        for _, current in ipairs(world.drops or {}) do
+            local range = distance(character, current)
+            if current.landed == true and current.platform == character.platform and range and range <= SWEEP_RADIUS then
+                cluster[#cluster + 1] = current
+            end
+        end
+        if not allowed and drop.platform == character.platform then cluster[#cluster + 1] = drop end
+        blocked_info.abandoned_count = capacity_abandon(ctx, world, cluster, blocked)
+        if mover.loot and mover.loot.sweep then
+            mover.loot.abandoned_count = (mover.loot.abandoned_count or 0) + blocked_info.abandoned_count
+        end
         capacity_event(ctx, world, blocked_info)
         local reason = (blocked_info.reason == "full" or blocked_info.reason == "stack_capacity_unknown")
             and "inventory_full" or "inventory_unknown"

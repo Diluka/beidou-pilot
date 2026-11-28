@@ -394,6 +394,40 @@ world.inventory_info.items = {{inventory_type = 4, slot = 1, item_id = 4000001, 
 before_pickup = pickup_count
 assert(select(2, loot.step(ctx, world, local_item, mover)) == "inventory_full"
     and pickup_count == before_pickup and mover.loot == nil, "mid-sweep capacity loss must release action")
+-- A sweep that becomes capacity-blocked must mark its cluster, including the
+-- originally selected item, so changing platforms cannot restart the same loop.
+local cluster_ok, cluster_full = drop(330, 10), drop(331, 20)
+cluster_ok.item_id, cluster_full.item_id = 2000000, 4000000
+world = world_with({cluster_ok})
+world.map_id, world.scene_generation = 401, 1
+world.inventory_info.capacities["4"] = 1
+world.inventory_info.items = {{inventory_type = 4, slot = 1, item_id = 4000001, quantity = 1}}
+ctx, mover = context(210), {status = "done"}; ctx.state = {}
+local options = {context = ctx, graph = {}}
+assert(select(2, loot.step(ctx, world, cluster_ok, mover)) == "sweeping")
+world.drops = {cluster_ok, cluster_full}
+local pickup_before_failure = pickup_count
+status, reason = loot.step(ctx, world, cluster_ok, mover)
+assert(status == "failed" and reason == "inventory_full" and pickup_count == pickup_before_failure,
+    "capacity failure during sweep must abort without another pickup")
+assert(ctx.state.loot_abandoned and ctx.state.loot_abandoned[cluster_ok.object_id],
+    "capacity failure must mark the selected sweep target")
+options.abandoned = ctx.state.loot_abandoned
+world.character.x, world.character.platform = 0, 2
+assert(loot.select(world, options) == nil, "switching platforms must not reselect the failed cluster")
+assert(loot.select(world, options) == nil, "repeated selection must not restart the failed cluster")
+world.character.platform = 1
+world.inventory_info.items = {}
+assert(loot.select(world, options) == cluster_ok, "capacity recovery must make the cluster selectable immediately")
+world.inventory_info.items = {{inventory_type = 4, slot = 1, item_id = 4000001, quantity = 1}}
+assert(select(2, loot.step(ctx, world, cluster_ok, {status = "done"})) == "inventory_full")
+assert(ctx.state.loot_abandoned[cluster_ok.object_id], "the second failure must recreate the mark")
+world.scene_generation = 2
+world.drops = {cluster_ok}
+options.abandoned = nil
+assert(loot.select(world, options) == cluster_ok and not ctx.state.loot_abandoned[cluster_ok.object_id],
+    "a new scene must clear stale capacity failure marks")
+
 world.inventory_info = nil
 assert(loot.select(world, {context = ctx}) == nil and events[#events].kind == "loot/inventory_unknown",
     "missing inventory observations must fail closed")
@@ -461,6 +495,30 @@ local pickups_before_full = pickup_count
 tick(ctx)
 assert(ctx.state.hunt_action == "combat" and pickup_count == pickups_before_full,
     "full inventory must yield to combat without pickup")
+-- Selection can mark the old target abandoned while its pickup pulse remains set.
+-- The main loop must not resurrect it through the in-flight pickup fallback.
+local saved_loot_select, saved_loot_step = loot.select, loot.step
+local stale = drop(241, 55); stale.y = 100
+world.drops = {stale}
+ctx.state.hunt_action, ctx.state.hunt_drop = "loot", stale
+ctx.state.hunt_blocked_scope, ctx.state.loot_abandoned_scope = "808:1", "808:1"
+ctx.state.hunt_failures, ctx.state.loot_abandoned = 2, {}
+ctx.state.mover = {status = "done", loot = {sweep = true, pickup_requested = true}}
+local loot_reused = false
+loot.select = function(_, options)
+    options.context.state.loot_abandoned[stale.object_id] = true
+    return nil, "inventory_full"
+end
+loot.step = function(_, _, target)
+    if not target.sweep_abort then loot_reused = true end
+    return "failed", "inventory_full"
+end
+combat.select = function() return nil end
+tick(ctx)
+assert(not loot_reused and ctx.state.hunt_action == "patrol" and ctx.state.hunt_drop == nil,
+    "capacity-abandoned in-flight target must not be reused instead of patrol")
+assert(ctx.state.hunt_failures == 2, "inventory_full must not count as a navigation failure")
+loot.select, loot.step = saved_loot_select, saved_loot_step
 world_module.observe, sustain.step, combat.select, io_module.poll, io_module.publish = old_observe, old_sustain,
     old_select, old_poll, old_publish
 

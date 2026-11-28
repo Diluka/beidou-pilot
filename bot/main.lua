@@ -536,7 +536,8 @@ local function main(context)
                         break
                     end
                 end
-                if not drop and memory.mover and memory.mover.loot and memory.mover.loot.pickup_requested then
+                if not drop and not memory.loot_abandoned[memory.hunt_drop.object_id]
+                    and memory.mover and memory.mover.loot and memory.mover.loot.pickup_requested then
                     drop = memory.hunt_drop
                 end
             end
