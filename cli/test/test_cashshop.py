@@ -42,6 +42,13 @@ class CashShopTest(unittest.TestCase):
         self.assertIn("candidate_not_unique", result["blockers"])
         self.assertIn("modal_present_or_unknown", result["blockers"])
 
+    def test_missing_modal_is_unknown(self):
+        state = sample()
+        del state["modal"]
+        with patch.object(cashshop, "read_cashshop", return_value=state):
+            result = cashshop.expand(Mock(), "equip", 1, True)
+        self.assertIn("modal_present_or_unknown", result["blockers"])
+
     def test_count_is_bounded_before_observation(self):
         with patch.object(cashshop, "read_cashshop") as read:
             with self.assertRaises(ClientError):

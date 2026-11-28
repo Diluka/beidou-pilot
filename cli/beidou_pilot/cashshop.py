@@ -32,7 +32,7 @@ def expand(backend: Backend, item_type: str, count: int, dry_run: bool) -> JsonO
     blockers = []
     if snapshot.get("grid_count") != 1 or not isinstance(grid, dict):
         blockers.append("grid_unavailable")
-    if snapshot.get("modal_count") != 0 or snapshot.get("modal") is not None:
+    if snapshot.get("modal_count") != 0 or "modal" not in snapshot or snapshot["modal"] is not None:
         blockers.append("modal_present_or_unknown")
     if not isinstance(grid, dict) or grid.get("balance_checksums_valid") is not True:
         blockers.append("balance_unavailable")
