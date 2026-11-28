@@ -11,6 +11,7 @@
 #include "stdafx.h"
 #include "NativeChatReply.h"
 #include "AgentBridge.h"
+#include "NativeChatQueue.h"
 
 #include "../../shared/img/ImgResources.h"
 
@@ -43,35 +44,13 @@ struct InPacket {
     void* unknownTail;
 };
 
-struct OutPacket {
-    int loopback;
-
-    union {
-        unsigned char* data;
-        void* unknown;
-        unsigned short* header;
-    };
-
-    unsigned long size;
-    unsigned int offset;
-    int encryptedByShanda;
-};
-
-using SendPacketFn = void(__fastcall*)(void* socket, void* unused, OutPacket* packet);
-
-// Client V17 addresses verified by the existing receive and send hooks.
-constexpr std::uint32_t kClientSocketAddress = 0x00BE7914;
-constexpr std::uint32_t kSendPacketAddress = 0x0049637B;
-
+// Client V17 receive opcode verified by the existing receive hook.
 constexpr unsigned short kWhisperReceiveOpcode = 0x0087;
-constexpr unsigned short kWhisperSendOpcode = 0x0078;
 constexpr unsigned char kWhisperReceiveFlag = 0x02 | 0x10; // whisper | receive
-constexpr unsigned char kWhisperSendFlag = 0x02 | 0x04;    // whisper | request
 
 constexpr std::uint32_t kMinimumReplyIntervalMilliseconds = 1500;
 constexpr std::size_t kLogLimitBytes = 1024 * 1024;
 
-SendPacketFn sendPacket = reinterpret_cast<SendPacketFn>(kSendPacketAddress);
 std::uint32_t lastReplyAt = 0;
 bool repliedOnce = false;
 
@@ -270,32 +249,8 @@ bool ReadString(const unsigned char* data, std::size_t size, std::size_t& offset
     return true;
 }
 
-bool AppendString(std::vector<unsigned char>& payload, const std::string& value) {
-    if (value.size() > 0xFFFF) return false;
-    payload.reserve(payload.size() + 2 + value.size());
-    payload.push_back(static_cast<unsigned char>(value.size() & 0xFF));
-    payload.push_back(static_cast<unsigned char>((value.size() >> 8) & 0xFF));
-    payload.insert(payload.end(), value.begin(), value.end());
-    return true;
-}
-
 bool SendWhisper(const std::string& target, const std::string& message) {
-    if (target.empty() || message.empty()) return false;
-    const auto socket = *reinterpret_cast<const std::uint32_t*>(kClientSocketAddress);
-    if (socket == 0) return false;
-    std::vector<unsigned char> payload;
-    payload.push_back(static_cast<unsigned char>(kWhisperSendOpcode & 0xFF));
-    payload.push_back(static_cast<unsigned char>((kWhisperSendOpcode >> 8) & 0xFF));
-    payload.push_back(kWhisperSendFlag);
-    if (!AppendString(payload, target) || !AppendString(payload, message)) return false;
-    OutPacket packet{};
-    packet.loopback = 0;
-    packet.data = payload.data();
-    packet.size = static_cast<unsigned long>(payload.size());
-    packet.offset = 0;
-    packet.encryptedByShanda = 0;
-    sendPacket(reinterpret_cast<void*>(socket), nullptr, &packet);
-    return true;
+    return NativeChatQueue::Enqueue(NativeChatQueue::Channel::Whisper, message, target);
 }
 
 // ---------------------------------------------------------------------------
