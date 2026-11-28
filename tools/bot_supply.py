@@ -276,8 +276,9 @@ def write_route(workbench_name: str, start: int, goal: int) -> Path:
     return route_path
 
 
-def travel(workbench_name: str, goal: int, timeout_seconds: int) -> None:
-    write_route(workbench_name, read_character(workbench_name).get("map_id"), goal)
+def travel(workbench_name: str, goal: int, timeout_seconds: int, route_prepared: bool = False) -> None:
+    if not route_prepared:
+        write_route(workbench_name, read_character(workbench_name).get("map_id"), goal)
     result = workbench(workbench_name, "script", "run", "bot/supply_travel.lua", "--seconds", str(timeout_seconds))
     if result.returncode != 0:
         raise SystemExit(
@@ -421,6 +422,32 @@ def restock(
     return report
 
 
+def authorized_route(workbench_name: str, start: int, goal: int, allowed: list[dict[str, object]]) -> dict[str, object]:
+    result = subprocess.run(
+        [sys.executable, str(WORKTREE / "tools/bot_route.py"), workbench_name, str(start), str(goal)],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode:
+        raise SystemExit(f"生成白名单路线失败：{result.stdout} {result.stderr}")
+    route = json.loads(result.stdout)
+    legs = route.get("legs")
+    if (
+        route.get("from") != start
+        or route.get("goal") != goal
+        or not isinstance(legs, list)
+        or (start != goal and not legs)
+        or any(not isinstance(leg, dict) for leg in legs)
+        or (legs and legs[0].get("map") != start)
+    ):
+        raise SystemExit("路线身份或起点无效；保持停手")
+    for index, leg in enumerate(legs):
+        destination = legs[index + 1].get("map") if index + 1 < len(legs) else goal
+        if {"from": leg.get("map"), "to": destination, "portal": leg.get("portal")} not in allowed:
+            raise SystemExit("路线包含未授权地图或传送门；保持停手")
+    return route
+
+
 def supply_cycle(workbench_name: str, session_id: str, apply: bool, watch_seconds: int) -> dict[str, object]:
     """仅在明确授权的城镇交易，逐段验证回图路线；一次会话最多执行一次。"""
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
@@ -452,7 +479,7 @@ def supply_cycle(workbench_name: str, session_id: str, apply: bool, watch_second
             raise SystemExit("路线白名单无效；未移动、未购买")
     deadline = time.monotonic() + watch_seconds
     while True:
-        event = None
+        event, arrived = None, None
         for path in (bot_dir / "events.1.jsonl", bot_dir / "events.jsonl"):
             if not path.is_file():
                 continue
@@ -468,10 +495,32 @@ def supply_cycle(workbench_name: str, session_id: str, apply: bool, watch_second
                     and entry["data"].get("session_id") == session_id
                 ):
                     event = entry["data"]
-        if event:
+                elif (
+                    event
+                    and isinstance(entry, dict)
+                    and entry.get("type") == "supply/retreat"
+                    and isinstance(entry.get("data"), dict)
+                    and entry["data"].get("session_id") == session_id
+                    and entry["data"].get("result") == "arrived"
+                ):
+                    arrived = entry["data"]
+        if event and arrived:
             break
+        state_path = bot_dir / "state.json"
+        if event and state_path.is_file():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                state = {}
+            if (
+                isinstance(state, dict)
+                and state.get("session_id") == session_id
+                and isinstance(state.get("last_error"), str)
+                and state["last_error"].startswith("supply_retreat_")
+            ):
+                raise SystemExit(f"撤退失败，bot 保持续航；未购买：{state['last_error']}")
         if time.monotonic() >= deadline:
-            raise SystemExit("未发现指定会话的低补给事件；未移动、未购买")
+            raise SystemExit("未确认同一会话的低补给及撤退到达事件；未移动、未购买")
         time.sleep(min(1, max(0, deadline - time.monotonic())))
     if event.get("reason") != "low":
         raise SystemExit(f"补给观察或配置异常：{event.get('reason')}；未移动、未购买")
@@ -509,20 +558,26 @@ def supply_cycle(workbench_name: str, session_id: str, apply: bool, watch_second
     if type(town) is not int or town not in towns:
         raise SystemExit("角色不在白名单安全城镇；未移动、未购买")
     shop_map, _ = nearest_potion_shop(workbench_name)
-    if shop_map != town:
-        raise SystemExit("安全城镇内没有已配置的商店；未移动、未购买")
+    if shop_map not in towns:
+        raise SystemExit("商店不在安全地图白名单；未移动、未购买")
     plan_path = bot_dir / "plan.conf"
     plan_text = plan_path.read_text(encoding="utf-8") if plan_path.is_file() else ""
     matches = re.findall(r"^\s*hunt_map\s*=\s*(\d+)\s*$", plan_text, re.MULTILINE)
     if len(matches) != 1:
         raise SystemExit("狩猎地图绑定缺失或不唯一；未移动、未购买")
     hunt_map = int(matches[0])
+    safe_maps = re.findall(r"^\s*safe_map\s*=\s*(\d+)\s*$", plan_text, re.MULTILINE)
+    if len(safe_maps) != 1 or int(safe_maps[0]) != town or arrived.get("map_id") != town or arrived.get("goal") != town:
+        raise SystemExit("撤退到达事件、配置安全地图与当前位置不一致；未移动、未购买")
     receipt = bot_dir / ("supply-cycle-" + session_id + ".json")
     if receipt.exists():
         raise SystemExit("此会话已有补给记录；请核对现场，勿重放")
-    report = {"session_id": session_id, "town": town, "hunt_map": hunt_map, "dry_run": not apply}
+    outbound = authorized_route(workbench_name, town, shop_map, allowed) if town != shop_map else None
+    authorized_route(workbench_name, shop_map, hunt_map, allowed) if shop_map != hunt_map else None
+    report = {"session_id": session_id, "town": town, "shop_map": shop_map, "hunt_map": hunt_map, "dry_run": not apply}
     if not apply:
-        report["restock"] = restock(workbench_name, town_only=town)
+        report["outbound"] = outbound
+        report["plan"] = supply_plan(workbench_name)
         return report
     # 写入不可覆盖的开始记录；崩溃或部分交易后不自动重放。
     try:
@@ -530,37 +585,91 @@ def supply_cycle(workbench_name: str, session_id: str, apply: bool, watch_second
             json.dump({"status": "started", **report}, file, ensure_ascii=False)
     except FileExistsError as error:
         raise SystemExit("此会话已被处理，禁止重放") from error
-    report["restock"] = restock(workbench_name, dry_run=False, town_only=town)
-    items = read_items(workbench_name)
-    if any(counted(items, item["item_id"]) < item["threshold"] for item in low_items):
-        raise SystemExit("补货后仍低于事件阈值，保持停手")
-    if read_character(workbench_name).get("map_id") != town:
-        raise SystemExit("交易后位置已变化；停止回图")
-    command = [sys.executable, str(WORKTREE / "tools/botctl")]
-    result = subprocess.run(
-        [*command, "plan", workbench_name, "--hunt-map", str(hunt_map)], text=True, capture_output=True
-    )
-    if result.returncode:
-        raise SystemExit(f"补货后生成回图路线失败，保持停手：{result.stdout} {result.stderr}")
-    route = json.loads((bot_dir / "route.json").read_text(encoding="utf-8"))
-    legs = route.get("legs")
-    if route.get("from") != town or route.get("goal") != hunt_map or not isinstance(legs, list):
-        raise SystemExit("回图路线身份不匹配，保持停手")
-    if (town != hunt_map and not legs) or (legs and (not isinstance(legs[0], dict) or legs[0].get("map") != town)):
-        raise SystemExit("回图路线为空或起点不匹配，保持停手")
-    if any(not isinstance(leg, dict) for leg in legs):
-        raise SystemExit("回图路线无效，保持停手")
-    for index, leg in enumerate(legs):
-        destination = legs[index + 1].get("map") if index + 1 < len(legs) else hunt_map
-        if {"from": leg.get("map"), "to": destination, "portal": leg.get("portal")} not in allowed:
-            raise SystemExit("回图路线包含未授权地图或传送门，保持停手")
-    for args in (("start", workbench_name), ("send", workbench_name, "--kind", "hunt")):
-        result = subprocess.run([*command, *args], text=True, capture_output=True)
+    try:
+        if outbound:
+            (bot_dir / "route.supply.json").write_text(
+                json.dumps(outbound, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            travel(workbench_name, shop_map, 240, route_prepared=True)
+        report["restock"] = restock(workbench_name, dry_run=False, town_only=shop_map)
+        items = read_items(workbench_name)
+        if any(counted(items, item["item_id"]) < item["threshold"] for item in low_items):
+            raise SystemExit("补货后仍低于事件阈值，保持停手")
+        if read_character(workbench_name).get("map_id") != shop_map:
+            raise SystemExit("交易后位置已变化；停止回图")
+        command = [sys.executable, str(WORKTREE / "tools/botctl")]
+        result = subprocess.run(
+            [*command, "plan", workbench_name, "--hunt-map", str(hunt_map)], text=True, capture_output=True
+        )
         if result.returncode:
-            raise SystemExit(f"补货后恢复失败；请核对机器人会话：{result.stdout} {result.stderr}")
-    report["status"] = "resume_requested"
-    receipt.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            raise SystemExit(f"补货后生成回图路线失败，保持停手：{result.stdout} {result.stderr}")
+        route = json.loads((bot_dir / "route.json").read_text(encoding="utf-8"))
+        legs = route.get("legs")
+        if route.get("from") != shop_map or route.get("goal") != hunt_map or not isinstance(legs, list):
+            raise SystemExit("回图路线身份不匹配，保持停手")
+        if (shop_map != hunt_map and not legs) or (
+            legs and (not isinstance(legs[0], dict) or legs[0].get("map") != shop_map)
+        ):
+            raise SystemExit("回图路线为空或起点不匹配，保持停手")
+        if any(not isinstance(leg, dict) for leg in legs):
+            raise SystemExit("回图路线无效，保持停手")
+        for index, leg in enumerate(legs):
+            destination = legs[index + 1].get("map") if index + 1 < len(legs) else hunt_map
+            if {"from": leg.get("map"), "to": destination, "portal": leg.get("portal")} not in allowed:
+                raise SystemExit("回图路线包含未授权地图或传送门，保持停手")
+        for args in (("start", workbench_name), ("send", workbench_name, "--kind", "hunt")):
+            result = subprocess.run([*command, *args], text=True, capture_output=True)
+            if result.returncode:
+                raise SystemExit(f"补货后恢复失败；请核对机器人会话：{result.stdout} {result.stderr}")
+        report["status"] = "resume_requested"
+        receipt.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except (SystemExit, OSError, ValueError) as error:
+        report["status"], report["error"] = "failed", str(error)
+        receipt.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        raise
+
     return report
+
+
+def supervise(workbench_name: str, apply: bool) -> None:
+    """持续监听状态会话；有低补给时执行一次闭环，失败即退出。"""
+    if not re.fullmatch(r"(?:live|dev)/[a-zA-Z0-9_-]+", workbench_name):
+        raise SystemExit("工作台名称无效")
+    bot_dir = REPO_ROOT / "private/workbenches" / workbench_name / "bot"
+    if not (bot_dir / "supply_host.json").is_file():
+        raise SystemExit("未配置安全白名单，未启动补货监听")
+    handled = set()
+    while True:
+        state_path = bot_dir / "state.json"
+        if state_path.is_file():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                time.sleep(1)
+                continue
+            session_id = state.get("session_id") if isinstance(state, dict) else None
+            if isinstance(session_id, str) and session_id not in handled:
+                for path in (bot_dir / "events.1.jsonl", bot_dir / "events.jsonl"):
+                    if not path.is_file():
+                        continue
+                    for line in path.read_text(encoding="utf-8").splitlines():
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if (
+                            isinstance(event, dict)
+                            and event.get("type") == "supply/low"
+                            and isinstance(event.get("data"), dict)
+                            and event["data"].get("session_id") == session_id
+                        ):
+                            report = supply_cycle(workbench_name, session_id, apply, 3600)
+                            print(json.dumps(report, ensure_ascii=False), flush=True)
+                            handled.add(session_id)
+                            break
+                    if session_id in handled:
+                        break
+        time.sleep(1)
 
 
 def do_junk(workbench_name: str, dry_run: bool, include_equipment: bool) -> dict[str, object]:
@@ -605,6 +714,9 @@ def parser() -> argparse.ArgumentParser:
     cycle.add_argument("--session", required=True)
     cycle.add_argument("--apply", action="store_true")
     cycle.add_argument("--watch-seconds", type=int, default=0)
+    supervisor = sub.add_parser("supervise", help="持续监听低补给并执行白名单闭环")
+    supervisor.add_argument("workbench")
+    supervisor.add_argument("--apply", action="store_true")
     junk_parser = sub.add_parser("junk", help="卖无用垃圾")
     junk_parser.add_argument("workbench")
     junk_parser.add_argument("--dry-run", action="store_true")
@@ -640,6 +752,8 @@ def main(argv: list[str] | None = None) -> int:
                     indent=2,
                 )
             )
+        elif args.command == "supervise":
+            supervise(args.workbench, args.apply)
         elif args.command == "junk":
             print(
                 json.dumps(

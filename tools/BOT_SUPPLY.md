@@ -12,9 +12,9 @@
 {"safe_towns":[100000102],"allowed_legs":[{"from":100000102,"portal":"out00","to":100000000}]}
 ```
 
-地图和传送门仅作格式示例，实际须按维护者核验结果配置。以运行中的 bot 会话 ID 启动 `python3 tools/bot_supply.py cycle dev/NAME --session SESSION_ID --watch-seconds 3600` 等待或预览；确认无误后增加 `--apply`。执行仅处理该次会话的低补给事件；先等待脚本完成且确认 `control_released=true`，没有其他活动脚本，且当前位置与商店地图均为白名单安全城镇才交易。不会自动从狩猎地图跨图去城镇；未到城镇、缺白名单或商店不在当前地图即停止并报告。默认不出售杂物，使用既有金额及数量上限。
+地图和传送门仅作格式示例，实际须按维护者核验结果配置；`safe_towns` 须包含 bot 的 safe_map 和商店地图，`allowed_legs` 须覆盖安全地图到商店及商店到 hunt_map 的每条门户。`python3 tools/bot_supply.py supervise dev/NAME` 持续监听、默认预览；显式 `--apply` 才执行交易和回图，需持续运行该宿主进程。也可用 `cycle dev/NAME --session SESSION_ID --watch-seconds 3600` 调试指定会话。监听先后匹配同一会话的 `supply/low` 与 `supply/retreat` 的 `arrived`，等待脚本完成并确认 `control_released=true`，无其他活动脚本，安全地图与当前位置一致且列入白名单，商店地图也须在白名单，才按已授权路线前往商店。没有白名单、不匹配、失败或超时即停止报告；不会自动重放。默认不出售杂物，使用既有金额及数量上限。
 
-交易成功并核对低水位恢复后，通过 `botctl plan` 按绑定的 `hunt_map` 生成回图路线，逐段检查 `from`、`portal`、`to`；全部获准才启动机器人并发送 hunt。返回 `resume_requested` 只表示已请求恢复，不代表实际到图或狩猎成功。每个会话的 `supply-cycle-SESSION_ID.json` 为防重放记录，执行开始后即保留；失败或中断可能已发生交易，须核对现场及记录，不可直接重放。一次 cycle 只处理一个会话；后续狩猎会话须另行启动监听。配置与事件不代表途中的实际安全，真实环境仍须独立验收。
+交易成功并核对低水位恢复后，通过 `botctl plan` 按绑定的 `hunt_map` 生成回图路线，逐段检查 `from`、`portal`、`to`；全部获准才启动机器人并发送 hunt。返回 `resume_requested` 只表示已请求恢复，不代表实际到图或狩猎成功。每个会话的 `supply-cycle-SESSION_ID.json` 为防重放记录，执行开始后即保留；失败或中断可能已发生交易，须核对现场及记录，不可直接重放。一次 cycle 只处理一个会话；supervise 可持续监听后续会话，进程退出或崩溃不会自动恢复。配置与事件不代表途中的实际安全，真实环境仍须独立验收。
 
 低水位来自角色独立 `supply.conf`，补货目标来自工具现有等级和职业表；低水位不得与补足目标混淆。未知库存或配置错误会停手并报告，不触发交易。已配置项目参与检查，没有配置箭矢的职业不会触发箭矢告警。
 
