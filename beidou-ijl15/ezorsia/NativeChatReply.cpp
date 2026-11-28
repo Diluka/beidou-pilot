@@ -613,25 +613,44 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
         }
         std::sort(learned.begin(), learned.end(),
                   [](const LearnedSkill& left, const LearnedSkill& right) { return left.id < right.id; });
-        reply("技能点 " + std::to_string(stats.skillPoints) + " 已学 " + std::to_string(learned.size()) + " 个");
-        if (learned.empty()) {
-            reply("暂无转职技能");
-        } else {
-            std::string line;
-            for (const auto& skill : learned) {
-                std::string name = Utf8ToGbk(ReadSkillName(skill.id));
-                if (name.empty()) name = "技能" + std::to_string(skill.id);
-                const std::string entry = name + " Lv." + std::to_string(skill.level);
-                if (line.empty()) {
-                    line = entry;
-                } else if (line.size() + entry.size() + 3 > 100) {
-                    reply(line);
-                    line = entry;
-                } else {
-                    line += "、" + entry;
-                }
+        // Group by job stage: 1st job skills are in whole-hundred job segments,
+        // 2nd/3rd/4th job skills end with 0/1/2 in the job segment.
+        std::vector<LearnedSkill> stages[5];
+        for (const auto& skill : learned) {
+            const std::uint32_t jobSegment = skill.id / 10000;
+            int stage = 0;
+            if (jobSegment % 100 == 0)
+                stage = 1;
+            else if (jobSegment % 10 == 0)
+                stage = 2;
+            else if (jobSegment % 10 == 1)
+                stage = 3;
+            else if (jobSegment % 10 == 2)
+                stage = 4;
+            if (stage >= 1 && stage <= 4) stages[stage].push_back(skill);
+        }
+        reply("技能点 " + std::to_string(stats.skillPoints));
+        for (int stage = 1; stage <= 4; ++stage) {
+            const std::string prefix = std::to_string(stage) + "转：";
+            if (stages[stage].empty()) {
+                reply(prefix + "无");
+                continue;
             }
-            if (!line.empty()) reply(line);
+            std::string line = prefix;
+            bool firstEntry = true;
+            for (const auto& skill : stages[stage]) {
+                std::string name = Utf8ToGbk(ReadSkillName(skill.id));
+                if (name.empty()) name = std::to_string(skill.id);
+                const std::string entry = (firstEntry ? "" : " ") + name + std::to_string(skill.level);
+                if (line.size() + entry.size() > 100) {
+                    reply(line);
+                    line = std::to_string(stage) + "转续：" + name + std::to_string(skill.level);
+                } else {
+                    line += entry;
+                }
+                firstEntry = false;
+            }
+            reply(line);
         }
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": skills");
         return true;
