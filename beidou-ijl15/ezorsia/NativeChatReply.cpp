@@ -49,9 +49,11 @@ struct InPacket {
     void* unknownTail;
 };
 
-// Client V17 receive opcode verified by the existing receive hook.
+// Client V17 receive opcodes verified by the existing receive hook.
 constexpr unsigned short kWhisperReceiveOpcode = 0x0087;
 constexpr unsigned char kWhisperReceiveFlag = 0x02 | 0x10; // whisper | receive
+constexpr unsigned short kMultiChatReceiveOpcode = 0x0086;
+constexpr unsigned char kPartyChatMode = 1;
 
 constexpr std::uint32_t kMinimumReplyIntervalMilliseconds = 1500;
 constexpr std::size_t kLogLimitBytes = 1024 * 1024;
@@ -473,8 +475,18 @@ std::string ExperiencePercent(std::uint32_t level, std::uint32_t experience) {
 // Returns true when the whisper was a chat command and has been handled.
 // Chinese command words below are CP936 literals (bridge execution charset) and
 // are compared against the raw CP936 message body; English aliases are lowercased.
-bool HandleChatCommand(const std::string& sender, const std::string& message, const std::string& senderUtf8) {
+bool HandleChatCommand(const std::string& sender, const std::string& message, const std::string& senderUtf8,
+                       bool fromParty = false) {
     if (message.size() < 2 || message[0] != '@') return false;
+    if (fromParty) {
+        // The party channel is shared with other players; only the configured
+        // owner may command the bot through it. Others are ignored silently.
+        const std::string owner = ReadBotConfig("owner_name");
+        if (owner.empty() || owner != senderUtf8) {
+            AppendLog(Timestamp() + " party command ignored from " + senderUtf8);
+            return true;
+        }
+    }
     std::string command = message.substr(1);
     while (!command.empty()
            && (command.back() == ' ' || command.back() == '\r' || command.back() == '\n' || command.back() == '\t'))
@@ -570,7 +582,7 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
         // The server rejects whispers over 127 characters, so one line cannot
         // carry every command with its usage; the shared queue paces the parts.
         reply("指令：@位置 @状态 @技能 @帮助 @跟随 @过来 @打猎 @停止");
-        reply("用法：@跟随 [玩家名] 省略跟随你；@过来 跨图召唤；动作类仅主人可用");
+        reply("用法：@跟随 [玩家名] 省略跟随你；@过来 跨图召唤；组队频道同样可用");
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": help");
         return true;
     }
@@ -690,6 +702,25 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
     return true;
 }
 
+// Party channel messages follow the multi-chat packet: byte mode, then the
+// sender name and text as server strings (CP936). Only the party mode (1) is
+// handled. Commands still reply through whisper so a group of bots does not
+// flood the party channel.
+void HandlePartyChat(const unsigned char* data, std::size_t size) {
+    if (size < 9) return;
+    if (data[6] != kPartyChatMode) return;
+    std::size_t offset = 7;
+    std::string sender;
+    std::string message;
+    if (!ReadString(data, size, offset, sender)) return;
+    if (!ReadString(data, size, offset, message)) return;
+    const std::string senderUtf8 = GbkToUtf8(sender);
+    const std::string messageUtf8 = GbkToUtf8(message);
+    AppendLog(Timestamp() + " party chat from " + (senderUtf8.empty() ? sender : senderUtf8) + ": " + messageUtf8);
+    if (senderUtf8.empty()) return;
+    HandleChatCommand(sender, message, senderUtf8, true);
+}
+
 void HandleReceiveWhisper(const unsigned char* data, std::size_t size) {
     std::size_t offset = 6;
     if (offset >= size) return;
@@ -761,6 +792,14 @@ void OnPacket(void* packet) {
     const auto* data = static_cast<const unsigned char*>(incoming->data);
     unsigned short opcode = 0;
     std::memcpy(&opcode, data + 4, sizeof(opcode));
+    if (opcode == kMultiChatReceiveOpcode) {
+        __try {
+            HandlePartyChat(data, static_cast<std::size_t>(incoming->size));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return;
+        }
+        return;
+    }
     if (opcode != kWhisperReceiveOpcode) return;
     if (incoming->size < 7) return;
     if (data[6] == 0x09) {
