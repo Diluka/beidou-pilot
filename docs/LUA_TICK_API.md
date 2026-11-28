@@ -101,7 +101,7 @@ end
 
 | 属性 | 内容与边界 |
 | --- | --- |
-| `game.character` | 当前玩家实体：共享可移动物体的 `x/y/velocity`，以及 `id/name/level/job/hp/max_hp/mp/max_mp`；长字段 `strength/dexterity/intelligence/luck/ability_points/skill_points/experience` 及简写 `str/dex/int/luk/ap/sp/exp`；`movement` 是角色能力参考，`on_ground/attacking/action_idle/native_updates` 是本角色原生事实，未知时为 `nil`；与本端可读取的角色领域事实合并。`skills` 是已学技能等级映射（技能 ID 字符串 → `{level,master_level}`），`skills_complete` 表明该映射是否完整；缺失或为 `false` 时表示观察不完整，不能当成未学习 |
+| `game.character` | 当前玩家实体：共享可移动物体的 `x/y/velocity`，以及 `id/name/level/job/hp/max_hp/mp/max_mp`；长字段 `strength/dexterity/intelligence/luck/ability_points/skill_points/experience` 及简写 `str/dex/int/luk/ap/sp/exp`；`movement` 是角色能力参考，`on_ground/attacking/action_idle/native_updates` 是本角色原生事实，未知时为 `nil`；与本端可读取的角色领域事实合并。`skills` 是已学技能等级映射（技能 ID 字符串 → `{level,master_level}`），`skills_complete` 表明该映射是否完整；缺失或为 `false` 时表示观察不完整，不能当成未学习；`buffs` 是本地角色当前的临时状态（buff）列表，来自 GIVE_BUFF/CANCEL_BUFF 收包跟踪，每项含 `stat`（服务端 BuffStat 名）、`label`（中文名）、`value`、`buff_id`、`duration_ms`、`remaining_ms`，`buffs_status` 为 `ok` 表示数据可用，脚本续 buff 可据此判断 |
 | `game.world` | `instance_id/scene_generation/ready/in_game/map_id`；既有角色快照位置仍提供 `x/y` 和 `position={x,y}`，`facing` 沿用 `Left/Right`；`settled/dead/revive_requestable` 未知时不提供。新实体运动字段不挂在此领域，GUI `settled` 保持未知 |
 | `game.scene` | `players/monsters/npcs/projectiles/drops` 的实体列表按本端支持范围提供，各行共享可移动物体的位置与向量契约；怪物项可带 `controlled`（本端是否持有该怪物控制权）：GUI 端保持未知；集合或字段不可读保留未知，不把不支持的集合写成空列表；完整性按本端实际能力声明 |
 | `game.inventory`、`game.quests` | 本端原生背包/装备和任务领域；任务动态性仍遵循本端来源声明 |

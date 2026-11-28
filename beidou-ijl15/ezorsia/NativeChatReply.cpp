@@ -12,6 +12,7 @@
 #include "NativeChatReply.h"
 #include "AgentBridge.h"
 #include "NativeChatQueue.h"
+#include "NativeBuffs.h"
 #include "NativeObservation.h"
 
 #include "../../shared/img/ImgResources.h"
@@ -516,7 +517,8 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
         } else {
             reply("背包观察不可用");
         }
-        reply("buff、点券、经验百分比暂不支持观察");
+        reply(BeiDouBridge::NativeBuffs::Summary());
+        reply("点券暂不支持观察");
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": status");
         return true;
     }

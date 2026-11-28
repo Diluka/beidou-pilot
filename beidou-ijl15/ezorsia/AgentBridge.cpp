@@ -18,6 +18,7 @@
 #include "NativeSceneTerrain.h"
 #include "NativeChatBroadcast.h"
 #include "NativeChatQueue.h"
+#include "NativeBuffs.h"
 #include "NativeChatReply.h"
 #include "LoginAction.h"
 
@@ -170,11 +171,10 @@ public:
         if (domain == "ui") observation.data = TickUiView(observation.data);
         if (domain == "character") {
             observation.data = TickCharacterView(observation.data);
-            // CharacterData's verified maps are learned skill levels, not active
-            // TemporaryStat/buff records. Do not infer buffs from those maps.
-            observation.data["buffs"] = MapleControl::Value{};
-            observation.data["buffs_status"] = "unsupported";
-            observation.data["buffs_unavailable"] = "native_buff_details_unavailable";
+            // Active temporary stats come from the GIVE_BUFF/CANCEL_BUFF packets
+            // the bridge tracks, not from the skill maps.
+            observation.data["buffs"] = BeiDouBridge::NativeBuffs::Snapshot();
+            observation.data["buffs_status"] = "ok";
         }
         return observation;
     }

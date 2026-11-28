@@ -205,6 +205,7 @@
     <ClInclude Include="BossHP.h" />
     <ClInclude Include="HpMpAlert.h" />
     <ClInclude Include="NativeChatBroadcast.h" />
+    <ClInclude Include="NativeBuffs.h" />
     <ClInclude Include="NativeChatQueue.h" />
     <ClInclude Include="NativeChatReply.h" />
     <ClInclude Include="Client.h" />
@@ -264,6 +265,7 @@
     <ClCompile Include="BossHP.cpp" />
     <ClCompile Include="HpMpAlert.cpp" />
     <ClCompile Include="NativeChatBroadcast.cpp" />
+    <ClCompile Include="NativeBuffs.cpp" />
     <ClCompile Include="NativeChatQueue.cpp" />
     <ClCompile Include="NativeChatReply.cpp" />
     <ClCompile Include="Client.cpp" />
