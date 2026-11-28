@@ -66,6 +66,48 @@ struct Entry {
 std::deque<Entry> queue;
 std::uint64_t lastSendAt = 0;
 
+std::string BridgeDirectory() {
+    std::array<char, MAX_PATH> value{};
+    const DWORD length = GetEnvironmentVariableA("MAPLE_BRIDGE_DIR", value.data(), static_cast<DWORD>(value.size()));
+    if (length == 0 || length >= value.size()) return {};
+    return std::string(value.data(), length);
+}
+
+std::string Timestamp() {
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    std::array<char, 64> text{};
+    sprintf_s(text.data(), text.size(), "%04d-%02d-%02d %02d:%02d:%02d.%03d", static_cast<int>(now.wYear),
+              static_cast<int>(now.wMonth), static_cast<int>(now.wDay), static_cast<int>(now.wHour),
+              static_cast<int>(now.wMinute), static_cast<int>(now.wSecond), static_cast<int>(now.wMilliseconds));
+    return std::string(text.data());
+}
+
+void AppendLog(const std::string& line) {
+    const std::string directory = BridgeDirectory();
+    if (directory.empty()) return;
+    const std::string path = directory + "\\chat.log";
+    HANDLE file = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    const std::string record = line + "\r\n";
+    DWORD written = 0;
+    WriteFile(file, record.data(), static_cast<DWORD>(record.size()), &written, nullptr);
+    CloseHandle(file);
+}
+
+const char* ChannelName(Channel channel) {
+    switch (channel) {
+    case Channel::Public:
+        return "public";
+    case Channel::Party:
+        return "party";
+    case Channel::Whisper:
+        return "whisper";
+    }
+    return "unknown";
+}
+
 void AppendU16(std::vector<unsigned char>& payload, std::size_t value) {
     payload.push_back(static_cast<unsigned char>(value & 0xFF));
     payload.push_back(static_cast<unsigned char>((value >> 8) & 0xFF));
@@ -142,7 +184,10 @@ void Tick() {
     if (lastSendAt != 0 && now - lastSendAt < kSendIntervalMs) return;
     Entry entry = std::move(queue.front());
     queue.pop_front();
-    if (SendEntry(entry)) lastSendAt = now;
+    if (SendEntry(entry)) {
+        lastSendAt = now;
+        AppendLog(Timestamp() + " chat sent: " + ChannelName(entry.channel));
+    }
 }
 
 } // namespace NativeChatQueue
