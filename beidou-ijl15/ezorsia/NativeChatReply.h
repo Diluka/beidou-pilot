@@ -11,5 +11,10 @@ namespace NativeChatReply {
 // still dispatches it.
 void OnPacket(void* packet);
 
+// Advances delayed chat work from the game update hook: completes a summon
+// request (location lookup, route generation, bot travel command) and enforces
+// the lookup timeout.
+void Tick();
+
 } // namespace NativeChatReply
 } // namespace BeiDouBridge

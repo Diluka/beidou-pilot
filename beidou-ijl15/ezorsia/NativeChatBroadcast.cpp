@@ -203,6 +203,7 @@ std::string ModeAnnouncement(const std::string& mode) {
     if (mode == "follow") return "策略切换：跟随中";
     if (mode == "hunt") return "策略切换：开始狩猎";
     if (mode == "dead") return "策略切换：死亡等待复活";
+    if (mode == "travel") return "策略切换：正在赶路";
     return {};
 }
 

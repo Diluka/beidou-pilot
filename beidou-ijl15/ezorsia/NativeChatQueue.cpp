@@ -47,6 +47,7 @@ constexpr unsigned short kGeneralChatOpcode = 0x0031;
 constexpr unsigned short kMultiChatOpcode = 0x0077;
 constexpr unsigned short kWhisperSendOpcode = 0x0078;
 constexpr unsigned char kWhisperSendFlag = 0x02 | 0x04; // whisper | request
+constexpr unsigned char kFindRequestFlag = 0x01 | 0x04; // location | request
 
 // The server validates string length in characters; at two bytes per CJK
 // character this byte cap stays well below its 127-character limit.
@@ -104,6 +105,8 @@ const char* ChannelName(Channel channel) {
         return "party";
     case Channel::Whisper:
         return "whisper";
+    case Channel::Find:
+        return "find";
     }
     return "unknown";
 }
@@ -157,6 +160,13 @@ bool SendEntry(const Entry& entry) {
         payload.push_back(kWhisperSendFlag);
         AppendU16(payload, entry.target.size());
         AppendBytes(payload, entry.target);
+        AppendU16(payload, entry.text.size());
+        AppendBytes(payload, entry.text);
+        break;
+    case Channel::Find:
+        payload.push_back(static_cast<unsigned char>(kWhisperSendOpcode & 0xFF));
+        payload.push_back(static_cast<unsigned char>((kWhisperSendOpcode >> 8) & 0xFF));
+        payload.push_back(kFindRequestFlag);
         AppendU16(payload, entry.text.size());
         AppendBytes(payload, entry.text);
         break;
