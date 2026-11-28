@@ -4,7 +4,8 @@ package.loaded['lib.metrics_storage'] = {
     new = function(path) return {path=path} end,
     save = function(_, rows) snapshots[#snapshots + 1] = table.concat(rows, ','); return true end,
 }
-package.loaded['lib.io'] = {event=function() return true end}
+local events = {}
+package.loaded['lib.io'] = {event=function(_,kind,data) events[#events+1]={kind=kind,data=data}; return true end}
 package.loaded['lib.metrics'] = nil
 local metrics = require('lib.metrics')
 local m = assert(metrics.new('/metrics.json'))
@@ -125,5 +126,19 @@ assert(text:find('"arrow_delta_observed":10',1,true))
 pc.tick.time=21; pw.inventory[1].quantity=nil; assert(metrics.observe(inventory_test,pc,pw))
 for i=22,40 do pc.tick.time=i; assert(metrics.observe(inventory_test,pc,pw)) end
 assert(snapshots[#snapshots]:find('"arrow_delta_observed":null',1,true))
+-- Timing metadata is emitted only for a slow, normally returned save.
+local clock = os.clock
+local ticks = {0, 0.06}
+os.clock = function() return table.remove(ticks, 1) end
+local probe = assert(metrics.new('/probe.json'))
+probe.rows = {'{"x":1}'}; probe.last_write = 0
+events = {}
+assert(metrics.flush(probe, 20, ctx))
+assert(#events == 1 and events[1].kind == 'metrics/flush')
+assert(events[1].data.slow_candidate.bytes == 7 and events[1].data.slow_candidate.duration_us >= 59999)
+ticks = {1, 1.01}; events = {}
+assert(metrics.flush(probe, 40, ctx))
+assert(#events == 1 and events[1].data.slow_candidate == nil)
+os.clock = clock
 package.loaded['lib.metrics_storage'], package.loaded['lib.io'], package.loaded['lib.metrics'] = saved_storage, saved_io, nil
 print('metrics tests ok')
