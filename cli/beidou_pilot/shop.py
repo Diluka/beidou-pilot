@@ -47,17 +47,49 @@ def close_shop(backend: Backend) -> JsonObject:
                 "shop_unavailable", "取消数量框后商店状态不可用。", {"unavailable": snapshot["unavailable"]}
             )
     if snapshot["open"]:
-        current = snapshot["window"]
-        if current is None or current["address"] != window["address"]:
-            raise ClientError("shop_window_changed", "取消数量框后商店窗口变化，未继续退出。")
-        click_control(backend, current, 2)
-        deadline = time.monotonic() + 1.2
-        snapshot = cast(ShopSnapshot, backend.read("shop"))
-        while snapshot["open"]:
-            if time.monotonic() >= deadline:
-                raise ClientError("shop_close_not_confirmed", "退出按钮已点击，商店仍未关闭。")
-            time.sleep(0.1)
+        for attempt in range(3):
+            current = snapshot["window"]
+            if current is None or current["instance_ref"] != window["instance_ref"]:
+                raise ClientError("shop_window_changed", "商店窗口变化，未继续退出。")
+            if snapshot["quantity_dialog"] is not None:
+                raise ClientError("shop_quantity_cancel_not_confirmed", "数量框仍在，未继续退出商店。")
+            ui = backend.read("ui")
+            windows = cast(list[JsonObject], ui["windows"])
+            if ui["unavailable"] or not windows or windows[-1]["instance_ref"] != current["instance_ref"]:
+                raise ClientError(
+                    "shop_close_not_confirmed",
+                    "商店不是可确认的顶层窗口，未继续退出。",
+                    {"attempts": attempt, "shop": cast(JsonObject, snapshot), "ui": ui},
+                )
             snapshot = cast(ShopSnapshot, backend.read("shop"))
+            if snapshot["unavailable"]:
+                raise ClientError(
+                    "shop_unavailable", "退出前商店状态不可用。", {"unavailable": snapshot["unavailable"]}
+                )
+            if not snapshot["open"]:
+                break
+            current = snapshot["window"]
+            if (
+                current is None
+                or current["instance_ref"] != window["instance_ref"]
+                or snapshot["quantity_dialog"] is not None
+            ):
+                raise ClientError("shop_window_changed", "退出前商店窗口或数量框变化，未继续退出。")
+            click_control(backend, current, 2)
+            deadline = time.monotonic() + 1.2
+            snapshot = cast(ShopSnapshot, backend.read("shop"))
+            while snapshot["open"] and not snapshot["unavailable"] and time.monotonic() < deadline:
+                time.sleep(0.1)
+                snapshot = cast(ShopSnapshot, backend.read("shop"))
+            if snapshot["unavailable"] or not snapshot["open"]:
+                break
+        if snapshot["open"] and not snapshot["unavailable"]:
+            ui = backend.read("ui")
+            raise ClientError(
+                "shop_close_not_confirmed",
+                "退出按钮重试后商店仍未关闭。",
+                {"attempts": 3, "shop": cast(JsonObject, snapshot), "ui": ui},
+            )
     if snapshot["unavailable"]:
         raise ClientError(
             "shop_unavailable", "退出商店后读数不可用，未确认关闭。", {"unavailable": snapshot["unavailable"]}

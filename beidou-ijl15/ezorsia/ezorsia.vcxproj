@@ -204,6 +204,7 @@
     <ClInclude Include="..\..\shared\lua-runtime\EventTransport.h" />
     <ClInclude Include="BossHP.h" />
     <ClInclude Include="HpMpAlert.h" />
+    <ClInclude Include="NativeChatReply.h" />
     <ClInclude Include="Client.h" />
     <ClInclude Include="FixBuddy.h" />
     <ClInclude Include="FixIme.h" />
@@ -260,6 +261,7 @@
     <ClCompile Include="..\..\shared\lua-runtime\EventTransport.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="BossHP.cpp" />
     <ClCompile Include="HpMpAlert.cpp" />
+    <ClCompile Include="NativeChatReply.cpp" />
     <ClCompile Include="Client.cpp" />
     <ClCompile Include="ijl15.cpp" />
     <ClCompile Include="ZAllocEx.cpp" />

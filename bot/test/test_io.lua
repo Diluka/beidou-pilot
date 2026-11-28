@@ -5,10 +5,11 @@ local state_module = require("lib.state")
 local world_module = require("lib.world")
 local saved_open = io.open
 local saved_execute, saved_rename, saved_remove, saved_time = os.execute, os.rename, os.remove, os.time
-local files, queue_paths, modified_at, failed_writes = {}, {}, {}, {}
+local files, queue_paths, modified_at, failed_writes, open_counts = {}, {}, {}, {}, {}
 local root = "tmp/bot-io-test"
 
 local function open_fake(path, mode)
+    open_counts[path] = (open_counts[path] or 0) + 1
     mode = mode or "r"
     if mode:find("r") and files[path] == nil and not mode:find("+") then return nil end
     local buffer = mode:find("r") and files[path] or mode:find("a") and (files[path] or "") or ""
@@ -135,6 +136,47 @@ context.state.pending_receipts = commands
 context.state.force_publish = true
 assert(io_module.publish(context, {character = {}}, 6))
 assert(files[root .. "/queue/rejected/interrupted"] == "rejected=interrupted\n")
+local before_empty_scan = 0
+for slot = 1, 8 do
+    before_empty_scan = before_empty_scan + (open_counts[root .. "/queue/slot" .. slot .. ".processing"] or 0)
+        + (open_counts[root .. "/queue/slot" .. slot .. ".cmd"] or 0)
+end
+assert(#assert(io_module.poll(context, 6.5)) == 0)
+local after_empty_scan = 0
+for slot = 1, 8 do
+    after_empty_scan = after_empty_scan + (open_counts[root .. "/queue/slot" .. slot .. ".processing"] or 0)
+        + (open_counts[root .. "/queue/slot" .. slot .. ".cmd"] or 0)
+end
+assert(after_empty_scan - before_empty_scan == 16, "empty queue opens each slot only once")
+local _, retry_events = files[root .. "/events.jsonl"]:gsub('"type":"io/rename_retry"', "")
+assert(retry_events == 1, "repeated GUI rename retries must not append an event every publish")
+context.state.force_publish = true
+assert(io_module.publish(context, {character = {}}, 63))
+local _, later_retry_events = files[root .. "/events.jsonl"]:gsub('"type":"io/rename_retry"', "")
+assert(later_retry_events == 2 and files[root .. "/events.jsonl"]:find('"count":', 1, true),
+    "periodic retry summary must include accumulated occurrences")
+
+local clock = 1000
+os.time = function() return clock end
+local timing = {tick = {index = 1, delta = 0.04}, state = {bot_root = root, bot = {mode = "hunt"}, hunt_action = "patrol", force_publish = true}}
+assert(io_module.publish(timing, {character = {}}, 100))
+clock = 1002; timing.state.force_publish = true
+assert(io_module.publish(timing, {character = {}}, 101))
+assert(not files[root .. "/events.jsonl"]:find('"type":"tick/slow"', 1, true))
+clock = 1005; timing.tick.index = 2; timing.state.force_publish = true
+assert(io_module.publish(timing, {character = {}}, 102))
+local events = files[root .. "/events.jsonl"]
+assert(events:find('"type":"tick/slow"', 1, true) and events:find('"wall_gap_seconds":3', 1, true))
+assert(events:find('"reason":"unknown"', 1, true) and events:find('"budget_ms":null', 1, true))
+clock = 1008; timing.state.force_publish = true
+assert(io_module.publish(timing, {character = {}}, 103))
+local _, slow_count = files[root .. "/events.jsonl"]:gsub('"type":"tick/slow"', "")
+assert(slow_count == 1, "slow candidate reports are rate limited")
+clock = 1065; timing.state.force_publish = true
+assert(io_module.publish(timing, {character = {}}, 104))
+_, slow_count = files[root .. "/events.jsonl"]:gsub('"type":"tick/slow"', "")
+assert(slow_count == 2, "a new candidate is recorded after the rate limit")
+os.time = saved_time
 
 files["/work/bot/config.conf"] = "owner_name=Owner\nowner_character_id=12\nfollow_distance=99\n"
 files["/work/bot/checkpoint.conf"] = "mode=hunt\ntarget=12\nmap_id=7\n"
@@ -189,6 +231,9 @@ local absent_owner = world_module.observe({
 assert(absent_owner.owner.present == false)
 
 local event_path = root .. "/events.jsonl"
+local opens = open_counts[event_path] or 0
+assert(io_module.event(context, "ordinary", {}))
+assert(open_counts[event_path] == opens + 1, "ordinary event append opens the file once")
 local large_event = {text = string.rep("x", 600 * 1024)}
 assert(io_module.event(context, "test", large_event))
 assert(io_module.event(context, "test", large_event))
@@ -306,7 +351,7 @@ main_chunk()
 local pipeline_context = {
     tick = {time = 10},
     state = {
-        bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+        bot = {mode = "hunt", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         mover = {}, last_poll = 10, started_at = 1,
     },
     game = {character = {action_idle = true, movement = {max_speed = 100, max_jump_height = 50}},
@@ -335,7 +380,7 @@ assert(table.concat(calls, ",") == "observe,sustain,publish")
 calls, sustain_handled = {}, false
 local recovery_context = {
     tick = {time = 20},
-    state = {bot = {mode = "recover", config = {}}, last_poll = 20, started_at = 1},
+    state = {bot = {mode = "recover", config = {metrics_enabled = 0}}, last_poll = 20, started_at = 1},
     game = {character = {action_idle = true, movement = {max_speed = 100, max_jump_height = 50}},
         player = {move = function() return true end, skill = function() return true end}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
@@ -366,7 +411,7 @@ assert(recovery_context.state.mover_attempt_generation == 1, "patrol must attemp
 selected_mob, selected_drop = {}, nil
 local hunt_action_context = {
     tick = {time = 20.35},
-    state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+    state = {bot = {mode = "hunt", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         last_poll = 20.35, started_at = 1},
     game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
@@ -397,7 +442,7 @@ scene_generation = 1
 created_mover, follow_action = {}, {kind = "move", x = 20, y = 2, stop_distance = 40}
 local follow_context = {
     tick = {time = 20.5},
-    state = {bot = {mode = "follow", config = {}}, graph = {}, graph_generation = 1,
+    state = {bot = {mode = "follow", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         last_poll = 20.5, started_at = 1},
     game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
@@ -414,7 +459,7 @@ assert(last_set_path_edges and #last_set_path_edges == 1
 selected_mob, selected_drop, created_mover, movement_result, combat_result = {}, {}, {}, "done", "done"
 local combat_context = {
     tick = {time = 20.5},
-    state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+    state = {bot = {mode = "hunt", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         last_poll = 20.5, started_at = 1},
     game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},
@@ -427,7 +472,7 @@ assert(combat_context.state.mover == created_mover)
 selected_mob, selected_drop, created_mover = nil, {}, {}
 local loot_context = {
     tick = {time = 20.5},
-    state = {bot = {mode = "hunt", config = {}}, graph = {}, graph_generation = 1,
+    state = {bot = {mode = "hunt", config = {metrics_enabled = 0}}, graph = {}, graph_generation = 1,
         last_poll = 20.5, started_at = 1},
     game = {character = {movement = {max_speed = 100, max_jump_height = 50}}},
     scene = {terrain = {status = "available", navigation = {model = {stand_height = 5}}}},

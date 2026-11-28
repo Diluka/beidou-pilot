@@ -43,6 +43,14 @@ local expected = {
     world = {
         observe = 1,
     },
+    metrics = {
+        new = 1,
+        observe = 3,
+        event = 3,
+        flush = 3,
+        target = 2,
+        visit = 2,
+    },
 }
 
 local modules = {}
@@ -271,6 +279,7 @@ local expected_defaults = {
     pot_hp = 60,
     pot_mp = 30,
     loot_radius = 150,
+    metrics_enabled = 1,
     attack_mode = "melee",
     attack_range = 110,
     min_range = 60,
@@ -311,4 +320,7 @@ dofile("bot/test/test_map_binding.lua")
 dofile("bot/test/test_supply_stop.lua")
 dofile("bot/test/test_memory.lua")
 dofile("bot/test/test_equipment.lua")
+dofile("bot/test/test_metrics.lua")
+dofile("bot/test/test_metrics_storage.lua")
+dofile("bot/test/test_metrics_wire.lua")
 print("bot smoke ok: 10 modules")

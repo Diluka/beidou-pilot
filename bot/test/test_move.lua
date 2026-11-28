@@ -87,7 +87,12 @@ assert(step(mover, ctx, world) == "running" and direction == nil and action == n
 world.character.on_ground = true
 status, reason = step(mover, ctx, world)
 assert(status == "failed" and reason == "landing_mismatch" and direction == nil and action == nil)
+assert(mover.last_failure.reason == "landing_mismatch" and mover.last_failure.kind == "downjump"
+    and mover.last_failure.to == 2 and mover.last_failure.landing_platform == 1
+    and mover.last_failure.landing_x == world.character.x and mover.last_failure.landing_y == world.character.y,
+    "failed movement retains edge and observed landing details")
 begin({kind = "downjump", x = 0, destination = 0})
+assert(mover.last_failure == nil, "a new path clears previous diagnostic details")
 assert(step(mover, ctx, world) == "running" and direction == "down" and action == nil)
 assert(step(mover, ctx, world) == "running" and direction == "down" and action == "jump")
 move.stop(mover)
@@ -629,12 +634,39 @@ assert(step(mover,ctx,world)=="running" and action==nil)
 world.character.x=-7; ctx.tick.time=1.125
 assert(step(mover,ctx,world)=="running" and action=="jump")
 move.stop(mover)
+-- A path may be planned while descending inside platform_at's tolerance.
+mover=move.new({platforms={{left=-100,right=100,segments={-100,100,0,0}}}})
+begin({kind="jumpup",from=1,to=2,x=0,destination=40})
+world.character={x=-50,y=-5,on_ground=false}
+game.character={physics={velocity={x=0,y=210}},movement={max_speed=125}}
+action,direction=nil,nil
+assert(step(mover,ctx,world)=="running" and mover.phase=="prepare_runup" and direction==nil and action==nil,
+    "airborne start must wait instead of failing")
+ctx.tick.time=0.1; world.character.y=0; world.character.on_ground=true
+assert(step(mover,ctx,world)=="running" and mover.phase=="to_runup_start")
+assert(step(mover,ctx,world)=="running" and direction=="right")
+world.character.x=-32; ctx.tick.time=0.2
+assert(step(mover,ctx,world)=="running" and mover.phase=="runup_settle")
+ctx.tick.time=0.23; assert(step(mover,ctx,world)=="running" and mover.phase=="runup")
+ctx.tick.time=0.3; world.character.x=-8
+assert(step(mover,ctx,world)=="running" and action=="jump", "runup launches after landing")
+move.stop(mover)
+-- An actor that never lands remains bounded by the existing edge deadline.
+mover=move.new({platforms={{left=-100,right=100,segments={-100,100,0,0}}}})
+begin({kind="jumpup",from=1,to=2,x=0,destination=40})
+world.character={x=-50,y=-5,on_ground=false}; game.character={physics={velocity={x=1,y=210}}}
+assert(step(mover,ctx,world)=="running")
+ctx.tick.time=20
+status,reason=step(mover,ctx,world)
+assert(status=="failed" and reason=="timeout" and mover.last_failure.velocity_y==210)
 -- Too little safe source space fails after the retry, without jumping.
 mover=move.new({platforms={{left=-19,right=100,segments={-19,100,0,0}}}})
 begin({kind="jumpup",from=1,to=2,x=0,destination=40}); action=nil
 assert(step(mover,ctx,world)=="running" and action==nil)
 status,reason=step(mover,ctx,world)
 assert(status=="failed" and reason=="runup_unavailable" and action==nil)
+assert(mover.last_failure.detail=="insufficient_space" and mover.last_failure.phase=="prepare_runup",
+    "runup failure identifies the exact branch without changing its public reason")
 -- A stalled approach times out, retries, and can subsequently succeed.
 runup(1,32)
 ctx.tick.time=2.1
@@ -764,5 +796,68 @@ for _, rise in ipairs({-300,300}) do
     mover=move.new(rope_graph); begin({kind="rope",from=1,to=2,x=522,destination=522,rise=rise,rope_index=1})
     world.character={x=522,y=395,on_ground=true}; game.character={physics={velocity={x=0}}}; action=nil
     assert(step(mover,ctx,world)=="running" and direction==(rise<0 and "up" or "down") and action==nil)
+end
+-- Real map geometry plus a simplified synthetic 30ms horizontal model: this
+-- tests controller transitions, not the real client's physics or knockback.
+local captured = assert(terrain.build(dofile("bot/test/fixtures/map_100030000.lua").navigation))
+local captured_edge = assert(terrain.plan(captured, 69, 33, {speed=125,max_jump_height=77.00625}))[1]
+for _, x in ipairs({-3914, -3295}) do
+    for _, y in ipairs({-505, -511, -518}) do
+        for _, initial_velocity in ipairs({-125, 0, 125}) do
+            local fake_direction, launched, phase = nil, false, nil
+            local actor = {x=x, y=y, on_ground=true}
+            local velocity = initial_velocity
+            local fake_player = {
+                move = function(d) fake_direction=d; return true end,
+                jump = function() launched=true; return true end,
+                skill = function() return true end,
+            }
+            local fake_context = {tick={time=0,index=0},game={player=fake_player,
+                character={movement={max_speed=125},physics={velocity={x=velocity}}}}}
+            local fake_mover = move.new(captured)
+            move.set_path(fake_mover, {captured_edge})
+            local old_game = game
+            game = fake_context.game
+            for i=1,1000 do
+                fake_context.tick.index, fake_context.tick.time = i, i*0.03
+                local st, reason = move.step(fake_mover, fake_context, {character=actor})
+                assert(st ~= "failed", string.format("P69 x=%s y=%s vx=%s phase=%s reason=%s",x,y,initial_velocity,tostring(fake_mover.phase),tostring(reason)))
+                phase = fake_mover.phase
+                if launched then break end
+                if fake_direction == "right" then velocity=math.min(125,velocity+42)
+                elseif fake_direction == "left" then velocity=math.max(-125,velocity-42)
+                elseif velocity>0 then velocity=math.max(0,velocity-24)
+                else velocity=math.min(0,velocity+24) end
+                actor.x=actor.x+velocity*0.03
+                fake_context.game.character.physics.velocity.x=velocity
+            end
+            game=old_game
+            assert(launched and phase == "launch", "P69 synthetic runup must reach launch")
+        end
+    end
+end
+local edge71 = assert(terrain.plan(captured, 71, 33, {speed=125,max_jump_height=77.00625}))[1]
+assert(edge71.kind == "horizontal_jump" and edge71.from == 71 and edge71.to == 68)
+for _, x in ipairs({-4250, edge71.x}) do
+    local fake_direction, launched, velocity = nil, false, 0
+    local actor = {x=x, y=-385, on_ground=true}
+    local fake_player = {move=function(d) fake_direction=d; return true end,
+        jump=function() launched=true; return true end, skill=function() return true end}
+    local fake_context = {tick={time=0,index=0},game={player=fake_player,character={physics={velocity={x=0}}}}}
+    local fake_mover = move.new(captured); move.set_path(fake_mover,{edge71})
+    local old_game = game; game=fake_context.game
+    for i=1,300 do
+        fake_context.tick.index, fake_context.tick.time=i,i*0.03
+        local st, why=move.step(fake_mover,fake_context,{character=actor})
+        assert(st ~= "failed", "P71 synthetic approach failed: "..tostring(why))
+        if launched then break end
+        if fake_direction=="right" then velocity=math.min(125,velocity+42)
+        elseif fake_direction=="left" then velocity=math.max(-125,velocity-42)
+        elseif velocity>0 then velocity=math.max(0,velocity-24)
+        else velocity=math.min(0,velocity+24) end
+        actor.x=actor.x+velocity*0.03
+    end
+    game=old_game
+    assert(launched,"P71 approach must submit horizontal jump in this synthetic model")
 end
 print("move tests ok")

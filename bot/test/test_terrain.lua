@@ -1,6 +1,23 @@
 local terrain = require("lib.terrain")
 local synthetic = dofile("bot/test/fixtures/synthetic.lua")
 local real = dofile("bot/test/fixtures/map_102000000.lua")
+local route_map = assert(terrain.build(dofile("bot/test/fixtures/map_100030000.lua").navigation))
+assert(terrain.platform_at(route_map, -947, -865, 70) == 33, "east00 must resolve to platform 33")
+for _, from in ipairs({5, 69, 71}) do
+    local route = assert(terrain.plan(route_map, from, 33, {speed=125, max_jump_height=77.00625}))
+    assert(#route > 0 and route[1].from == from and route[#route].to == 33)
+end
+local route69 = assert(terrain.plan(route_map, 69, 33, {speed=125, max_jump_height=77.00625}))
+assert(route69[1].kind == "jumpup" and route69[1].from == 69 and route69[1].to == 67
+    and route69[1].x == -3285 and route69[1].destination == -3269)
+local shop = dofile("bot/test/fixtures/map_100000102.lua")
+local shop_graph = assert(terrain.build(shop.navigation))
+local shop_path = assert(terrain.plan(shop_graph, 6, 13, {speed = 125, max_jump_height = 77.00625}))
+assert(#shop_path > 1, "shop route must avoid the intercepted direct drop")
+for _, edge in ipairs(shop_path) do
+    assert(not (edge.kind == "drop" and edge.from == 6 and edge.to == 13 and edge.x == 99),
+        "shop platform 14 intercepts the observed 6->13 drop")
+end
 
 local graph, reason = terrain.build(synthetic.navigation)
 assert(graph and reason == nil, "synthetic navigation must build: " .. tostring(reason))
@@ -28,8 +45,15 @@ local function navigation_with_platforms(platforms)
 end
 
 local function graph_for_candidate(kind, values)
-    local navigation = navigation_with_platforms(synthetic.navigation.platforms)
-    navigation.ropes = synthetic.navigation.ropes
+    local platforms = synthetic.navigation.platforms
+    if kind == "drop" then
+        platforms = {
+            {index=1,left=0,right=100,open_left=true,open_right=true,segments={0,100,100,100}},
+            {index=2,left=100,right=180,open_left=true,open_right=true,segments={100,180,140,140}},
+        }
+    end
+    local navigation = navigation_with_platforms(platforms)
+    navigation.ropes = kind == "drop" and {} or synthetic.navigation.ropes
     navigation.candidates[kind] = values
     return assert(terrain.build(navigation))
 end
@@ -71,6 +95,22 @@ ceiling_navigation.walls = {}
 local ceiling_path, ceiling_reason = terrain.plan(assert(terrain.build(ceiling_navigation)), 1, 2)
 assert(ceiling_path == nil and ceiling_reason == "no_path",
     "a platform intruding into the jump clearance envelope must prevent the edge")
+
+-- Shop capture: the higher floor intercepts the planned descent to the lower floor.
+local drop_occlusion = navigation_with_platforms({
+    {index=1,left=91,right=174,open_left=true,open_right=true,segments={91,174,57,57}},
+    {index=2,left=61,right=108,open_left=true,open_right=true,segments={61,108,120,120}},
+    {index=3,left=59,right=109,open_left=true,open_right=true,segments={59,109,72,73}},
+})
+drop_occlusion.walls = {}
+drop_occlusion.candidates.drop = {1,2,99,74,63}
+local drop_graph = assert(terrain.build(drop_occlusion))
+local shadowed_drop = terrain.plan(drop_graph, 1, 2, {blocked={["1:3"]=true}})
+assert(not shadowed_drop, "intermediate floor must reject a drop even when its bounding corridor overlaps")
+drop_occlusion.platforms[3] = {index=3,left=0,right=50,open_left=true,open_right=true,segments={0,50,72,73}}
+local open_drop = assert(terrain.plan(drop_graph, 1, 2))[1]
+assert(open_drop.kind == "drop" and open_drop.from == 1 and open_drop.to == 2,
+    "a floor outside the drop corridor must not reject the candidate")
 
 local plan_graph = assert(terrain.build(synthetic.navigation))
 local planned = assert(terrain.plan(plan_graph, 1, 4, {speed = 125, blocked = {}}))

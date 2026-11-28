@@ -1,6 +1,6 @@
 # 伴游机器人 Lua 包
 
-该目录是可复制到角色 `/work/scripts/bot` 的 tick 脚本包。`lib.io`、`lib.state`、`lib.world` 与 `main.lua` 提供指令邮箱、状态/事件发布、基础世界投影和 tick 主流程；`lib.terrain` 提供只读地形构图、平台定位与 A* 路径规划。`lib.move`、`lib.follow`、`lib.combat`、`lib.sustain` 与 `lib.loot` 实现其各自当前覆盖的行为；具体限制以模块和离线/真实场景验收为准。机器人只读 `/work/bot` 的配置和队列文件。
+该目录是可复制到角色 `/work/scripts/bot` 的 tick 脚本包。`lib.io`、`lib.state`、`lib.world` 与 `main.lua` 提供指令邮箱、状态/事件发布、基础世界投影和 tick 主流程；`lib.terrain` 提供只读地形构图、平台定位与 A* 路径规划。`lib.move`、`lib.follow`、`lib.combat`、`lib.sustain` 与 `lib.loot` 实现其各自当前覆盖的行为；具体限制以模块和离线/真实场景验收为准。机器人从 `/work/bot` 读取配置与命令，并写状态、事件和回执。
 
 `main.lua` 按 tick API 定义唯一的顶层 `local function main(context)`。tick 加载器会在内部编译并包装入口，因此不需要、也不应从用户脚本返回一个模块表。此骨架不会在顶层调用 `game` 或 `player`。
 
@@ -20,6 +20,12 @@
 | `lib.world` | `observe(ctx)` |
 
 未实现的行为模块按签名返回 `nil, "not_implemented"`、`false, "not_implemented"` 或 `"failed", "not_implemented"`。terrain 的 `build`、`platform_at` 和 `plan` 已实现；接口及数据结构契约以 [`docs/PHASE1.md`](../docs/PHASE1.md) 为准，terrain 与邮箱/状态/世界行为均有离线用例覆盖。
+
+## 运行范围与已知限制
+
+机器人具备平台巡逻、绳梯与水平跳、顺路拾取、掉层恢复、远程距离筛选和普通门户绑定回图。目标可达性与战斗效果依赖现场地形；跨平台弹道/命中尚待真机确认。同平台拾取扫荡尚未合入并待验证。城镇门户 `landing_mismatch`、NPC/商店后输入冻结、`tick_overrun` 根因及自动补给闭环限制见[客户端能力](../docs/CLIENT_LIMITATIONS.md#伴游机器人当前能力和限制)。
+
+常驻服仅按已授权计划正常游玩，不使用 GM 写入或直接修改数据库；交互后若输入冻结，按工作台关闭重开并核对实际输入。`lib.metrics` 已合入但主流程未接线，安装后不会自动产生指标。
 
 ## 低补给停手
 
@@ -102,6 +108,8 @@ workbenches/workbench dev/NAME script run bot/safe_spot.lua --seconds 30
 | `ranged_skill_bonus_per_level` | `15` |
 | `ranged_skill_level` | `0` |
 | `skill_mp_cost` | `10` |
+| `ammo_item_id` | `2060000` |
+| `ammo_low` | `50` |
 | `hp_item` | `0` |
 | `mp_item` | `0` |
 | `follow_distance` | `80` |
@@ -109,6 +117,7 @@ workbenches/workbench dev/NAME script run bot/safe_spot.lua --seconds 30
 | `pot_hp` | `60` |
 | `pot_mp` | `30` |
 | `loot_radius` | `150` |
+| `metrics_enabled` | `1` |
 
 将配置写入角色 `/work/bot/config.conf`，格式为 `key=value`，例如 `owner_name=Owner`、`owner_character_id=123`。缺失或无法解析的值使用表中默认值。
 
@@ -126,7 +135,7 @@ source=host
 
 宿主先把完整内容写入临时文件，选取空槽后 rename 到槽位；单一写入者避免槽位竞争。脚本约每 0.5 秒按槽号扫描，以 rename 领取为 `.processing`。Windows 下覆盖已有 state 的 rename 失败后会删除旧文件再重试，因此更新存在短暂无文件窗口，不保证严格原子替换。命令处理后写入 `queue/done/<id>`（内容 `ok`）或 `queue/rejected/<id>`（内容 `rejected=<reason>`）；重复 ID 不会再次执行，最近 100 个 ID 会留在会话内去重。`ttl=0` 不过期；正 TTL 从命令内 `created_ms` 起计时，过期命令写入拒绝回执。`status` 立即发布状态。
 
-follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代次变化，或 owner 的期望位置移动达到 `stop_distance` 时重算路径，同平台内的小幅位置变化继续复用路径。自然场景中 owner 与 bot 位于不同平台且路径规划返回 `no_path` 时，跟随不能保证接近目标；原 headless dev 冒烟在修复后仍观察到 `follow/wait: owner_platform_unreachable`；headless 已退役，GUI 迁移后的 30 分钟跟随验收尚未完成。
+follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代次变化，或 owner 的期望位置移动达到 `stop_distance` 时重算路径，同平台内的小幅位置变化继续复用路径。自然场景中 owner 与 bot 位于不同平台且路径规划返回 `no_path` 时，跟随不能保证接近目标；原 headless dev 冒烟在修复后仍观察到 `follow/wait: owner_platform_unreachable`；headless 已退役，跨平台跟随效果按当前 GUI 场景观察。
 
 ### 一次性场景目标与无目标等待
 
@@ -145,7 +154,7 @@ follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代�
 
 `/work/bot/state.json` 常规间隔约 1 秒更新，Windows 覆盖回退时有短暂缺失窗口；`/work/bot/events.jsonl` 记录命令、模式和错误事件，单文件达到 1 MiB 时滚动到 `events.1.jsonl`。启动进入 `recover`；世界就绪且当前场景有可用地形图时转为 `idle`，不要求 `move.new` 已实现。mover 仅在 follow/hunt 产生实际移动或目标动作时才按场景代次尝试创建。checkpoint 当前只校验并保留，不重放上次动作或恢复旧模式/目标。
 
-`state.json.session_id` 取自只读 `context.tick.script_id`，即当前 Runtime tick 会话 ID。
+`tick/slow` 是状态发布间隔候选：两次成功发布的 `os.time()` 整数秒之差至少 3 时最多每 60 秒记录一次，包含 tick index、delta、动作类别和 `reason=unknown`。它使用系统墙钟且只有秒级精度，可能受调度、钟表调整或发布节流影响，不表示单次 tick 超时，也不区分 CPU 和 IO；Lua tick 上下文不暴露预算值，`budget_ms` 为 null。\n\n`state.json.session_id` 取自只读 `context.tick.script_id`，即当前 Runtime tick 会话 ID。
 
 ## 宿主运行手册
 
@@ -163,7 +172,9 @@ tools/botctl stop dev/NAME
 
 `install` 从当前检出复制并覆盖 `scripts/bot` 中的机器人代码，创建邮箱目录但保留 `state.json`、事件日志等角色状态；`start` 仅经 workbench 发布连续 tick 脚本，不启动客户端；`status` 同时显示 workbench 脚本状态和 `state.json`；`stop` 根据当前 `script.id` 发起取消，并检查脚本终止与 control_released；`logs` 默认显示最近 50 行。客户端关闭仍由 workbench 单独管理。
 
-`send` 使用单一宿主发送者，先写临时文件再以不覆盖的硬链接发布到空槽，最多等待回执 3 秒。超时不代表命令未执行，不要重发；先检查原命令 ID 的回执与状态。启动后遗留的 `.processing` 会拒绝为 `interrupted`，不重放旧动作。\n\n配置键及状态/事件字段见上方“默认值”“指令、状态与事件”。常见故障：
+`send` 使用单一宿主发送者，先写临时文件再以不覆盖的硬链接发布到空槽，最多等待回执 3 秒。超时不代表命令未执行，不要重发；先检查原命令 ID 的回执与状态。启动后遗留的 `.processing` 会拒绝为 `interrupted`，不重放旧动作。
+
+配置键及状态/事件字段见上方“默认值”“指令、状态与事件”。常见故障：
 
 - “没有运行中的 bot script”：先运行 status；脚本已结束时无需 stop，也不要重复 start。
 - `/work/bot` 写入失败：检查角色目录挂载权限与空间，勿用宿主绕过 workbench 写客户端状态。
@@ -191,6 +202,8 @@ workbenches/workbench dev/NAME script run bot/travel.lua --seconds 240
 
 ## 持久化状态（memory）
 
+以下描述独立模块接口；当前 defaults 不含 `memory_enabled`，主包的持久化分支未启用，不应把模块能力当成已接线运行能力。
+
 - 路径 `/work/bot/memory.lua`（可读 Lua 表，`schema = 1`），先写 `.tmp` 再 rename；Windows 覆盖回退时存在短暂缺失窗口，上限 64KB；
 - API：`lib.memory` 的 `load/save/get/set/unset/flush/clear/reconcile/repair_meta`；命名空间约定 `bot`（模式/目标/地图等）、`supply`（补给阶段/上次商店）、`quest`（任务进度缓存）；
 - 损坏文件自动改名为 `.bak` 并重置，不崩溃；`schema` 变化由 `repair_meta` 迁移；
@@ -201,8 +214,8 @@ workbenches/workbench dev/NAME script run bot/travel.lua --seconds 240
 
 - 命名空间 `equipment`：`equipped`（客户端权威快照）、`sell_list`（待卖清单，含 `approved`）、`candidates`；
 - 换装对账：客户端 `equipped` 变化时，被替换的旧装备自动加入 `sell_list`（`approved=false`，不自动卖），新增装备更新快照；
-- 离线重登：`reconcile` 以客户端 `inventory/equipped` 为准——清单/候选里已不存在的物品自动移除，仍存在的保留；**清单持久化在 `/work/bot/memory.lua`，重登不丢**；
-- 自动清包只处理 `approved=true` 的清单项；新获得/未确认装备永不自动卖；人工确认用 `equipment.approve(store, item_id)`。
+- 独立调用 `reconcile` 时以提供的客户端 `inventory/equipped` 为准：清单/候选里已不存在的物品移除，仍存在的保留。只有调用方接线并成功保存 memory，清单才会持久化；当前主包的 memory 分支未启用。
+- 模块中的批准标记可由调用方以 `equipment.approve(store, item_id)` 设置；这不代表主包已接入自动清包或自动出售。
 
 ## 战斗模式（近战/远程/技能）
 
@@ -235,7 +248,31 @@ skill_mp_cost=10
 
 狩猎时，远程和技能模式优先从安全的当前平台攻击射程内其他平台的怪：仅接受水平距离在射程内、垂直差不超过 40px 且墙与平台边界未阻断的目标，不为跨平台目标追击或换位。射程使用已学远程箭或配置兜底值；`combat/ranged_target` 和 `combat/range_blocked` 记录选择与阻断。几何判断仅为保守近似，弹道和命中需真机验证。
 
-远程和技能模式下，目标小于 `min_range` 时释放攻击输入，以同平台有界步行后撤；平台边缘或墙的可用退距不足 `min(40, min_range/2)`、地形不可用或移动失败时放弃目标并记录 `combat/retreat_blocked`。巡逻跳过宽度小于 `min_range + 60` 的平台并按场景记录 `hunt/skip`；狩猎不会攻击该类平台的目标。贴身时无论血量均不输出；当前未接入 sustain 的 `no_potion` 返回值，也不保证可以脱离追击。墙与平台判断依赖当前地形快照，真实效果仍需客户端验证。
+远程和技能模式下，目标小于 `min_range` 时释放攻击输入，以同平台有界步行后撤；平台边缘或墙的可用退距不足 `min(40, min_range/2)`、地形不可用或移动失败时放弃目标并记录 `combat/retreat_blocked`。巡逻跳过宽度小于 `min_range + 60` 的平台并按场景记录 `hunt/skip`；狩猎不会攻击该类平台的目标。贴身时无论血量均不输出；无药时 `sustain/no_potion` 事件限频记录，主流程继续；不保证可以脱离追击。墙与平台判断依赖当前地形快照，真实效果仍需客户端验证。
+
+## 刷怪指标采集合同
+
+主流程默认启用 `lib.metrics` 被动采集，在 `/work/bot/config.conf` 设置 `metrics_enabled=0` 可关闭，默认值为 `1`。初始化失败会记录 `metrics/error` 并在本会话禁用；采集调用异常限频报告，不阻塞原有动作。采集在平台投影后观察、跟踪狩猎目标，并记录明确的卡住事件；平台或场景变化仅记录变化事实，不猜测选择原因与采样策略。当前喝药返回值只表示请求，拾取 `picked` 可能只是掉落消失，均不能证明实际消耗或拾取，故不计为确认事件；死亡和 HP 净下降由模块观察，避免重复计数。它不执行动作或选点评分。退出及异常可能在下次周期写入前发生，不能保证最后一个窗口落盘。
+
+```lua
+local metrics = require('lib.metrics')
+local samples = assert(metrics.new('/work/bot/metrics.json'))
+metrics.observe(samples, context, world) -- 每 tick；失败只记录，不影响动作
+metrics.target(samples, selected_mob)   -- 无目标传 nil
+metrics.event(samples, 'hp_potion', {map_id=world.map_id, platform=platform, mob_template=template})
+```
+
+文件为 `schema: 1`、`records` 数组；每条记录是一段窗口内的 `map_id`、怪物所在 `platform`、`mob_template`（未知为 null），`scene_generation`、`window_start/window_end` 是脚本 tick 秒和场景代次，不是跨会话的墙钟。`sample_windows` 是窗口数；怪种行的 `dwell_s` 只计角色停留的平台上，连续两次观察到该怪种的时间；不同怪种的暴露可以重叠，不能相加作为平台总驻留。未观察到怪不等于没有刷怪。`kills` 是目标消失或不活跃的估计次数，`estimated` 和 `kill_source` 标明估计来源，不代表服务端确认击杀；切图不会计为击杀。经验取客户端 `character.experience`（回退 `exp`），仅在调用方额外提供可信唯一归因标志 `world.metrics_exp_attributable=true`、同一采样区间等级不变且经验上升时归入目标，仍是估计；当前主流程没有该标志，经验按未知处理；无法归属时 `exp_unknown_kills` 增加且该窗口的 `exp` 为 null。升级、多人攻击或多目标引起的经验变化可能无法归因。
+
+平台行（`mob_template=null`）另记角色连续有效观察的 `dwell_s`，不依赖怪物列表；`platform_complete` 仅代表该平台时间窗口的有效观察连续，不代表怪物或拾取观察完整。正常平台切换前的已观察部分可参与汇总，跨平台的采样间隔不归入任何平台；掉线、切图或采样超时则排除该窗口。`exp_delta_observed` 是角色经验的正变化，`arrow_delta_observed`、`hp_potion_delta_observed`、`mp_potion_delta_observed` 是相邻可用样本中配置物品数量下降量的累加；它们标注 `estimated=true`、`attribution=platform_window`，不是怪种归因或已确认消耗，可能混入其他来源。角色升级或经验倒退、库存不可读或物品不再可见时，相应窗口字段为 null；库存增加只更新基线，不反推消耗；相邻采样间同时发生补货/拾取和消耗会抵消，未采到的变化也可能被遗漏，所以它既不是首尾库存净变化，也不是消耗总量的可靠上下界。未配置药品、同一物品配置为多种用途也为 unknown。\n\n宿主汇总中的 `platform_observation` 只统计 `platform_complete=true` 的平台行，观测时长达到 60 秒才显示每分钟估计率；各字段单独排除未知窗口，`rate_coverage` 标明每项实际窗口数及分母。拾取率尚无可靠来源，保持 unknown；低样本、暴露与选择偏差仍须人工分析。\n\n`kills` 仅涵盖调用方持续提供的选中目标，并非全场怪物死亡数；零值仅在调用方明确提供 `world.metrics_targets_complete=true` 时可用，当前主流程不提供该标志。`kill_time_sum/kill_time_samples` 是选中到估计结束的秒数及样本数；`hp_potions/mp_potions/arrows`、`drops_seen/drops_picked`（按物品 ID）、`damage_taken/deaths/stuck_events` 分列保留原始计数；HP 净下降及死亡仅归角色平台、不归怪种，净下降会被同时发生的治疗抵消。null 是未知，不等于零；调用方必须在有足够证据时才传递事件，按键请求不等于物品实际消耗或拾取成功。`complete` 仅在调用方对每次观察明确提供 `world.metrics_complete=true` 且无观察缺口、掉视野或切图时为 true；现有 world 投影未提供此标志，接线不得擅自视为完整。间隔超过 2 秒、观察缺失、切图或目标消失使窗口不完整；不完整窗口不能用于计算速率。`insufficient` 表示本窗口击杀数小于 5 或驻留不足 60 秒；跨窗口分析应先合并完整窗口后重新判断样本量。
+
+调用方在 `observe` 之后、下一采样之前可用 `metrics.visit(samples, {arrival_reason=..., exit_reason=..., collection_policy=..., policy_seed=...})` 显式登记新的一次平台访问；默认会截断此前目标和采样基线；主流程在新平台观察后传入 `preserve_observation=true`，只附加访问元数据并保留新平台基线；上次访问的 `exit_reason` 写入关闭窗口，新的进入原因、规则 ID、种子、`visit_start` 写入新窗口。`entries` 为已知访问中该怪种的首次记录次数，缺少访问事件为 null；它不等于全图访问次数。漏采或切图按不完整窗口截断；未知离开原因不可当正常巡逻。建议使用中性、可复现轮转或随机采样并覆盖可达平台，不要依据当前效率选择，采样不足不能用于推断平台优劣；本模块不实现调度或声称采样公平。`kill_time_sum` 允许目标跨窗口，完整时长归入结束窗口，跨缺口或场景变更不计。
+
+每约 20 秒将已关闭窗口写入 `/work/bot/metrics.json`，先写临时文件再 rename；Windows 覆盖回退有短暂无文件窗口。单文件上限 256 KiB，最多保留当前及 `metrics.1.json` 两代，继续滚动会丢弃最旧一代并发布 `metrics/rotate`；宿主必须定期复制以保存更长历史。采集异常应由接线方旁路处理，不得阻塞机器人动作。宿主可选使用 `python3 tools/farm_stats.py dev/NAME --json` 或给出文件路径做离线汇总；工具不操作游戏，不做目标策略，未确认完整的窗口不进入速率计算。长时研究须定期自行复制数据。
+
+## 运行时预算
+
+bot 主循环以 `@tick.budget_ms 200` 运行（默认 100ms）：GUI 宿主的调度/桥抖动实测可让单次回调达到 110–170ms，按默认预算会以 `tick_overrun` 中止长跑会话。放宽到 200ms 继续保留 `overrun abort`，异常卡死仍会中止，只吸收宿主抖动；`script status` 的 `tick.overruns/max_us` 仍用于观察真实耗时。若需要更严格的实时性，可在复制脚本上覆盖 `@tick` 前导注释。
 
 ## 离线测试
 
@@ -259,7 +296,7 @@ bot smoke ok: 9 modules
 
 `bot/test/owner_drive.lua` 是 owner 移动试验脚本：向右 2 秒、向左 2 秒、原地跳一下，再循环；不攻击、不拾取、不使用物品。将其复制到 owner 角色的 `/work/scripts` 后，以 CLI 的会话期限运行，例如 `script run owner_drive.lua --seconds 10`。`--seconds` 由 CLI 控制，当前全局默认 30 秒；脚本文件不能单独覆盖该默认值。
 
-这些测试辅助脚本不会自行启动机器人，也不代表地形、跟随、战斗或拾取行为已经实现。
+这些测试辅助脚本不会自行启动机器人；行为以各模块及实际场景验证为准。
 
 ## 手工同步
 

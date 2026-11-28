@@ -7,7 +7,8 @@ end
 function M.set_path(mover, edges)
     if type(edges) ~= "table" then return false, "invalid_edge" end
     mover.edges, mover.index, mover.status = edges, 1, "running"
-    mover.started, mover.retries, mover.reason, mover.downjump_preheld = nil, 0, nil, nil
+    mover.started, mover.retries, mover.reason, mover.downjump_preheld, mover.last_failure = nil, 0, nil, nil, nil
+    mover.runup_failure_detail = nil
     return true
 end
 
@@ -18,7 +19,7 @@ function M.stop(mover)
     mover.status, mover.started, mover.jump_held, mover.downjump_preheld = "done", nil, nil, nil
 end
 
-function M.step(mover, ctx, world)
+local function step(mover, ctx, world)
     if mover.stop_pending and mover.status == "running" then
         mover.stop_pending, mover.release_tick = nil, ctx.tick.index
         return "running"
@@ -170,7 +171,11 @@ function M.step(mover, ctx, world)
         local failure
         if (edge.kind == "jumpup" or edge.kind == "downjump" or edge.kind == "drop") and mover.phase ~= "align" and character.on_ground == false then mover.airborne = true end
         if now - mover.edge_started >= mover.edge_timeout then failure = "timeout" end
-        if not failure and mover.phase == "prepare_runup" then
+        if not failure and mover.phase == "prepare_runup" and character.on_ground == false then
+            -- A newly planned edge can begin while the actor is still falling.
+            -- Keep the original edge deadline and wait without issuing movement.
+            if not p.move(nil) then failure = "unsupported_edge" end
+        elseif not failure and mover.phase == "prepare_runup" then
             local platforms = type(mover.graph) == "table" and mover.graph.platforms
             local source = type(platforms) == "table" and platforms[edge.from] or nil
             local left = type(source) == "table" and source.left or nil
@@ -193,6 +198,10 @@ function M.step(mover, ctx, world)
             end
             if not finite(edge.x) or not finite(edge.destination) or not finite(left) or not finite(right)
                 or left > right or not character.on_ground or not on_source then
+                if not finite(edge.x) or not finite(edge.destination) then mover.runup_failure_detail = "edge_invalid"
+                elseif not finite(left) or not finite(right) or left > right then mover.runup_failure_detail = "source_invalid"
+                elseif not character.on_ground then mover.runup_failure_detail = "airborne"
+                else mover.runup_failure_detail = "source_mismatch" end
                 failure = "runup_unavailable"
             else
                 local target
@@ -200,7 +209,7 @@ function M.step(mover, ctx, world)
                     local candidate = edge.x - sign * distance
                     if candidate >= left + 8 and candidate <= right - 8 then target = candidate; break end
                 end
-                if not target then failure = "runup_unavailable" else
+                if not target then mover.runup_failure_detail = "insufficient_space"; failure = "runup_unavailable" else
                     mover.runup_direction = sign == 1 and "right" or "left"
                     mover.runup_sign, mover.runup_target = sign, target
                     local movement = ctx.game.character and ctx.game.character.movement
@@ -214,6 +223,9 @@ function M.step(mover, ctx, world)
         elseif not failure and mover.phase == "to_runup_start" then
             if not character.on_ground or character.x < mover.runup_left or character.x > mover.runup_right
                 or now - mover.phase_time >= mover.runup_timeout then
+                mover.runup_failure_detail = not character.on_ground and "approach_airborne"
+                    or (character.x < mover.runup_left or character.x > mover.runup_right) and "approach_outside_source"
+                    or "approach_timeout"
                 failure = "runup_unavailable"
             elseif math.abs(character.x - mover.runup_target) <= 4 then
                 if not p.move(nil) then failure = "unsupported_edge" else
@@ -229,6 +241,9 @@ function M.step(mover, ctx, world)
             local stable = type(velocity) ~= "number" and now > mover.runup_time and character.x == mover.runup_x
             if not character.on_ground or character.x < mover.runup_left or character.x > mover.runup_right
                 or now - mover.phase_time >= 0.5 then
+                mover.runup_failure_detail = not character.on_ground and "settle_airborne"
+                    or (character.x < mover.runup_left or character.x > mover.runup_right) and "settle_outside_source"
+                    or "settle_timeout"
                 failure = "runup_unavailable"
             elseif not p.move(nil) then
                 failure = "unsupported_edge"
@@ -243,6 +258,9 @@ function M.step(mover, ctx, world)
             local speed = dt > 0 and (character.x - mover.runup_x) * mover.runup_sign / dt or 0
             if not character.on_ground or character.x < mover.runup_left or character.x > mover.runup_right
                 or now - mover.phase_time >= 1.5 or (character.x - edge.x) * mover.runup_sign > 12 then
+                mover.runup_failure_detail = not character.on_ground and "runup_airborne"
+                    or (character.x < mover.runup_left or character.x > mover.runup_right) and "runup_outside_source"
+                    or now - mover.phase_time >= 1.5 and "runup_timeout" or "launch_overshoot"
                 failure = "runup_unavailable"
             elseif not p.move(mover.runup_direction) then
                 failure = "unsupported_edge"
@@ -479,6 +497,30 @@ function M.step(mover, ctx, world)
         return "failed", mover.reason
     end
     return "running"
+end
+
+function M.step(mover, ctx, world)
+    local status, reason = step(mover, ctx, world)
+    if status == "failed" and not mover.last_failure then
+        local edge = mover.edges and mover.edges[mover.index]
+        local character = world and world.character
+        local platform = character and character.on_ground == true and mover.graph
+            and require("lib.terrain").platform_at(mover.graph, character.x, character.y, 20) or nil
+        mover.last_failure = {
+            reason = reason, kind = type(edge) == "table" and edge.kind or nil,
+            from = type(edge) == "table" and edge.from or nil, to = type(edge) == "table" and edge.to or nil,
+            x = type(edge) == "table" and edge.x or nil, destination = type(edge) == "table" and edge.destination or nil,
+            rise = type(edge) == "table" and edge.rise or nil, landing_platform = platform,
+            landing_x = character and character.x, landing_y = character and character.y,
+            phase = mover.phase, detail = reason == "runup_unavailable" and mover.runup_failure_detail or nil,
+            on_ground = character and character.on_ground,
+            velocity_x = ctx and ctx.game and ctx.game.character and ctx.game.character.physics
+                and ctx.game.character.physics.velocity and ctx.game.character.physics.velocity.x,
+            velocity_y = ctx and ctx.game and ctx.game.character and ctx.game.character.physics
+                and ctx.game.character.physics.velocity and ctx.game.character.physics.velocity.y,
+        }
+    end
+    return status, reason
 end
 
 return M

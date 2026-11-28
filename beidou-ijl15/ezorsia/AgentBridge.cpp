@@ -2031,3 +2031,7 @@ void AgentBridge::CharacterUpdated(std::uintptr_t player) {
         NativeMotion::RecordLocalPhysics(current, characterUpdates);
     }
 }
+
+std::uint32_t AgentBridge::CurrentMapId() {
+    return currentState != nullptr && currentState->mapKnown ? currentState->mapId : 0;
+}

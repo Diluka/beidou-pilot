@@ -1,6 +1,6 @@
 # 第一期：能跟能打（伴游机器人 MVP）
 
-- 状态：历史拆分。原 headless 后端已退役；机器人邮箱已迁移到 GUI（#414）并通过 30 分钟 GUI 验收的跟随/战斗/喝药/指令/取消重启项（2026-11-27）；跨平台拾取未达标，随 #408 继续。任务表与验收前提仍以维护者确认的版本为准。
+- 状态：历史拆分与阶段目标。客户端仅保留原版 GUI，机器人邮箱已迁移；维护者将 #325 后续验收调整为真实客户端正常游玩的稳定性测试。历史跟随、战斗、喝药、指令与取消重启证据不等于所有跨平台拾取或 30 分钟稳定性已通过；未解问题见[客户端能力](CLIENT_LIMITATIONS.md)。
 - 设计依据：[伴游机器人设计与路线](COMPANION_BOT.md) 的 P0/P1
 - 任务模板：[开发任务模板](../.github/ISSUE_TEMPLATE/task.md)
 
@@ -131,6 +131,8 @@ bot/
 | `ranged_skill_bonus_per_level` | `15` |
 | `ranged_skill_level` | `0` |
 | `skill_mp_cost` | `10` |
+| `ammo_item_id` | `2060000` |
+| `ammo_low` | `50` |
 | `hp_item` | `0` |
 | `mp_item` | `0` |
 | `follow_distance` | `80` |
@@ -138,6 +140,7 @@ bot/
 | `pot_hp` | `60` |
 | `pot_mp` | `30` |
 | `loot_radius` | `150` |
+| `metrics_enabled` | `1`（0 为关闭） |
 
 ### 6.4 世界模型
 
@@ -226,9 +229,11 @@ local function main(context) ... end
 /work/bot/plan.conf               hunt_map、可选 route、plan_revision
 /work/bot/route.json              跨图路线（默认路径）
 /work/bot/checkpoint.conf         模式/目标
+/work/bot/supply.conf             可选低补给阈值
+/work/bot/metrics.json            独立指标模块输出；主包未接线
 ```
 
-`tools/botctl plan dev/NAME --hunt-map 20000` 从运行客户端的当前场景取起点，调用 `bot_route.py` 生成默认航线并更新计划；失败保留旧文件。重规划改变 `plan_revision`，允许同目标路线失败后再次尝试。hunt 模式在目标图外使用匹配当前地图和目标的路线，缺失或不匹配时等待，不在错误地图狩猎。普通门户图不覆盖船、出租车等脚本交通。
+`tools/botctl plan dev/NAME --hunt-map 20000` 从运行客户端的当前场景取起点，调用 `bot_route.py` 生成默认航线并更新计划；失败保留旧文件。重规划改变 `plan_revision`，允许同目标路线失败后再次尝试。idle/hunt 模式在目标图外使用匹配当前地图和目标的路线，缺失或不匹配时等待，不在错误地图狩猎。普通门户图不覆盖船、出租车等脚本交通。
 
 发送者先写临时文件再发布到空槽；单一发送者避免槽位竞争。脚本用 rename 领取槽位。目标已存在时 Windows 的 rename 不覆盖；状态写入先尝试 rename，失败且目标存在时移除旧目标再重试，记录事件，不能保证全程原子可见。
 
@@ -257,12 +262,19 @@ local function main(context) ... end
 
 `session_id` 为当前 Runtime tick 会话 ID，由 `context.tick.script_id` 提供；它不是持久化或重启后可复用的 ID。
 
+### 当前实现与待验证能力
+
+- 已合入的平台巡逻、绳梯/水平跳、顺路拾取、远程最小距离与窄平台筛选、跨平台驻留选怪、掉层恢复及低补给停手，由 [bot 主包](../bot/README.md) 的地形、移动、战斗、拾取和自保模块共同执行。无药时记录事件并让主流程继续；不是自动补货。
+- 地图绑定使用 `plan.conf` 和普通门户航线；idle/hunt 回图已有现场验证，但城镇门户 `landing_mismatch` 仍限制可用路线。远程跨平台弹道与命中未真机确认。
+- `lib.metrics` 数据模块已合入，主流程尚未接线，安装 bot 不会自动采集。拾取扫荡 [PR #439](https://github.com/Diluka/beidou-pilot/pull/439) 尚未合入且待真实验证；补给白名单编排 [PR #433](https://github.com/Diluka/beidou-pilot/pull/433) 为 Draft，均不是当前主包能力。
+- 大图 `tick_overrun` 的 IO 优化已合入，根因仍未知；NPC/商店交互后输入冻结的现场 workaround 和常驻服注意见[客户端能力](CLIENT_LIMITATIONS.md#伴游机器人当前能力和限制)。
+
 ### 6.7 模式
 
 | 模式 | 行为 | 退出 |
 | --- | --- | --- |
 | `recover` | 观察、确认身份/位置、等安全；世界就绪且本场景有可用地形图后进入 `idle`，不依赖移动模块已实现 | 安全后按计划/指令 |
-| `idle` | 停手等待 | 收到指令 |
+| `idle` | 停手等待；配置绑定地图且未暂停时可回图 | 收到指令 |
 | `follow` | 跟随 owner，保持 40～120px | `stay`/`hunt`/危险 |
 | `hunt` | 在当前狩猎点打怪/拾取 | `follow`/`stay`/升级阈值 |
 | `dead` | 复活一次、等待 | HP>0 |
@@ -278,6 +290,6 @@ local function main(context) ... end
 
 ## 8. 未纳入本期
 
-- 私聊指令、队伍、组队任务、BOSS、LLM、跨图、GUI 机器人。
-- GUI 兼容开发；如需要，先做钩子/协议调查任务，再按 hook 优先排任务。
+- 私聊指令、队伍、组队任务、BOSS、LLM；自动跨图仅覆盖当前普通门户路线，不涵盖全部交通。
+- GUI 后端已是唯一运行路径；新的原生能力按单独任务验证。
 - 经典组队任务默认 3 人起，玩家 + 1 机器人进不去；后续需要第二个机器人补位或开发服降门槛。
