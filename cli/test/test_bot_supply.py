@@ -57,6 +57,91 @@ class BotSupplyContract(unittest.TestCase):
                 bot_supply.do_junk("dev/test", False, True)
             sell.assert_not_called()
 
+    def test_junk_apply_requires_explicit_confirmations(self) -> None:
+        items = [
+            {"item_id": 4000999, "slot": 3, "quantity": 5, "inventory_type": 4},
+            {"item_id": 1060013, "slot": 1, "quantity": 1, "inventory_type": 1},
+        ]
+        with patch.object(bot_supply, "read_items", return_value=items), patch.object(bot_supply, "sell") as sell:
+            preview = bot_supply.do_junk("dev/test", True, True, equipment_slots=(1,))
+            self.assertEqual("instance_attributes_unavailable", preview["equipment_unknown"][0]["reason"])
+            with self.assertRaisesRegex(SystemExit, "未指定人工确认"):
+                bot_supply.do_junk("dev/test", False, False)
+            sell.assert_not_called()
+
+    def test_confirmed_slots_are_sold_in_current_shop(self) -> None:
+        items = [
+            {"item_id": 4000999, "slot": 3, "quantity": 5, "inventory_type": 4},
+            {"item_id": 1060013, "slot": 1, "quantity": 1, "inventory_type": 1},
+        ]
+        with (
+            patch.object(bot_supply, "read_items", return_value=items),
+            patch.object(
+                bot_supply, "read_shop", return_value={"open": True, "window": {"address": "x"}, "unavailable": []}
+            ),
+            patch.object(bot_supply, "sell", return_value={"completed": True, "trade_result": True}) as sell,
+            patch.object(bot_supply, "travel") as travel,
+        ):
+            report = bot_supply.do_junk("dev/test", False, True, (1,), (4000999,), 6)
+        self.assertEqual(2, len(report["results"]))
+        self.assertEqual(
+            [("dev/test", 4000999, 5, 3), ("dev/test", 1060013, 1, 1)], [call.args for call in sell.call_args_list]
+        )
+        travel.assert_not_called()
+
+    def test_junk_rejects_protected_changed_and_unknown_receipt(self) -> None:
+        protected = [{"item_id": 4000003, "slot": 3, "quantity": 1, "inventory_type": 4}]
+        with patch.object(bot_supply, "read_items", return_value=protected), patch.object(bot_supply, "sell") as sell:
+            with self.assertRaises(SystemExit):
+                bot_supply.do_junk("dev/test", False, False, sell_etc=(4000003,))
+            sell.assert_not_called()
+        item = {"item_id": 1060013, "slot": 1, "quantity": 1, "inventory_type": 1}
+        shop = {"open": True, "window": {"address": "x"}, "unavailable": []}
+        with (
+            patch.object(bot_supply, "read_items", side_effect=[[item], []]),
+            patch.object(bot_supply, "read_shop", return_value=shop),
+            patch.object(bot_supply, "sell") as sell,
+        ):
+            with self.assertRaisesRegex(SystemExit, "已变化"):
+                bot_supply.do_junk("dev/test", False, False, equipment_slots=(1,))
+            sell.assert_not_called()
+        with (
+            patch.object(bot_supply, "read_items", return_value=[item]),
+            patch.object(bot_supply, "read_shop", return_value=shop),
+            patch.object(bot_supply, "sell", return_value={"trade_result": "unknown"}) as sell,
+        ):
+            with self.assertRaisesRegex(SystemExit, "不重试"):
+                bot_supply.do_junk("dev/test", False, False, equipment_slots=(1,))
+            self.assertEqual(1, sell.call_count)
+
+    def test_junk_preserves_completed_receipts_when_next_read_fails(self) -> None:
+        items = [
+            {"item_id": 1060013, "slot": 1, "quantity": 1, "inventory_type": 1},
+            {"item_id": 1060014, "slot": 2, "quantity": 1, "inventory_type": 1},
+        ]
+        shop = {"open": True, "window": {"address": "x"}, "unavailable": []}
+        with (
+            patch.object(bot_supply, "read_items", side_effect=[items, items, SystemExit("失联")]),
+            patch.object(bot_supply, "read_shop", return_value=shop),
+            patch.object(bot_supply, "sell", return_value={"completed": True, "trade_result": True}) as sell,
+        ):
+            with self.assertRaises(SystemExit) as error:
+                bot_supply.do_junk("dev/test", False, False, equipment_slots=(1, 2))
+            self.assertIn('"item_id": 1060013', str(error.exception))
+            self.assertIn("不重试", str(error.exception))
+            self.assertEqual(1, sell.call_count)
+
+    def test_junk_rejects_excess_and_invalid_slots_before_sale(self) -> None:
+        items = [
+            {"item_id": 1060013, "slot": 1, "quantity": 1, "inventory_type": 1},
+            {"item_id": 4000999, "slot": 2, "quantity": 5, "inventory_type": 4},
+        ]
+        with patch.object(bot_supply, "read_items", return_value=items), patch.object(bot_supply, "sell") as sell:
+            for slots, ids, limit in (((1, 1), (), 10), ((0,), (), 10), ((1,), (4000999,), 5), ((9,), (), 10)):
+                with self.subTest(slots=slots, ids=ids), self.assertRaises(SystemExit):
+                    bot_supply.do_junk("dev/test", False, False, slots, ids, limit)
+            sell.assert_not_called()
+
     def test_nearest_shop_selects_shortest_route(self) -> None:
         character = {"map_id": 100000000}
         with (

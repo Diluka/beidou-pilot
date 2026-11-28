@@ -52,6 +52,18 @@ nodes:
       - kind: document
         value: docs/CLI.md
         description: 复活的前提、一次确认和结果核对。
+  - id: character-care.inventory-clean
+    kind: scenario
+    name: 人工确认后清理背包
+    summary: 操作者先预览候选，再确认出售项并在已打开的商店执行；装备实例属性未知，不自动淘汰。
+    aliases: [清包, junk]
+    anchors:
+      - kind: file
+        value: tools/bot_supply.py
+        description: 候选筛选、确认项与安全出售。
+      - kind: document
+        value: tools/BOT_SUPPLY.md
+        description: 操作步骤、保护范围及失败处理。
   - id: character-care.confirmation
     kind: invariant
     name: 以实际变化确认角色维护结果
@@ -77,6 +89,7 @@ nodes:
         value: docs/CLIENT_LIMITATIONS.md
         description: 当前能力缺口与已退役入口。
 relations:
+  - {from: character-care.inventory-clean, type: part_of, to: character-care, summary: 人工确认的清包属于角色维护。}
   - {from: character-care.equip, type: part_of, to: character-care, summary: 装备更换归角色维护。}
   - {from: character-care.bind, type: part_of, to: character-care, summary: 快捷键绑定归角色维护。}
   - {from: character-care.revive, type: part_of, to: character-care, summary: 死亡复活归角色维护。}
@@ -91,6 +104,29 @@ relations:
   - {from: character-care.revive, type: constrained_by, to: character-care.confirmation, summary: 一次确认后等待同角色恢复，未确认不重放。}
   - {from: character-care, type: constrained_by, to: character-care.support-boundary, summary: 按本端实际支持范围选择维护操作。}
 flows:
+  - id: character-care.inventory-clean.flow
+    name: 核对并出售指定物品
+    summary: 先预览，按人工确认的物品与槽位执行；未知结果停止。
+    scenario: character-care.inventory-clean
+    startsAt: preview
+    steps:
+      - {id: preview, kind: action, name: 预览背包候选, summary: 杂物按保护规则筛选，装备属性未知。, concept: character-care.inventory-clean}
+      - {id: choose, kind: decision, name: 是否确认出售项, summary: 操作者人工核对并明确指定物品或装备槽位。}
+      - {id: no-sale, kind: outcome, name: 保留物品, summary: 未确认或受保护的项目不出售。}
+      - {id: shop, kind: decision, name: 商店与槽位是否可核对, summary: 人工开店，执行前核对出售数量上限及当前槽位。}
+      - {id: sell, kind: action, name: 逐件出售并核对回执, summary: 通过商店接口提交指定物品；异常即停止。, concept: character-care.inventory-clean}
+      - {id: confirmed, kind: decision, name: 出售是否全部确认, summary: 核对返回结果并保留回执。}
+      - {id: done, kind: outcome, name: 返回已确认回执, summary: 不自动关店或返回练级地图。}
+      - {id: unknown, kind: outcome, name: 停止并保留现场, summary: 观察失败或成交未知时不重试并报告已确认回执。}
+    transitions:
+      - {from: preview, to: choose}
+      - {from: choose, to: no-sale, when: 未确认或受保护}
+      - {from: choose, to: shop, when: 已明确确认}
+      - {from: shop, to: no-sale, when: 商店或槽位不可核对}
+      - {from: shop, to: sell, when: 条件已满足}
+      - {from: sell, to: confirmed}
+      - {from: confirmed, to: done, when: 所有回执已确认}
+      - {from: confirmed, to: unknown, when: 观察失败或结果未知}
   - id: character-care.revive.flow
     name: 一次确认并等待角色恢复
     summary: 存活跳过，死亡时仅操作已识别确认框，不重复提交。

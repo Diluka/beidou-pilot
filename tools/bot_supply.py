@@ -4,7 +4,7 @@
 子命令：
 - `status WORKBENCH`：计算红药/蓝药/箭矢缺口，输出 JSON。
 - `restock WORKBENCH [--apply]`：默认预览；执行时仅售卖显式确认的 etc 并按上限购买（需要 GUI）。
-- `junk WORKBENCH [--dry-run|--apply] [--include-equipment]`：预览或售出人工核对的 ETC；装备仅预览。
+- `junk WORKBENCH [--dry-run|--apply]`：预览候选，或按显式确认的 ETC 和装备槽位出售。
 - `gear WORKBENCH`：按等级输出武器/防具升级建议。
 """
 
@@ -302,8 +302,11 @@ def buy(workbench_name: str, item_id: int, count: int) -> dict[str, object]:
     return cli_json(workbench_name, "shop", "buy", str(item_id), "--count", str(count))
 
 
-def sell(workbench_name: str, item_id: int, count: int) -> dict[str, object]:
-    return cli_json(workbench_name, "shop", "sell", str(item_id), "--count", str(count))
+def sell(workbench_name: str, item_id: int, count: int, slot: int | None = None) -> dict[str, object]:
+    arguments = ["shop", "sell", str(item_id), "--count", str(count)]
+    if slot is not None:
+        arguments.extend(["--slot", str(slot)])
+    return cli_json(workbench_name, *arguments)
 
 
 def close_shop(workbench_name: str) -> None:
@@ -382,34 +385,94 @@ def restock(
     return report
 
 
-def do_junk(workbench_name: str, dry_run: bool, include_equipment: bool) -> dict[str, object]:
-    if include_equipment and not dry_run:
-        raise SystemExit("装备实例属性未知，禁止自动出售装备；请核对后单独指定槽位")
-    candidates = junk_list(workbench_name, include_equipment)
-    report: dict[str, object] = {"candidates": candidates, "dry_run": dry_run}
-    if include_equipment:
-        report["equipment_unknown"] = [
-            {"item_id": item.get("item_id"), "slot": item.get("slot"), "reason": "instance_attributes_unavailable"}
-            for item in read_items(workbench_name)
-            if item.get("inventory_type") == 1
-        ]
-    if dry_run or not candidates:
+def do_junk(
+    workbench_name: str,
+    dry_run: bool,
+    include_equipment: bool,
+    equipment_slots: tuple[int, ...] = (),
+    sell_etc: tuple[int, ...] = (),
+    max_count: int = 1000,
+) -> dict[str, object]:
+    if max_count < 1 or any(slot < 1 for slot in equipment_slots) or len(set(equipment_slots)) != len(equipment_slots):
+        raise SystemExit("数量上限和装备槽位须为正，且槽位不能重复")
+    if include_equipment and not dry_run and not equipment_slots:
+        raise SystemExit("装备实例属性未知，禁止自动出售装备；请人工确认并指定槽位")
+    items = read_items(workbench_name)
+    candidates = [
+        {"item_id": item["item_id"], "slot": item["slot"], "quantity": item["quantity"]}
+        for item in items
+        if item.get("inventory_type") == 4
+        and isinstance(item.get("item_id"), int)
+        and not is_protected(item["item_id"])
+        and isinstance(item.get("quantity"), int)
+        and item["quantity"] > 0
+        and isinstance(item.get("slot"), int)
+        and item["slot"] > 0
+    ]
+    unknown = [
+        {"item_id": item.get("item_id"), "slot": item.get("slot"), "reason": "instance_attributes_unavailable"}
+        for item in items
+        if item.get("inventory_type") == 1
+    ]
+    report: dict[str, object] = {"candidates": candidates, "dry_run": dry_run, "equipment_unknown": unknown}
+    selected = []
+    for slot in equipment_slots:
+        matches = [item for item in items if item.get("inventory_type") == 1 and item.get("slot") == slot]
+        if (
+            len(matches) != 1
+            or not isinstance(matches[0].get("item_id"), int)
+            or is_protected(matches[0]["item_id"])
+            or matches[0].get("quantity") != 1
+        ):
+            raise SystemExit(f"装备槽位 {slot} 缺失、歧义或受保护，未出售")
+        selected.append(matches[0])
+    selected_etc = [item for item in candidates if item["item_id"] in sell_etc]
+    if set(sell_etc) != {item["item_id"] for item in selected_etc}:
+        raise SystemExit("指定 ETC 不存在、信息不完整或受保护，未出售")
+    if any(item["quantity"] > 1000 for item in selected_etc):
+        raise SystemExit("单槽数量超过商店单次上限，未出售")
+    report["selected_equipment"] = selected
+    report["selected_etc"] = selected_etc
+    if dry_run:
         return report
-    shop_map, shop = nearest_potion_shop(workbench_name)
-    ensure_gui(workbench_name)
-    travel(workbench_name, shop_map, 240)
-    open_shop(workbench_name, str(shop.get("npc")))
-    results = {}
-    for candidate in candidates:
+    if sum(int(item["quantity"]) for item in selected_etc) + len(selected) > max_count:
+        raise SystemExit("确认的出售数量超过上限，未出售")
+    if not selected and not selected_etc:
+        raise SystemExit("未指定人工确认的 ETC 物品或装备槽位，未出售")
+    shop = read_shop(workbench_name)
+    if shop.get("open") is not True or shop.get("unavailable") or not shop.get("window"):
+        raise SystemExit("当前商店不可确认，未出售；请先人工到店并确认安全")
+    results = []
+    for item in selected_etc + selected:
+        slot = int(item["slot"])
+        kind = int(item.get("inventory_type", 4))
         try:
-            results[str(candidate["item_id"])] = sell(
-                workbench_name, int(candidate["item_id"]), int(candidate["quantity"])
-            )
+            current = [
+                entry
+                for entry in read_items(workbench_name)
+                if entry.get("inventory_type") == kind and entry.get("slot") == slot
+            ]
         except SystemExit as error:
-            results[str(candidate["item_id"])] = {"error": str(error)}
-            report["results"] = results
-            return report  # Preserve the scene after an uncertain transaction.
-    close_shop(workbench_name)
+            raise SystemExit(
+                f"槽位读取失败，停止且不重试；已完成回执：{json.dumps(results, ensure_ascii=False)}；原因：{error}"
+            ) from error
+        if (
+            len(current) != 1
+            or current[0].get("item_id") != item["item_id"]
+            or current[0].get("quantity") != item["quantity"]
+        ):
+            raise SystemExit(f"槽位 {slot} 已变化，停止；已完成回执：{json.dumps(results, ensure_ascii=False)}")
+        try:
+            result = sell(workbench_name, int(item["item_id"]), int(item["quantity"]), slot)
+        except SystemExit as error:
+            raise SystemExit(
+                f"出售结果未确认，停止且不重试；已完成回执：{json.dumps(results, ensure_ascii=False)}；原因：{error}"
+            ) from error
+        if result.get("completed") is not True or result.get("trade_result") is not True:
+            raise SystemExit(
+                f"出售结果未确认，停止且不重试；回执：{json.dumps(result, ensure_ascii=False)}；已完成：{json.dumps(results, ensure_ascii=False)}"
+            )
+        results.append({"slot": slot, "item_id": item["item_id"], "receipt": result})
     report["results"] = results
     return report
 
@@ -431,13 +494,21 @@ def parser() -> argparse.ArgumentParser:
     )
     junk_parser = sub.add_parser("junk", help="卖无用垃圾")
     junk_parser.add_argument("workbench")
-    junk_parser.add_argument("--dry-run", action="store_true")
-    junk_parser.add_argument("--apply", action="store_true")
+    junk_mode = junk_parser.add_mutually_exclusive_group()
+    junk_mode.add_argument("--dry-run", action="store_true")
+    junk_mode.add_argument("--apply", action="store_true")
     junk_parser.add_argument(
         "--include-equipment",
         action="store_true",
-        help="预览装备及未知原因；实例属性不可用，禁止与 --apply 同用",
+        help="预览装备及未知原因；出售必须逐个指定 --equipment-slot",
     )
+    junk_parser.add_argument(
+        "--equipment-slot", type=int, action="append", default=[], help="人工确认出售的装备槽位，可重复"
+    )
+    junk_parser.add_argument(
+        "--sell-etc", type=int, action="append", default=[], help="人工确认出售的 ETC 物品 ID，可重复"
+    )
+    junk_parser.add_argument("--max-count", type=int, default=1000, help="单次最多出售的物品数")
     gear = sub.add_parser("gear", help="装备升级建议")
     gear.add_argument("workbench")
     return root
@@ -459,7 +530,16 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "junk":
             print(
                 json.dumps(
-                    do_junk(args.workbench, not args.apply, args.include_equipment), ensure_ascii=False, indent=2
+                    do_junk(
+                        args.workbench,
+                        not args.apply,
+                        args.include_equipment,
+                        tuple(args.equipment_slot),
+                        tuple(args.sell_etc),
+                        args.max_count,
+                    ),
+                    ensure_ascii=False,
+                    indent=2,
                 )
             )
         elif args.command == "gear":
