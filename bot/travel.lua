@@ -2,6 +2,7 @@
 package.path = "/work/scripts/bot/?.lua;/work/scripts/bot/?/init.lua;" .. package.path
 local travel = require("lib.travel")
 local world = require("lib.world")
+local sustain = require("lib.sustain")
 
 local function main(context)
     if not context.state.travel then
@@ -13,6 +14,13 @@ local function main(context)
         end
         context.state.travel = travel.new(legs, goal)
     end
-    local status, reason = travel.step(context.state.travel, context, world.observe(context))
+    local observed = world.observe(context)
+    local handled = sustain.step(context, observed)
+    if handled then
+        context.game.player.move(nil)
+        context.state.travel.graph, context.state.travel.mover, context.state.travel.path = nil, nil, nil
+        return
+    end
+    local status, reason = travel.step(context.state.travel, context, observed)
     if status ~= "running" then return status, reason end
 end
