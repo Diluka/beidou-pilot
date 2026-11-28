@@ -75,6 +75,8 @@ SOURCES = {
         "beidou-ijl15/ezorsia/ObserveNotifications.cpp",
         "beidou-ijl15/ezorsia/NativeChatBroadcast.cpp",
         "beidou-ijl15/ezorsia/NativeChatBroadcast.h",
+        "beidou-ijl15/ezorsia/NativeBuffs.cpp",
+        "beidou-ijl15/ezorsia/NativeBuffs.h",
         "beidou-ijl15/ezorsia/NativeChatQueue.cpp",
         "beidou-ijl15/ezorsia/NativeChatQueue.h",
         "beidou-ijl15/ezorsia/NativeChatReply.cpp",
