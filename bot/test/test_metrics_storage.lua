@@ -46,7 +46,11 @@ assert(not storage.save(second, {'{"a":3}', '{"a":4}', '{"a":5}'}))
 assert(files[path] == previous)
 fail_rename = false
 assert(storage.save(second, {'{"a":3}', '{"a":4}', '{"a":5}'}))
-assert(not storage.save(second, {'{"a":99}'}))
+local ok, reason = storage.save(second, {'{"a":99}'})
+assert(not ok and reason == 'records_changed')
+ok, reason = storage.save(second, {'{"a":bad}'})
+assert(not ok and reason == 'invalid_record')
+assert(storage.save(second, {'{"a":3}', '{"a":4}', '{"a":5}'}))
 
 files = {}
 local big = '{"data":"' .. string.rep('x', 140000) .. '"}'

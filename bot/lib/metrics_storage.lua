@@ -119,8 +119,11 @@ function M.save(state, rows)
         if backup then return false, 'recovery_required: ' .. backup_path end
     end
     for i, row in ipairs(rows) do
-        if type(row) ~= 'string' or row:sub(1, 1) ~= '{' or not valid_json(row) then return false, 'invalid_record' end
-        if state.committed[i] and state.committed[i] ~= row then return false, 'records_changed' end
+        -- Immutable committed strings were validated before the successful save.
+        if state.committed[i] ~= row then
+            if type(row) ~= 'string' or row:sub(1, 1) ~= '{' or not valid_json(row) then return false, 'invalid_record' end
+            if state.committed[i] then return false, 'records_changed' end
+        end
     end
     if #rows < #state.committed then return false, 'records_changed' end
     local function snapshot(first, old)
