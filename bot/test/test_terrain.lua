@@ -547,3 +547,42 @@ print(("rope chain reverse ok: edges=%d kinds=%s")
 print(("terrain ok: synthetic locations=8; map=%d platforms=%d candidates=%d character=(%d,%d) platform=%d path=%d->1 edges=%d kinds=%s")
     :format(real.map_id, #real_graph.platforms, candidate_count, character_x, character_y,
         character_platform, character_platform, #real_path, table.concat(real_path_kinds, ",")))
+
+-- 禁边键兼容：navigation 数值经后端序列化为浮点（15.0）时，整数语义键 "15:2" 与主流程
+-- 按原始数值 tostring 的 "15.0:2.0" 都必须能禁用对应边。
+local function float_numbers(value)
+    if type(value) == "number" then return value + 0.0 end
+    if type(value) ~= "table" then return value end
+    local copy = {}
+    for key, item in pairs(value) do copy[key] = float_numbers(item) end
+    return copy
+end
+local float_graph = assert(terrain.build(float_numbers(chain_fixture.navigation)))
+local function path_has_edge(path, from, to)
+    for _, edge in ipairs(path or {}) do
+        if edge.from == from and edge.to == to then return true end
+    end
+    return false
+end
+local mini_navigation = {
+    model = {stand_height = 70, wall_margin = 12, min_platform_width = 16, jump_rise = 75,
+        drop_min = 4, drop_max = 65, rope_grab = 76},
+    terrain_left = 0, terrain_right = 200,
+    platforms = {
+        {index = 1, left = 0, right = 100, open_left = false, open_right = true,
+            segments = {0, 100, 100, 100}},
+        {index = 2, left = 120, right = 200, open_left = true, open_right = false,
+            segments = {120, 200, 120, 120}},
+    },
+    walls = {}, ropes = {},
+    candidates = {walk = {}, step = {1.0, 2.0, 92.0, 128.0, 20.0}, jumpup = {}, drop = {}, rope = {}},
+}
+local mini_graph = assert(terrain.build(mini_navigation))
+local mini_plain = assert(terrain.plan(mini_graph, 1, 2, {}))
+assert(mini_plain[1].kind == "step" and mini_plain[1].from == 1 and mini_plain[1].to == 2,
+    "float navigation keeps the native 1->2 step edge")
+assert(not path_has_edge(terrain.plan(mini_graph, 1, 2, {blocked = {["1:2"] = true}}), 1, 2),
+    "integer blocked key suppresses a float-id native edge")
+-- Lua 5.1 的 tostring(1.0) 输出 "1"，与客户端运行时（tostring(1.0) 输出 "1.0"）不同；
+-- 原始 tostring 键的兼容分支由 edge_blocked 的第二种格式覆盖，这里无法在 5.1 下构造该键。
+print("terrain blocked key compatibility ok")
