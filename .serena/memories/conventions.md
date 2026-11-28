@@ -2,7 +2,7 @@
 
 - 自维护代码排版与文件组织见[格式规范](../../docs/FORMATTING.md)，统一入口见[tools/format.py](../../tools/format.py)；只处理明确的新自维护白名单，历史编码和第三方例外按规范保留。
 - 宿主 workbenches/workbench 管理分区、版本和容器。Python CLI、辅助引擎和内置 Lua 在所属客户端镜像内执行；容器 --root/--instance 仅核对本容器身份。
-- 客户端镜像按角色 ref（默认 main）固定到已提交版本。工作目录整体挂 /work；每个角色用 default 容器，CLIENT_ROOT=/work/runtime/default/RUN_ID。角色标识决定 live/dev 目标，配置错误不回退。长期授权、开发样本和验收边界见 AGENTS.md。
+- 客户端镜像按角色 ref（默认 main）固定到已提交版本。工作目录整体挂 /work；每个角色用 default 容器，CLIENT_ROOT=/work/runtime/default/RUN_ID，Wine 前缀的宿主数据固定在 /work/runtime/default/prefix，并 bind mount 到本次 $CLIENT_ROOT/runtime/prefix，仅由该角色串行复用。角色标识决定 live/dev 目标，配置错误不回退。长期授权、开发样本和验收边界见 AGENTS.md。
 - 私密账号、分区定义、共享资源配置和运行数据全部留在主检出 private/workbenches/。GUI Compose 由当前启动器提供；客户端依旧使用只读原版资源和共享原生 IMG 解析器。资源边界变化时同步维护 docs/ARCHITECTURE.md 与客户端 Docker 参考。
 - cli/test 使用包相对导入共享 BridgeFiles；开发子进程测试的 PYTHONPATH 指 cli 代码根。测试集中放在 cli/test 并统一由包相对导入处理路径。
 - Python 只做参数、装载/取消和结果投影，角色控制策略写在 Lua；tick 脚本在入口及每次采样核对原生 instance_id/CID/map/scene_generation，旧规划只作用于原进程。

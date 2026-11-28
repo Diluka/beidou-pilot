@@ -69,3 +69,8 @@ services:
         target: /cache
         bind:
           create_host_path: false
+      - type: bind
+        source: ${BEIDOU_WINEPREFIX_HOST:?需要角色级 Wine 前缀目录}
+        target: ${CLIENT_RUNTIME_ROOT:?需要容器内实例目录}/runtime/prefix
+        bind:
+          create_host_path: false

@@ -161,8 +161,8 @@ environment=${BASH_REMATCH[1]}
 workbench="$private_root/$1"
 shift
 [ -d "$workbench" ] && [ "$(realpath "$workbench")" = "$workbench" ] || fail invalid_workbench '工作台须为所属分区内的实际目录。'
-for role_path in account.json runtime/default scripts; do
-    [ "$(realpath -m "$workbench/$role_path")" = "$workbench/$role_path" ] || fail invalid_workbench '账号、运行目录和脚本目录不能通过链接切换工作台。'
+for role_path in account.json runtime/default runtime/default/prefix scripts; do
+    [ "$(realpath -m "$workbench/$role_path")" = "$workbench/$role_path" ] || fail invalid_workbench '账号、运行目录、Wine 前缀和脚本目录不能通过链接切换工作台。'
 done
 command=${1:-status}
 if [ "$#" -gt 0 ]; then shift; fi
@@ -254,6 +254,35 @@ archive_exit() {
         stop_reason:(if $reason!="" then $reason elif $state.ExitCode==0 then "process_exited" else "process_failed" end)}' >"$state/exit.json"
 }
 
+ensure_prefix() {
+    local legacy_root=${1-} legacy_prefix= stable_empty=0
+    prefix_root="$state/prefix"
+    [ ! -L "$prefix_root" ] || fail runtime_state_invalid 'Wine 前缀不能是符号链接。'
+    if [ -e "$prefix_root" ] && [ ! -d "$prefix_root" ]; then
+        fail runtime_state_invalid 'Wine 前缀不是目录。'
+    fi
+    if [ -d "$prefix_root" ] && [ -z "$(ls -A -- "$prefix_root")" ]; then stable_empty=1; fi
+    if [ -n "$legacy_root" ]; then
+        case "$legacy_root" in "$state"/20*Z) ;; *) fail runtime_state_invalid '旧运行目录不属于当前角色。' ;; esac
+        [ -d "$legacy_root" ] && [ ! -L "$legacy_root" ] && [ "$(realpath "$legacy_root")" = "$legacy_root" ] ||
+            fail runtime_state_invalid '旧运行目录不是当前角色内的实际目录。'
+        [[ "${legacy_root##*/}" =~ ^[0-9]{8}T[0-9]{6}\.[0-9]+Z$ ]] || fail runtime_state_invalid '旧运行 ID 无效。'
+        legacy_prefix="$legacy_root/runtime/prefix"
+    fi
+    if { [ ! -e "$prefix_root" ] || [ "$stable_empty" -eq 1 ]; } && [ -d "$legacy_prefix" ]; then
+        [ ! -L "$legacy_prefix" ] && [ "$(realpath "$legacy_prefix")" = "$legacy_prefix" ] ||
+            fail runtime_state_invalid '旧 Wine 前缀不是当前角色内的实际目录。'
+        if [ -e "$legacy_prefix/system.reg" ] || [ -e "$legacy_prefix/user.reg" ] || [ -d "$legacy_prefix/drive_c" ]; then
+            [ "$stable_empty" -eq 0 ] || rmdir -- "$prefix_root"
+            mv -- "$legacy_prefix" "$prefix_root"
+        elif [ -n "$(ls -A -- "$legacy_prefix")" ]; then
+            fail runtime_state_invalid '旧 Wine 前缀内容无法识别。'
+        fi
+    fi
+    mkdir -p "$prefix_root"
+    [ "$(realpath "$prefix_root")" = "$prefix_root" ] || fail runtime_state_invalid 'Wine 前缀不是当前角色内的实际目录。'
+}
+
 exec_cli() {
     local token child result=0 interrupted=false cli_user
     local exec_directory=()
@@ -317,6 +346,8 @@ case "$command" in
             docker stop --time 10 "$id" >/dev/null
             docker inspect "$id" | jq -e '.[0].State | (.Running|not) and .Pid == 0' >/dev/null ||
                 fail close_not_confirmed '所属容器尚未确认退出。'
+            previous_root=$(jq -r '.Config.Labels["beidou.client.root"]' <<<"$inspect")
+            ensure_prefix "$previous_root"
             archive_exit
             docker rm "$id" >/dev/null
         fi
@@ -568,9 +599,15 @@ if "$running"; then
     else exec_open; fi
     exit $?
 fi
+previous_root=
 if [ -n "$id" ]; then
+    previous_root=$(jq -r '.Config.Labels["beidou.client.root"]' <<<"$inspect")
+    ensure_prefix "$previous_root"
     archive_exit
     docker rm "$id" >/dev/null
+elif [ -f "$record" ]; then
+    previous_run=$(jq -r '.run_id // empty | strings | select(test("^[A-Za-z0-9][A-Za-z0-9_.-]*$"))' "$record")
+    if [ -n "$previous_run" ] && [ -d "$state/$previous_run" ]; then previous_root="$state/$previous_run"; fi
 fi
 cache_dir=$(jq -r '.cache_dir // empty' <<<"$settings")
 [ -n "$cache_dir" ] || cache_dir="$workbench/cache"
@@ -578,6 +615,41 @@ cache_dir=$(realpath -m "$cache_dir")
 [[ "$cache_dir" == "$workbench/"* ]] || fail cache_dir_unavailable '缓存须位于所属角色目录内。'
 mkdir -p "$cache_dir" || fail cache_dir_unavailable "缓存目录不可用：$cache_dir"
 cache_dir=$(realpath "$cache_dir") || fail cache_dir_unavailable "缓存目录不可用：$cache_dir"
+prefix_root="$state/prefix"
+search_legacy=0
+if [ ! -e "$prefix_root" ]; then
+    search_legacy=1
+elif [ -d "$prefix_root" ] && [ ! -L "$prefix_root" ] && [ -z "$(ls -A -- "$prefix_root")" ]; then
+    search_legacy=1
+fi
+if [ "$search_legacy" -eq 1 ]; then
+    legacy_roots=()
+    for candidate_root in "$state"/20*Z; do
+        [ -d "$candidate_root" ] || continue
+        [ ! -L "$candidate_root" ] && [ "$(realpath "$candidate_root")" = "$candidate_root" ] ||
+            fail runtime_state_invalid '旧运行目录不是当前角色内的实际目录。'
+        [[ "${candidate_root##*/}" =~ ^[0-9]{8}T[0-9]{6}\.[0-9]+Z$ ]] || fail runtime_state_invalid '旧运行 ID 无效。'
+        candidate_prefix="$candidate_root/runtime/prefix"
+        [ -d "$candidate_prefix" ] || continue
+        [ ! -L "$candidate_prefix" ] && [ "$(realpath "$candidate_prefix")" = "$candidate_prefix" ] ||
+            fail runtime_state_invalid '旧 Wine 前缀不是当前角色内的实际目录。'
+        if [ -e "$candidate_prefix/system.reg" ] || [ -e "$candidate_prefix/user.reg" ] || [ -d "$candidate_prefix/drive_c" ]; then
+            legacy_roots+=("$candidate_root")
+        elif [ -n "$(ls -A -- "$candidate_prefix")" ]; then
+            fail runtime_state_invalid '旧 Wine 前缀内容无法识别。'
+        fi
+    done
+    registered=
+    for candidate_root in "${legacy_roots[@]}"; do [ "$candidate_root" = "$previous_root" ] && registered=$candidate_root; done
+    if [ -n "$registered" ]; then
+        previous_root=$registered
+    elif [ "${#legacy_roots[@]}" -eq 1 ]; then
+        previous_root=${legacy_roots[0]}
+    elif [ "${#legacy_roots[@]}" -gt 1 ]; then
+        fail runtime_state_invalid '存在多份旧 Wine 前缀且无法确定最后一次运行。'
+    fi
+fi
+ensure_prefix "$previous_root"
 run_id=$(date -u +%Y%m%dT%H%M%S.%NZ)
 run_root="$state/$run_id"
 container_root="/work/runtime/$instance/$run_id"
@@ -607,7 +679,7 @@ target="$run_root/server.json"
 jq -nc --arg project "$project" --arg service "$service" --arg network "$network" \
     '{project:$project,service:$service,network:$network}' >"$target"
 export CLIENT_IMAGE="$image" CLIENT_IMAGE_ID="$image" CLIENT_CONTAINER_NAME="$name" WORKBENCH_ROOT="$workbench"
-export CLIENT_ROOT="$run_root" CLIENT_RUNTIME_ROOT="$container_root"
+export CLIENT_ROOT="$run_root" CLIENT_RUNTIME_ROOT="$container_root" BEIDOU_WINEPREFIX_HOST="$prefix_root"
 export BEIDOU_CLIENT_DIR="$gui" GAME_DATA_DIR="$data" TARGET_IP="$target_ip" TARGET_NETWORK="$network"
 export TARGET_CONTAINER_ID="$server_id" RUN_ID="$run_id" MAPLE_INSTANCE="$instance" CHARACTER_ID="$character_id" WORLD_ID="$world"
 export MAPLE_LOGIN_MODE=character

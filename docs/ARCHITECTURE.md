@@ -32,7 +32,7 @@ Python 负责参数、静态资料规划、脚本装载/取消和最终结果。
 
 常驻服与半常驻开发服的网络和数据独立，客户端只连接本分区已核验的目标。`server dev up|stop|status|cli` 管理开发服；角色 `close` 不会停服，开发服日常停服保留数据。
 
-每个工作目录拥有自己的 `default` 容器、运行目录、桥和控制锁。原生 `instance_id/run_id` 保证请求、取消与结果属于本次运行；真实断线或错误会退出并保留事实。
+每个工作目录拥有自己的 `default` 容器、角色级持久 Wine 前缀、运行目录、桥和控制锁。原生 `instance_id/run_id` 保证请求、取消与结果属于本次运行；真实断线或错误会退出并保留事实。
 
 容器入口从本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID` 读取 `account.json`、`server.json`，生成内部资源映射与 `state/container.json`，随后交给 GUI bootstrap。容器内 CLI 通过登记、进程和原生桥直接观察、执行桌面原语与登录。`open` 完成或确认本容器入图，进程已由宿主启动器创建。
 
@@ -61,7 +61,7 @@ workbenches/workbench dev/NAME resources-check
 | `game_data` | 原版 `Data/` 目录，只读挂到 `/data`，供运行时节点视图与静态查询共用 |
 | `gui_client` | 匹配 V17 的外部原客户端目录，只读挂到 GUI 容器 `/client` |
 
-角色目录整体读写挂载到 `/work`。账号来自该目录的 `account.json`，目标来自主检出 `private/workbenches/config/` 中所属分区的 `live.server.json` 或 `dev.server.json`，不从角色配置选服。本次快照保存在 `/work/runtime/default/RUN_ID/`，`CLIENT_ROOT` 指向该目录。容器入口在其 `config/resources.json` 生成资源映射，`MAPLE_RESOURCES_CONFIG` 指向该文件；`gui_dll` 固定为 `/opt/beidou-pilot/native/ijl15.dll`，清单登记在该运行根的 `state/agent-bridge-build.json`。配置、角色记录和运行数据均不进入镜像。字段与入口见 [CLI](CLI.md)。
+角色目录整体读写挂载到 `/work`。账号来自该目录的 `account.json`，目标来自主检出 `private/workbenches/config/` 中所属分区的 `live.server.json` 或 `dev.server.json`，不从角色配置选服。本次快照保存在 `/work/runtime/default/RUN_ID/`，`CLIENT_ROOT` 指向该目录；Wine 前缀的宿主数据固定在 `/work/runtime/default/prefix/`，启动器将其覆盖挂载到本次 `$CLIENT_ROOT/runtime/prefix`，只由此角色的 `default` 实例串行复用。容器入口在本次运行根的 `config/resources.json` 生成资源映射，`MAPLE_RESOURCES_CONFIG` 指向该文件；`gui_dll` 固定为 `/opt/beidou-pilot/native/ijl15.dll`，清单登记在该运行根的 `state/agent-bridge-build.json`。配置、角色记录和运行数据均不进入镜像。字段与入口见 [CLI](CLI.md)。
 
 GUI 保留 `/client` 只读挂载用于启动原版客户端；原版 `Data/` 另以 `/data` 只读挂载，Python Catalog 与 GUI 从同一配置读取。客户端运行副本的 `Data/` 仍映射到原件，不写入资源目录。
 
@@ -71,7 +71,7 @@ GUI 保留 `/client` 只读挂载用于启动原版客户端；原版 `Data/` �
 
 原版 GUI 在本次 `$CLIENT_ROOT/client` 组装运行副本：复制原客户端的运行文件，`Data/` 链接到只读 `/client/Data`，再用镜像内已核验的桥替换运行副本中的 `ijl15.dll`。原客户端目录保持只读，运行副本使用独立运行文件。图片库 `2ijl15.dll` 仍是桥接 DLL 的运行依赖，必须保留。
 
-宿主工作台整体挂为 `/work`，本次实例运行根为 `/work/runtime/default/RUN_ID`。GUI 的 Wine prefix、日志与桥位于 `$CLIENT_ROOT/runtime/prefix`、`$CLIENT_ROOT/runtime/runs` 和 `$CLIENT_ROOT/runtime/bridge`。GUI 生成文件允许容器内 `1000:1000` 读写。GUI 使用 `DISPLAY=:97`、Xvfb/窗口管理器、VirtualGL EGL 和 `/dev/dri/renderD128`；原资源只读、硬件初始化及真实游戏效果分别验收。
+宿主工作台整体挂为 `/work`，本次实例运行根为 `/work/runtime/default/RUN_ID`。GUI 的 Wine prefix 仍使用 `$CLIENT_ROOT/runtime/prefix`，但该路径由 Compose 单独 bind mount 到稳定的角色目录 `/work/runtime/default/prefix`；日志与桥位于 `$CLIENT_ROOT/runtime/runs` 和 `$CLIENT_ROOT/runtime/bridge`。旧布局最后一次运行的前缀在正常关闭、下一次启动或清理时取得生命周期锁后原子迁移；`workbenches/cleanup-runtime` 默认预览、显式 `--apply` 才删除非活动历史目录。GUI 生成文件允许容器内 `1000:1000` 读写。GUI 使用 `DISPLAY=:97`、Xvfb/窗口管理器、VirtualGL EGL 和 `/dev/dri/renderD128`；原资源只读、硬件初始化及真实游戏效果分别验收。
 
 GUI 准备和统一入口见 [CLI](CLI.md#原版-gui)。
 
