@@ -40,7 +40,7 @@ arrow_item=2060000
 arrow_low=50
 ```
 
-只检查配置的物品，每种的 item 与 low 必须成对且为正整数；不写文件则不启用。狩猎时低于阈值、库存不可读或配置错误会发布 `supply/low`、撤下动作并结束脚本。事件发生不代表已确认放键，须查询该会话终态和 `control_released`。停止的位置不保证安全；当前尚无自动补给与回图编排，切勿在活动脚本期间操作商店。
+只检查配置的物品，每种的 item 与 low 必须成对且为正整数；不写文件则不启用。狩猎时低于阈值、库存不可读或配置错误会发布 `supply/low`，停止攻击并继续 sustain，同时按 `plan.conf` 的 `safe_map=地图号` 和可选 `retreat_route=/work/bot/路线文件` 撤退。默认路线为 `/work/bot/route.retreat.json`，必须提前从预期狩猎地图生成到安全地图的路线；例如使用 `python3 tools/bot_route.py dev/NAME 狩猎地图号 安全地图号 --output <角色目录>/bot/route.retreat.json` 预先生成；与原狩猎绑定 `hunt_map`、`route.json` 分开，不自动生成或证明路线安全。缺路线、起点不匹配或旅行失败时原地停手并发布 `supply/retreat` 失败事件，脚本继续尝试喝药，但不保证脱险。到达安全地图并完成必要的药水操作后发布 `supply/retreat` 的 arrived 并结束；宿主须确认该会话 `control_released=true` 后才可交易，补货后通过原有 plan/route 重新启动狩猎。旅行脚本也尝试 sustain；诊断和旅行均不可在危险地图无人值守裸跑。
 
 ## 地形平台定位
 

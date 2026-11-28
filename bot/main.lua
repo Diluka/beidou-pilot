@@ -150,7 +150,7 @@ local function main(context)
         io_module.event(context, "mode", {from = "dead", mode = "recover", reason = "revived"})
     end
 
-    if bot.mode == "hunt" and world.ready then
+    if bot.mode == "hunt" and world.ready and not memory.supply_retreat then
         local inventory = context.game.inventory
         local items = inventory and inventory.status == "ok" and type(inventory.items) == "table"
             and world.inventory or nil
@@ -165,9 +165,9 @@ local function main(context)
             low.session_id = context.tick.script_id
             low.map_id = world.map_id
             io_module.event(context, "supply/low", low)
+            memory.supply_retreat = {reason = low.reason}
+            memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
             memory.force_publish = true
-            io_module.publish(context, world, now)
-            return "done"
         end
     end
 
@@ -241,7 +241,7 @@ local function main(context)
         return
     end
     local kind, name
-    if bot.mode == "follow" then kind, name = navigate.selector(bot.target) end
+    if bot.mode == "follow" and not memory.supply_retreat then kind, name = navigate.selector(bot.target) end
     local handled, sustain_error = sustain.step(context, world)
     if handled and not kind then
         metric_call("target", nil)
@@ -262,6 +262,65 @@ local function main(context)
     elseif not handled and sustain_error and sustain_error ~= "not_implemented" then
         bot.last_error = sustain_error
         io_module.event(context, "error", {reason = sustain_error})
+    end
+
+    if memory.supply_retreat then
+        local retreat = memory.supply_retreat
+        local file = io.open((memory.bot_root or "/work/bot") .. "/plan.conf", "r")
+        local text = file and file:read("*a") or ""
+        if file then file:close() end
+        local safe_map, route
+        for line in text:gmatch("[^\r\n]+") do
+            local key, value = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
+            if key == "safe_map" and value:match("^%d+$") then safe_map = tonumber(value) end
+            if key == "retreat_route" and value ~= "" then route = value end
+        end
+        route = route or (memory.bot_root or "/work/bot") .. "/route.retreat.json"
+        if world.ready and safe_map and world.map_id == safe_map then
+            if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
+            context.game.player.stop()
+            io_module.event(context, "supply/retreat", {map_id = world.map_id, goal = safe_map,
+                reason = retreat.reason, result = "arrived", session_id = context.tick.script_id})
+            memory.force_publish = true
+            io_module.publish(context, world, now)
+            return "done"
+        end
+        if not retreat.failed then
+            if memory.travel_suspended then
+                retreat.failed = "operator_stopped"
+            elseif not safe_map then
+                retreat.failed = "safe_map_unavailable"
+            elseif not world.ready or not world.map_id then
+                context.game.player.stop()
+                io_module.publish(context, world, now)
+                return
+            elseif not memory.travel then
+                local legs, goal = travel.load_route(route)
+                if not legs or goal ~= safe_map or not legs[1] or legs[1].map ~= world.map_id then
+                    retreat.failed = "route_unavailable"
+                else
+                    memory.travel = travel.new(legs, goal)
+                    io_module.event(context, "supply/retreat", {map_id = world.map_id, goal = safe_map,
+                        reason = retreat.reason, result = "started"})
+                end
+            end
+            if memory.travel then
+                local status, reason = travel.step(memory.travel, context, world)
+                if status == "failed" or status == "done" then
+                    retreat.failed = status == "done" and "destination_unconfirmed" or (reason or "travel_failed")
+                    travel.stop(memory.travel, context)
+                    memory.travel = nil
+                end
+            end
+            if retreat.failed then
+                bot.last_error = "supply_retreat_" .. retreat.failed
+                io_module.event(context, "supply/retreat", {map_id = world.map_id, goal = safe_map,
+                    reason = retreat.failed, result = "failed"})
+            end
+        end
+        if retreat.failed then context.game.player.stop() end
+        io_module.publish(context, world, now)
+        return
     end
 
     local terrain_ready = world.ready and terrain_scene and terrain_scene.status == "available"

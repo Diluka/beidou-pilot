@@ -100,6 +100,7 @@ package.loaded["lib.move"] = {
     step = function() steps = steps + 1; if fail_move then return "failed", "no_progress" end; return "running" end,
 }
 package.loaded["lib.world"] = {observe = function(c) return c.world end}
+package.loaded["lib.sustain"] = {step = function() return false end}
 local c = {
     state = {goal = 3, legs = {{map=1, x=0, y=0, portal="a"}, {map=2, x=0, y=0, portal="b"}}},
     world = {ready=true, map_id=1, character={x=0, y=0}},
