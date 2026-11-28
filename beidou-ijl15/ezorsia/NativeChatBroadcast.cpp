@@ -71,6 +71,9 @@ constexpr unsigned char kPartyOperationLeave = 0x0C;  // disband / leave / expel
 constexpr unsigned char kPartyOperationLeader = 0x1B;
 
 constexpr std::size_t kPartySlotCount = 6;
+constexpr unsigned short kPartyOperationOpcode = 0x007C;
+constexpr unsigned char kPartyCreateOperation = 0x01;
+constexpr unsigned char kPartyInviteOperation = 0x04;
 constexpr std::uint32_t kPollIntervalMs = 1000;
 constexpr std::uint32_t kAnnounceIntervalMs = 2000;
 constexpr std::size_t kMaxChatBytes = 120;
@@ -309,7 +312,52 @@ void OnPacket(void* packet) {
     }
 }
 
+// Temporary verification hook. Not part of the delivered behavior: it is
+// removed before the change is merged.
+bool pendingInvite = false;
+std::string pendingInviteName;
+
+void SendPartyOperation(std::vector<unsigned char> payload) {
+    payload.insert(payload.begin(), {static_cast<unsigned char>(kPartyOperationOpcode & 0xFF),
+                                     static_cast<unsigned char>((kPartyOperationOpcode >> 8) & 0xFF)});
+    SendPayload(payload);
+}
+
+void PollTestInvite() {
+    if (pendingInvite) {
+        std::vector<unsigned char> invite{kPartyInviteOperation};
+        AppendU16(invite, pendingInviteName.size());
+        AppendBytes(invite, pendingInviteName);
+        SendPartyOperation(invite);
+        AppendLog(Timestamp() + " test hook: party invite sent to " + pendingInviteName);
+        pendingInvite = false;
+        pendingInviteName.clear();
+        return;
+    }
+    const std::string directory = BridgeDirectory();
+    if (directory.empty()) return;
+    const std::string path = directory + "\\test-invite.txt";
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attributes)) return;
+    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    std::array<char, 256> buffer{};
+    DWORD read = 0;
+    ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size() - 1), &read, nullptr);
+    CloseHandle(file);
+    MoveFileExA(path.c_str(), (path + ".done").c_str(), MOVEFILE_REPLACE_EXISTING);
+    std::string name(buffer.data(), read);
+    while (!name.empty() && (name.back() == '\r' || name.back() == '\n' || name.back() == ' ')) name.pop_back();
+    if (name.empty()) return;
+    pendingInviteName = name;
+    pendingInvite = true;
+    SendPartyOperation({kPartyCreateOperation});
+    AppendLog(Timestamp() + " test hook: party create sent, pending invite " + name);
+}
+
 void Tick() {
+    PollTestInvite();
     const auto now = static_cast<std::uint64_t>(GetTickCount64());
     if (lastPollAt != 0 && now - lastPollAt < kPollIntervalMs) return;
     lastPollAt = now;
