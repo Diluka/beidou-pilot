@@ -319,7 +319,10 @@ function M.plan(graph, from_index, to_index, options)
     -- navigation 数值经后端序列化后可能是浮点（15.0），策略层的禁边键是 "from:to" 整数语义；
     -- 统一按整数格式化，避免原生边因 "15.0:2.0" 与 "15:2" 不一致而绕过禁边。
     local function edge_blocked(from, to)
+        -- 同时接受整数语义键和调用方按原始数值 tostring 出的键，兼容主流程的
+        -- memory.blocked["from:to"]（navigation 浮点 id 可能写成 "15.0:2.0"）。
         return blocked[string.format("%d:%d", from, to)] ~= nil
+            or blocked[tostring(from) .. ":" .. tostring(to)] ~= nil
     end
     local effective_speed = math.max(1, speed)
     local model = graph.model
