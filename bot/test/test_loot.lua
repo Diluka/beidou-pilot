@@ -7,6 +7,7 @@ local saved_set_path, saved_move_step, saved_move_stop = move.set_path, move.ste
 local saved_event = io_module.event
 local edges, move_results, events = {}, {}, {}
 local pickup_count, cleared_actions, move_stop_count = 0, 0, 0
+local directions = {}
 
 move.set_path = function(mover, path)
     edges[#edges + 1] = path[1]
@@ -29,7 +30,7 @@ io_module.event = function(_, kind, data)
 end
 
 game = {player = {
-    move = function() return true end,
+    move = function(direction) directions[#directions + 1] = direction or "stop"; return true end,
     skill = function(value)
         assert(value == nil, "loot cleanup must clear the action slot")
         cleared_actions = cleared_actions + 1
@@ -254,21 +255,34 @@ terrain.plan = saved_plan
 local a, b, remote = drop(200, 10), drop(201, 30), drop(202, 10, 2)
 world = world_with({a, b, remote})
 ctx, mover = context(40), {status = "done"}
-ctx.state = {}
+ctx.state = {graph = {platforms = {{left = -200, right = 200}}}}
 local before = pickup_count
 assert(select(2, loot.step(ctx, world, a, mover)) == "sweeping")
+assert(directions[#directions] == "right", "sweep must keep moving through the drop cluster")
 world.drops = {b, remote}
 ctx.tick.time = 40.2
 assert(select(2, loot.step(ctx, world, b, mover)) == "sweeping")
 assert(mover.loot.count == 1, "the first disappearance must be observed while the sweep continues")
-assert(edges[#edges].destination == b.x, "walk tolerance must not leave the actor short of pickup range")
+assert(directions[#directions] == "right", "sweep must not stop to pick one object at a time")
 world.drops = {remote}
 ctx.tick.time = 40.4
 status, reason = loot.step(ctx, world, b, mover)
 local summary = events[#events]
 assert(status == "done" and reason == "cleared" and summary.kind == "loot/sweep"
     and summary.data.count == 2 and #summary.data.items == 2 and summary.data.elapsed > 0)
-assert(pickup_count == before + 1, "held pickup must not be resubmitted each tick")
+assert(pickup_count == before + 1, "pickup must not be submitted twice in adjacent ticks")
+
+world = world_with({drop(205, -50), drop(206, 50)})
+ctx, mover = context(45), {status = "done"}
+ctx.state = {graph = {platforms = {{left = -200, right = 200}}}}
+local first_count, first_clears = pickup_count, cleared_actions
+for i = 1, 7 do
+    ctx.tick.time = 45 + i * 0.04
+    assert(select(2, loot.step(ctx, world, world.drops[1], mover)) == "sweeping")
+end
+assert(pickup_count == first_count + 3 and cleared_actions >= first_clears + 2,
+    "three-tick cycle must release and re-submit while sweeping")
+assert(directions[#directions] ~= "stop", "pickup pulses must preserve movement intent")
 
 local saved_pickup = game.player.pickup
 local attempts = 0
@@ -284,6 +298,9 @@ ctx.tick.time = 50.2
 loot.step(ctx, world, world.drops[1], mover)
 assert(attempts == 1, "rejected intent must not be retried every tick")
 ctx.tick.time = 50.5
+loot.step(ctx, world, world.drops[1], mover)
+assert(attempts == 1, "release tick must not submit pickup")
+ctx.tick.time = 50.6
 loot.step(ctx, world, world.drops[1], mover)
 assert(attempts == 2 and mover.loot.pickup_requested)
 world.mobs = {{active = true, x = 30, y = 0}}

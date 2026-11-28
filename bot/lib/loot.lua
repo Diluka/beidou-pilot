@@ -210,13 +210,15 @@ function M.step(ctx, world, drop, mover)
                 count = 0, submissions = 0, accepted = 0, rejected = 0, attempt = 0}
             mover.loot = state
         end
-        local closest, closest_distance, remaining = nil, nil, 0
+        local closest, closest_distance, remaining, leftmost, rightmost = nil, nil, 0, nil, nil
         for _, current in ipairs(world.drops or {}) do
             local d = distance(character, current)
             if current.landed == true and current.platform == state.platform and current.object_id ~= nil
                 and d and d <= SWEEP_RADIUS
                 and not (ctx.state and ctx.state.loot_abandoned and ctx.state.loot_abandoned[current.object_id]) then
                 remaining = remaining + 1
+                leftmost = math.min(leftmost or current.x, current.x)
+                rightmost = math.max(rightmost or current.x, current.x)
                 if not state.seen[current.object_id] then
                     state.seen[current.object_id] = {item_id = current.item_id, present = true}
                 end
@@ -242,32 +244,40 @@ function M.step(ctx, world, drop, mover)
             abort_sweep(ctx, mover, "timeout")
             return "running", "fallback"
         end
-        if closest_distance > 25 then
-            -- Walk's 12px arrival tolerance must not leave us outside pickup range.
-            local destination = closest.x
-            if state.moving_to ~= destination or mover.status ~= "running" then
-                local ok, reason = move.set_path(mover, {{kind = "walk", from = character.platform,
-                    to = character.platform, x = character.x, destination = destination, rise = 0}})
-                if not ok then return end_sweep(reason or "move_failed", true) end
-                state.moving_to = destination
+        -- Sweep across the cluster on the independent direction channel. The extra
+        -- 12px carries the actor through the outer drops, not just near them.
+        local graph = ctx.state and ctx.state.graph or mover.graph
+        local platform = graph and graph.platforms and graph.platforms[character.platform]
+        if platform then
+            local left = math.max(platform.left + 40, leftmost - 12)
+            local right = math.min(platform.right - 40, rightmost + 12)
+            if left < right and character.x >= platform.left + 20 and character.x <= platform.right - 20 then
+                if not state.direction then state.direction = character.x < (left + right) / 2 and "right" or "left" end
+                if character.x <= left then state.direction = "right" elseif character.x >= right then state.direction = "left" end
+                if not player.move(state.direction) then return end_sweep("move_failed", true) end
+            else
+                player.move(nil)
             end
-            local status, reason = move.step(mover, ctx, world)
-            if status == "failed" then return end_sweep(reason or "move_failed", true) end
-        elseif mover.status == "running" then
-            move.stop(mover)
-            state.moving_to, state.intent_held = nil, nil
+        else
+            player.move(nil)
         end
-        if not state.intent_held and (not state.next_attempt or now >= state.next_attempt) then
+        -- On the observed GUI client, moving with one held intent picked only one
+        -- object; separate-tick release/repress collected the remaining objects.
+        state.pulse = (state.pulse or 0) % 3
+        if state.pulse == 0 and (not state.next_attempt or now >= state.next_attempt) then
             state.submissions = state.submissions + 1
             local ok, reason = player.pickup()
             if ok then
                 state.accepted = state.accepted + 1
-                state.pickup_requested, state.intent_held = true, true
+                state.pickup_requested = true
             else
                 state.rejected, state.last_rejection = state.rejected + 1, reason or "rejected"
                 state.next_attempt = now + 0.5
             end
+        elseif state.pulse == 2 then
+            player.skill(nil)
         end
+        state.pulse = state.pulse + 1
         return "running", "sweeping"
     end
     if not state or state.object_id ~= drop.object_id then
