@@ -1,6 +1,15 @@
 local terrain = require("lib.terrain")
 local synthetic = dofile("bot/test/fixtures/synthetic.lua")
 local real = dofile("bot/test/fixtures/map_102000000.lua")
+local route_map = assert(terrain.build(dofile("bot/test/fixtures/map_100030000.lua").navigation))
+assert(terrain.platform_at(route_map, -947, -865, 70) == 33, "east00 must resolve to platform 33")
+for _, from in ipairs({5, 69, 71}) do
+    local route = assert(terrain.plan(route_map, from, 33, {speed=125, max_jump_height=77.00625}))
+    assert(#route > 0 and route[1].from == from and route[#route].to == 33)
+end
+local route69 = assert(terrain.plan(route_map, 69, 33, {speed=125, max_jump_height=77.00625}))
+assert(route69[1].kind == "jumpup" and route69[1].from == 69 and route69[1].to == 67
+    and route69[1].x == -3285 and route69[1].destination == -3269)
 local shop = dofile("bot/test/fixtures/map_100000102.lua")
 local shop_graph = assert(terrain.build(shop.navigation))
 local shop_path = assert(terrain.plan(shop_graph, 6, 13, {speed = 125, max_jump_height = 77.00625}))
