@@ -62,13 +62,15 @@ class FakeBackend:
     def __init__(self, snapshots, item_id=2000000, quantity=0, mesos=1000):
         self.snapshots = list(snapshots)
         self.character = {"mesos": mesos, "mesos_checksum_valid": True}
-        self.inventory = {"items": [{"item_id": item_id, "quantity": quantity}]}
+        self.inventory = {"items": [{"item_id": item_id, "quantity": quantity, "slot": 3}]}
 
     def read(self, domain, *args):
         if domain == "shop":
             return self.snapshots.pop(0) if len(self.snapshots) > 1 else self.snapshots[0]
         if domain == "character":
             return self.character
+        if domain == "dialog":
+            return {"focused_window": {"width": 505, "height": 116, "buttons": [{"control_id": 6}, {"control_id": 7}]}}
         raise AssertionError(f"unexpected domain {domain}")
 
     def desktop(self, actions):
@@ -125,6 +127,112 @@ class ShopPollingContract(unittest.TestCase):
             with self.assertRaises(shop.ClientError) as raised:
                 shop.buy(backend, 2000000, 1)
         self.assertEqual("shop_quantity_dialog_timeout", raised.exception.code)
+
+    def test_equipment_timeout_preserves_receipt_and_never_replays(self) -> None:
+        item = {
+            "index": 0,
+            "item_id": 1060013,
+            "unit_price": 10,
+            "bundle_quantity": 1,
+            "quantity": 1,
+            "inventory_slot": 3,
+        }
+        backend = FakeBackend(
+            [
+                snapshot(sell_tab_index=0, sell_items=[item]),
+                snapshot(sell_tab_index=0, sell_items=[item], sell_selected_index=0),
+            ],
+            item_id=1060013,
+            quantity=1,
+        )
+        with (
+            patch.object(shop.time, "monotonic", side_effect=itertools.count(0, 0.1)),
+            patch.object(shop.time, "sleep"),
+            patch.object(shop, "click_window"),
+            patch.object(shop, "click_control") as click,
+        ):
+            with self.assertRaises(shop.ClientError) as raised:
+                shop.sell(backend, 1060013, 1, 3)
+        self.assertEqual("shop_quantity_dialog_timeout", raised.exception.code)
+        self.assertEqual("unknown", raised.exception.details["trade_result"])
+        self.assertEqual(3, raised.exception.details["inventory_slot"])
+        self.assertEqual(505, raised.exception.details["focused_window"]["width"])
+        self.assertEqual([6, 7], [b["control_id"] for b in raised.exception.details["focused_window"]["buttons"]])
+        self.assertEqual(1, click.call_count)
+        self.assertEqual(1, backend.inventory["items"][0]["quantity"])
+
+    def test_equipment_confirmation_checks_slot_and_wallet(self) -> None:
+        item = {
+            "index": 0,
+            "item_id": 1060013,
+            "unit_price": 10,
+            "bundle_quantity": 1,
+            "quantity": 1,
+            "inventory_slot": 3,
+        }
+        backend = FakeBackend(
+            [
+                snapshot(sell_tab_index=0, sell_items=[item]),
+                snapshot(sell_tab_index=0, sell_items=[item], sell_selected_index=0),
+            ],
+            item_id=1060013,
+            quantity=1,
+        )
+        read = backend.read
+        confirm = {"width": 506, "height": 116, "buttons": [{"control_id": 6}, {"control_id": 7}]}
+
+        def observe(domain, *args):
+            return {"focused_window": confirm} if domain == "dialog" else read(domain, *args)
+
+        def click(_backend, _window, control):
+            if control == 6:
+                backend.inventory = {"items": []}
+                backend.character["mesos"] += 10
+
+        with (
+            patch.object(backend, "read", side_effect=observe),
+            patch.object(shop, "click_window"),
+            patch.object(shop, "click_control", side_effect=click) as controls,
+        ):
+            result = shop.sell(backend, 1060013, 1, 3)
+        self.assertTrue(result["trade_result"] and result["slot_cleared"])
+        self.assertEqual([1001, 6], [call.args[2] for call in controls.call_args_list])
+
+    def test_equipment_confirmation_without_effect_is_unknown(self) -> None:
+        item = {
+            "index": 0,
+            "item_id": 1060013,
+            "unit_price": 10,
+            "bundle_quantity": 1,
+            "quantity": 1,
+            "inventory_slot": 3,
+        }
+        backend = FakeBackend(
+            [
+                snapshot(sell_tab_index=0, sell_items=[item]),
+                snapshot(sell_tab_index=0, sell_items=[item], sell_selected_index=0),
+            ],
+            item_id=1060013,
+            quantity=1,
+        )
+        read = backend.read
+        confirm = {"width": 506, "height": 116, "buttons": [{"control_id": 6}, {"control_id": 7}]}
+        with (
+            patch.object(
+                backend,
+                "read",
+                side_effect=lambda domain, *a: {"focused_window": confirm} if domain == "dialog" else read(domain, *a),
+            ),
+            patch.object(shop.time, "monotonic", side_effect=itertools.count(0, 0.5)),
+            patch.object(shop.time, "sleep"),
+            patch.object(shop, "click_window"),
+            patch.object(shop, "click_control") as click,
+        ):
+            with self.assertRaises(shop.ClientError) as raised:
+                shop.sell(backend, 1060013, 1, 3)
+        self.assertEqual("shop_trade_not_confirmed", raised.exception.code)
+        self.assertEqual("unknown", raised.exception.details["trade_result"])
+        self.assertEqual([1001, 6], [c.args[2] for c in click.call_args_list])
 
 
 if __name__ == "__main__":

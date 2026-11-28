@@ -162,6 +162,15 @@ def _trade(
     if any(quantity is None for quantity in quantities):
         raise ClientError("inventory_unavailable", "交易物品的库存数量未知。")
     quantity_before = sum(cast(list[int], quantities))
+    if direction == "sell" and inventory_type == 1:
+        matching = [entry for entry in inventory["items"] if entry.get("slot") == item["inventory_slot"]]
+        if (
+            count != 1
+            or not isinstance(item["inventory_slot"], int)
+            or len(matching) != 1
+            or matching[0]["item_id"] != item_id
+        ):
+            raise ClientError("inventory_unavailable", "装备槽位或数量无法唯一核对，未提交交易。")
     index = item["index"]
     first_field = "buy_first_index" if direction == "buy" else "sell_first_index"
     selected_field = "buy_selected_index" if direction == "buy" else "sell_selected_index"
@@ -198,39 +207,121 @@ def _trade(
     deadline = time.monotonic() + 1.2
     snapshot = cast(ShopSnapshot, backend.read("shop"))
     prompt = snapshot["quantity_dialog"]
+    confirm_window = None
     while prompt is None:
+        if direction == "sell" and inventory_type == 1 and count == 1:
+            try:
+                focused = backend.read("dialog").get("focused_window")
+            except ClientError:
+                focused = None
+            if isinstance(focused, dict) and focused.get("width") == 506 and focused.get("height") == 116:
+                buttons = focused.get("buttons")
+                if isinstance(buttons, list) and sorted(b.get("control_id") for b in buttons) == [6, 7]:
+                    confirm_window = focused
+                    break
         if time.monotonic() >= deadline:
-            raise ClientError("shop_quantity_dialog_timeout", "等待数量框超时，未继续确认；请核对现场，勿重放交易。")
+            details: JsonObject = {
+                "direction": direction,
+                "item_id": item_id,
+                "count": count,
+                "inventory_type": inventory_type,
+                "inventory_slot": item["inventory_slot"],
+                "quantity_before": quantity_before,
+                "mesos_before": money_before,
+                "shop_quote": price,
+                "trade_result": "unknown",
+            }
+            if direction == "sell" and inventory_type == 1:
+                try:
+                    details["focused_window"] = backend.read("dialog").get("focused_window")
+                except ClientError as error:
+                    details["dialog_observation_error"] = error.code
+            raise ClientError(
+                "shop_quantity_dialog_timeout",
+                "等待数量框超时，交易按钮可能已触发操作；请核对现场，勿重放交易。",
+                details,
+            )
         time.sleep(0.1)
         snapshot = cast(ShopSnapshot, backend.read("shop"))
         prompt = snapshot["quantity_dialog"]
-    if not prompt["minimum"] <= count <= prompt["maximum"]:
-        raise ClientError(
-            "shop_quantity_out_of_range",
-            "请求数量超出当前商店数量框范围。",
-            {"minimum": prompt["minimum"], "maximum": prompt["maximum"]},
-        )
-    actions: list[Action] = [{"action": "hold", "keys": ["Control_L", "a"], "seconds": 0.06}]
-    actions.extend({"action": "hold", "keys": [digit], "seconds": 0.06} for digit in str(count))
-    actions.append({"action": "wait", "seconds": 0.1})
-    backend.desktop(actions)
-    snapshot = cast(ShopSnapshot, backend.read("shop"))
-    typed = snapshot["quantity_dialog"]
-    if typed is None or typed["window"]["address"] != prompt["window"]["address"] or typed["value"] != count:
-        raise ClientError("shop_quantity_not_confirmed", "数量框实际值未等于请求数量，未提交交易。")
-    click_control(backend, typed["window"], 1)
+    if confirm_window is not None:
+        try:
+            click_control(backend, confirm_window, 6)
+        except ClientError as error:
+            raise ClientError(
+                "shop_trade_not_confirmed",
+                "确认操作结果未知；请核对现场，勿重放交易。",
+                {
+                    "trade_result": "unknown",
+                    "confirmation_window": confirm_window,
+                    "cause": error.code,
+                    "item_id": item_id,
+                    "inventory_slot": item["inventory_slot"],
+                    "quantity_before": quantity_before,
+                    "mesos_before": money_before,
+                },
+            ) from error
+    else:
+        if not prompt["minimum"] <= count <= prompt["maximum"]:
+            raise ClientError(
+                "shop_quantity_out_of_range",
+                "请求数量超出当前商店数量框范围。",
+                {"minimum": prompt["minimum"], "maximum": prompt["maximum"]},
+            )
+        actions: list[Action] = [{"action": "hold", "keys": ["Control_L", "a"], "seconds": 0.06}]
+        actions.extend({"action": "hold", "keys": [digit], "seconds": 0.06} for digit in str(count))
+        actions.append({"action": "wait", "seconds": 0.1})
+        backend.desktop(actions)
+        snapshot = cast(ShopSnapshot, backend.read("shop"))
+        typed = snapshot["quantity_dialog"]
+        if typed is None or typed["window"]["address"] != prompt["window"]["address"] or typed["value"] != count:
+            raise ClientError("shop_quantity_not_confirmed", "数量框实际值未等于请求数量，未提交交易。")
+        click_control(backend, typed["window"], 1)
     expected_quantity = quantity_before + (count if direction == "buy" else -count)
     expected_money = money_before + (price * count if direction == "sell" else -price * count)
     deadline = time.monotonic() + 2
     while True:
-        inventory = read_inventory(backend, inventory_type)
+        try:
+            inventory = read_inventory(backend, inventory_type)
+            wallet = cast(CharacterSnapshot, backend.read("character"))
+        except ClientError as error:
+            raise ClientError(
+                "shop_trade_not_confirmed",
+                "提交后观察失败；请核对现场，勿重放交易。",
+                {
+                    "trade_result": "unknown",
+                    "item_id": item_id,
+                    "inventory_slot": item["inventory_slot"],
+                    "quantity_before": quantity_before,
+                    "mesos_before": money_before,
+                    "confirmation_window": confirm_window,
+                    "cause": error.code,
+                },
+            ) from error
         quantities = [entry["quantity"] for entry in inventory["items"] if entry["item_id"] == item_id]
         if any(quantity is None for quantity in quantities):
-            raise ClientError("inventory_unavailable", "提交交易后库存数量未知；请核对现场，勿重放交易。")
+            raise ClientError(
+                "inventory_unavailable",
+                "提交交易后库存数量未知；请核对现场，勿重放交易。",
+                {
+                    "trade_result": "unknown",
+                    "item_id": item_id,
+                    "inventory_slot": item["inventory_slot"],
+                    "quantity_before": quantity_before,
+                    "mesos_before": money_before,
+                    "confirmation_window": confirm_window,
+                },
+            )
         quantity_after = sum(cast(list[int], quantities))
-        wallet = cast(CharacterSnapshot, backend.read("character"))
         money_after = wallet["mesos"] if wallet["mesos_checksum_valid"] else None
-        if (quantity_after == expected_quantity and money_after == expected_money) or time.monotonic() >= deadline:
+        slot_cleared = confirm_window is None or (
+            isinstance(item["inventory_slot"], int)
+            and all(isinstance(entry.get("slot"), int) for entry in inventory["items"])
+            and not any(entry.get("slot") == item["inventory_slot"] for entry in inventory["items"])
+        )
+        if (
+            quantity_after == expected_quantity and money_after == expected_money and slot_cleared
+        ) or time.monotonic() >= deadline:
             break
         time.sleep(0.1)
     details: JsonObject = {
@@ -244,10 +335,15 @@ def _trade(
         "quantity_after": quantity_after,
         "quantity_changed": quantity_after == expected_quantity,
         "actual_total_price": abs(money_after - money_before) if money_after is not None else None,
+        "inventory_slot": item["inventory_slot"],
+        "confirmation_window": confirm_window,
+        "trade_result": "unknown",
+        "slot_cleared": slot_cleared,
     }
-    if quantity_after != expected_quantity or money_after != expected_money:
+    if quantity_after != expected_quantity or money_after != expected_money or not slot_cleared:
         raise ClientError(
             "shop_trade_not_confirmed", "交易提交后金币与库存未同时符合预期；请核对现场，勿重放交易。", details
         )
     details["completed"] = True
+    details["trade_result"] = True
     return details

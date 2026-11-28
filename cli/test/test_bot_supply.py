@@ -47,6 +47,16 @@ class BotSupplyContract(unittest.TestCase):
         self.assertEqual([4000999], sorted(entry["item_id"] for entry in equipment))
         self.assertNotIn(1452051, [entry["item_id"] for entry in equipment])
 
+    def test_equipment_preview_is_unknown_and_apply_fails_closed(self) -> None:
+        items = [{"item_id": 1060013, "slot": 1, "quantity": 1, "inventory_type": 1}]
+        with patch.object(bot_supply, "read_items", return_value=items), patch.object(bot_supply, "sell") as sell:
+            preview = bot_supply.do_junk("dev/test", True, True)
+            self.assertEqual([], preview["candidates"])
+            self.assertEqual("instance_attributes_unavailable", preview["equipment_unknown"][0]["reason"])
+            with self.assertRaises(SystemExit):
+                bot_supply.do_junk("dev/test", False, True)
+            sell.assert_not_called()
+
     def test_nearest_shop_selects_shortest_route(self) -> None:
         character = {"map_id": 100000000}
         with (

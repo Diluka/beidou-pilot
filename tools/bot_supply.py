@@ -3,8 +3,8 @@
 
 子命令：
 - `status WORKBENCH`：计算红药/蓝药/箭矢缺口，输出 JSON。
-- `restock WORKBENCH [--apply]`：默认预览；执行时售卖未保护 etc 并按上限购买（需要 GUI）。
-- `junk WORKBENCH [--dry-run|--apply] [--include-equipment]`：卖 etc 垃圾（默认只列举）。
+- `restock WORKBENCH [--apply]`：默认预览；执行时仅售卖显式确认的 etc 并按上限购买（需要 GUI）。
+- `junk WORKBENCH [--dry-run|--apply] [--include-equipment]`：预览或售出人工核对的 ETC；装备仅预览。
 - `gear WORKBENCH`：按等级输出武器/防具升级建议。
 """
 
@@ -176,9 +176,8 @@ def read_equipped(workbench_name: str) -> set[int]:
 
 
 def junk_list(workbench_name: str, include_equipment: bool = False) -> list[dict[str, object]]:
-    """可卖清单：etc 垃圾 + 未装备的无用装备（任务/卷轴物品保护，已装备的绝不卖）。"""
+    """预览未命中保护规则的 ETC；装备实例属性未知，不列为可出售候选。"""
     items = read_items(workbench_name)
-    equipped = read_equipped(workbench_name) if include_equipment else set()
     result: list[dict[str, object]] = []
     for item in items:
         item_id = item.get("item_id")
@@ -188,8 +187,6 @@ def junk_list(workbench_name: str, include_equipment: bool = False) -> list[dict
             continue
         if kind == 4 and not is_protected(item_id):
             result.append({"item_id": item_id, "quantity": quantity})
-        elif kind in (1, 3) and include_equipment and not is_protected(item_id) and item_id not in equipped:
-            result.append({"item_id": item_id, "quantity": quantity, "equipment": True})
     return result
 
 
@@ -386,8 +383,16 @@ def restock(
 
 
 def do_junk(workbench_name: str, dry_run: bool, include_equipment: bool) -> dict[str, object]:
+    if include_equipment and not dry_run:
+        raise SystemExit("装备实例属性未知，禁止自动出售装备；请核对后单独指定槽位")
     candidates = junk_list(workbench_name, include_equipment)
     report: dict[str, object] = {"candidates": candidates, "dry_run": dry_run}
+    if include_equipment:
+        report["equipment_unknown"] = [
+            {"item_id": item.get("item_id"), "slot": item.get("slot"), "reason": "instance_attributes_unavailable"}
+            for item in read_items(workbench_name)
+            if item.get("inventory_type") == 1
+        ]
     if dry_run or not candidates:
         return report
     shop_map, shop = nearest_potion_shop(workbench_name)
@@ -402,6 +407,8 @@ def do_junk(workbench_name: str, dry_run: bool, include_equipment: bool) -> dict
             )
         except SystemExit as error:
             results[str(candidate["item_id"])] = {"error": str(error)}
+            report["results"] = results
+            return report  # Preserve the scene after an uncertain transaction.
     close_shop(workbench_name)
     report["results"] = results
     return report
@@ -429,7 +436,7 @@ def parser() -> argparse.ArgumentParser:
     junk_parser.add_argument(
         "--include-equipment",
         action="store_true",
-        help="仅人工确认时使用：把未装备的装备也列入清单/出售；自动化默认不卖装备",
+        help="预览装备及未知原因；实例属性不可用，禁止与 --apply 同用",
     )
     gear = sub.add_parser("gear", help="装备升级建议")
     gear.add_argument("workbench")
