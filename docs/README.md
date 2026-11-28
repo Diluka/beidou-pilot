@@ -41,6 +41,7 @@
 - [V17 其余运动规则与差异](V17_EXTENDED_MOTION_RULES.md)：攀爬、受击、移动技能、场地特例、实体与运动包。
 - [Tick 频率实测](TICK_FREQUENCY.md)：调度档位的成本与限制。
 - [远端玩家验证](REMOTE_PLAYER_VALIDATION.md)：同图其他玩家观察的双客户端试验。
+- [跑图途中清怪代价研究](TRAVEL_COMBAT_STUDY.md)：硬跑与挡路清怪的总耗时/HP 对比、结论与后续方向。
 
 研究记录用于理解原版行为和复核证据；当前契约见 [Tick Lua API](LUA_TICK_API.md) 和 [CLI](CLI.md)。
 
