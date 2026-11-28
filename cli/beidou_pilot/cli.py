@@ -103,6 +103,7 @@ def parser() -> Parser:
     result.add_argument("--instance-id", required=True, help="提交时的原生实例身份")
     command("status", "当前客户端阶段与角色，不启动、不输入")
     command("capabilities", "读取原生动作能力与静态观察支持范围，不启动客户端")
+    command("_cash-probe", "临时研究探针：只读商城候选对象")
     q = command("world-map", "只读查询原生世界地图的跨图路线，不控制客户端")
     actions = q.add_subparsers(dest="world_map_action", required=True, parser_class=Parser)
     route = actions.add_parser("route", parents=[common], allow_abbrev=False)
@@ -302,6 +303,11 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                     "Lua仍在控制客户端；先显式取消对应脚本再操作窗口。",
                     {"script_id": script["id"]},
                 )
+    if cmd == "_cash-probe":
+        from .observations import NativeObserver
+
+        result, _ = NativeObserver(backend.root, backend.name, backend.instance)._read("cash-probe", 3)
+        return result
     if cmd == "status":
         return status(backend)
     if cmd == "capabilities":
@@ -768,6 +774,7 @@ def main(argv: list[str] | None = None) -> int:
                 "screenshot",
                 "record",
                 "hotkeys",
+                "_cash-probe",
             )
             or (args.command == "bridge" and args.action == "status")
             or (args.command == "script" and args.action in {"status", "describe"})
