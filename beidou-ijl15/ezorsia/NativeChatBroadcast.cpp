@@ -71,7 +71,7 @@ constexpr unsigned char kPartyOperationLeave = 0x0C;  // disband / leave / expel
 constexpr unsigned char kPartyOperationLeader = 0x1B;
 
 constexpr std::size_t kPartySlotCount = 6;
-constexpr unsigned short kPartyOperationOpcode = 0x007C;
+constexpr unsigned short kPartyOperationSendOpcode = 0x007C;
 constexpr unsigned char kPartyCreateOperation = 0x01;
 constexpr unsigned char kPartyInviteOperation = 0x04;
 constexpr std::uint32_t kPollIntervalMs = 1000;
@@ -318,8 +318,8 @@ bool pendingInvite = false;
 std::string pendingInviteName;
 
 void SendPartyOperation(std::vector<unsigned char> payload) {
-    payload.insert(payload.begin(), {static_cast<unsigned char>(kPartyOperationOpcode & 0xFF),
-                                     static_cast<unsigned char>((kPartyOperationOpcode >> 8) & 0xFF)});
+    payload.insert(payload.begin(), {static_cast<unsigned char>(kPartyOperationSendOpcode & 0xFF),
+                                     static_cast<unsigned char>((kPartyOperationSendOpcode >> 8) & 0xFF)});
     SendPayload(payload);
 }
 
