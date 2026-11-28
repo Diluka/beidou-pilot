@@ -412,7 +412,38 @@ void PollPartyCommands() {
     ExecutePartyCommand(command);
 }
 
+// Temporary verification hook (removed before merge): reads whisper-test.txt
+// containing "target|message" and enqueues one whisper through the chat queue.
+void PollWhisperTest() {
+    const std::string directory = BridgeDirectory();
+    if (directory.empty()) return;
+    const std::string path = directory + "\\whisper-test.txt";
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attributes)) return;
+    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    std::array<char, 512> buffer{};
+    DWORD read = 0;
+    ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size() - 1), &read, nullptr);
+    CloseHandle(file);
+    MoveFileExA(path.c_str(), (path + ".done").c_str(), MOVEFILE_REPLACE_EXISTING);
+    const std::string content(buffer.data(), read);
+    const std::size_t separator = content.find('|');
+    if (separator == std::string::npos) return;
+    const std::string target = content.substr(0, separator);
+    std::string message = content.substr(separator + 1);
+    while (!message.empty() && (message.back() == '\r' || message.back() == '\n' || message.back() == ' '))
+        message.pop_back();
+    if (target.empty() || message.empty()) return;
+    if (NativeChatQueue::Enqueue(NativeChatQueue::Channel::Whisper, message, target))
+        AppendLog(Timestamp() + " whisper test queued for " + target + ": " + message);
+    else
+        AppendLog(Timestamp() + " whisper test rejected for " + target);
+}
+
 void Tick() {
+    PollWhisperTest();
     PollPartyCommands();
     const auto now = static_cast<std::uint64_t>(GetTickCount64());
     if (lastPollAt != 0 && now - lastPollAt < kPollIntervalMs) return;
