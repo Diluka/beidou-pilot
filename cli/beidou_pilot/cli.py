@@ -295,8 +295,13 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "shop",
         "cashshop",
         "notifications",
-    } and not (cmd in {"dialog", "ui", "shop", "cashshop", "notifications"} and args.action == "read"
-               or cmd == "cashshop" and args.action == "expand" and args.dry_run):
+    } and not (
+        cmd in {"dialog", "ui", "shop", "cashshop", "notifications"}
+        and args.action == "read"
+        or cmd == "cashshop"
+        and args.action == "expand"
+        and args.dry_run
+    ):
         from .bridge import BridgeClient
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
