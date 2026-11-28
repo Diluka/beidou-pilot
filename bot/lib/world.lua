@@ -132,13 +132,14 @@ function M.observe(ctx)
         world.drops = {}
         for _, drop in ipairs(drops) do
             world.drops[#world.drops + 1] = project_entity(drop, {
-                object_id = {"object_id", "id"}, item_id = {"item_id"},
+                object_id = {"object_id", "id"}, item_id = {"item_id"}, money = {"money"},
                 x = {"x"}, y = {"y"}, landed = {"landed"},
             })
         end
     end
 
     local inventory = game and game.inventory
+    world.inventory_info = inventory
     local items = inventory and (inventory.items or inventory)
     if type(items) == "table" then
         world.inventory = {}
