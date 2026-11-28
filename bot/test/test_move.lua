@@ -860,4 +860,315 @@ for _, x in ipairs({-4250, edge71.x}) do
     game=old_game
     assert(launched,"P71 approach must submit horizontal jump in this synthetic model")
 end
+-- 绳通道：rope_grab（原地跳抓/走出边缘下抓）、rope_climb、rope_hop、rope_leave。
+-- 附着判定只用位置步进，不依赖 GUI 下不可靠的攀爬速度字段。
+-- 绳 1 下端比地面高 40px（走跳抓），绳 2 用于 rope_hop；目标平台覆盖绳轴附近，便于低水平距离跳离。
+local rope_platforms = {
+    {left = 0, right = 90, segments = {0, 90, 200, 200}},
+    {left = 98, right = 200, segments = {98, 200, 100, 100}},
+}
+local rope_graph = {ropes = {
+    {index = 1, x = 100, y1 = 0, y2 = 160, platforms = {}},
+    {index = 2, x = 190, y1 = 0, y2 = 200, platforms = {}},
+}, platforms = rope_platforms}
+local grab_edge = {kind = "rope_grab", from = 1, to = 3, x = 85, destination = 100, rise = -10,
+    rope_index = 1, grab_y = 190}
+local climb_up_edge = {kind = "rope_climb", from = 3, to = 4, x = 100, destination = 100, rise = -110,
+    target_y = 60, rope_index = 1}
+local leave_edge = {kind = "rope_leave", from = 4, to = 2, x = 100, destination = 150, rise = 40,
+    rope_index = 1}
+local function rope_reset(edges)
+    ctx.tick.time = 0
+    direction, action = nil, nil
+    world.character = {x = 85, y = 200, on_ground = true}
+    assert(move.set_path(mover, edges))
+    assert(mover.on_rope == nil and mover.rope_index == nil, "a new path clears rope attachment")
+end
+local function rope_tick(time, x, y, on_ground)
+    ctx.tick.time = time
+    world.character = {x = x, y = y, on_ground = on_ground}
+    return step(mover, ctx, world)
+end
+local status, reason
+game.character = nil
+game.player.move = function(value) direction = value; return true end
+game.player.jump = function() action = "jump"; return true end
+game.player.skill = function(value) assert(value == nil); action = nil; return true end
+-- 原地跳抓 → 爬到绳顶 → 方向跳落到目标平台。
+mover = move.new(rope_graph)
+rope_reset({grab_edge, climb_up_edge, leave_edge})
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == "jump"
+    and mover.phase == "grab", "rope_grab jumps toward the rope from the aligned launch point")
+assert(rope_tick(0.1, 92, 186, false) == "running" and direction == "up" and action == "jump",
+    "hold Up in the air after the directional jump")
+assert(rope_tick(0.4, 98, 172, false) == "running" and direction == "up" and action == nil,
+    "release the jump action after the launch window")
+assert(rope_tick(0.43, 100, 176, false) == "running" and mover.on_rope == nil,
+    "a slow fall near the rope is not a grab")
+assert(rope_tick(0.46, 100, 179, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.49, 100, 176, false) == "running" and mover.on_rope == nil,
+    "one 3px climb step is not yet proof of attachment")
+assert(rope_tick(0.52, 100, 173, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.55, 100, 170, false) == "running" and mover.on_rope == true
+    and mover.rope_index == 1 and direction == nil,
+    "three consecutive 3px upward steps attach to the rope")
+assert(step(mover, ctx, world) == "running" and direction == "up" and mover.phase == "climb",
+    "rope_climb holds Up toward the higher rope node")
+assert(rope_tick(0.58, 100, 100, false) == "running" and direction == "up")
+assert(rope_tick(0.61, 100, 60, false) == "running" and direction == nil and mover.on_rope == true,
+    "rope_climb completes within 6px of the target height and keeps the attachment")
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == nil
+    and mover.phase == "leave", "rope_leave holds the direction for one tick before jumping")
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == "jump",
+    "the climb jump is submitted with the direction already held")
+assert(rope_tick(0.7, 120, 80, false) == "running" and direction == "right" and action == "jump",
+    "rope_leave keeps the direction during the flight")
+assert(rope_tick(1.0, 150, 100, true) == "done" and direction == nil and action == nil
+    and mover.on_rope == nil and mover.status == "done",
+    "landing on the target platform completes the leave and clears the rope state")
+-- 目标抓点明显低于平台：走出边缘下落抓取，不再按 Jump。
+local walkoff_graph = {
+    ropes = {{index = 1, x = 100, y1 = 210, y2 = 320, platforms = {}}},
+    platforms = {{left = 0, right = 90, segments = {0, 90, 200, 200}}},
+}
+mover = move.new(walkoff_graph)
+rope_reset({{kind = "rope_grab", from = 1, to = 2, x = 80, destination = 100, rise = 60,
+    rope_index = 1, grab_y = 300}})
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == nil
+    and mover.phase == "walkoff", "a lower grab point is reached by walking off the platform edge")
+assert(rope_tick(0.1, 95, 200, false) == "running" and direction == "up" and action == nil
+    and mover.phase == "grab", "press Up after leaving the ground")
+assert(rope_tick(0.13, 100, 210, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.16, 100, 244, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.19, 100, 241, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.22, 100, 238, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.25, 100, 235, false) == "done" and mover.on_rope == true
+    and mover.status == "done", "the falling grab attaches once climbing steps appear")
+-- 绳段进入脚下 20px：走到绳轴按上即可地面抓取，不提交跳跃。
+local ground_graph = {
+    ropes = {{index = 1, x = 100, y1 = -100, y2 = 199, platforms = {}}},
+    platforms = {{left = 0, right = 90, segments = {0, 90, 200, 200}}},
+}
+mover = move.new(ground_graph)
+rope_reset({{kind = "rope_grab", from = 1, to = 2, x = 80, destination = 100, rise = -1,
+    rope_index = 1, grab_y = -100}})
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == nil
+    and mover.phase == "ground", "a rope reaching the platform is grabbed from the ground")
+assert(rope_tick(0.1, 100, 200, true) == "running" and direction == "up" and action == nil,
+    "stand on the rope axis and press Up without jumping")
+assert(rope_tick(0.2, 100, 197, false) == "running" and mover.phase == "grab",
+    "the ground grab leaves the ground as soon as it attaches")
+assert(rope_tick(0.23, 100, 194, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.26, 100, 191, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.29, 100, 188, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.32, 100, 185, false) == "done" and mover.on_rope == true,
+    "the ground grab attaches after three climb steps")
+-- GUI tick 间隔 100ms 时攀爬每 tick 约 10px，附着判定必须按 tick 间隔换算而不是固定 3px。
+mover = move.new(ground_graph)
+rope_reset({{kind = "rope_grab", from = 1, to = 2, x = 80, destination = 100, rise = -1,
+    rope_index = 1, grab_y = -100}})
+ctx.tick.delta = 0.1
+assert(step(mover, ctx, world) == "running" and mover.phase == "ground")
+assert(rope_tick(0.1, 100, 200, true) == "running" and direction == "up")
+assert(rope_tick(0.2, 100, 190, false) == "running" and mover.phase == "grab")
+assert(rope_tick(0.3, 100, 180, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.4, 100, 170, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.5, 100, 160, false) == "running" and mover.on_rope == nil)
+assert(rope_tick(0.6, 100, 150, false) == "done" and mover.on_rope == true,
+    "100ms ticks attach after three 10px climb steps")
+ctx.tick.delta = nil
+-- 没有附着就落回平台：按现有约定重试一次，第二次失败明确报 rope_grab_failed。
+mover = move.new(rope_graph)
+rope_reset({{kind = "rope_grab", from = 1, to = 3, x = 85, destination = 100, rise = -10,
+    rope_index = 1, grab_y = 190}})
+assert(step(mover, ctx, world) == "running" and action == "jump")
+assert(rope_tick(0.1, 92, 186, false) == "running" and action == "jump")
+status, reason = rope_tick(0.2, 85, 200, true)
+assert(status == "running" and reason == nil and mover.retries == 1 and direction == nil and action == nil,
+    "an unattached grab retries once after releasing the jump")
+assert(rope_tick(0.23, 85, 200, true) == "running" and direction == "right" and action == "jump",
+    "the retry realigns and jumps again")
+assert(rope_tick(0.3, 92, 186, false) == "running")
+status, reason = rope_tick(0.36, 85, 200, true)
+assert(status == "failed" and reason == "rope_grab_failed" and direction == nil and action == nil,
+    "a second unattached grab fails explicitly")
+assert(mover.last_failure.reason == "rope_grab_failed" and mover.last_failure.kind == "rope_grab"
+    and mover.last_failure.from == 1 and mover.last_failure.to == 3
+    and mover.last_failure.x == 85 and mover.last_failure.destination == 100
+    and mover.last_failure.landing_platform == 1,
+    "a failed grab records the edge and observed landing details")
+-- 向下攀爬：同一条绳上按 down 到更低的绳节点。
+mover = move.new(rope_graph)
+rope_reset({grab_edge, {kind = "rope_climb", from = 3, to = 4, x = 100, destination = 100,
+    rise = 30, target_y = 190, rope_index = 1}})
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == "jump")
+assert(rope_tick(0.1, 92, 186, false) == "running")
+assert(rope_tick(0.4, 100, 176, false) == "running")
+assert(rope_tick(0.43, 100, 179, false) == "running")
+assert(rope_tick(0.46, 100, 176, false) == "running")
+assert(rope_tick(0.49, 100, 173, false) == "running")
+assert(rope_tick(0.52, 100, 170, false) == "running" and mover.on_rope == true)
+assert(step(mover, ctx, world) == "running" and direction == "down" and mover.phase == "climb",
+    "rope_climb holds Down toward the lower rope node")
+assert(rope_tick(0.55, 100, 180, false) == "running" and direction == "down")
+assert(rope_tick(0.58, 100, 189, false) == "done" and direction == nil and mover.status == "done",
+    "downward rope_climb completes within 6px of the target height")
+-- 目标接近绳顶：继续按上直到原版顶端退出把角色放到上层平台。
+mover = move.new(rope_graph)
+rope_reset({grab_edge, {kind = "rope_climb", from = 3, to = 4, x = 100, destination = 100,
+    rise = -166, target_y = -4, rope_index = 1}})
+assert(step(mover, ctx, world) == "running" and action == "jump")
+assert(rope_tick(0.1, 92, 186, false) == "running")
+assert(rope_tick(0.4, 100, 176, false) == "running")
+assert(rope_tick(0.43, 100, 179, false) == "running")
+assert(rope_tick(0.46, 100, 176, false) == "running")
+assert(rope_tick(0.49, 100, 173, false) == "running")
+assert(rope_tick(0.52, 100, 170, false) == "running" and mover.on_rope == true)
+assert(step(mover, ctx, world) == "running" and direction == "up" and mover.climb_top_exit)
+assert(rope_tick(0.55, 100, 100, false) == "running" and direction == "up",
+    "a top-exit climb keeps holding Up instead of stopping at the node height")
+assert(rope_tick(0.58, 100, -20, true) == "done" and direction == nil and mover.status == "done",
+    "the top exit completes when the original logic puts the actor back on a platform")
+-- 顶端钳住不再移动时同样完成，避免卡死在绳上。
+mover = move.new(rope_graph)
+rope_reset({grab_edge, {kind = "rope_climb", from = 3, to = 4, x = 100, destination = 100,
+    rise = -166, target_y = -4, rope_index = 1}})
+assert(step(mover, ctx, world) == "running" and action == "jump")
+assert(rope_tick(0.1, 92, 186, false) == "running")
+assert(rope_tick(0.4, 100, 176, false) == "running")
+assert(rope_tick(0.43, 100, 179, false) == "running")
+assert(rope_tick(0.46, 100, 176, false) == "running")
+assert(rope_tick(0.49, 100, 173, false) == "running")
+assert(rope_tick(0.52, 100, 170, false) == "running" and mover.on_rope == true)
+assert(step(mover, ctx, world) == "running" and direction == "up")
+assert(rope_tick(0.55, 100, -4, false) == "running" and direction == "up")
+assert(rope_tick(0.58, 100, -4, false) == "running")
+assert(rope_tick(0.61, 100, -4, false) == "running")
+assert(rope_tick(0.64, 100, -4, false) == "done" and direction == nil and mover.status == "done",
+    "a clamped top exit completes after the position stops changing")
+-- 落点与绳轴同列：按上到绳顶自然脱绳落地，不做无意义跳跃。
+mover = move.new(rope_graph)
+rope_reset({grab_edge, {kind = "rope_leave", from = 4, to = 2, x = 100, destination = 100,
+    rise = -70, rope_index = 1}})
+assert(step(mover, ctx, world) == "running" and action == "jump")
+assert(rope_tick(0.1, 92, 186, false) == "running")
+assert(rope_tick(0.4, 100, 176, false) == "running")
+assert(rope_tick(0.43, 100, 179, false) == "running")
+assert(rope_tick(0.46, 100, 176, false) == "running")
+assert(rope_tick(0.49, 100, 173, false) == "running")
+assert(rope_tick(0.52, 100, 170, false) == "running" and mover.on_rope == true)
+assert(step(mover, ctx, world) == "running" and direction == "up" and action == nil,
+    "a nearly vertical leave holds Up to climb out of the rope top")
+assert(rope_tick(0.55, 100, 100, true) == "done" and direction == nil and action == nil
+    and mover.on_rope == nil and mover.status == "done",
+    "climbing out of the top lands on the target platform and completes the leave")
+-- 攀爬途中掉离绳梯：落地即失败，重试一次后终态仍是 rope_mismatch。
+mover = move.new(rope_graph)
+rope_reset({grab_edge, climb_up_edge})
+assert(step(mover, ctx, world) == "running" and action == "jump")
+assert(rope_tick(0.1, 92, 186, false) == "running")
+assert(rope_tick(0.4, 100, 176, false) == "running")
+assert(rope_tick(0.43, 100, 179, false) == "running")
+assert(rope_tick(0.46, 100, 176, false) == "running")
+assert(rope_tick(0.49, 100, 173, false) == "running")
+assert(rope_tick(0.52, 100, 170, false) == "running" and mover.on_rope == true)
+assert(step(mover, ctx, world) == "running" and direction == "up")
+status, reason = rope_tick(0.55, 100, 200, true)
+assert(status == "running" and reason == nil and mover.retries == 1 and direction == nil,
+    "losing the rope during a climb retries the edge once")
+status, reason = rope_tick(0.6, 100, 200, true)
+assert(status == "failed" and reason == "rope_mismatch" and mover.on_rope == nil and direction == nil,
+    "a detached climb fails explicitly and clears the rope state")
+-- 在绳上方向+jump 跳到另一根绳，成功时切换 rope_index。
+mover = move.new(rope_graph)
+rope_reset({grab_edge, {kind = "rope_hop", from = 3, to = 5, x = 100, destination = 190,
+    rise = -90, from_rope_index = 1, rope_index = 2, leave_y = 60, grab_y = 60}})
+assert(step(mover, ctx, world) == "running" and action == "jump")
+assert(rope_tick(0.1, 92, 186, false) == "running")
+assert(rope_tick(0.4, 100, 176, false) == "running")
+assert(rope_tick(0.43, 100, 179, false) == "running")
+assert(rope_tick(0.46, 100, 176, false) == "running")
+assert(rope_tick(0.49, 100, 173, false) == "running")
+assert(rope_tick(0.52, 100, 170, false) == "running" and mover.on_rope == true)
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == nil
+    and mover.phase == "hop", "rope_hop holds the direction toward the target rope")
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == "jump"
+    and mover.phase == "hop_flight", "rope_hop submits the climb jump")
+assert(rope_tick(0.55, 130, 160, false) == "running" and direction == "up",
+    "rope_hop holds Up while crossing to the target rope")
+assert(rope_tick(0.58, 170, 165, false) == "running" and mover.on_rope == true)
+assert(rope_tick(0.61, 190, 162, false) == "running" and mover.on_rope == true)
+assert(rope_tick(0.64, 190, 159, false) == "running" and mover.on_rope == true)
+assert(rope_tick(0.67, 190, 156, false) == "done" and mover.rope_index == 2
+    and direction == nil and mover.status == "done",
+    "grabbing the next rope switches the tracked rope index")
+-- 跳向另一根绳时落地：报 rope_grab_failed，重试一次后终态仍是失败。
+mover = move.new(rope_graph)
+rope_reset({grab_edge, {kind = "rope_hop", from = 3, to = 5, x = 100, destination = 190,
+    rise = -90, from_rope_index = 1, rope_index = 2, leave_y = 60, grab_y = 60}})
+assert(step(mover, ctx, world) == "running" and action == "jump")
+assert(rope_tick(0.1, 92, 186, false) == "running")
+assert(rope_tick(0.4, 100, 176, false) == "running")
+assert(rope_tick(0.43, 100, 179, false) == "running")
+assert(rope_tick(0.46, 100, 176, false) == "running")
+assert(rope_tick(0.49, 100, 173, false) == "running")
+assert(rope_tick(0.52, 100, 170, false) == "running" and mover.on_rope == true)
+assert(step(mover, ctx, world) == "running" and direction == "right")
+assert(step(mover, ctx, world) == "running" and action == "jump")
+status, reason = rope_tick(0.55, 130, 170, false)
+assert(status == "running" and mover.airborne and direction == "up")
+status, reason = rope_tick(0.58, 140, 195, true)
+assert(status == "running" and reason == nil and mover.retries == 1 and direction == nil and action == nil,
+    "a missed rope hop retries once")
+assert(rope_tick(0.61, 140, 195, true) == "running" and direction == "right" and action == nil)
+assert(rope_tick(0.64, 140, 195, true) == "running" and direction == "right" and action == "jump")
+assert(rope_tick(0.67, 150, 185, false) == "running" and mover.airborne)
+status, reason = rope_tick(0.7, 150, 195, true)
+assert(status == "failed" and reason == "rope_grab_failed" and direction == nil and action == nil
+    and mover.on_rope == nil, "a second missed hop fails explicitly and clears the rope state")
+-- 跳离时落错平台：landing_mismatch 不再重试。
+mover = move.new(rope_graph)
+rope_reset({grab_edge, leave_edge})
+assert(step(mover, ctx, world) == "running" and action == "jump")
+assert(rope_tick(0.1, 92, 186, false) == "running")
+assert(rope_tick(0.4, 100, 176, false) == "running")
+assert(rope_tick(0.43, 100, 179, false) == "running")
+assert(rope_tick(0.46, 100, 176, false) == "running")
+assert(rope_tick(0.49, 100, 173, false) == "running")
+assert(rope_tick(0.52, 100, 170, false) == "running" and mover.on_rope == true)
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == nil)
+assert(step(mover, ctx, world) == "running" and direction == "right" and action == "jump")
+status, reason = rope_tick(0.55, 120, 190, false)
+assert(status == "running" and mover.airborne)
+status, reason = rope_tick(0.6, 50, 200, true)
+assert(status == "failed" and reason == "landing_mismatch" and direction == nil and action == nil
+    and mover.on_rope == nil, "landing on the wrong platform fails the leave without retrying")
+assert(mover.last_failure.reason == "landing_mismatch" and mover.last_failure.kind == "rope_leave"
+    and mover.last_failure.landing_platform == 1,
+    "a rejected rope landing records the observed platform")
+-- 字段校验：四类 edge 缺少执行所需字段时报 invalid_edge。
+for _, edge in ipairs({
+    {kind = "rope_grab", destination = 100, to = 3},
+    {kind = "rope_climb", x = 100, destination = 100, to = 3},
+    {kind = "rope_leave", destination = 150, to = 2},
+    {kind = "rope_hop", x = 100, to = 5},
+}) do
+    mover = move.new(rope_graph)
+    rope_reset({edge})
+    status, reason = step(mover, ctx, world)
+    assert(status == "failed" and reason == "invalid_edge" and direction == nil,
+        "a rope edge without its required fields is invalid")
+end
+-- 未经过 rope_grab 的绳上边不能凭空执行，也不做无意义重试。
+for _, edge in ipairs({
+    {kind = "rope_climb", from = 3, to = 4, x = 100, destination = 100, target_y = 50, rope_index = 1},
+    {kind = "rope_leave", from = 4, to = 2, x = 100, destination = 150, to = 2, rope_index = 1},
+    {kind = "rope_hop", from = 3, to = 5, x = 100, destination = 190, rope_index = 2},
+}) do
+    mover = move.new(rope_graph)
+    rope_reset({edge})
+    status, reason = step(mover, ctx, world)
+    assert(status == "failed" and reason == "rope_mismatch" and direction == nil,
+        "a rope-only edge without tracked attachment fails closed")
+end
 print("move tests ok")

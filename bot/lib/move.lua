@@ -9,6 +9,7 @@ function M.set_path(mover, edges)
     mover.edges, mover.index, mover.status = edges, 1, "running"
     mover.started, mover.retries, mover.reason, mover.downjump_preheld, mover.last_failure = nil, 0, nil, nil, nil
     mover.runup_failure_detail = nil
+    mover.on_rope, mover.rope_index = nil, nil
     return true
 end
 
@@ -17,6 +18,50 @@ function M.stop(mover)
     game.player.skill(nil)
     mover.stop_pending = mover.stop_pending or mover.jump_held or nil
     mover.status, mover.started, mover.jump_held, mover.downjump_preheld = "done", nil, nil, nil
+    mover.on_rope, mover.rope_index = nil, nil
+end
+
+-- 绳梯攀爬每 30ms 直接把 y 写 3px，GUI 下 physics.velocity 可能是 0 或未知，不能用于判定附着。
+-- 跳跃弧线每步 y 变化随重力连续改变，2..4px 的窗口最多连续出现一次（连续两次以上即可排除普通跳跃）；
+-- 因此把连续三次同向约 3px 的采样视为已进入攀爬步进。
+local function climb_step(mover, character, axis_x, rope, tick_delta)
+    local function reset()
+        mover.rope_step_streak, mover.rope_last_y = 0, character.y
+        return false
+    end
+    if character.on_ground == true or math.abs(character.x - axis_x) > 10 then return reset() end
+    if type(rope) == "table" and type(rope.y1) == "number" and type(rope.y2) == "number" then
+        local top, bottom = math.min(rope.y1, rope.y2), math.max(rope.y1, rope.y2)
+        if character.y < top - 20 or character.y > bottom + 20 then return reset() end
+    end
+    local previous = mover.rope_last_y
+    mover.rope_last_y = character.y
+    if type(previous) ~= "number" then
+        mover.rope_step_streak = 0
+        return false
+    end
+    local dy = character.y - previous
+    -- 同一原生更新的重复样本不算新的一步，也不打断连续计数。
+    if dy == 0 then return false end
+    local rise = -dy
+    -- 攀爬每个 tick 的位移由 tick 间隔决定（100px/s；30ms tick 约 3px，100ms tick 约 10px），
+    -- 不能按固定 3px 窗口判定。跳跃弧线受重力影响每 tick 位移连续变化，不会连续 3 次落在同一窗口。
+    local delta = type(tick_delta) == "number" and tick_delta > 0 and tick_delta or 0.03
+    local expected = 100 * delta
+    if rise >= expected * 0.55 and rise <= expected * 1.5 then
+        mover.rope_step_streak = mover.rope_step_streak + 1
+        return mover.rope_step_streak >= 3
+    end
+    mover.rope_step_streak = 0
+    return false
+end
+
+local function rope_at(graph, rope_index)
+    local ropes = type(graph) == "table" and graph.ropes
+    if type(ropes) ~= "table" or type(rope_index) ~= "number" then return nil end
+    for _, rope in ipairs(ropes) do
+        if type(rope) == "table" and rope.index == rope_index then return rope end
+    end
 end
 
 local function step(mover, ctx, world)
@@ -46,13 +91,14 @@ local function step(mover, ctx, world)
     local reason
     if type(edge) ~= "table" or type(edge.kind) ~= "string" then
         reason = "invalid_edge"
-    elseif edge.kind ~= "walk" and edge.kind ~= "step" and edge.kind ~= "jumpup" and edge.kind ~= "horizontal_jump" and edge.kind ~= "downjump" and edge.kind ~= "drop" and edge.kind ~= "rope" then
+    elseif edge.kind ~= "walk" and edge.kind ~= "step" and edge.kind ~= "jumpup" and edge.kind ~= "horizontal_jump" and edge.kind ~= "downjump" and edge.kind ~= "drop" and edge.kind ~= "rope"
+        and edge.kind ~= "rope_grab" and edge.kind ~= "rope_climb" and edge.kind ~= "rope_leave" and edge.kind ~= "rope_hop" then
         reason = "unsupported_edge"
-    elseif type(edge.destination) ~= "number" or (edge.kind == "step" and type(edge.to) ~= "number") then
+    elseif (edge.kind ~= "rope_climb" and type(edge.destination) ~= "number") or (edge.kind == "step" and type(edge.to) ~= "number") then
         reason = "invalid_edge"
     end
     local character = world and world.character
-    if not reason and (not character or type(character.x) ~= "number" or type(character.y) ~= "number" or ((edge.kind == "jumpup" or edge.kind == "horizontal_jump" or edge.kind == "downjump" or edge.kind == "drop" or edge.kind == "rope") and type(character.on_ground) ~= "boolean")) then
+    if not reason and (not character or type(character.x) ~= "number" or type(character.y) ~= "number" or ((edge.kind == "jumpup" or edge.kind == "horizontal_jump" or edge.kind == "downjump" or edge.kind == "drop" or edge.kind == "rope" or edge.kind == "rope_grab" or edge.kind == "rope_climb" or edge.kind == "rope_leave" or edge.kind == "rope_hop") and type(character.on_ground) ~= "boolean")) then
         reason = "character_unavailable"
     end
     if reason then
@@ -134,6 +180,315 @@ local function step(mover, ctx, world)
         end
         if mover.phase == "complete" then
             p.move(nil)
+            mover.index, mover.started, mover.retries, mover.airborne = mover.index + 1, nil, 0, nil
+            if mover.index > #mover.edges then mover.status = "done"; return "done" end
+        end
+        return "running"
+    end
+    if edge.kind == "rope_grab" or edge.kind == "rope_climb" or edge.kind == "rope_leave" or edge.kind == "rope_hop" then
+        local p = ctx.game.player
+        local terrain = require("lib.terrain")
+        local invalid
+        if edge.kind == "rope_climb" then
+            if type(edge.x) ~= "number" or type(edge.target_y) ~= "number" then invalid = true end
+        elseif edge.kind == "rope_leave" then
+            if type(edge.x) ~= "number" or type(edge.destination) ~= "number" or type(edge.to) ~= "number" then
+                invalid = true
+            end
+        elseif edge.kind == "rope_hop" then
+            -- rope_hop 只用目标绳轴决定跳跃方向；x 是源绳轴，执行时由当前绳上位置代替。
+            if type(edge.destination) ~= "number" then invalid = true end
+        elseif type(edge.x) ~= "number" or type(edge.destination) ~= "number" then
+            invalid = true
+        end
+        if invalid then
+            p.move(nil)
+            if mover.jump_held then p.skill(nil); mover.jump_held = nil; mover.release_tick = ctx.tick.index end
+            mover.status, mover.reason = "failed", "invalid_edge"
+            return "failed", mover.reason
+        end
+        -- 绳上状态无法靠重复同一相位恢复，缺失或绳索不匹配时直接失败，不做重试。
+        -- rope_hop 的 rope_index 是目标绳，源绳记录在 from_rope_index。
+        local source_rope = edge.kind == "rope_hop" and edge.from_rope_index or edge.rope_index
+        if edge.kind ~= "rope_grab" and (mover.on_rope ~= true
+            or (type(source_rope) == "number" and type(mover.rope_index) == "number"
+                and source_rope ~= mover.rope_index)) then
+            p.move(nil)
+            mover.on_rope, mover.rope_index = nil, nil
+            mover.status, mover.reason = "failed", "rope_mismatch"
+            return "failed", mover.reason
+        end
+        if mover.active_edges ~= mover.edges or mover.active_index ~= mover.index then
+            mover.active_edges, mover.active_index, mover.edge_started = mover.edges, mover.index, now
+            mover.airborne, mover.downjump_preheld = nil, nil
+            local movement = ctx.game.character and ctx.game.character.movement
+            local speed = movement and movement.max_speed
+            if type(speed) ~= "number" or speed <= 0 or speed ~= speed or speed == math.huge then speed = 100 end
+            if edge.kind == "rope_grab" then
+                mover.edge_timeout = 10 + 2 * math.abs(edge.x - character.x) / speed
+            elseif edge.kind == "rope_climb" then
+                mover.edge_timeout = 10 + 2 * math.abs(edge.target_y - character.y) / 100
+            else
+                mover.edge_timeout = 10
+            end
+        end
+        if not mover.started then
+            if mover.retries == 0 then mover.edge_started, mover.airborne = now, nil end
+            mover.started, mover.phase_time = now, now
+            mover.rope_last_y, mover.rope_step_streak = nil, 0
+            mover.leave_preheld = nil
+            if edge.kind == "rope_grab" then
+                local rope = rope_at(mover.graph, edge.rope_index)
+                local top, bottom
+                if type(rope) == "table" and type(rope.y1) == "number" and type(rope.y2) == "number" then
+                    top, bottom = math.min(rope.y1, rope.y2), math.max(rope.y1, rope.y2)
+                end
+                local grab_y = type(edge.grab_y) == "number" and edge.grab_y or edge.destination
+                if top and bottom and bottom >= character.y - 20 and top <= character.y then
+                    -- 绳段进入脚下 20px 的原版地面向上抓取区间：走到绳轴后按上即可附着，无需跳跃。
+                    mover.phase = "ground"
+                elseif grab_y - character.y > 10 then
+                    -- 抓点明显低于平台：走到平台边缘走出后下落抓取。
+                    mover.phase = "walkoff"
+                else
+                    mover.phase = "align"
+                end
+            elseif edge.kind == "rope_climb" then
+                mover.phase = "climb"
+                mover.progress_time, mover.progress_y = now, character.y
+                local rope = rope_at(mover.graph, edge.rope_index)
+                if type(rope) == "table" and type(rope.y1) == "number" and type(rope.y2) == "number" then
+                    local top = math.min(rope.y1, rope.y2)
+                    -- 靠近绳顶时继续按上，让原版顶端退出把角色放到上层平台。
+                    mover.climb_top_exit = math.abs(edge.target_y - top) <= 10
+                else
+                    mover.climb_top_exit = nil
+                end
+            elseif edge.kind == "rope_hop" then
+                mover.phase = "hop"
+                mover.leave_direction = edge.destination >= character.x and "right" or "left"
+            else
+                mover.phase = "leave"
+                mover.leave_direction = edge.destination >= character.x and "right" or "left"
+                mover.progress_time, mover.progress_x = now, character.x
+                -- 落点与绳轴几乎同列时不做无意义跳跃，按上到绳顶自然脱绳再校验落点平台。
+                mover.leave_top_exit = math.abs(edge.destination - edge.x) <= 8
+            end
+        end
+        local failure
+        if now - mover.edge_started >= mover.edge_timeout then
+            if edge.kind == "rope_leave" then
+                failure = "landing_mismatch"
+            elseif edge.kind == "rope_grab" or edge.kind == "rope_hop" then
+                failure = "rope_grab_failed"
+            else
+                failure = "timeout"
+            end
+        end
+        if not failure and mover.phase == "ground" then
+            if character.on_ground == false then
+                mover.phase, mover.phase_time, mover.airborne = "grab", now, true
+                if not p.move("up") then failure = "unsupported_edge" end
+            elseif math.abs(character.x - edge.destination) > 8 then
+                if not p.move(character.x < edge.destination and "right" or "left") then failure = "unsupported_edge" end
+            elseif not p.move("up") then
+                failure = "unsupported_edge"
+            end
+        elseif not failure and mover.phase == "align" then
+            if character.on_ground == false then
+                -- 起跳前先落回平台；不在地面时不推进相位，超时兜底。
+                if not p.move(nil) then failure = "unsupported_edge" end
+            elseif math.abs(character.x - edge.x) > 8 then
+                if not p.move(character.x < edge.x and "right" or "left") then failure = "unsupported_edge" end
+            else
+                local direction
+                if edge.destination - edge.x > 6 then direction = "right"
+                elseif edge.x - edge.destination > 6 then direction = "left" end
+                if not (p.move(direction) and p.jump()) then failure = "unsupported_edge" else
+                    mover.phase, mover.phase_time, mover.jump_held = "grab", now, true
+                    mover.airborne = nil
+                end
+            end
+        elseif not failure and mover.phase == "walkoff" then
+            if character.on_ground == false then
+                mover.phase, mover.phase_time, mover.airborne = "grab", now, true
+                if not p.move("up") then failure = "unsupported_edge" end
+            else
+                local direction
+                if edge.destination > character.x then
+                    direction = "right"
+                elseif edge.destination < character.x then
+                    direction = "left"
+                else
+                    local platforms = type(mover.graph) == "table" and mover.graph.platforms
+                    local platform = type(platforms) == "table" and edge.from and platforms[edge.from] or nil
+                    direction = type(platform) == "table" and platform.open_left and "left" or "right"
+                end
+                if not p.move(direction) then failure = "unsupported_edge" end
+            end
+        elseif not failure and mover.phase == "grab" then
+            if not p.move("up") then failure = "unsupported_edge" end
+            if not failure and mover.jump_held and now - mover.phase_time >= 0.3 then
+                p.skill(nil)
+                mover.jump_held, mover.release_tick = nil, ctx.tick.index
+            end
+            if character.on_ground == false then mover.airborne = true end
+            if not failure and mover.airborne and character.on_ground == true then
+                failure = "rope_grab_failed"
+            end
+            if not failure and character.on_ground == false
+                and climb_step(mover, character, edge.destination, rope_at(mover.graph, edge.rope_index),
+                    ctx.tick and ctx.tick.delta) then
+                if mover.jump_held then p.skill(nil); mover.jump_held = nil end
+                p.move(nil)
+                mover.on_rope, mover.rope_index = true, edge.rope_index
+                mover.phase = "complete"
+            end
+        elseif not failure and mover.phase == "climb" then
+            local delta = edge.target_y - character.y
+            if math.abs(character.x - edge.x) > 10 then
+                failure = "rope_mismatch"
+            elseif mover.climb_top_exit then
+                -- 绳顶退出：继续按上，等原版顶端逻辑让角色落到上层平台，或被顶端钳住不再移动。
+                if character.on_ground == true then
+                    p.move(nil)
+                    mover.phase = "complete"
+                else
+                    if not p.move("up") then failure = "unsupported_edge" end
+                    if not failure and character.y == mover.rope_last_y then
+                        mover.rope_step_streak = (mover.rope_step_streak or 0) + 1
+                        if mover.rope_step_streak >= 3 then p.move(nil); mover.phase = "complete" end
+                    else
+                        mover.rope_step_streak = 0
+                    end
+                    mover.rope_last_y = character.y
+                    if not failure and mover.phase == "climb" and now - mover.progress_time >= 2 then
+                        if math.abs(character.y - mover.progress_y) < 5 then failure = "no_progress" end
+                        mover.progress_time, mover.progress_y = now, character.y
+                    end
+                end
+            elseif math.abs(delta) <= 6 then
+                p.move(nil)
+                mover.phase = "complete"
+            elseif character.on_ground == true then
+                failure = "rope_mismatch"
+            else
+                if not p.move(delta < 0 and "up" or "down") then
+                    failure = "unsupported_edge"
+                elseif character.y == mover.rope_last_y then
+                    -- 附着时每 30ms 至少移动 3px；连续无变化说明已掉离绳梯。
+                    mover.rope_step_streak = (mover.rope_step_streak or 0) + 1
+                    if mover.rope_step_streak >= 3 then failure = "rope_mismatch" end
+                else
+                    mover.rope_step_streak = 0
+                end
+                mover.rope_last_y = character.y
+                if not failure and now - mover.progress_time >= 2 then
+                    if math.abs(character.y - mover.progress_y) < 5 then failure = "no_progress" end
+                    mover.progress_time, mover.progress_y = now, character.y
+                end
+            end
+        elseif not failure and mover.phase == "hop" then
+            if not p.move(mover.leave_direction) then
+                failure = "unsupported_edge"
+            elseif mover.leave_preheld then
+                if not p.jump() then
+                    failure = "unsupported_edge"
+                else
+                    mover.phase, mover.phase_time, mover.jump_held = "hop_flight", now, true
+                    mover.airborne = nil
+                end
+            else
+                mover.leave_preheld = true
+            end
+        elseif not failure and mover.phase == "hop_flight" then
+            if not p.move("up") then failure = "unsupported_edge" end
+            if not failure and mover.jump_held and now - mover.phase_time >= 0.3 then
+                p.skill(nil)
+                mover.jump_held, mover.release_tick = nil, ctx.tick.index
+            end
+            if character.on_ground == false then mover.airborne = true end
+            if not failure and mover.airborne and character.on_ground == true then
+                failure = "rope_grab_failed"
+            end
+            if not failure and character.on_ground == false
+                and climb_step(mover, character, edge.destination, rope_at(mover.graph, edge.rope_index),
+                    ctx.tick and ctx.tick.delta) then
+                if mover.jump_held then p.skill(nil); mover.jump_held = nil end
+                p.move(nil)
+                mover.on_rope, mover.rope_index = true, edge.rope_index
+                mover.phase = "complete"
+            end
+        elseif not failure and mover.phase == "leave" then
+            if character.on_ground == true then
+                -- 爬绳顶端已经自然落到平台：直接校验落点，不再要求一次跳跃。
+                local platform = terrain.platform_at(mover.graph, character.x, character.y, 20)
+                if platform == edge.to and math.abs(character.x - edge.destination) <= 20 then
+                    mover.phase = "complete"
+                else
+                    failure = "landing_mismatch"
+                end
+            elseif math.abs(character.x - edge.x) > 10 then
+                failure = "rope_mismatch"
+            elseif mover.leave_top_exit then
+                -- 落点与绳轴同列：不做无意义跳跃，按上到绳顶自然脱绳，落地后校验目标平台。
+                if not p.move("up") then failure = "unsupported_edge" end
+            elseif not p.move(mover.leave_direction) then
+                failure = "unsupported_edge"
+            elseif mover.leave_preheld then
+                if not p.jump() then
+                    failure = "unsupported_edge"
+                else
+                    mover.phase, mover.phase_time, mover.jump_held = "leave_flight", now, true
+                    mover.airborne = nil
+                end
+            else
+                mover.leave_preheld = true
+            end
+        elseif not failure and mover.phase == "leave_flight" then
+            if character.on_ground == false then mover.airborne = true end
+            if mover.airborne and character.on_ground == true then
+                p.move(nil)
+                if mover.jump_held then p.skill(nil); mover.jump_held = nil end
+                local platform = terrain.platform_at(mover.graph, character.x, character.y, 20)
+                if platform ~= edge.to or math.abs(character.x - edge.destination) > 20 then
+                    failure = "landing_mismatch"
+                else
+                    mover.phase = "complete"
+                end
+            else
+                local direction = character.x < edge.destination and "right" or "left"
+                if (direction == "right" and character.x >= edge.destination - 8)
+                    or (direction == "left" and character.x <= edge.destination + 8) then
+                    if not p.move(nil) then failure = "unsupported_edge" end
+                elseif not p.move(direction) then
+                    failure = "unsupported_edge"
+                end
+                if mover.jump_held and now - mover.phase_time >= 0.3 then
+                    p.skill(nil)
+                    mover.jump_held = nil
+                end
+                if not failure and now - mover.progress_time >= 2 then
+                    if math.abs(character.x - mover.progress_x) < 5 then failure = "no_progress" end
+                    mover.progress_time, mover.progress_x = now, character.x
+                end
+            end
+        end
+        if failure then
+            p.move(nil)
+            if mover.jump_held then p.skill(nil); mover.jump_held = nil; mover.release_tick = ctx.tick.index end
+            if failure ~= "timeout" and failure ~= "landing_mismatch" and mover.retries < 1 then
+                mover.retries, mover.started, mover.airborne = mover.retries + 1, nil, nil
+                return "running"
+            end
+            mover.on_rope, mover.rope_index = nil, nil
+            mover.status, mover.reason = "failed", failure
+            return "failed", failure
+        end
+        if mover.phase == "complete" then
+            p.move(nil)
+            if mover.jump_held then p.skill(nil); mover.jump_held = nil end
+            if edge.kind == "rope_leave" then mover.on_rope, mover.rope_index = nil, nil end
             mover.index, mover.started, mover.retries, mover.airborne = mover.index + 1, nil, 0, nil
             if mover.index > #mover.edges then mover.status = "done"; return "done" end
         end

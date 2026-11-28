@@ -67,7 +67,12 @@ local candidate_examples = {
 }
 for kind, values in pairs(candidate_examples) do
     local from, to = values[1], values[2]
-    local planned = assert(terrain.plan(graph_for_candidate(kind, values), from, to))
+    local candidate_graph = graph_for_candidate(kind, values)
+    if kind == "rope" then
+        -- 绳节点通道会生成更便宜的上下绳路径；这里只校验原生 rope 候选本身。
+        candidate_graph.rope_nodes = nil
+    end
+    local planned = assert(terrain.plan(candidate_graph, from, to))
     assert(#planned == 1 and planned[1].kind == kind, kind .. " candidate must be plannable")
     assert(planned[1].from == from and planned[1].to == to
         and planned[1].x == values[3] and planned[1].destination == values[4]
@@ -114,10 +119,11 @@ assert(open_drop.kind == "drop" and open_drop.from == 1 and open_drop.to == 2,
 
 local plan_graph = assert(terrain.build(synthetic.navigation))
 local planned = assert(terrain.plan(plan_graph, 1, 4, {speed = 125, blocked = {}}))
-assert(#planned == 3, "synthetic path must use three edges")
-assert(planned[1].kind == "walk" and planned[2].kind == "step" and planned[3].kind == "rope",
-    "A* must choose the lowest-cost valid route")
-assert(planned[1].from == 1 and planned[3].to == 4, "path endpoints must match the request")
+assert(#planned >= 3, "synthetic path must use at least three edges")
+assert(planned[1].kind == "walk" and planned[2].kind == "step"
+    and planned[3].kind == "rope_grab" and planned[#planned].kind == "rope_leave",
+    "A* must route through the rope channel instead of the native rope candidate")
+assert(planned[1].from == 1 and planned[#planned].to == 4, "path endpoints must match the request")
 for index = 1, #planned - 1 do
     assert(planned[index].to == planned[index + 1].from, "path edges must be continuous")
 end
@@ -161,12 +167,16 @@ assert(filtered_path == nil and filtered_reason == "no_path", "drop above the mo
 filtered_path, filtered_reason = terrain.plan(
     graph_for_candidate("drop", {1, 2, 90, 150, 3}), 1, 2)
 assert(filtered_path == nil and filtered_reason == "no_path", "drop below the model limit must be filtered")
-filtered_path, filtered_reason = terrain.plan(
-    graph_for_candidate("rope", {3, 4, 260, 260, 96, 1}), 3, 4)
-assert(filtered_path and filtered_path[1].kind == "rope" and filtered_path[1].rise == 96, "long rope climbs must not be filtered by grab tolerance")
-filtered_path, filtered_reason = terrain.plan(
-    graph_for_candidate("rope", {3, 4, 260, 260, -96, 1}), 3, 4)
-assert(filtered_path and filtered_path[1].kind == "rope" and filtered_path[1].rise == -96, "long descending rope climbs must not be filtered by grab tolerance")
+local native_rope_graph = graph_for_candidate("rope", {3, 4, 260, 260, 96, 1})
+native_rope_graph.rope_nodes = nil
+filtered_path, filtered_reason = terrain.plan(native_rope_graph, 3, 4)
+assert(filtered_path and filtered_path[1].kind == "rope" and filtered_path[1].rise == 96,
+    "long rope climbs must not be filtered by grab tolerance")
+native_rope_graph = graph_for_candidate("rope", {3, 4, 260, 260, -96, 1})
+native_rope_graph.rope_nodes = nil
+filtered_path, filtered_reason = terrain.plan(native_rope_graph, 3, 4)
+assert(filtered_path and filtered_path[1].kind == "rope" and filtered_path[1].rise == -96,
+    "long descending rope climbs must not be filtered by grab tolerance")
 
 local overlap_navigation = navigation_with_platforms({
     {index = 1, left = 0, right = 100, open_left = true, open_right = true, segments = {0, 100, 100, 100}},
@@ -310,9 +320,11 @@ local map10000 = dofile("bot/test/fixtures/map_10000.lua")
 assert(map10000.map_id == 10000, "tutorial fixture must retain the captured map identity")
 local tutorial_graph = assert(terrain.build(map10000.navigation))
 local rope_path = assert(terrain.plan(tutorial_graph, 4, 1))
-assert(rope_path[1].kind == "rope" and rope_path[1].from == 4 and rope_path[1].to == 1
-    and rope_path[1].rise == -240 and rope_path[1].rope_index,
-    "map 10000 p4-to-p1 must retain its long rope edge")
+assert(rope_path[1].kind == "rope_grab" and rope_path[1].from == 4
+    and rope_path[1].rope_index == 1 and rope_path[1].x == 975
+    and rope_path[#rope_path].kind == "rope_leave" and rope_path[#rope_path].to == 1
+    and rope_path[#rope_path].rise == -2,
+    "map 10000 p4-to-p1 must climb the long rope channel")
 local tutorial_jump = assert(terrain.plan(tutorial_graph, 4, 10, {speed = 125}))
 assert(#tutorial_jump == 1 and tutorial_jump[1].kind == "horizontal_jump"
     and tutorial_jump[1].from == 4 and tutorial_jump[1].to == 10
@@ -325,6 +337,252 @@ for _, pair in ipairs({{3, 4}, {9, 10}, {7, 8}, {7, 9}}) do
         ("blocked or unreachable tutorial route %d->%d must remain no_path"):format(pair[1], pair[2]))
 end
 
+-- 绳通道：斜面平台抓绳、攀爬、绳间跳跃与跳离。
+local rope_fixture = dofile("bot/test/fixtures/rope_terrain.lua")
+local rope_graph = assert(terrain.build(rope_fixture.navigation))
+assert(#rope_graph.rope_nodes > 0 and rope_graph.rope_nodes[1].node == #rope_graph.platforms + 1,
+    "rope nodes must be appended after the platform nodes")
+assert(rope_graph.rope_nodes[1].rope == 1 and rope_graph.rope_nodes[1].y < rope_graph.rope_nodes[2].y,
+    "rope nodes must carry the rope index and rise along the rope")
+assert(terrain.platform_at(rope_graph, 130, 60, 0) == 1,
+    "sloped platform height must be interpolated for the rope launch point")
+local climb_path = assert(terrain.plan(rope_graph, 1, 2))
+assert(#climb_path == 7, "sloped platform -> rope -> upper platform must plan grab, five climbs and leave")
+local rope_grab = climb_path[1]
+assert(rope_grab.kind == "rope_grab" and rope_grab.from == 1
+    and rope_grab.to == rope_graph.rope_nodes[6].node
+    and rope_grab.x == 260 and rope_grab.destination == 330
+    and rope_grab.grab_y == -60 and rope_grab.rise == -60 and rope_grab.rope_index == 1,
+    "rope_grab must launch from the interpolated sloped edge at the 70px horizontal boundary")
+for index = 2, #climb_path - 1 do
+    local edge = climb_path[index]
+    assert(edge.kind == "rope_climb" and edge.x == 330 and edge.destination == 330
+        and edge.rise == -40 and edge.target_y == rope_grab.grab_y - 40 * (index - 1),
+        "rope_climb must step between adjacent 40px rope nodes")
+end
+local rope_leave = climb_path[#climb_path]
+assert(rope_leave.kind == "rope_leave" and rope_leave.to == 2 and rope_leave.x == 330
+    and rope_leave.destination == 330 and rope_leave.rise == -10,
+    "rope_leave must jump onto a platform above the rope node")
+local descend_path = assert(terrain.plan(rope_graph, 1, 3))
+assert(#descend_path == 2 and descend_path[1].kind == "rope_grab" and descend_path[1].rise == 20
+    and descend_path[2].kind == "rope_leave" and descend_path[2].to == 3 and descend_path[2].rise == 180,
+    "rope_leave must also support landing below the rope node")
+
+-- 抓绳判定边界：水平 71px 与整体高于起跳窗口的绳都不可抓。
+local farther_rope = dofile("bot/test/fixtures/rope_terrain.lua").navigation
+farther_rope.ropes[1].x = 331
+local farther_path, farther_reason = terrain.plan(assert(terrain.build(farther_rope)), 1, 2)
+assert(farther_path == nil and farther_reason == "no_path", "a rope 71px away must not be grabbable")
+local high_rope = dofile("bot/test/fixtures/rope_terrain.lua").navigation
+high_rope.ropes[1].y1, high_rope.ropes[1].y2 = -500, -400
+local high_path, high_reason = terrain.plan(assert(terrain.build(high_rope)), 1, 3)
+assert(high_path == nil and high_reason == "no_path", "a rope entirely above the grab window must not be grabbable")
+local boundary_rope = dofile("bot/test/fixtures/rope_terrain.lua").navigation
+boundary_rope.ropes[1].y1, boundary_rope.ropes[1].y2 = -75, 100
+assert(terrain.plan(assert(terrain.build(boundary_rope)), 1, 3),
+    "a rope node exactly on the grab window edge must be grabbable")
+
+local function rope_navigation(platforms, ropes, walls)
+    return {
+        model = synthetic.navigation.model,
+        terrain_left = 0,
+        terrain_right = 1200,
+        platforms = platforms,
+        walls = walls or {},
+        ropes = ropes,
+        candidates = {walk = {}, step = {}, jumpup = {}, drop = {}, rope = {}},
+    }
+end
+
+-- 从平台上沿下落 220px 内抓绳；墙挡住直接 downjump，确保路径只能走绳。
+local fall_platforms = {
+    {index=1, left=0, right=100, open_left=true, open_right=true, segments={0,100,-500,-500}},
+    {index=2, left=0, right=100, open_left=true, open_right=true, segments={0,100,200,200}},
+}
+local block_wall = {50, -1000, 1000}
+local fall_rope = {index=1, x=150, y1=-280, y2=0, platforms={}}
+local fall_graph = assert(terrain.build(rope_navigation(fall_platforms, {fall_rope}, block_wall)))
+local fall_path = assert(terrain.plan(fall_graph, 1, 2))
+assert(#fall_path == 2 and fall_path[1].kind == "rope_grab" and fall_path[1].grab_y == -280
+    and fall_path[1].rise == 220 and fall_path[2].kind == "rope_leave" and fall_path[2].to == 2,
+    "a falling grab up to 220px below the launch must be reachable")
+local too_low_rope = {index=1, x=150, y1=-270, y2=0, platforms={}}
+local too_low_graph = assert(terrain.build(rope_navigation(fall_platforms, {too_low_rope}, block_wall)))
+local too_low_path, too_low_reason = terrain.plan(too_low_graph, 1, 2)
+assert(too_low_path == nil and too_low_reason == "no_path",
+    "a rope top more than 220px below the launch must not be grabbable")
+
+-- rope_leave 跳离上升上限 19px 与水平超距。
+local leave_platforms = {
+    {index=1, left=0, right=100, open_left=true, open_right=true, segments={0,100,0,0}},
+    {index=2, left=100, right=200, open_left=true, open_right=true, segments={100,200,-139,-139}},
+}
+local leave_rope = {index=1, x=150, y1=-120, y2=100, platforms={}}
+local leave_graph = assert(terrain.build(rope_navigation(leave_platforms, {leave_rope})))
+local rise19_path = assert(terrain.plan(leave_graph, 1, 2))
+local rise19 = rise19_path[#rise19_path]
+assert(rise19.kind == "rope_leave" and rise19.to == 2 and rise19.rise == -19
+    and rise19.destination == 150, "rope_leave must allow landing 19px above the rope node")
+leave_platforms[2].segments = {100, 200, -140, -140}
+local rise20_path, rise20_reason = terrain.plan(assert(terrain.build(
+    rope_navigation(leave_platforms, {leave_rope}))), 1, 2)
+assert(rise20_path == nil and rise20_reason == "no_path",
+    "rope_leave must reject landings more than 19px above the rope node")
+local overshoot_platforms = {
+    {index=1, left=0, right=100, open_left=true, open_right=true, segments={0,100,0,0}},
+    {index=2, left=400, right=600, open_left=true, open_right=true, segments={400,600,200,200}},
+}
+local overshoot_path, overshoot_reason = terrain.plan(assert(terrain.build(
+    rope_navigation(overshoot_platforms, {leave_rope}))), 1, 2)
+assert(overshoot_path == nil and overshoot_reason == "no_path",
+    "rope_leave must reject a platform beyond the horizontal airtime reach")
+overshoot_platforms[2].left, overshoot_platforms[2].right = 200, 420
+overshoot_platforms[2].segments = {200, 420, 200, 200}
+local reach_path = assert(terrain.plan(assert(terrain.build(
+    rope_navigation(overshoot_platforms, {leave_rope}))), 1, 2))
+assert(#reach_path == 2 and reach_path[2].kind == "rope_leave" and reach_path[2].to == 2
+    and reach_path[2].destination == 208 and reach_path[2].rise >= 100,
+    "rope_leave must reach a platform inside the horizontal airtime envelope")
+
+-- 端到端：真实地图 103030100 中间绳链（R3->R4->R5->R6）。
+local chain_fixture = dofile("bot/test/fixtures/map_103030100.lua")
+local chain_graph = assert(terrain.build(chain_fixture.navigation))
+local left_detour = assert(terrain.plan(chain_graph, 1, 3))
+assert(left_detour[#left_detour].kind == "horizontal_jump" and left_detour[#left_detour].from == 2
+    and left_detour[#left_detour].to == 3,
+    "unblocked plan(1,3) must keep using the left detour onto P3")
+local chain_path = assert(terrain.plan(chain_graph, 1, 3, {blocked = {["1:15"]=true, ["15:2"]=true, ["2:3"]=true}}))
+local chain_hops, chain_ropes = 0, {}
+for _, edge in ipairs(chain_path) do
+    if edge.kind == "rope_hop" then
+        chain_hops = chain_hops + 1
+        chain_ropes[#chain_ropes + 1] = edge.rope_index
+    end
+end
+assert(chain_path[1].kind == "rope_grab" and chain_path[1].rope_index == 3
+    and chain_path[1].x == 1267 and chain_path[1].grab_y == 128,
+    "blocked left detour must grab R3 from the ground platform")
+assert(chain_hops >= 2 and chain_ropes[1] == 4 and chain_ropes[#chain_ropes] == 6,
+    "middle chain must hop R3->R4->R5->R6 in order")
+assert(chain_path[#chain_path].kind == "rope_leave" and chain_path[#chain_path].to == 3
+    and chain_path[#chain_path].destination == 1547,
+    "middle chain must leave R6 onto P3 at the rope axis")
+local function node_x(graph, index)
+    if index <= #graph.platforms then
+        local platform = graph.platforms[index]
+        return (platform.left + platform.right) / 2
+    end
+    for _, node in ipairs(graph.rope_nodes) do
+        if node.node == index then
+            for _, rope in ipairs(graph.ropes) do
+                if rope.index == node.rope then return rope.x end
+            end
+        end
+    end
+end
+local function path_cost(graph, path, speed)
+    local total = 0
+    for _, edge in ipairs(path) do
+        local dx = math.abs(node_x(graph, edge.to) - node_x(graph, edge.from))
+        if edge.kind == "walk" then total = total + dx / speed
+        elseif edge.kind == "step" then total = total + 0.05 + dx / speed
+        elseif edge.kind == "jumpup" then total = total + 0.6 + dx / speed
+        elseif edge.kind == "drop" then total = total + 0.4 + dx / speed
+        elseif edge.kind == "rope" then total = total + 0.8 + math.abs(edge.rise) / 100
+        elseif edge.kind == "horizontal_jump" then total = total + 0.8 + math.abs(edge.destination - edge.x) / speed
+        elseif edge.kind == "downjump" then total = total + 0.6 + dx / speed
+        elseif edge.kind == "rope_grab" then
+            total = total + 0.3 + math.abs(edge.destination - edge.x) / 125 + math.abs(edge.rise) / 200
+        elseif edge.kind == "rope_climb" then total = total + math.abs(edge.rise) / 100 + 0.02
+        elseif edge.kind == "rope_hop" then
+            total = total + 0.6 + math.abs(edge.destination - edge.x) / 162.5
+                + math.abs(edge.grab_y - edge.leave_y) / 200
+        elseif edge.kind == "rope_leave" then
+            total = total + 0.3 + math.abs(edge.destination - edge.x) / 162.5 + math.abs(edge.rise) / 200
+        end
+    end
+    return total
+end
+local middle_cost = path_cost(chain_graph, chain_path, 100)
+local detour_cost = path_cost(chain_graph, left_detour, 100)
+print(("rope chain: middle edges=%d cost=%.3f; left detour edges=%d cost=%.3f; ratio=%.2f")
+    :format(#chain_path, middle_cost, #left_detour, detour_cost, middle_cost / detour_cost))
+for index, edge in ipairs(chain_path) do
+    print(("  %d %s %s->%s x=%s destination=%s rise=%s grab_y=%s leave_y=%s")
+        :format(index, edge.kind, tostring(edge.from), tostring(edge.to), tostring(edge.x),
+            tostring(edge.destination), tostring(edge.rise), tostring(edge.grab_y), tostring(edge.leave_y)))
+end
+
+-- 反向兜底：屏蔽旧绕行以及 P3 的直接 downjump/垂降后，plan(3,1) 经 R6->R5->R4->R3 回到 P1。
+local reverse_blocked = {["1:15"]=true, ["15:2"]=true, ["2:3"]=true,
+    ["3:2"]=true, ["2:15"]=true, ["15:1"]=true}
+for to = 1, #chain_graph.platforms do
+    if to ~= 3 then reverse_blocked["3:" .. to] = true end
+end
+for from = 1, #chain_graph.platforms do
+    if from ~= 1 then reverse_blocked[from .. ":1"] = true end
+end
+for _, node in ipairs(chain_graph.rope_nodes) do
+    if node.rope ~= 3 then reverse_blocked[node.node .. ":1"] = true end
+    if node.rope ~= 6 then reverse_blocked["3:" .. node.node] = true end
+end
+local reverse_path = assert(terrain.plan(chain_graph, 3, 1, {blocked = reverse_blocked}))
+local reverse_hops = {}
+for _, edge in ipairs(reverse_path) do
+    if edge.kind == "rope_hop" then reverse_hops[#reverse_hops + 1] = edge.rope_index end
+end
+assert(reverse_path[1].kind == "rope_grab" and reverse_path[1].rope_index == 6,
+    "reverse chain must grab R6 from P3")
+assert(#reverse_hops >= 2 and reverse_hops[1] == 5 and reverse_hops[#reverse_hops] == 3,
+    "reverse chain must hop R6->R5->R4->R3")
+assert(reverse_path[#reverse_path].kind == "rope_leave" and reverse_path[#reverse_path].to == 1
+    and reverse_path[#reverse_path].x == 1267,
+    "reverse chain must leave R3 onto the ground platform")
+local reverse_kinds = {}
+for _, edge in ipairs(reverse_path) do reverse_kinds[#reverse_kinds + 1] = edge.kind end
+print(("rope chain reverse ok: edges=%d kinds=%s")
+    :format(#reverse_path, table.concat(reverse_kinds, ",")))
+
 print(("terrain ok: synthetic locations=8; map=%d platforms=%d candidates=%d character=(%d,%d) platform=%d path=%d->1 edges=%d kinds=%s")
     :format(real.map_id, #real_graph.platforms, candidate_count, character_x, character_y,
         character_platform, character_platform, #real_path, table.concat(real_path_kinds, ",")))
+
+-- 禁边键兼容：navigation 数值经后端序列化为浮点（15.0）时，整数语义键 "15:2" 与主流程
+-- 按原始数值 tostring 的 "15.0:2.0" 都必须能禁用对应边。
+local function float_numbers(value)
+    if type(value) == "number" then return value + 0.0 end
+    if type(value) ~= "table" then return value end
+    local copy = {}
+    for key, item in pairs(value) do copy[key] = float_numbers(item) end
+    return copy
+end
+local float_graph = assert(terrain.build(float_numbers(chain_fixture.navigation)))
+local function path_has_edge(path, from, to)
+    for _, edge in ipairs(path or {}) do
+        if edge.from == from and edge.to == to then return true end
+    end
+    return false
+end
+local mini_navigation = {
+    model = {stand_height = 70, wall_margin = 12, min_platform_width = 16, jump_rise = 75,
+        drop_min = 4, drop_max = 65, rope_grab = 76},
+    terrain_left = 0, terrain_right = 200,
+    platforms = {
+        {index = 1, left = 0, right = 100, open_left = false, open_right = true,
+            segments = {0, 100, 100, 100}},
+        {index = 2, left = 120, right = 200, open_left = true, open_right = false,
+            segments = {120, 200, 120, 120}},
+    },
+    walls = {}, ropes = {},
+    candidates = {walk = {}, step = {1.0, 2.0, 92.0, 128.0, 20.0}, jumpup = {}, drop = {}, rope = {}},
+}
+local mini_graph = assert(terrain.build(mini_navigation))
+local mini_plain = assert(terrain.plan(mini_graph, 1, 2, {}))
+assert(mini_plain[1].kind == "step" and mini_plain[1].from == 1 and mini_plain[1].to == 2,
+    "float navigation keeps the native 1->2 step edge")
+assert(not path_has_edge(terrain.plan(mini_graph, 1, 2, {blocked = {["1:2"] = true}}), 1, 2),
+    "integer blocked key suppresses a float-id native edge")
+-- Lua 5.1 的 tostring(1.0) 输出 "1"，与客户端运行时（tostring(1.0) 输出 "1.0"）不同；
+-- 原始 tostring 键的兼容分支由 edge_blocked 的第二种格式覆盖，这里无法在 5.1 下构造该键。
+print("terrain blocked key compatibility ok")

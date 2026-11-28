@@ -120,11 +120,40 @@ function M.build(navigation)
         end
     end
 
+    -- Rope nodes turn each rope into a vertical channel sampled at 40px, with
+    -- both ends and the layers where a platform touches the rope as anchors.
+    local rope_nodes = {}
+    for _, rope in ipairs(ropes) do
+        local low, high = math.min(rope.y1, rope.y2), math.max(rope.y1, rope.y2)
+        local heights = {low, high}
+        for pair_index = 1, #rope.platforms, 2 do
+            heights[#heights + 1] = math.max(low, math.min(high, rope.platforms[pair_index + 1]))
+        end
+        local sampled = low + 40
+        while sampled < high do
+            heights[#heights + 1] = sampled
+            sampled = sampled + 40
+        end
+        table.sort(heights)
+        local previous
+        for _, height in ipairs(heights) do
+            if previous == nil or height - previous > 0.001 then
+                rope_nodes[#rope_nodes + 1] = {
+                    node = platform_count + #rope_nodes + 1,
+                    rope = rope.index,
+                    y = height,
+                }
+                previous = height
+            end
+        end
+    end
+
     return {
         navigation = navigation,
         platforms = platforms,
         walls = walls,
         ropes = ropes,
+        rope_nodes = rope_nodes,
         candidates = candidates,
         model = model,
         terrain_left = terrain_left,
@@ -287,6 +316,14 @@ function M.plan(graph, from_index, to_index, options)
     local max_jump_height = finite_number(options.max_jump_height) and options.max_jump_height
         or graph.model.jump_rise
     local blocked = type(options.blocked) == "table" and options.blocked or {}
+    -- navigation 数值经后端序列化后可能是浮点（15.0），策略层的禁边键是 "from:to" 整数语义；
+    -- 统一按整数格式化，避免原生边因 "15.0:2.0" 与 "15:2" 不一致而绕过禁边。
+    local function edge_blocked(from, to)
+        -- 同时接受整数语义键和调用方按原始数值 tostring 出的键，兼容主流程的
+        -- memory.blocked["from:to"]（navigation 浮点 id 可能写成 "15.0:2.0"）。
+        return blocked[string.format("%d:%d", from, to)] ~= nil
+            or blocked[tostring(from) .. ":" .. tostring(to)] ~= nil
+    end
     local effective_speed = math.max(1, speed)
     local model = graph.model
     local platform_x = {}
@@ -306,7 +343,7 @@ function M.plan(graph, from_index, to_index, options)
                 local rope_index = kind == "rope" and values[offset + 5] or nil
                 local valid = valid_platform(from) and valid_platform(to)
                     and finite_number(x) and finite_number(destination) and finite_number(rise)
-                    and not blocked[tostring(from) .. ":" .. tostring(to)]
+                    and not edge_blocked(from, to)
                 if valid then
                     if kind == "jumpup" then
                         local max_rise = math.min(model.jump_rise, max_jump_height)
@@ -375,7 +412,7 @@ function M.plan(graph, from_index, to_index, options)
     local walls = type(graph.walls) == "table" and graph.walls or {}
     for from, source in ipairs(platforms) do
         for to, target in ipairs(platforms) do
-            if from ~= to and not blocked[tostring(from) .. ":" .. tostring(to)] then
+            if from ~= to and not edge_blocked(from, to) then
                 local x, destination, rise = horizontal_launch(source, target, from, to, platforms, walls,
                     model, math.min(model.jump_rise, max_jump_height))
                 if x then
@@ -392,7 +429,7 @@ function M.plan(graph, from_index, to_index, options)
     -- Derive vertical platform-through relations without changing the native snapshot.
     for from, source in ipairs(platforms) do
         for to, target in ipairs(platforms) do
-            if from ~= to and not blocked[tostring(from) .. ":" .. tostring(to)] then
+            if from ~= to and not edge_blocked(from, to) then
                 local left = math.max(source.left, target.left) + 8
                 local right = math.min(source.right, target.right) - 8
                 if left <= right and target.right - target.left >= model.min_platform_width then
@@ -435,6 +472,188 @@ function M.plan(graph, from_index, to_index, options)
         end
     end
 
+    -- Rope nodes are appended after the platform nodes. Each rope is a vertical
+    -- channel that can be entered from a platform, climbed, jumped across to
+    -- another rope, and left onto a platform.
+    local rope_nodes = type(graph.rope_nodes) == "table" and graph.rope_nodes or {}
+    local ropes = type(graph.ropes) == "table" and graph.ropes or {}
+    local rope_by_index, rope_entries = {}, {}
+    local node_x = {}
+    for index = 1, platform_count do node_x[index] = platform_x[index] end
+    for _, rope in ipairs(ropes) do rope_by_index[rope.index] = rope end
+    for _, entry in ipairs(rope_nodes) do
+        local rope = rope_by_index[entry.rope]
+        if rope then
+            node_x[entry.node] = rope.x
+            local entries = rope_entries[entry.rope]
+            if entries then
+                entries[#entries + 1] = entry
+            else
+                rope_entries[entry.rope] = {entry}
+            end
+        end
+    end
+    local function add_edge(edge)
+        if edge_blocked(edge.from, edge.to) then return end
+        adjacency[edge.from] = adjacency[edge.from] or {}
+        adjacency[edge.from][#adjacency[edge.from] + 1] = edge
+        edges[#edges + 1] = edge
+    end
+
+    for _, rope in ipairs(ropes) do
+        local entries = rope_entries[rope.index]
+        if entries then
+            table.sort(entries, function(left, right) return left.y < right.y end)
+            for index = 1, #entries - 1 do
+                local lower, upper = entries[index], entries[index + 1]
+                local rise = upper.y - lower.y
+                add_edge({kind="rope_climb", from=lower.node, to=upper.node, x=rope.x,
+                    destination=rope.x, rise=rise, rope_index=rope.index, target_y=upper.y,
+                    cost=math.abs(rise) / 100 + 0.02})
+                add_edge({kind="rope_climb", from=upper.node, to=lower.node, x=rope.x,
+                    destination=rope.x, rise=-rise, rope_index=rope.index, target_y=lower.y,
+                    cost=math.abs(rise) / 100 + 0.02})
+            end
+        end
+    end
+
+    for from, source in ipairs(platforms) do
+        for _, rope in ipairs(ropes) do
+            local launch_x = math.max(source.left, math.min(source.right, rope.x))
+            local launch_y = height_range(source, launch_x, launch_x, true)
+            local horizontal = math.abs(rope.x - launch_x)
+            if launch_y and horizontal <= 70 then
+                local span_left, span_right = math.min(launch_x, rope.x), math.max(launch_x, rope.x)
+                local apex_y = launch_y - model.jump_rise
+                local overhangs = {}
+                for index, platform in ipairs(platforms) do
+                    if index ~= from then
+                        local near, far = height_range(platform, span_left, span_right)
+                        if near then overhangs[#overhangs + 1] = {near, far} end
+                    end
+                end
+                -- The window covers both a jump-grab above the platform and a
+                -- falling grab below its edge.
+                for _, entry in ipairs(rope_entries[rope.index] or {}) do
+                    local grab_y = entry.y
+                    if grab_y >= apex_y and grab_y <= launch_y + 220 then
+                        local clear = true
+                        for _, overhang in ipairs(overhangs) do
+                            if overhang[1] <= grab_y and overhang[2] >= apex_y then
+                                clear = false
+                                break
+                            end
+                        end
+                        if clear then
+                            for index = 1, #walls, 3 do
+                                local wall_x, top, bottom = walls[index], walls[index + 1], walls[index + 2]
+                                if wall_x > span_left and wall_x < span_right then
+                                    local clear_above = math.max(0, launch_y - top) <= model.jump_rise
+                                    local pass_below = math.min(launch_y, grab_y) - model.stand_height >= bottom
+                                    if not clear_above and not pass_below then
+                                        clear = false
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        if clear then
+                            local rise = grab_y - launch_y
+                            add_edge({kind="rope_grab", from=from, to=entry.node, x=launch_x,
+                                destination=rope.x, rise=rise, rope_index=rope.index, grab_y=grab_y,
+                                cost=0.3 + horizontal / 125 + math.abs(rise) / 200})
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Jumping off a rope: the actor moves at 162.5px/s while rising 19px at most.
+    local hop_speed, hop_gravity, hop_up = 162.5, 2000, 277.5
+    for _, from_rope in ipairs(ropes) do
+        for _, to_rope in ipairs(ropes) do
+            local entries = rope_entries[from_rope.index]
+            if from_rope.index ~= to_rope.index and entries then
+                local distance = math.abs(to_rope.x - from_rope.x)
+                local airtime = distance / hop_speed
+                if airtime > 2 * hop_up / hop_gravity then
+                    local drop = -hop_up * airtime + hop_gravity / 2 * airtime * airtime
+                    local rope_low, rope_high = math.min(to_rope.y1, to_rope.y2),
+                        math.max(to_rope.y1, to_rope.y2)
+                    local targets = rope_entries[to_rope.index]
+                    for _, entry in ipairs(entries) do
+                        local arrival_y = entry.y + drop
+                        if arrival_y >= rope_low - 20 and arrival_y <= rope_high + 20 then
+                            local grab_y = arrival_y
+                            local target = nil
+                            for _, candidate in ipairs(targets) do
+                                if target == nil or math.abs(candidate.y - grab_y) < math.abs(target.y - grab_y) then
+                                    target = candidate
+                                end
+                            end
+                            add_edge({kind="rope_hop", from=entry.node, to=target.node, x=from_rope.x,
+                                destination=to_rope.x, rise=grab_y - entry.y, from_rope_index=from_rope.index,
+                                rope_index=to_rope.index, leave_y=entry.y, grab_y=grab_y,
+                                cost=0.6 + distance / hop_speed + math.abs(grab_y - entry.y) / 200})
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    for _, rope in ipairs(ropes) do
+        for _, entry in ipairs(rope_entries[rope.index] or {}) do
+            local rope_y = entry.y
+            for to, target in ipairs(platforms) do
+                local margin = math.min(8, (target.right - target.left) / 4)
+                local destination = math.max(target.left + margin,
+                    math.min(target.right - margin, rope.x))
+                local target_y = height_range(target, destination, destination, true)
+                local rise = target_y and target_y - rope_y
+                if rise and rise >= -19 then
+                    local discriminant = hop_up * hop_up + 2 * hop_gravity * rise
+                    local airtime = (hop_up + math.sqrt(discriminant)) / hop_gravity
+                    local horizontal = math.abs(destination - rope.x)
+                    if horizontal <= hop_speed * airtime - 10 then
+                        local span_left = math.min(rope.x, destination)
+                        local span_right = math.max(rope.x, destination)
+                        local apex_y = rope_y - 19
+                        local clear = true
+                        for index, platform in ipairs(platforms) do
+                            if index ~= to then
+                                local near, far = height_range(platform, span_left, span_right)
+                                if near and near <= target_y and far >= apex_y then
+                                    clear = false
+                                    break
+                                end
+                            end
+                        end
+                        if clear then
+                            for index = 1, #walls, 3 do
+                                local wall_x, top, bottom = walls[index], walls[index + 1], walls[index + 2]
+                                if wall_x > span_left and wall_x < span_right then
+                                    local clear_above = math.max(0, rope_y - top) <= 19
+                                    local pass_below = math.min(rope_y, target_y) - model.stand_height >= bottom
+                                    if not clear_above and not pass_below then
+                                        clear = false
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        if clear then
+                            add_edge({kind="rope_leave", from=entry.node, to=to, x=rope.x,
+                                destination=destination, rise=rise, rope_index=rope.index,
+                                cost=0.3 + horizontal / hop_speed + math.abs(rise) / 200})
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     for _, outgoing in pairs(adjacency) do
         table.sort(outgoing, function(left, right)
             if left.to ~= right.to then return left.to < right.to end
@@ -444,12 +663,12 @@ function M.plan(graph, from_index, to_index, options)
 
     local minimum_cost_per_x = math.huge
     for _, edge in ipairs(edges) do
-        local dx = math.abs(platform_x[edge.to] - platform_x[edge.from])
+        local dx = math.abs(node_x[edge.to] - node_x[edge.from])
         if dx > 0 then minimum_cost_per_x = math.min(minimum_cost_per_x, edge.cost / dx) end
     end
     if minimum_cost_per_x == math.huge then minimum_cost_per_x = 0 end
     local function heuristic(index)
-        return minimum_cost_per_x * math.abs(platform_x[to_index] - platform_x[index])
+        return minimum_cost_per_x * math.abs(platform_x[to_index] - node_x[index])
     end
     local function entry_before(left, right)
         if left.estimate ~= right.estimate then return left.estimate < right.estimate end
