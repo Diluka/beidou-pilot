@@ -42,6 +42,8 @@ arrow_low=50
 
 只检查配置的物品，每种的 item 与 low 必须成对且为正整数；不写文件则不启用。狩猎时低于阈值、库存不可读或配置错误会发布 `supply/low`，停止攻击并继续 sustain，同时按 `plan.conf` 的 `safe_map=地图号` 和可选 `retreat_route=/work/bot/路线文件` 撤退。默认路线为 `/work/bot/route.retreat.json`，必须提前从预期狩猎地图生成到安全地图的路线；例如使用 `python3 tools/bot_route.py dev/NAME 狩猎地图号 安全地图号 --output <角色目录>/bot/route.retreat.json` 预先生成；与原狩猎绑定 `hunt_map`、`route.json` 分开，不自动生成或证明路线安全。缺路线、起点不匹配或旅行失败时原地停手并发布 `supply/retreat` 失败事件，脚本继续尝试喝药，但不保证脱险。到达安全地图并完成必要的药水操作后发布 `supply/retreat` 的 arrived 并结束；宿主须确认该会话 `control_released=true` 后才可交易，补货后通过原有 plan/route 重新启动狩猎。旅行脚本也尝试 sustain；诊断和旅行均不可在危险地图无人值守裸跑。
 
+idle 地图绑定 travel 启动前也检查 `supply.conf`：低于配置阈值时保持 idle、放键，限频发布 `supply/low` 和 `travel/wait`；库存不可用或配置非法时发布 `supply/error` 并阻止 travel。恢复后下一次 tick 自动重试；不配置该文件时不增加限制。此检查只影响出发，不改变已经运行的旅行或狩猎撤退逻辑。
+
 ## 地形平台定位
 
 `lib.terrain.build(navigation)` 直接消费 `context.scene.terrain.navigation`，返回引用原始数据的 graph；成功时包含 1 基平台数组以及原样保留的 `walls`、`ropes`、`candidates`、`model` 和地形边界。输入缺失时返回 `nil, "navigation_unavailable"`；必需字段或结构无效时返回 `nil, "navigation_invalid:<field>"`，不会重新从 footholds 派生平台。

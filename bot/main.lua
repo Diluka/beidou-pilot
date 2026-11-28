@@ -299,6 +299,43 @@ local function main(context)
         io_module.publish(context, world, now)
         return
     end
+    local supply_blocked
+    if bot.mode == "idle" and not memory.supply_retreat and not memory.travel and not memory.travel_suspended
+        and world.ready and world.map_id then
+        local file = io.open((memory.bot_root or "/work/bot") .. "/plan.conf", "r")
+        local plan = file and file:read("*a") or ""
+        if file then file:close() end
+        local hunt_map
+        for line in plan:gmatch("[^\r\n]+") do
+            local key, value = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
+            if key == "hunt_map" and value:match("^%d+$") then hunt_map = tonumber(value) end
+        end
+        if hunt_map and hunt_map ~= world.map_id then
+            local inventory = context.game.inventory
+            local items = inventory and inventory.status == "ok" and type(inventory.items) == "table"
+                and world.inventory or nil
+            supply_blocked = supply.check(memory.bot_root or "/work/bot", items)
+            if supply_blocked then
+                context.game.player.stop()
+                local reason = supply_blocked.reason
+                if memory.supply_guard_reason ~= reason or not memory.supply_guard_at
+                    or now - memory.supply_guard_at >= 10 then
+                    supply_blocked.session_id = context.tick.script_id
+                    supply_blocked.map_id, supply_blocked.goal = world.map_id, hunt_map
+                    if reason == "low" then
+                        supply_blocked.travel_blocked = "supply_low"
+                        io_module.event(context, "supply/low", supply_blocked)
+                        io_module.event(context, "travel/wait", {reason = "supply_low", map_id = world.map_id, goal = hunt_map})
+                    else
+                        io_module.event(context, "supply/error", supply_blocked)
+                    end
+                    memory.supply_guard_at, memory.supply_guard_reason = now, reason
+                end
+            else
+                memory.supply_guard_at, memory.supply_guard_reason = nil, nil
+            end
+        end
+    end
     local kind, name
     if bot.mode == "follow" and not memory.supply_retreat then kind, name = navigate.selector(bot.target) end
     local handled, sustain_error = sustain.step(context, world)
@@ -322,6 +359,11 @@ local function main(context)
     elseif not handled and sustain_error and sustain_error ~= "not_implemented" then
         bot.last_error = sustain_error
         io_module.event(context, "error", {reason = sustain_error})
+    end
+
+    if supply_blocked then
+        io_module.publish(context, world, now)
+        return
     end
 
     if memory.supply_retreat then
