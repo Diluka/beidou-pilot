@@ -20,7 +20,7 @@ from .runtime import load_runtime
 
 
 DOMAINS = frozenset({"stage", "scene", "inventory", "character", "quests", "hotkeys", "dialog", "interaction", "ui", "shop",
-                     "notifications"})
+                     "notifications", "cashshop"})
 # 跨图路线复用只读观察请求通道，但不是普通观察领域：不进入 capabilities，也不能用 observe 读取。
 WORLD_ROUTE = "world-route"
 
