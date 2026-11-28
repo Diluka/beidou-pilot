@@ -197,6 +197,51 @@ tick(ctx, 0.001)
 tick(ctx, 0.002)
 assert(ctx.state.bot.mode == "hunt" and input.pickups > 0, "loot must preempt patrol after releasing its action")
 
+-- NPC drop policy is an explicit safe-context caller decision, never inferred from a name.
+local target_module, terrain_module = require("lib.target"), require("lib.terrain")
+local saved_plan = terrain_module.plan
+local options_seen
+terrain_module.plan = function(_, _, _, options)
+    options_seen = options
+    if options.drop_policy == "conservative" then
+        options.drop_rejections.count = 1
+        options.drop_rejections.first = {kind="drop",from=1,to=2,x=90,destination=150,rise=40}
+        return nil, "no_path"
+    end
+    return nil, "no_path"
+end
+local npc_ctx = scenario("follow", "npc:商人", 5, 100)
+npc_ctx.game.scene.npcs = {{object_id=57,template_id=800,name="商人",x=150,y=80}}
+npc_ctx.state.graph = assert(terrain_module.build(fixture.navigation))
+npc_ctx.state.bot = {target="npc:商人"}
+local npc_world = {map_id=fixture.map_id,scene_generation=1,character={x=5,y=100,platform=1,on_ground=true},now=0}
+local function nav(policy) return {generation=1,map_id=fixture.map_id,instance_id="target-test",started=0,drop_policy=policy} end
+local status, reason = target_module.step(npc_ctx,npc_world,nav(nil),"npc","商人",function() error("no mover expected") end)
+assert(status=="wait" and reason=="no_path" and options_seen.drop_policy==nil,
+    "ordinary NPC navigation retains its original policy")
+status, reason = target_module.step(npc_ctx,npc_world,nav("conservative"),"npc","商人",function() error("no mover expected") end)
+assert(status=="wait" and reason=="no_path:drop_rejected_unproven" and options_seen.drop_policy=="conservative"
+    and event_count("drop_rejected_unproven")==1,
+    "safe shop NPC reports conservative no_path instead of retrying the unsafe route")
+terrain_module.plan = saved_plan
+local shop = dofile("bot/test/fixtures/map_100000102.lua")
+npc_ctx.state.graph = assert(terrain_module.build(shop.navigation))
+npc_ctx.state.bot = {target="npc:卢娜"}
+npc_ctx.game.scene.npcs = {{object_id=101,template_id=1011100,name="卢娜",x=-258,y=84}}
+npc_ctx.game.character.x,npc_ctx.game.character.y = 126,57
+npc_ctx.game.player.jump = function() return true end
+npc_ctx.game.character.physics = {velocity={x=0,y=0}}
+npc_ctx.scene.map_id,npc_ctx.scene.scene_generation = shop.map_id,shop.scene_generation
+local shop_world = {map_id=shop.map_id,scene_generation=shop.scene_generation,
+    character={x=126,y=57,platform=6,on_ground=true},now=0}
+local shop_nav = {generation=shop.scene_generation,map_id=shop.map_id,instance_id="target-test",started=0,drop_policy="conservative"}
+local shop_mover = require("lib.move").new(npc_ctx.state.graph)
+npc_ctx.state.mover = shop_mover
+status, reason = target_module.step(npc_ctx,shop_world,shop_nav,"npc","卢娜",function() return shop_mover end)
+assert(status=="moving" and #shop_mover.edges==6, "safe shop NPC uses alternate six-edge route")
+for _,edge in ipairs(shop_mover.edges) do
+    assert(not (edge.kind=="drop" and edge.from==15 and edge.to==18), "known unsafe shop edge must not recur")
+end
 io_module.poll, io_module.publish, io_module.event = saved_poll, saved_publish, saved_event
 io.open, game = saved_open, saved_game
 print("target navigation and hunt wait contracts ok")

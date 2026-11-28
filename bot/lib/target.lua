@@ -88,9 +88,20 @@ local function step(ctx, world, nav, kind, name, ensure_mover)
         if not movement or not movement.max_speed or not movement.max_jump_height then
             return "wait", "movement_unavailable"
         end
+        -- A shop/supply caller that has established a safe context can set
+        -- nav.drop_policy; ordinary NPC/point navigation remains unchanged.
+        local rejected = {}
         local edges, reason = terrain.plan(graph, c.platform, to, {speed = movement.max_speed,
-            max_jump_height = movement.max_jump_height, blocked = memory.blocked})
-        if not edges or (#edges == 0 and c.platform ~= to) then return "wait", reason or "no_path" end
+            max_jump_height = movement.max_jump_height, blocked = memory.blocked,
+            drop_policy = (kind == "portal" or kind == "npc" and nav.drop_policy == "conservative")
+                and "conservative" or nil, drop_rejections = rejected})
+        if rejected.count then
+            events.event(ctx, "drop_rejected_unproven", {map_id = world.map_id, from = c.platform,
+                to = to, count = rejected.count, first = rejected.first})
+        end
+        if not edges or (#edges == 0 and c.platform ~= to) then
+            return "wait", reason == "no_path" and rejected.count and "no_path:drop_rejected_unproven" or reason or "no_path"
+        end
         if c.platform == to then
             edges = {{kind = "walk", from = to, to = to, x = c.x, destination = goal.x, rise = 0}}
         end
@@ -109,7 +120,11 @@ local function step(ctx, world, nav, kind, name, ensure_mover)
             platform = c.platform, x = c.x, y = c.y, elapsed = world.now - nav.started, status = status,
             vx = ctx.game.character.velocity and ctx.game.character.velocity.x})
     end
-    if status == "failed" then return "wait", reason end
+    if status == "failed" then
+        events.event(ctx, "target/edge_failed", {target = memory.bot.target, reason = reason,
+            edge = memory.mover.last_failure})
+        return "wait", reason
+    end
     if status == "done" then
         if nav.final_walk then
             if not c.on_ground and in_range then

@@ -372,6 +372,16 @@ function M.plan(graph, from_index, to_index, options)
                                 end
                             end
                         end
+                        if valid and options.drop_policy == "conservative"
+                            and (platforms[from].right < platforms[to].left or platforms[to].right < platforms[from].left) then
+                            valid = false
+                            local rejected = options.drop_rejections
+                            if rejected then
+                                rejected.count = (rejected.count or 0) + 1
+                                rejected.first = rejected.first or {kind = "drop", from = from, to = to,
+                                    x = x, destination = destination, rise = rise}
+                            end
+                        end
                     elseif kind == "rope" then
                         valid = rise ~= 0
                     end
