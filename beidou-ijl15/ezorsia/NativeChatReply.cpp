@@ -384,7 +384,7 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
     if (verb == "帮助" || lowered == "help") {
         // The server rejects whispers over 127 characters, so one line cannot
         // carry every command with its usage; the shared queue paces the parts.
-        reply("指令：@位置 @状态 @帮助 @跟随 @打猎 @停下 @停止");
+        reply("指令：@位置 @状态 @帮助 @跟随 @打猎 @停止");
         reply("用法：@跟随 [玩家名] 省略则跟随你；打猎/停下/停止仅主人可用");
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": help");
         return true;
@@ -397,10 +397,8 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
     } else if (verb == "打猎" || lowered == "hunt") {
         kind = "hunt";
         label = "打猎";
-    } else if (verb == "停下" || lowered == "stay") {
-        kind = "stay";
-        label = "停下";
-    } else if (verb == "停止" || lowered == "stop") {
+    } else if (verb == "停止" || lowered == "stop" || verb == "停下" || lowered == "stay") {
+        // 停下 and stay are kept as compatible aliases; both mean stop and wait.
         kind = "stop";
         label = "停止";
     }
