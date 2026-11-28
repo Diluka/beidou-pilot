@@ -6,7 +6,7 @@
 namespace BeiDouBridge {
 namespace NativeChatQueue {
 
-enum class Channel { Public, Party, Whisper };
+enum class Channel { Public, Party, Whisper, Find };
 
 // Queues one chat line for delivery through the client's native send routine.
 //
@@ -16,6 +16,8 @@ enum class Channel { Public, Party, Whisper };
 // packet string encoding used by the server.
 //
 // whisperTarget is the recipient name in CP936 and is only used for Channel::Whisper.
+// Channel::Find sends a whisper-protocol location query for the name in cp936Text
+// (the server answers through the same whisper opcode with a location result).
 // Returns false when the text is too long or the queue is full.
 bool Enqueue(Channel channel, const std::string& cp936Text, const std::string& cp936WhisperTarget = {});
 

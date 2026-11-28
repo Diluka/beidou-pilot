@@ -12,10 +12,12 @@
 #include "NativeChatReply.h"
 #include "AgentBridge.h"
 #include "NativeChatQueue.h"
+#include "NativeObservation.h"
 
 #include "../../shared/img/ImgResources.h"
 
 #include <array>
+#include <sstream>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -53,6 +55,15 @@ constexpr std::size_t kLogLimitBytes = 1024 * 1024;
 
 std::uint32_t lastReplyAt = 0;
 bool repliedOnce = false;
+// Summon flow: @过来 queues a location lookup, then the result is turned into a
+// follow (same map) or a travel route (same channel, other map) on the next tick.
+bool summonPending = false;
+bool summonResultReady = false;
+unsigned char summonResultType = 0;
+std::uint32_t summonResultField = 0;
+std::uint64_t summonRequestAt = 0;
+std::string summonRequesterGbk;
+std::string summonRequesterUtf8;
 
 std::string DataRoot() {
     std::array<char, MAX_PATH> value{};
@@ -341,6 +352,48 @@ bool WriteBotCommand(const std::string& kind, const std::string& targetUtf8) {
     return false;
 }
 
+const MapleControl::Value* Member(const MapleControl::Value& object, const char* key) {
+    for (const auto& entry : object.Members())
+        if (entry.first == key) return &entry.second;
+    return nullptr;
+}
+
+// Generates /work/bot/route.summon.json from the native world-map route so the
+// bot travel mode can walk the legs through the client's own portal map.
+bool WriteSummonRoute(std::uint32_t from, std::uint32_t goal) {
+    const auto observation =
+        NativeObservation::WorldRoute(DataRoot(), static_cast<std::int64_t>(from), static_cast<std::int64_t>(goal));
+    if (observation.status != "ok") return false;
+    const auto* legs = Member(observation.data, "legs");
+    if (legs == nullptr || legs->Type() != MapleControl::Value::Kind::Array) return false;
+    std::ostringstream route;
+    route << "{\"from\":" << from << ",\"goal\":" << goal << ",\"legs\":[";
+    bool first = true;
+    for (const auto& leg : legs->Elements()) {
+        const auto* map = Member(leg, "from");
+        const auto* portal = Member(leg, "portal");
+        const auto* portalAt = Member(leg, "portal_at");
+        if (map == nullptr || portal == nullptr || portalAt == nullptr) return false;
+        if (portalAt->Elements().empty() || portalAt->Elements()[0].Elements().size() < 2) return false;
+        const auto& point = portalAt->Elements()[0].Elements();
+        if (!first) route << ",";
+        first = false;
+        route << "{\"map\":" << static_cast<std::uint32_t>(map->Number()) << ",\"portal\":\"" << portal->Text()
+              << "\",\"x\":" << static_cast<int>(point[0].Number()) << ",\"y\":" << static_cast<int>(point[1].Number())
+              << "}";
+    }
+    route << "]}";
+    const std::string path = "Z:\\work\\bot\\route.summon.json";
+    HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    const std::string content = route.str();
+    DWORD written = 0;
+    const bool complete = WriteFile(file, content.data(), static_cast<DWORD>(content.size()), &written, nullptr) != 0
+                          && written == content.size();
+    CloseHandle(file);
+    return complete;
+}
+
 // Returns true when the whisper was a chat command and has been handled.
 // Chinese command words below are CP936 literals (bridge execution charset) and
 // are compared against the raw CP936 message body; English aliases are lowercased.
@@ -384,9 +437,31 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
     if (verb == "帮助" || lowered == "help") {
         // The server rejects whispers over 127 characters, so one line cannot
         // carry every command with its usage; the shared queue paces the parts.
-        reply("指令：@位置 @状态 @帮助 @跟随 @打猎 @停止");
-        reply("用法：@跟随 [玩家名] 省略则跟随你；打猎/停下/停止仅主人可用");
+        reply("指令：@位置 @状态 @帮助 @跟随 @过来 @打猎 @停止");
+        reply("用法：@跟随 [玩家名] 省略跟随你；@过来 跨图召唤；动作类仅主人可用");
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": help");
+        return true;
+    }
+    if (verb == "过来" || lowered == "come" || lowered == "summon") {
+        const std::string owner = ReadBotConfig("owner_name");
+        if (!owner.empty() && owner != senderUtf8) {
+            reply("只有主人可以召唤我");
+            AppendLog(Timestamp() + " summon rejected from non-owner " + senderUtf8);
+            return true;
+        }
+        if (summonPending) {
+            reply("正在处理上一个召唤请求");
+            return true;
+        }
+        if (!NativeChatQueue::Enqueue(NativeChatQueue::Channel::Find, sender)) {
+            reply("召唤请求排队失败");
+            return true;
+        }
+        summonPending = true;
+        summonRequestAt = GetTickCount64();
+        summonRequesterGbk = sender;
+        summonRequesterUtf8 = senderUtf8;
+        AppendLog(Timestamp() + " summon: location lookup for " + senderUtf8);
         return true;
     }
     const char* kind = nullptr;
@@ -477,6 +552,23 @@ void HandleReceiveWhisper(const unsigned char* data, std::size_t size) {
               + std::to_string(mapId) + "]");
 }
 
+void HandleLocationResult(const unsigned char* data, std::size_t size) {
+    if (!summonPending || summonResultReady) return;
+    std::size_t offset = 7;
+    std::string name;
+    if (!ReadString(data, size, offset, name)) return;
+    if (offset + 5 > size) return;
+    const unsigned char type = data[offset];
+    offset += 1;
+    std::uint32_t field = 0;
+    std::memcpy(&field, data + offset, sizeof(field));
+    summonResultType = type;
+    summonResultField = field;
+    summonResultReady = true;
+    AppendLog(Timestamp() + " summon: location result type=" + std::to_string(type) + " field "
+              + std::to_string(field));
+}
+
 } // namespace
 
 void OnPacket(void* packet) {
@@ -487,10 +579,75 @@ void OnPacket(void* packet) {
     unsigned short opcode = 0;
     std::memcpy(&opcode, data + 4, sizeof(opcode));
     if (opcode != kWhisperReceiveOpcode) return;
+    if (incoming->size < 7) return;
+    if (data[6] == 0x09) {
+        __try {
+            HandleLocationResult(data, static_cast<std::size_t>(incoming->size));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return;
+        }
+        return;
+    }
     __try {
         HandleReceiveWhisper(data, static_cast<std::size_t>(incoming->size));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return;
+    }
+}
+
+void Tick() {
+    if (summonPending && !summonResultReady && GetTickCount64() - summonRequestAt > 8000) {
+        summonPending = false;
+        SendWhisper(summonRequesterGbk, Utf8ToGbk("无法确认你的位置（查询超时）"));
+        AppendLog(Timestamp() + " summon: location lookup timed out for " + summonRequesterUtf8);
+        summonRequesterGbk.clear();
+        summonRequesterUtf8.clear();
+        return;
+    }
+    if (!summonResultReady) return;
+    summonResultReady = false;
+    summonPending = false;
+    const std::string requesterGbk = summonRequesterGbk;
+    const std::string requesterUtf8 = summonRequesterUtf8;
+    summonRequesterGbk.clear();
+    summonRequesterUtf8.clear();
+    const auto reply = [&](const std::string& gbk) {
+        if (!gbk.empty()) SendWhisper(requesterGbk, gbk);
+    };
+    const std::uint32_t currentMap = AgentBridge::CurrentMapId();
+    if (summonResultType == 1) {
+        // Same channel: field is the requester's map id.
+        const std::uint32_t targetMap = summonResultField;
+        if (targetMap == currentMap) {
+            if (WriteBotCommand("follow", requesterUtf8))
+                reply(Utf8ToGbk("我就在你旁边，开始跟随"));
+            else
+                reply(Utf8ToGbk("指令队列已满，稍后重试"));
+            AppendLog(Timestamp() + " summon: requester on same map, follow queued for " + requesterUtf8);
+        } else if (WriteSummonRoute(currentMap, targetMap)) {
+            if (WriteBotCommand("travel", requesterUtf8)) {
+                reply(Utf8ToGbk("你在地图 " + std::to_string(targetMap) + "，正在前往"));
+                AppendLog(Timestamp() + " summon: travel queued to map " + std::to_string(targetMap));
+            } else {
+                reply(Utf8ToGbk("指令队列已满，稍后重试"));
+            }
+        } else {
+            reply(Utf8ToGbk("无法找到从当前地图到你的路线"));
+            AppendLog(Timestamp() + " summon: no route from " + std::to_string(currentMap) + " to "
+                      + std::to_string(targetMap));
+        }
+    } else if (summonResultType == 3) {
+        reply(Utf8ToGbk("你在另一个频道，跨频道无法寻路，请来到我所在的频道"));
+        AppendLog(Timestamp() + " summon: requester on another channel");
+    } else if (summonResultType == 0) {
+        reply(Utf8ToGbk("你在交易中心，无法寻路"));
+        AppendLog(Timestamp() + " summon: requester in ITC");
+    } else if (summonResultType == 2) {
+        reply(Utf8ToGbk("你在现金商店，无法寻路"));
+        AppendLog(Timestamp() + " summon: requester in cash shop");
+    } else {
+        reply(Utf8ToGbk("无法确认你的位置"));
+        AppendLog(Timestamp() + " summon: unknown location result type " + std::to_string(summonResultType));
     }
 }
 

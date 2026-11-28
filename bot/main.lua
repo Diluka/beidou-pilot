@@ -158,6 +158,50 @@ local function main(context)
         io_module.event(context, "mode", {from = "dead", mode = "recover", reason = "revived"})
     end
 
+    if bot.mode == "travel" then
+        -- Summon travel: walk /work/bot/route.summon.json written by the bridge,
+        -- then switch to follow for the caller that summoned us.
+        if not world.ready or not world.map_id then
+            context.game.player.stop()
+            io_module.publish(context, world, now)
+            return
+        end
+        if not memory.travel then
+            local legs, goal = travel.load_route((memory.bot_root or "/work/bot") .. "/route.summon.json")
+            if not legs or not legs[1] or legs[1].map ~= world.map_id then
+                bot.last_error = "summon_route_unavailable"
+                local previous = bot.mode
+                state_module.transition(bot, "idle", bot.last_error)
+                io_module.event(context, "mode", {from = previous, mode = "idle", reason = bot.last_error})
+                memory.force_publish = true
+                io_module.publish(context, world, now)
+                return
+            end
+            memory.travel = travel.new(legs, goal)
+            io_module.event(context, "summon", {result = "started", goal = goal, map_id = world.map_id})
+        end
+        local status, reason = travel.step(memory.travel, context, world)
+        if status == "done" then
+            travel.stop(memory.travel, context)
+            memory.travel = nil
+            local target = bot.target
+            state_module.transition(bot, "follow", "summon_arrived")
+            bot.target = target
+            io_module.event(context, "mode", {from = "travel", mode = "follow", reason = "summon_arrived"})
+            memory.force_publish = true
+        elseif status == "failed" then
+            travel.stop(memory.travel, context)
+            memory.travel = nil
+            bot.last_error = "summon_" .. tostring(reason or "travel_failed")
+            local previous = bot.mode
+            state_module.transition(bot, "idle", bot.last_error)
+            io_module.event(context, "mode", {from = previous, mode = "idle", reason = bot.last_error})
+            memory.force_publish = true
+        end
+        io_module.publish(context, world, now)
+        return
+    end
+
     if bot.mode == "hunt" and world.ready and not memory.supply_retreat then
         local inventory = context.game.inventory
         local items = inventory and inventory.status == "ok" and type(inventory.items) == "table"

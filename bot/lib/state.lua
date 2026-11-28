@@ -1,6 +1,6 @@
 local defaults = require("defaults")
 local M = {}
-local allowed_modes = {recover = true, idle = true, follow = true, hunt = true, dead = true}
+local allowed_modes = {recover = true, idle = true, follow = true, hunt = true, dead = true, travel = true}
 
 local function read_values(path)
     local values = {}
@@ -79,6 +79,11 @@ function M.apply(state, command)
         local ok, reason = state.player.stop()
         if not ok then return false, reason or "player_stop_failed" end
         state.mode, state.target, state.path = "idle", nil, nil
+    elseif command.kind == "travel" then
+        -- Summon: walk the route written by the bridge, then follow the caller.
+        state.mode = "travel"
+        state.target = command.target
+        state.path = nil
     else
         return false, "unknown_kind"
     end
