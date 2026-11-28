@@ -232,6 +232,11 @@ local function main(context)
     local scene = context.scene
     local terrain_scene = scene and scene.terrain
     local generation = world.scene_generation
+    if memory.follow_rope_exit and (memory.graph_generation ~= generation or bot.mode ~= "follow") then
+        context.game.player.move(nil)
+        context.game.player.skill(nil)
+        memory.follow_rope_exit = nil
+    end
     if memory.graph_generation ~= generation then
         abort_sweep()
         if memory.mover then move.stop(memory.mover) end
@@ -673,16 +678,104 @@ local function main(context)
             if memory.follow_blocked_generation ~= generation then
                 memory.follow_blocked_generation, memory.follow_blocked = generation, {}
                 memory.follow_unreachable, memory.follow_unreachable_event_at = nil, nil
-                memory.follow_air_since = nil
+                memory.follow_air_since, memory.follow_air_reason = nil, nil
             end
             -- A character already on a rope is not a valid grounded planner start.
             -- Do not disturb an edge that this mover itself is executing.
             local action, follow_error = follow.update(context, world)
+            if memory.follow_rope_exit and (not action or action.kind ~= "move") then
+                context.game.player.move(nil); context.game.player.skill(nil)
+                memory.follow_rope_exit = nil
+            end
             local active = memory.mover and memory.mover.status == "running" and memory.path_target
             if action and action.kind == "move" and character.on_ground ~= true and not active then
-                if memory.mover then move.stop(memory.mover) else context.game.player.move(nil) end
-                memory.follow_air_since = memory.follow_air_since or now
-                local reason = now - memory.follow_air_since >= 2 and "follow_ground_timeout" or "character_not_grounded"
+                local p = context.game.player
+                local exit = memory.follow_rope_exit
+                if not exit then
+                    if memory.mover then move.stop(memory.mover) else p.move(nil) end
+                    local physics = context.game.character and context.game.character.physics
+                    local velocity = physics and physics.velocity
+                    local rope
+                    if character.on_ground == false and physics and (not velocity or velocity.y == nil) then
+                        for _, candidate in ipairs(memory.graph.ropes or {}) do
+                            if math.abs(character.x - candidate.x) <= 10
+                                and character.y >= math.min(candidate.y1, candidate.y2)
+                                and character.y <= math.max(candidate.y1, candidate.y2) then rope = candidate; break end
+                        end
+                    end
+                    exit = {phase=rope and "observe" or "wait", started=now, x=character.x, y=character.y, rope=rope}
+                    memory.follow_rope_exit = exit
+                end
+                if exit.phase == "observe" then
+                    if math.abs(character.x - exit.x) > 1 or math.abs(character.y - exit.y) > 1 then
+                        exit.phase = "wait"
+                    elseif now - exit.started >= 0.15 then
+                        exit.phase, exit.progress_time, exit.y = "down", now, character.y
+                    end
+                end
+                if exit.phase == "down" then
+                    local physics = context.game.character and context.game.character.physics
+                    if physics and physics.velocity and type(physics.velocity.y) == "number" then
+                        p.move(nil)
+                        exit.phase = "fall"
+                    end
+                end
+                if exit.phase == "fall" and now - exit.started >= 6 then exit.phase = "failed" end
+                if exit.phase == "down" then
+                    if character.y - exit.y >= 3 then exit.progress_time, exit.y = now, character.y end
+                    if now - exit.started >= 6 then
+                        exit.phase = "failed"
+                    elseif now - exit.progress_time >= 1 then
+                        -- Jump only towards a nearby, geometrically supported landing strip.
+                        local best, distance
+                        for _, platform in ipairs(memory.graph.platforms or {}) do
+                            local margin = math.min(8, (platform.right - platform.left) / 4)
+                            local x = math.max(platform.left + margin, math.min(platform.right - margin, character.x))
+                            local dx = math.abs(x - character.x)
+                            local y = terrain.platform_at(memory.graph, x, character.y + 20, 20)
+                            if dx > 8 and dx <= 30 and y and memory.graph.platforms[y] == platform then
+                                local clear = true
+                                for i = 1, #(memory.graph.walls or {}), 3 do
+                                    local wx, top, bottom = memory.graph.walls[i], memory.graph.walls[i+1], memory.graph.walls[i+2]
+                                    if wx > math.min(x, character.x) and wx < math.max(x, character.x)
+                                        and top <= character.y + 40 and bottom >= character.y - 20 then clear = false end
+                                end
+                                for _, obstacle in ipairs(memory.graph.platforms or {}) do
+                                    if obstacle ~= platform then
+                                        for i = 1, #obstacle.segments, 4 do
+                                            local left, right = obstacle.segments[i], obstacle.segments[i+1]
+                                            local y1, y2 = obstacle.segments[i+2], obstacle.segments[i+3]
+                                            if right >= math.min(x, character.x) and left <= math.max(x, character.x)
+                                                and math.min(y1, y2) <= character.y + 40
+                                                and math.max(y1, y2) >= character.y - 20 then clear = false end
+                                        end
+                                    end
+                                end
+                                if clear and (not distance or dx < distance) then best, distance = x, dx end
+                            end
+                        end
+                        if best then
+                            exit.direction = best < character.x and "left" or "right"
+                            exit.phase = "prepare_jump"
+                        else
+                            exit.phase = "failed"
+                        end
+                    else
+                        if not p.move("down") then exit.phase = "failed" end
+                    end
+                end
+                if exit.phase == "prepare_jump" then
+                    if p.move(exit.direction) then exit.phase, exit.jump_time = "jump", now else exit.phase = "failed" end
+                elseif exit.phase == "jump" then
+                    if p.move(exit.direction) and p.jump() then exit.phase, exit.jump_time = "flight", now
+                    else exit.phase = "failed" end
+                elseif exit.phase == "flight" then
+                    if now - exit.jump_time >= 0.3 then p.skill(nil) end
+                    if now - exit.started >= 6 then exit.phase = "failed" end
+                end
+                if exit.phase == "failed" then p.move(nil); p.skill(nil) end
+                local reason = (exit.phase == "failed" or (exit.phase == "wait" and now - exit.started >= 2))
+                    and "follow_ground_timeout" or "character_not_grounded"
                 if memory.follow_air_reason ~= reason then
                     io_module.event(context, "follow/wait", {reason = reason, scene_generation = generation})
                     memory.follow_air_reason = reason
@@ -691,7 +784,13 @@ local function main(context)
                 io_module.publish(context, world, now)
                 return
             end
-            if character.on_ground == true then memory.follow_air_since, memory.follow_air_reason = nil, nil end
+            if character.on_ground == true then
+                if memory.follow_rope_exit then
+                    context.game.player.move(nil); context.game.player.skill(nil)
+                    memory.follow_rope_exit = nil
+                end
+                memory.follow_air_since, memory.follow_air_reason = nil, nil
+            end
             if action and action.kind == "move" then
                 local from = world.character and world.character.platform
                 local to = terrain.platform_at(memory.graph, action.x, action.y, tolerance)
