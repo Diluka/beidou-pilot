@@ -200,7 +200,13 @@ def _trade(
     prompt = snapshot["quantity_dialog"]
     while prompt is None:
         if time.monotonic() >= deadline:
-            raise ClientError("shop_quantity_dialog_timeout", "等待数量框超时，未继续确认；请核对现场，勿重放交易。")
+            raise ClientError(
+                "shop_quantity_dialog_timeout",
+                "等待数量框超时，交易按钮可能已触发操作；请核对现场，勿重放交易。",
+                {"direction": direction, "item_id": item_id, "count": count, "inventory_type": inventory_type,
+                 "inventory_slot": item["inventory_slot"], "quantity_before": quantity_before,
+                 "mesos_before": money_before, "shop_quote": price, "trade_result": "unknown"},
+            )
         time.sleep(0.1)
         snapshot = cast(ShopSnapshot, backend.read("shop"))
         prompt = snapshot["quantity_dialog"]

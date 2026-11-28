@@ -126,6 +126,23 @@ class ShopPollingContract(unittest.TestCase):
                 shop.buy(backend, 2000000, 1)
         self.assertEqual("shop_quantity_dialog_timeout", raised.exception.code)
 
+    def test_equipment_timeout_preserves_receipt_and_never_replays(self) -> None:
+        item = {"index": 0, "item_id": 1060013, "unit_price": 10, "bundle_quantity": 1,
+                "quantity": 1, "inventory_slot": 3}
+        backend = FakeBackend([snapshot(sell_tab_index=0, sell_items=[item]),
+                               snapshot(sell_tab_index=0, sell_items=[item], sell_selected_index=0)],
+                              item_id=1060013, quantity=1)
+        with (patch.object(shop.time, "monotonic", side_effect=itertools.count(0, 0.1)),
+              patch.object(shop.time, "sleep"), patch.object(shop, "click_window"),
+              patch.object(shop, "click_control") as click):
+            with self.assertRaises(shop.ClientError) as raised:
+                shop.sell(backend, 1060013, 1, 3)
+        self.assertEqual("shop_quantity_dialog_timeout", raised.exception.code)
+        self.assertEqual("unknown", raised.exception.details["trade_result"])
+        self.assertEqual(3, raised.exception.details["inventory_slot"])
+        self.assertEqual(1, click.call_count)
+        self.assertEqual(1, backend.inventory["items"][0]["quantity"])
+
 
 if __name__ == "__main__":
     unittest.main()
