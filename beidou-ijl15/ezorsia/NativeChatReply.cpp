@@ -347,21 +347,32 @@ bool WriteBotCommand(const std::string& kind, const std::string& targetUtf8) {
 bool HandleChatCommand(const std::string& sender, const std::string& message, const std::string& senderUtf8) {
     if (message.size() < 2 || message[0] != '@') return false;
     std::string command = message.substr(1);
-    while (!command.empty() && (command.back() == ' ' || command.back() == '\r' || command.back() == '\n'))
+    while (!command.empty()
+           && (command.back() == ' ' || command.back() == '\r' || command.back() == '\n' || command.back() == '\t'))
         command.pop_back();
-    std::string lowered = command;
+    // The verb is the first token; a trailing token is an optional argument
+    // (only follow uses one: the player to follow).
+    const std::size_t space = command.find(' ');
+    std::string verb = space == std::string::npos ? command : command.substr(0, space);
+    std::string argument = space == std::string::npos ? std::string() : command.substr(space + 1);
+    std::size_t argumentBegin = 0;
+    while (argumentBegin < argument.size() && (argument[argumentBegin] == ' ' || argument[argumentBegin] == '\t'))
+        ++argumentBegin;
+    argument = argument.substr(argumentBegin);
+    while (!argument.empty() && (argument.back() == ' ' || argument.back() == '\t')) argument.pop_back();
+    std::string lowered = verb;
     for (char& character : lowered)
         if (character >= 'A' && character <= 'Z') character = static_cast<char>(character - 'A' + 'a');
     const auto reply = [&](const std::string& gbkText) {
         if (!gbkText.empty()) SendWhisper(sender, gbkText);
     };
     const std::uint32_t mapId = AgentBridge::CurrentMapId();
-    if (command == "位置" || lowered == "where") {
+    if (verb == "位置" || lowered == "where") {
         reply("我在" + Utf8ToGbk(MapDescription(mapId)));
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": where");
         return true;
     }
-    if (command == "状态" || lowered == "status" || lowered == "state") {
+    if (verb == "状态" || lowered == "status" || lowered == "state") {
         const std::string mode = ReadBotStateText("mode");
         const std::string hp = ReadBotStateNumber("hp");
         const std::string maxHp = ReadBotStateNumber("max_hp");
@@ -370,26 +381,24 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": status");
         return true;
     }
-    if (command == "帮助" || lowered == "help") {
+    if (verb == "帮助" || lowered == "help") {
         // The server rejects whispers over 127 characters, so one line cannot
         // carry every command with its usage; the shared queue paces the parts.
-        reply("指令：@位置 @状态 @帮助 @跟随 @打猎 @停下 @停止");
-        reply("用法：查询直接回；@跟随 玩家名；动作类仅主人可用，支持英文别名");
+        reply("指令：@位置 @状态 @帮助 @跟随 @打猎 @停止");
+        reply("用法：@跟随 [玩家名] 省略则跟随你；打猎/停下/停止仅主人可用");
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": help");
         return true;
     }
     const char* kind = nullptr;
     std::string label;
-    if (command == "跟随" || lowered == "follow" || lowered == "come") {
+    if (verb == "跟随" || lowered == "follow" || lowered == "come") {
         kind = "follow";
         label = "跟随";
-    } else if (command == "打猎" || lowered == "hunt") {
+    } else if (verb == "打猎" || lowered == "hunt") {
         kind = "hunt";
         label = "打猎";
-    } else if (command == "停下" || lowered == "stay") {
-        kind = "stay";
-        label = "停下";
-    } else if (command == "停止" || lowered == "stop") {
+    } else if (verb == "停止" || lowered == "stop" || verb == "停下" || lowered == "stay") {
+        // 停下 and stay are kept as compatible aliases; both mean stop and wait.
         kind = "stop";
         label = "停止";
     }
@@ -405,12 +414,20 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
         AppendLog(Timestamp() + " chat command rejected from non-owner " + senderUtf8);
         return true;
     }
-    if (!WriteBotCommand(kind, senderUtf8)) {
+    std::string target = senderUtf8;
+    if (kind == std::string("follow") && !argument.empty()) {
+        const std::string nameUtf8 = GbkToUtf8(argument);
+        if (!nameUtf8.empty()) target = nameUtf8;
+    }
+    if (!WriteBotCommand(kind, target)) {
         reply("指令队列已满，稍后重试");
         AppendLog(Timestamp() + " chat command failed: mailbox full for " + senderUtf8);
         return true;
     }
-    reply("收到：" + label);
+    if (kind == std::string("follow") && target != senderUtf8)
+        reply("收到：" + label + " " + Utf8ToGbk(target));
+    else
+        reply("收到：" + label);
     AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": " + kind);
     return true;
 }
