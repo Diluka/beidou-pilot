@@ -188,14 +188,19 @@ local function main(context)
             state_module.transition(bot, "follow", "summon_arrived")
             bot.target = target
             io_module.event(context, "mode", {from = "travel", mode = "follow", reason = "summon_arrived"})
+            local result_file = io.open((memory.bot_root or "/work/bot") .. "/summon-result.txt", "w")
+            if result_file then result_file:write("arrived"); result_file:close() end
             memory.force_publish = true
         elseif status == "failed" then
             travel.stop(memory.travel, context)
             memory.travel = nil
-            bot.last_error = "summon_" .. tostring(reason or "travel_failed")
+            local error_reason = tostring(reason or "travel_failed")
+            bot.last_error = "summon_" .. error_reason
             local previous = bot.mode
             state_module.transition(bot, "idle", bot.last_error)
             io_module.event(context, "mode", {from = previous, mode = "idle", reason = bot.last_error})
+            local result_file = io.open((memory.bot_root or "/work/bot") .. "/summon-result.txt", "w")
+            if result_file then result_file:write(error_reason); result_file:close() end
             memory.force_publish = true
         end
         io_module.publish(context, world, now)

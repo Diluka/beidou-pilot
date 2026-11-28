@@ -64,6 +64,8 @@ std::uint32_t summonResultField = 0;
 std::uint64_t summonRequestAt = 0;
 std::string summonRequesterGbk;
 std::string summonRequesterUtf8;
+// Caller of the travel in progress, used to report the bot outcome later.
+std::string summonCallerGbk;
 
 std::string DataRoot() {
     std::array<char, MAX_PATH> value{};
@@ -595,7 +597,42 @@ void OnPacket(void* packet) {
     }
 }
 
+std::string TrimText(std::string text) {
+    while (!text.empty() && (text.back() == '\r' || text.back() == '\n' || text.back() == ' ' || text.back() == '\t'))
+        text.pop_back();
+    std::size_t begin = 0;
+    while (begin < text.size() && (text[begin] == ' ' || text[begin] == '\t')) ++begin;
+    return text.substr(begin);
+}
+
+std::string SummonFailureText(const std::string& reason) {
+    if (reason == "landing_mismatch") return "路线中的跳跃点无法通过";
+    if (reason == "unexpected_map") return "路线经过的地图不符合预期";
+    if (reason == "route_missing" || reason == "route_unavailable") return "路线数据不可用";
+    if (reason == "world_unavailable") return "当前游戏状态不可用";
+    return reason;
+}
+
+// Reports the bot's travel outcome (written to summon-result.txt) to the caller.
+void ReportSummonOutcome() {
+    const std::string path = "Z:\\work\\bot\\summon-result.txt";
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attributes)) return;
+    const std::string reason = TrimText(ReadFileText(path));
+    DeleteFileA(path.c_str());
+    if (summonCallerGbk.empty()) return;
+    if (reason == "arrived") {
+        SendWhisper(summonCallerGbk, "我已经到你身边了");
+        AppendLog(Timestamp() + " summon: arrived, caller notified");
+    } else {
+        SendWhisper(summonCallerGbk, "召唤失败：" + SummonFailureText(reason));
+        AppendLog(Timestamp() + " summon: travel failed, reason " + reason);
+    }
+    summonCallerGbk.clear();
+}
+
 void Tick() {
+    ReportSummonOutcome();
     if (summonPending && !summonResultReady && GetTickCount64() - summonRequestAt > 8000) {
         summonPending = false;
         SendWhisper(summonRequesterGbk, "无法确认你的位置（查询超时）");
@@ -626,6 +663,7 @@ void Tick() {
             AppendLog(Timestamp() + " summon: requester on same map, follow queued for " + requesterUtf8);
         } else if (WriteSummonRoute(currentMap, targetMap)) {
             if (WriteBotCommand("travel", requesterUtf8)) {
+                summonCallerGbk = requesterGbk;
                 reply("你在地图 " + std::to_string(targetMap) + "（" + Utf8ToGbk(MapDescription(targetMap))
                       + "），正在前往");
                 AppendLog(Timestamp() + " summon: travel queued to map " + std::to_string(targetMap));
