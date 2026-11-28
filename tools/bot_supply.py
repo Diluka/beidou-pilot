@@ -4,7 +4,7 @@
 子命令：
 - `status WORKBENCH`：计算红药/蓝药/箭矢缺口，输出 JSON。
 - `restock WORKBENCH [--apply]`：默认预览；执行时仅售卖显式确认的 etc 并按上限购买（需要 GUI）。
-- `junk WORKBENCH [--dry-run] [--include-equipment]`：预览清单与未知装备，不执行出售。
+- `junk WORKBENCH [--dry-run|--apply] [--include-equipment]`：预览或售出人工核对的 ETC；装备仅预览。
 - `gear WORKBENCH`：按等级输出武器/防具升级建议。
 """
 
@@ -383,15 +383,34 @@ def restock(
 
 
 def do_junk(workbench_name: str, dry_run: bool, include_equipment: bool) -> dict[str, object]:
-    if not dry_run:
-        raise SystemExit("清单仅供预览；请使用 restock --sell-etc 显式确认物品，装备须单独核对槽位")
+    if include_equipment and not dry_run:
+        raise SystemExit("装备实例属性未知，禁止自动出售装备；请核对后单独指定槽位")
     candidates = junk_list(workbench_name, include_equipment)
     report: dict[str, object] = {"candidates": candidates, "dry_run": dry_run}
     if include_equipment:
         report["equipment_unknown"] = [
             {"item_id": item.get("item_id"), "slot": item.get("slot"), "reason": "instance_attributes_unavailable"}
-            for item in read_items(workbench_name) if item.get("inventory_type") == 1
+            for item in read_items(workbench_name)
+            if item.get("inventory_type") == 1
         ]
+    if dry_run or not candidates:
+        return report
+    shop_map, shop = nearest_potion_shop(workbench_name)
+    ensure_gui(workbench_name)
+    travel(workbench_name, shop_map, 240)
+    open_shop(workbench_name, str(shop.get("npc")))
+    results = {}
+    for candidate in candidates:
+        try:
+            results[str(candidate["item_id"])] = sell(
+                workbench_name, int(candidate["item_id"]), int(candidate["quantity"])
+            )
+        except SystemExit as error:
+            results[str(candidate["item_id"])] = {"error": str(error)}
+            report["results"] = results
+            return report  # Preserve the scene after an uncertain transaction.
+    close_shop(workbench_name)
+    report["results"] = results
     return report
 
 

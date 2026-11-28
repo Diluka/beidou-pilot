@@ -69,6 +69,8 @@ class FakeBackend:
             return self.snapshots.pop(0) if len(self.snapshots) > 1 else self.snapshots[0]
         if domain == "character":
             return self.character
+        if domain == "dialog":
+            return {"focused_window": {"width": 506, "height": 116, "buttons": [{"control_id": 6}, {"control_id": 7}]}}
         raise AssertionError(f"unexpected domain {domain}")
 
     def desktop(self, actions):
@@ -127,19 +129,35 @@ class ShopPollingContract(unittest.TestCase):
         self.assertEqual("shop_quantity_dialog_timeout", raised.exception.code)
 
     def test_equipment_timeout_preserves_receipt_and_never_replays(self) -> None:
-        item = {"index": 0, "item_id": 1060013, "unit_price": 10, "bundle_quantity": 1,
-                "quantity": 1, "inventory_slot": 3}
-        backend = FakeBackend([snapshot(sell_tab_index=0, sell_items=[item]),
-                               snapshot(sell_tab_index=0, sell_items=[item], sell_selected_index=0)],
-                              item_id=1060013, quantity=1)
-        with (patch.object(shop.time, "monotonic", side_effect=itertools.count(0, 0.1)),
-              patch.object(shop.time, "sleep"), patch.object(shop, "click_window"),
-              patch.object(shop, "click_control") as click):
+        item = {
+            "index": 0,
+            "item_id": 1060013,
+            "unit_price": 10,
+            "bundle_quantity": 1,
+            "quantity": 1,
+            "inventory_slot": 3,
+        }
+        backend = FakeBackend(
+            [
+                snapshot(sell_tab_index=0, sell_items=[item]),
+                snapshot(sell_tab_index=0, sell_items=[item], sell_selected_index=0),
+            ],
+            item_id=1060013,
+            quantity=1,
+        )
+        with (
+            patch.object(shop.time, "monotonic", side_effect=itertools.count(0, 0.1)),
+            patch.object(shop.time, "sleep"),
+            patch.object(shop, "click_window"),
+            patch.object(shop, "click_control") as click,
+        ):
             with self.assertRaises(shop.ClientError) as raised:
                 shop.sell(backend, 1060013, 1, 3)
         self.assertEqual("shop_quantity_dialog_timeout", raised.exception.code)
         self.assertEqual("unknown", raised.exception.details["trade_result"])
         self.assertEqual(3, raised.exception.details["inventory_slot"])
+        self.assertEqual(506, raised.exception.details["focused_window"]["width"])
+        self.assertEqual([6, 7], [b["control_id"] for b in raised.exception.details["focused_window"]["buttons"]])
         self.assertEqual(1, click.call_count)
         self.assertEqual(1, backend.inventory["items"][0]["quantity"])
 

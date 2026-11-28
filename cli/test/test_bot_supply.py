@@ -55,8 +55,6 @@ class BotSupplyContract(unittest.TestCase):
             self.assertEqual("instance_attributes_unavailable", preview["equipment_unknown"][0]["reason"])
             with self.assertRaises(SystemExit):
                 bot_supply.do_junk("dev/test", False, True)
-            with self.assertRaises(SystemExit):
-                bot_supply.do_junk("dev/test", False, False)
             sell.assert_not_called()
 
     def test_nearest_shop_selects_shortest_route(self) -> None:
