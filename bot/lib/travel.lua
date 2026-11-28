@@ -1,5 +1,6 @@
 local terrain = require("lib.terrain")
 local move = require("lib.move")
+local io_module = require("lib.io")
 local M = {}
 
 function M.load_route(path)
@@ -33,8 +34,13 @@ function M.step(s, context, world)
     local p = context.game.player
     local function fail(reason)
         p.stop()
-        context.game.log("travel failed: " .. reason)
-        return "failed", reason, {kind = "failed", reason = reason, index = s.index}
+        local edge = s.mover and s.mover.last_failure
+        context.game.log("travel failed: " .. reason .. (edge and string.format(
+            " edge=%s %s:%s x=%s dest=%s rise=%s landing=(%s,%s) platform=%s",
+            tostring(edge.kind), tostring(edge.from), tostring(edge.to), tostring(edge.x),
+            tostring(edge.destination), tostring(edge.rise), tostring(edge.landing_x),
+            tostring(edge.landing_y), tostring(edge.landing_platform)) or ""))
+        return "failed", reason, {kind = "failed", reason = reason, index = s.index, edge = edge}
     end
     s.index = s.index or 1
     local leg = s.legs[s.index]
@@ -90,7 +96,7 @@ function M.step(s, context, world)
     -- 已规划的跳跃、下落和攀绳途中可能不命中任何平台；继续由移动器完成该边。
     if s.path then
         local status, reason = move.step(s.mover, context, world)
-        if status == "failed" then return retry(reason or "move_failed") end
+        if status == "failed" then return fail(reason or "move_failed") end
         if status == "done" then s.path = nil end
         return "running"
     end
@@ -123,9 +129,17 @@ function M.step(s, context, world)
     end
     if not s.path then
         local movement = context.game.character.movement or { max_speed = 125, max_jump_height = 77 }
+        local rejections = {}
         local edges, reason = terrain.plan(s.graph, platform, target,
-            { speed = movement.max_speed, max_jump_height = movement.max_jump_height, blocked = s.blocked or {} })
-        if not edges or #edges == 0 then return retry(reason or "no_path") end
+            { speed = movement.max_speed, max_jump_height = movement.max_jump_height, blocked = s.blocked or {},
+                drop_policy = "conservative", drop_rejections = rejections })
+        if rejections.count then
+            io_module.event(context, "drop_rejected_unproven", {map_id = world.map_id,
+                from = platform, to = target, count = rejections.count, first = rejections.first})
+        end
+        if not edges or #edges == 0 then
+            return fail(reason == "no_path" and rejections.count and "no_path:drop_rejected_unproven" or reason or "no_path")
+        end
         local ok, set_reason = move.set_path(s.mover, edges)
         if not ok then return retry(set_reason or "no_path") end
         s.path = true

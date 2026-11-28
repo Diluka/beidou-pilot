@@ -217,26 +217,23 @@ main(c)
 assert(c.state.retries == 1 and stops > 0 and #plans == 0, "missing target requires immediate retry")
 """)
 
-    def test_failed_edge_is_blocked_on_replan(self) -> None:
+    def test_failed_edge_stops_without_replanning(self) -> None:
         self.run_lua(r"""
 c.state.legs[1].x = 100
 fail_move = true
-main(c); main(c)
-assert(stops > 0, "failed movement must release input")
-fail_move = false
 main(c)
-assert(#plans == 2, "movement failure must trigger a new plan")
-assert(plans[2]["1:2"], "replan must block the failed rope edge")
+local status, reason = main(c)
+assert(status == "failed" and reason == "no_progress", "movement failure must stop the route")
+assert(stops > 0 and #plans == 1, "failed movement must release input without replanning")
 """)
 
     def test_no_path_fails_instead_of_blind_walking(self) -> None:
         self.run_lua(r"""
 c.state.legs[1].x = 100
 no_path = true
-main(c)
-assert(stops > 0, "failed plan must release input before retry")
 local status, reason = main(c)
-assert(status == "failed" and reason == "no_path", "repeated no_path must fail explicitly")
+assert(stops > 0, "failed plan must release input")
+assert(status == "failed" and reason == "no_path", "no_path must fail explicitly without retry")
 assert(moves[#moves] ~= "right", "no_path must not walk blindly")
 """)
 

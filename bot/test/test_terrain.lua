@@ -12,6 +12,25 @@ assert(route69[1].kind == "jumpup" and route69[1].from == 69 and route69[1].to =
     and route69[1].x == -3285 and route69[1].destination == -3269)
 local shop = dofile("bot/test/fixtures/map_100000102.lua")
 local shop_graph = assert(terrain.build(shop.navigation))
+local old_shop = assert(terrain.plan(shop_graph, 6, 23, {speed = 125, max_jump_height = 77.00625}))
+local rejected = {}
+local safe_shop = assert(terrain.plan(shop_graph, 6, 23, {speed = 125, max_jump_height = 77.00625,
+    drop_policy = "conservative", drop_rejections = rejected}))
+assert(#old_shop == 4 and old_shop[2].kind == "drop" and old_shop[2].from == 15 and old_shop[2].to == 18,
+    "the known unproven edge remains in default planning")
+assert(#safe_shop == 6 and rejected.count > 0, "opt-in policy plans the known alternate route")
+for _, edge in ipairs(safe_shop) do
+    assert(not (edge.kind == "drop" and edge.from == 15 and edge.to == 18), "reject unproven shop drop")
+end
+for from=1,#shop_graph.platforms do
+    for to=1,#shop_graph.platforms do
+        if from ~= to then
+            local default = terrain.plan(shop_graph, from, to, {speed=125,max_jump_height=77.00625})
+            local conservative = terrain.plan(shop_graph, from, to, {speed=125,max_jump_height=77.00625,drop_policy="conservative"})
+            assert(not default or conservative, string.format("shop path regression %d->%d",from,to))
+        end
+    end
+end
 local shop_path = assert(terrain.plan(shop_graph, 6, 13, {speed = 125, max_jump_height = 77.00625}))
 assert(#shop_path > 1, "shop route must avoid the intercepted direct drop")
 for _, edge in ipairs(shop_path) do
