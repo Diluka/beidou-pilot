@@ -298,6 +298,160 @@ bool SendWhisper(const std::string& target, const std::string& message) {
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Chat commands: whispered lines starting with @ are parsed by the bridge.
+// Read-only queries are answered directly; control commands are forwarded to
+// the bot mailbox so the single tick controller stays the only actor.
+// ---------------------------------------------------------------------------
+
+std::string ReadFileText(const std::string& path) {
+    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return {};
+    std::array<char, 16384> buffer{};
+    DWORD read = 0;
+    ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size() - 1), &read, nullptr);
+    CloseHandle(file);
+    return std::string(buffer.data(), read);
+}
+
+std::string ReadBotConfig(const char* key) {
+    const std::string content = ReadFileText("Z:\\work\\bot\\config.conf");
+    const std::string prefix = std::string(key) + "=";
+    std::size_t start = content.find(prefix);
+    if (start == std::string::npos) return {};
+    start += prefix.size();
+    std::size_t end = content.find_first_of("\r\n", start);
+    if (end == std::string::npos) end = content.size();
+    return content.substr(start, end - start);
+}
+
+std::string ReadBotStateText(const char* key) {
+    const std::string content = ReadFileText("Z:\\work\\bot\\state.json");
+    const std::string prefix = std::string("\"") + key + "\":\"";
+    std::size_t start = content.find(prefix);
+    if (start == std::string::npos) return {};
+    start += prefix.size();
+    std::size_t end = content.find('"', start);
+    if (end == std::string::npos) return {};
+    return content.substr(start, end - start);
+}
+
+std::string ReadBotStateNumber(const char* key) {
+    const std::string content = ReadFileText("Z:\\work\\bot\\state.json");
+    const std::string prefix = std::string("\"") + key + "\":";
+    std::size_t start = content.find(prefix);
+    if (start == std::string::npos) return {};
+    start += prefix.size();
+    std::size_t end = content.find_first_of("},", start);
+    if (end == std::string::npos) end = content.size();
+    return content.substr(start, end - start);
+}
+
+std::uint64_t NowMilliseconds() {
+    FILETIME time{};
+    GetSystemTimeAsFileTime(&time);
+    const auto ticks = (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    return (ticks - 116444736000000000ULL) / 10000;
+}
+
+// Writes one bot mailbox command into the first free slot. Content is UTF-8 so
+// the Lua bot can match the target name against observed players.
+bool WriteBotCommand(const std::string& kind, const std::string& targetUtf8) {
+    for (int slot = 1; slot <= 8; ++slot) {
+        const std::string path = "Z:\\work\\bot\\queue\\slot" + std::to_string(slot) + ".cmd";
+        WIN32_FILE_ATTRIBUTE_DATA attributes{};
+        if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attributes)) continue;
+        if (GetFileAttributesExA((path + ".processing").c_str(), GetFileExInfoStandard, &attributes)) continue;
+        std::string content =
+            "id=chat_" + std::to_string(NowMilliseconds()) + "\nkind=" + kind + "\nttl=0\nsource=host\n";
+        if (!targetUtf8.empty() && kind == "follow") content += "target=" + targetUtf8 + "\n";
+        const std::string temporary = path + ".tmp";
+        HANDLE file =
+            CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return false;
+        DWORD written = 0;
+        WriteFile(file, content.data(), static_cast<DWORD>(content.size()), &written, nullptr);
+        CloseHandle(file);
+        if (!MoveFileExA(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            DeleteFileA(temporary.c_str());
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+// Returns true when the whisper was a chat command and has been handled.
+// Chinese command words below are CP936 literals (bridge execution charset) and
+// are compared against the raw CP936 message body; English aliases are lowercased.
+bool HandleChatCommand(const std::string& sender, const std::string& message, const std::string& senderUtf8) {
+    if (message.size() < 2 || message[0] != '@') return false;
+    std::string command = message.substr(1);
+    while (!command.empty() && (command.back() == ' ' || command.back() == '\r' || command.back() == '\n'))
+        command.pop_back();
+    std::string lowered = command;
+    for (char& character : lowered)
+        if (character >= 'A' && character <= 'Z') character = static_cast<char>(character - 'A' + 'a');
+    const auto reply = [&](const std::string& gbkText) {
+        if (!gbkText.empty()) SendWhisper(sender, gbkText);
+    };
+    const std::uint32_t mapId = AgentBridge::CurrentMapId();
+    if (command == "位置" || lowered == "where") {
+        reply("我在" + Utf8ToGbk(MapDescription(mapId)));
+        AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": where");
+        return true;
+    }
+    if (command == "状态" || lowered == "status" || lowered == "state") {
+        const std::string mode = ReadBotStateText("mode");
+        const std::string hp = ReadBotStateNumber("hp");
+        const std::string maxHp = ReadBotStateNumber("max_hp");
+        reply("模式 " + (mode.empty() ? std::string("未知") : mode) + " HP " + (hp.empty() ? std::string("?") : hp)
+              + "/" + (maxHp.empty() ? std::string("?") : maxHp) + " 地图 " + Utf8ToGbk(MapDescription(mapId)));
+        AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": status");
+        return true;
+    }
+    if (command == "帮助" || lowered == "help") {
+        reply("可用指令：@位置 @状态 @跟随 @打猎 @停下 @停止");
+        AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": help");
+        return true;
+    }
+    const char* kind = nullptr;
+    std::string label;
+    if (command == "跟随" || lowered == "follow" || lowered == "come") {
+        kind = "follow";
+        label = "跟随";
+    } else if (command == "打猎" || lowered == "hunt") {
+        kind = "hunt";
+        label = "打猎";
+    } else if (command == "停下" || lowered == "stay") {
+        kind = "stay";
+        label = "停下";
+    } else if (command == "停止" || lowered == "stop") {
+        kind = "stop";
+        label = "停止";
+    }
+    if (kind == nullptr) {
+        reply("未知指令，发送 @帮助 查看");
+        AppendLog(Timestamp() + " chat command from " + senderUtf8 + " unknown: " + command);
+        return true;
+    }
+    const std::string owner = ReadBotConfig("owner_name");
+    if (owner.empty() || owner != senderUtf8) {
+        reply("只有主人可以下达操作指令");
+        AppendLog(Timestamp() + " chat command rejected from non-owner " + senderUtf8);
+        return true;
+    }
+    if (!WriteBotCommand(kind, senderUtf8)) {
+        reply("指令队列已满，稍后重试");
+        AppendLog(Timestamp() + " chat command failed: mailbox full for " + senderUtf8);
+        return true;
+    }
+    reply("收到：" + label);
+    AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": " + kind);
+    return true;
+}
+
 void HandleReceiveWhisper(const unsigned char* data, std::size_t size) {
     std::size_t offset = 6;
     if (offset >= size) return;
@@ -313,6 +467,7 @@ void HandleReceiveWhisper(const unsigned char* data, std::size_t size) {
     const std::string senderUtf8 = GbkToUtf8(sender);
     const std::string messageUtf8 = GbkToUtf8(message);
     AppendLog(Timestamp() + " whisper from " + (senderUtf8.empty() ? sender : senderUtf8) + ": " + messageUtf8);
+    if (!senderUtf8.empty() && HandleChatCommand(sender, message, senderUtf8)) return;
     if (!AsksLocation(message)) return;
     const std::uint32_t mapId = AgentBridge::CurrentMapId();
     if (mapId == 0) {
