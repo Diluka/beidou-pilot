@@ -16,6 +16,7 @@
 #include "NativeMotion.h"
 #include "NativeDeath.h"
 #include "NativeSceneTerrain.h"
+#include "NativeChatBroadcast.h"
 #include "LoginAction.h"
 
 #include <array>
@@ -1955,6 +1956,7 @@ void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
         return;
     }
     Tick();
+    BeiDouBridge::NativeChatBroadcast::Tick();
 }
 }
 
@@ -2034,4 +2036,8 @@ void AgentBridge::CharacterUpdated(std::uintptr_t player) {
 
 std::uint32_t AgentBridge::CurrentMapId() {
     return currentState != nullptr && currentState->mapKnown ? currentState->mapId : 0;
+}
+
+std::uint32_t AgentBridge::CurrentCharacterId() {
+    return currentState != nullptr && currentState->characterKnown ? currentState->character.id : 0;
 }

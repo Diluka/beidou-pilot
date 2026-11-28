@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "HpMpAlert.h"
+#include "NativeChatBroadcast.h"
 #include "NativeChatReply.h"
 namespace {
 constexpr DWORD kSaveGlobalAddr = 0x0049C8E7;
@@ -122,6 +123,7 @@ static void __fastcall ProcessPacket_Hook(void* pThis, void* edx, CInPacket* pac
     // Read-only chat observation; the packet still reaches the original handler
     // unchanged so field chat behavior keeps working.
     BeiDouBridge::NativeChatReply::OnPacket(packet);
+    BeiDouBridge::NativeChatBroadcast::OnPacket(packet);
     s_ProcessPacket(pThis, edx, packet);
 }
 } // namespace
