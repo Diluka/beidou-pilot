@@ -2045,3 +2045,18 @@ std::uint32_t AgentBridge::CurrentMapId() {
 std::uint32_t AgentBridge::CurrentCharacterId() {
     return currentState != nullptr && currentState->characterKnown ? currentState->character.id : 0;
 }
+
+AgentBridge::CharacterStats AgentBridge::CurrentCharacterStats() {
+    CharacterStats stats;
+    if (currentState == nullptr || !currentState->characterKnown) return stats;
+    const auto& character = currentState->character;
+    // values order: level, job, str, dex, int, luk, hp, max_hp, mp, max_mp, ap, sp, exp
+    stats.level = character.values[0];
+    stats.hp = character.values[6];
+    stats.maxHp = character.values[7];
+    stats.mp = character.values[8];
+    stats.maxMp = character.values[9];
+    stats.experience = character.values[12];
+    stats.known = character.known[0] && character.known[6] && character.known[7] && character.known[12];
+    return stats;
+}

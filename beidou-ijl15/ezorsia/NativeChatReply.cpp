@@ -309,17 +309,6 @@ std::string ReadBotStateText(const char* key) {
     return content.substr(start, end - start);
 }
 
-std::string ReadBotStateNumber(const char* key) {
-    const std::string content = ReadFileText("Z:\\work\\bot\\state.json");
-    const std::string prefix = std::string("\"") + key + "\":";
-    std::size_t start = content.find(prefix);
-    if (start == std::string::npos) return {};
-    start += prefix.size();
-    std::size_t end = content.find_first_of("},", start);
-    if (end == std::string::npos) end = content.size();
-    return content.substr(start, end - start);
-}
-
 std::uint64_t NowMilliseconds() {
     FILETIME time{};
     GetSystemTimeAsFileTime(&time);
@@ -428,11 +417,64 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
         return true;
     }
     if (verb == "状态" || lowered == "status" || lowered == "state") {
+        // 状态分多条回复：单条悄悄话有长度上限，队列会自动按间隔发送。
         const std::string mode = ReadBotStateText("mode");
-        const std::string hp = ReadBotStateNumber("hp");
-        const std::string maxHp = ReadBotStateNumber("max_hp");
-        reply("模式 " + (mode.empty() ? std::string("未知") : mode) + " HP " + (hp.empty() ? std::string("?") : hp)
-              + "/" + (maxHp.empty() ? std::string("?") : maxHp) + " 地图 " + Utf8ToGbk(MapDescription(mapId)));
+        const auto stats = AgentBridge::CurrentCharacterStats();
+        std::string head =
+            "模式 " + (mode.empty() ? std::string("未知") : mode) + " 地图 " + Utf8ToGbk(MapDescription(mapId));
+        if (stats.known)
+            head += " HP " + std::to_string(stats.hp) + "/" + std::to_string(stats.maxHp) + " MP "
+                    + std::to_string(stats.mp) + "/" + std::to_string(stats.maxMp);
+        reply(head);
+        std::string progress = "等级 " + std::to_string(stats.level) + " 经验 " + std::to_string(stats.experience);
+        const auto character = NativeObservation::Collect("character");
+        if (character.status == "ok") {
+            const auto* mesos = Member(character.data, "mesos");
+            if (mesos != nullptr && mesos->Type() == MapleControl::Value::Kind::Number)
+                progress += " 金币 " + std::to_string(static_cast<std::uint64_t>(mesos->Number()));
+            else
+                progress += " 金币 未知";
+        } else {
+            progress += " 金币 未知";
+        }
+        reply(progress);
+        const auto inventory = NativeObservation::Collect("inventory");
+        if (inventory.status == "ok") {
+            std::uint32_t capacity = 0;
+            std::uint32_t consumed = 0;
+            std::uint32_t potions = 0;
+            std::uint32_t ammo = 0;
+            const auto* capacities = Member(inventory.data, "capacities");
+            if (capacities != nullptr) {
+                const auto* capacity2 = Member(*capacities, "2");
+                if (capacity2 != nullptr && capacity2->Type() == MapleControl::Value::Kind::Number)
+                    capacity = static_cast<std::uint32_t>(capacity2->Number());
+            }
+            const auto* items = Member(inventory.data, "items");
+            if (items != nullptr && items->Type() == MapleControl::Value::Kind::Array) {
+                for (const auto& item : items->Elements()) {
+                    const auto* type = Member(item, "inventory_type");
+                    const auto* identifier = Member(item, "item_id");
+                    if (type == nullptr || identifier == nullptr) continue;
+                    if (static_cast<std::uint32_t>(type->Number()) != 2) continue;
+                    ++consumed;
+                    const auto id = static_cast<std::uint32_t>(identifier->Number());
+                    const auto* quantity = Member(item, "quantity");
+                    const auto count = quantity != nullptr && quantity->Type() == MapleControl::Value::Kind::Number
+                                           ? static_cast<std::uint32_t>(quantity->Number())
+                                           : 1;
+                    if (id >= 2000000 && id < 2060000)
+                        potions += count;
+                    else if (id >= 2060000 && id < 2080000)
+                        ammo += count;
+                }
+            }
+            reply("背包 消耗 " + std::to_string(consumed) + "/" + std::to_string(capacity) + " 药品 "
+                  + std::to_string(potions) + " 弹药 " + std::to_string(ammo));
+        } else {
+            reply("背包观察不可用");
+        }
+        reply("buff、点券、经验百分比暂不支持观察");
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": status");
         return true;
     }
