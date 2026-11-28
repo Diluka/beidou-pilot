@@ -304,7 +304,16 @@ function M.flush(s, now, ctx)
         return false, err
     end
     s.last_write = now
-    if ctx then io_module.event(ctx, 'metrics/flush', {records=#s.rows, elapsed_ms=(os.clock()-started)*1000}) end
+    if ctx then
+        local elapsed = (os.clock()-started)*1000
+        local event = {records=#s.rows, elapsed_ms=elapsed}
+        if elapsed >= 50 then
+            local bytes = 0
+            for _, row in ipairs(s.rows) do bytes = bytes + #row end
+            event.slow_candidate = {bytes=bytes, duration_us=elapsed*1000, clock='os.clock_uncalibrated'}
+        end
+        io_module.event(ctx, 'metrics/flush', event)
+    end
     return true
 end
 
