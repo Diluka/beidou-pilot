@@ -58,6 +58,21 @@ local function graph_for_candidate(kind, values)
     return assert(terrain.build(navigation))
 end
 
+-- A lower platform reachable by drop must not use a cheaper rope shortcut.
+local descent_nav = navigation_with_platforms({
+    {index=1,left=0,right=100,open_left=true,open_right=true,segments={0,100,100,100}},
+    {index=2,left=100,right=180,open_left=true,open_right=true,segments={100,180,140,140}},
+})
+descent_nav.walls = {}
+descent_nav.ropes = {{index=1,x=100,y1=100,y2=140,platforms={1,100,2,140}}}
+descent_nav.candidates.drop = {1,2,100,120,40}
+descent_nav.candidates.rope = {1,2,100,100,40,1}
+local descent_graph = assert(terrain.build(descent_nav))
+local descent = assert(terrain.plan(descent_graph,1,2))
+assert(#descent==1 and descent[1].kind=="drop", "prefer a direct drop to rope descent")
+local rope_fallback = assert(terrain.plan(descent_graph,1,2,{blocked={["1:2:drop"]=true}}))
+assert(#rope_fallback>0 and rope_fallback[1].kind:match("rope"), "retain rope fallback")
+
 local candidate_examples = {
     walk = {1, 2, 100, 120, 20},
     step = {1, 2, 100, 120, 20},
@@ -364,7 +379,15 @@ local rope_leave = climb_path[#climb_path]
 assert(rope_leave.kind == "rope_leave" and rope_leave.to == 2 and rope_leave.x == 330
     and rope_leave.destination == 330 and rope_leave.rise == -10,
     "rope_leave must jump onto a platform above the rope node")
-local descend_path = assert(terrain.plan(rope_graph, 1, 3))
+local rope_only_blocked = {}
+for from = 1, #rope_graph.platforms do
+    for to = 1, #rope_graph.platforms do
+        for _, kind in ipairs({"drop", "downjump", "jumpup", "horizontal_jump", "walk", "step"}) do
+            rope_only_blocked[("%d:%d:%s"):format(from, to, kind)] = true
+        end
+    end
+end
+local descend_path = assert(terrain.plan(rope_graph, 1, 3, {blocked=rope_only_blocked}))
 assert(#descend_path == 2 and descend_path[1].kind == "rope_grab" and descend_path[1].rise == 20
     and descend_path[2].kind == "rope_leave" and descend_path[2].to == 3 and descend_path[2].rise == 180,
     "rope_leave must also support landing below the rope node")

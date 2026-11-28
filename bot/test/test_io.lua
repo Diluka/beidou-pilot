@@ -282,7 +282,7 @@ local fake_modules = {
         end,
     },
     ["lib.world"] = {observe = function() calls[#calls + 1] = "observe"; return {
-        ready = true, scene_generation = scene_generation, character = {x = 1, y = 2, hp = 50},
+        ready = true, scene_generation = scene_generation, character = {x = 1, y = 2, hp = 50, on_ground = true},
     } end},
     ["lib.terrain"] = {
         build = function() calls[#calls + 1] = "build"; return {} end,
