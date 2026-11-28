@@ -317,6 +317,7 @@ main(context):
 ### 6.1 导航
 
 - 平台图/A* 直接消费 `context.scene.terrain.navigation` 已派生的 `platforms/walls/ropes/candidates`；走/小步/跳上/落下/绳边的执行相位参考已验证的 tick-walk。参考脚本保存在主检出 `private/workbenches/live/workspace-warrior/runtime/.../scripts/*.lua` 的运行快照中（带嵌入 context 的旧格式），落地时只抽执行相位并改到当前 `context.game` 契约。平台图以 navigation 为准。
+- 绳按"任意高度可进出的竖直通道"建模：`bot/lib/terrain.lua` 从 `navigation.ropes` 派生绳节点与 `rope_grab`、`rope_climb`、`rope_hop`、`rope_leave` 四类边，支持跳抓悬空绳、绳上任意高度跳离与绳间跳转；旧绕行边被禁或执行失败时作为兜底路径。真实地图实测中间绳链耗时高于传统绕行，默认 A* 仍选较短路线。
 - 已有事实：跳跃高度约 78px、地面速度约 130px/s、跳跃水平惯性约 58px；规划用保守值（跳高 75、落点 4～65、抓绳 95）。
 - `terrain_platform_at(x,y,tolerance)` 定位 owner/自己/怪物所在平台；目标在另一平台时 A*。
 - 路径只在目标平台变化、场景代次变化、卡住重规划时重算；同平台直接 `walk_to`。

@@ -23,7 +23,7 @@
 
 ## 运行范围与已知限制
 
-机器人具备平台巡逻、绳梯与水平跳、顺路拾取、掉层恢复、远程距离筛选和普通门户绑定回图。目标可达性与战斗效果依赖现场地形；跨平台弹道/命中尚待真机确认。同平台拾取扫荡尚未合入并待验证。城镇门户 `landing_mismatch`、NPC/商店后输入冻结、`tick_overrun` 根因及自动补给闭环限制见[客户端能力](../docs/CLIENT_LIMITATIONS.md#伴游机器人当前能力和限制)。
+机器人具备平台巡逻、绳梯与水平跳、绳通道进出（跳抓、绳上任意高度跳离、绳间跳转）、顺路拾取、掉层恢复、远程距离筛选和普通门户绑定回图。目标可达性与战斗效果依赖现场地形；跨平台弹道/命中尚待真机确认。同平台拾取扫荡尚未合入并待验证。城镇门户 `landing_mismatch`、NPC/商店后输入冻结、`tick_overrun` 根因及自动补给闭环限制见[客户端能力](../docs/CLIENT_LIMITATIONS.md#伴游机器人当前能力和限制)。
 
 常驻服仅按已授权计划正常游玩，不使用 GM 写入或直接修改数据库；交互后若输入冻结，按工作台关闭重开并核对实际输入。`lib.metrics` 已合入但主流程未接线，安装后不会自动产生指标。
 
@@ -46,6 +46,8 @@ arrow_low=50
 
 `lib.terrain.build(navigation)` 直接消费 `context.scene.terrain.navigation`，返回引用原始数据的 graph；成功时包含 1 基平台数组以及原样保留的 `walls`、`ropes`、`candidates`、`model` 和地形边界。输入缺失时返回 `nil, "navigation_unavailable"`；必需字段或结构无效时返回 `nil, "navigation_invalid:<field>"`，不会重新从 footholds 派生平台。
 
+build 同时从 `navigation.ropes` 派生绳通道节点 `graph.rope_nodes`：每根绳在 `[y1,y2]` 内按 40px 采样，加入两端与平台相交层高度，节点 id 接在平台之后。绳按"任意高度可进出的竖直通道"建模，不是平台层之间的固定边。
+
 `lib.terrain.platform_at(graph, x, y, tolerance)` 按平台 `segments` 线性插值高度，仅在平台与线段范围内且高度差不超过容差时返回平台索引；重叠命中时选高度差最小者，平局选索引较小者，无命中返回 `nil`。坐标使用地图像素，y 向下为正。示例：
 
 ```lua
@@ -55,7 +57,7 @@ local platform = terrain.platform_at(graph, context.game.character.x, context.ga
 game.log("platform=" .. tostring(platform))
 ```
 
-`lib.terrain.plan(graph, from_index, to_index, options)` 消费候选边，用 A* 按 `walk`、`step`、`jumpup`、`drop`、`rope` 的策略代价生成连续路径；`options.blocked` 可按 `"from:to"` 禁边，跳跃高度、速度可选调整。无路返回 `nil, "no_path"`，非法平台与模型缺失分别返回 `invalid_platform`、`model_unavailable`。上述 terrain 接口只读地形快照，不执行移动或 `player` 动作。
+`lib.terrain.plan(graph, from_index, to_index, options)` 消费候选边，用 A* 按 `walk`、`step`、`jumpup`、`drop`、`rope` 的策略代价生成连续路径；并从平台与绳通道派生四类绳边：`rope_grab`（平台跳抓，或走到边缘走出后下落段抓下方悬空绳）、`rope_climb`（同一根绳相邻节点上下）、`rope_hop`（绳上任意高度按住方向跳到另一根绳）、`rope_leave`（绳上任意高度跳离落到平台；落点与绳轴同列时按上到绳顶自然脱绳）。A* 节点空间包含平台节点与绳节点，路径边的 `from/to` 可能为绳节点。`options.blocked` 按 `"from:to"` 禁边，键一律按整数格式化，navigation 数值为浮点（如 `15.0`）时同样生效；跳跃高度、速度可选调整。无路返回 `nil, "no_path"`，非法平台与模型缺失分别返回 `invalid_platform`、`model_unavailable`。上述 terrain 接口只读地形快照，不执行移动或 `player` 动作。
 
 ## 安全挂机平台分析
 
