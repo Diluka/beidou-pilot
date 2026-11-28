@@ -13,6 +13,7 @@
 #include "stdafx.h"
 #include "NativeChatBroadcast.h"
 #include "AgentBridge.h"
+#include "NativeChatQueue.h"
 
 #include <array>
 #include <cstdint>
@@ -57,9 +58,6 @@ using SendPacketFn = void(__fastcall*)(void* socket, void* unused, OutPacket* pa
 constexpr std::uint32_t kClientSocketAddress = 0x00BE7914;
 constexpr std::uint32_t kSendPacketAddress = 0x0049637B;
 
-// Client-to-server opcodes from the server packet handlers.
-constexpr unsigned short kGeneralChatOpcode = 0x0031;
-constexpr unsigned short kMultiChatOpcode = 0x0077;
 constexpr unsigned short kPartyOperationOpcode = 0x003E;
 constexpr unsigned short kPartyMemberHpOpcode = 0x00C9;
 
@@ -175,27 +173,6 @@ void AppendBytes(std::vector<unsigned char>& payload, const std::string& value) 
 // Server handlers read one string then (public chat) one style byte, or
 // (multi chat) a recipient list. The party variant sends an empty recipient
 // list: the server still broadcasts the text to every party member.
-bool SendPublicChat(const std::string& cp936) {
-    std::vector<unsigned char> payload;
-    payload.push_back(static_cast<unsigned char>(kGeneralChatOpcode & 0xFF));
-    payload.push_back(static_cast<unsigned char>((kGeneralChatOpcode >> 8) & 0xFF));
-    AppendU16(payload, cp936.size());
-    AppendBytes(payload, cp936);
-    payload.push_back(0); // chat style
-    return SendPayload(payload);
-}
-
-bool SendPartyChat(const std::string& cp936) {
-    std::vector<unsigned char> payload;
-    payload.push_back(static_cast<unsigned char>(kMultiChatOpcode & 0xFF));
-    payload.push_back(static_cast<unsigned char>((kMultiChatOpcode >> 8) & 0xFF));
-    payload.push_back(1); // type 1 = party
-    payload.push_back(0); // recipient count: server broadcasts to the whole party
-    AppendU16(payload, cp936.size());
-    AppendBytes(payload, cp936);
-    return SendPayload(payload);
-}
-
 // Reads the mode field from the bot state projection. The bot writes compact
 // JSON with fixed key order; only this one value is needed.
 std::string ReadBotMode() {
@@ -229,9 +206,15 @@ std::string ModeAnnouncement(const std::string& mode) {
     return {};
 }
 
+// Everyone on the map always gets the announcement. When the character is in
+// a party an extra copy goes to the party channel. The shared chat queue
+// spaces the two packets past the server's 200 ms throttle, so the caller does
+// not need to schedule anything.
 bool Broadcast(const std::string& cp936) {
     if (cp936.empty() || cp936.size() > kMaxChatBytes) return false;
-    return partyActive ? SendPartyChat(cp936) : SendPublicChat(cp936);
+    const bool publicQueued = NativeChatQueue::Enqueue(NativeChatQueue::Channel::Public, cp936);
+    if (partyActive) NativeChatQueue::Enqueue(NativeChatQueue::Channel::Party, cp936);
+    return publicQueued;
 }
 
 // Parses the six party slot CIDs that follow the packet header and checks

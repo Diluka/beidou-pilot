@@ -17,6 +17,7 @@
 #include "NativeDeath.h"
 #include "NativeSceneTerrain.h"
 #include "NativeChatBroadcast.h"
+#include "NativeChatQueue.h"
 #include "LoginAction.h"
 
 #include <array>
@@ -1957,6 +1958,7 @@ void __fastcall UpdateHook(ClientApplication* app, void*, int now) {
     }
     Tick();
     BeiDouBridge::NativeChatBroadcast::Tick();
+    BeiDouBridge::NativeChatQueue::Tick();
 }
 }
 
