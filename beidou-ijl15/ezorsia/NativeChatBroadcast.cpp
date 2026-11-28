@@ -71,8 +71,11 @@ constexpr unsigned char kPartyOperationLeave = 0x0C;  // disband / leave / expel
 constexpr unsigned char kPartyOperationLeader = 0x1B;
 
 constexpr std::size_t kPartySlotCount = 6;
-constexpr unsigned short kPartyOperationSendOpcode = 0x007C;
+constexpr unsigned short kPartySendOpcode = 0x007C;
+constexpr unsigned short kPartyDenyOpcode = 0x007D;
 constexpr unsigned char kPartyCreateOperation = 0x01;
+constexpr unsigned char kPartyLeaveOperation = 0x02;
+constexpr unsigned char kPartyAcceptOperation = 0x03;
 constexpr unsigned char kPartyInviteOperation = 0x04;
 constexpr std::uint32_t kPollIntervalMs = 1000;
 constexpr std::uint32_t kAnnounceIntervalMs = 2000;
@@ -81,6 +84,9 @@ constexpr std::size_t kLogLimitBytes = 1024 * 1024;
 
 SendPacketFn sendPacket = reinterpret_cast<SendPacketFn>(kSendPacketAddress);
 bool partyActive = false;
+std::uint32_t pendingPartyId = 0;
+std::string pendingPartyFrom;
+std::vector<std::string> partyCommands;
 std::string lastMode;
 std::uint64_t lastPollAt = 0;
 std::uint64_t lastAnnounceAt = 0;
@@ -277,8 +283,20 @@ void HandlePartyOperation(const unsigned char* data, std::size_t size) {
         partyActive = SelfInPartySlots(data, size, offset);
         break;
     }
+    case kPartyOperationInvite: {
+        // type, party id, inviting name string, one trailing byte.
+        if (size < 13) return;
+        pendingPartyId = ReadAt(data, size, 7);
+        std::size_t offset = 11;
+        const std::size_t nameLength =
+            static_cast<std::size_t>(data[offset]) | (static_cast<std::size_t>(data[offset + 1]) << 8);
+        offset += 2;
+        if (offset + nameLength > size) return;
+        pendingPartyFrom.assign(reinterpret_cast<const char*>(data + offset), nameLength);
+        AppendLog(Timestamp() + " party invite received from " + pendingPartyFrom);
+        break;
+    }
     case kPartyOperationLeader:
-    case kPartyOperationInvite:
         break;
     default:
         break;
@@ -312,52 +330,107 @@ void OnPacket(void* packet) {
     }
 }
 
-// Temporary verification hook. Not part of the delivered behavior: it is
-// removed before the change is merged.
-bool pendingInvite = false;
-std::string pendingInviteName;
-
-void SendPartyOperation(std::vector<unsigned char> payload) {
-    payload.insert(payload.begin(), {static_cast<unsigned char>(kPartyOperationSendOpcode & 0xFF),
-                                     static_cast<unsigned char>((kPartyOperationSendOpcode >> 8) & 0xFF)});
+// Shared party command protocol. The host or bot writes one command per line
+// to party-cmd.txt under the bridge directory; the bridge executes one command
+// per update poll and renames the file to .done. Commands run without any UI
+// interaction:
+//   create            create a party (current character becomes leader)
+//   invite <name>     invite a player by name
+//   accept            accept the pending invite (from the cached party packet)
+//   deny              decline the pending invite
+//   leave             leave the party (leader leaving disbands it server-side)
+void SendPartyPacket(std::vector<unsigned char> payload) {
+    payload.insert(payload.begin(), {static_cast<unsigned char>(kPartySendOpcode & 0xFF),
+                                     static_cast<unsigned char>((kPartySendOpcode >> 8) & 0xFF)});
     SendPayload(payload);
 }
 
-void PollTestInvite() {
-    if (pendingInvite) {
-        std::vector<unsigned char> invite{kPartyInviteOperation};
-        AppendU16(invite, pendingInviteName.size());
-        AppendBytes(invite, pendingInviteName);
-        SendPartyOperation(invite);
-        AppendLog(Timestamp() + " test hook: party invite sent to " + pendingInviteName);
-        pendingInvite = false;
-        pendingInviteName.clear();
-        return;
+void ExecutePartyCommand(const std::string& raw) {
+    std::string command = raw;
+    while (!command.empty() && (command.back() == '\r' || command.back() == ' ' || command.back() == '\t'))
+        command.pop_back();
+    std::size_t begin = 0;
+    while (begin < command.size() && (command[begin] == ' ' || command[begin] == '\t')) ++begin;
+    command = command.substr(begin);
+    if (command.empty() || command[0] == '#') return;
+    if (command == "create") {
+        SendPartyPacket({kPartyCreateOperation});
+        AppendLog(Timestamp() + " party command: create sent");
+    } else if (command == "leave") {
+        SendPartyPacket({kPartyLeaveOperation});
+        AppendLog(Timestamp() + " party command: leave sent");
+    } else if (command == "accept") {
+        if (pendingPartyId == 0) {
+            AppendLog(Timestamp() + " party command: accept skipped, no pending invite");
+            return;
+        }
+        std::vector<unsigned char> payload{kPartyAcceptOperation};
+        payload.push_back(static_cast<unsigned char>(pendingPartyId & 0xFF));
+        payload.push_back(static_cast<unsigned char>((pendingPartyId >> 8) & 0xFF));
+        payload.push_back(static_cast<unsigned char>((pendingPartyId >> 16) & 0xFF));
+        payload.push_back(static_cast<unsigned char>((pendingPartyId >> 24) & 0xFF));
+        SendPartyPacket(payload);
+        AppendLog(Timestamp() + " party command: accept sent for party " + std::to_string(pendingPartyId));
+        pendingPartyId = 0;
+        pendingPartyFrom.clear();
+    } else if (command == "deny") {
+        if (pendingPartyFrom.empty()) {
+            AppendLog(Timestamp() + " party command: deny skipped, no pending invite");
+            return;
+        }
+        std::vector<unsigned char> payload{static_cast<unsigned char>(kPartyDenyOpcode & 0xFF),
+                                           static_cast<unsigned char>((kPartyDenyOpcode >> 8) & 0xFF), 0};
+        AppendU16(payload, pendingPartyFrom.size());
+        AppendBytes(payload, pendingPartyFrom);
+        SendPayload(payload);
+        AppendLog(Timestamp() + " party command: deny sent for inviter " + pendingPartyFrom);
+        pendingPartyId = 0;
+        pendingPartyFrom.clear();
+    } else if (command.rfind("invite ", 0) == 0) {
+        const std::string name = command.substr(7);
+        std::vector<unsigned char> payload{kPartyInviteOperation};
+        AppendU16(payload, name.size());
+        AppendBytes(payload, name);
+        SendPartyPacket(payload);
+        AppendLog(Timestamp() + " party command: invite sent to " + name);
+    } else {
+        AppendLog(Timestamp() + " party command: unknown command " + command);
     }
-    const std::string directory = BridgeDirectory();
-    if (directory.empty()) return;
-    const std::string path = directory + "\\test-invite.txt";
-    WIN32_FILE_ATTRIBUTE_DATA attributes{};
-    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attributes)) return;
-    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) return;
-    std::array<char, 256> buffer{};
-    DWORD read = 0;
-    ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size() - 1), &read, nullptr);
-    CloseHandle(file);
-    MoveFileExA(path.c_str(), (path + ".done").c_str(), MOVEFILE_REPLACE_EXISTING);
-    std::string name(buffer.data(), read);
-    while (!name.empty() && (name.back() == '\r' || name.back() == '\n' || name.back() == ' ')) name.pop_back();
-    if (name.empty()) return;
-    pendingInviteName = name;
-    pendingInvite = true;
-    SendPartyOperation({kPartyCreateOperation});
-    AppendLog(Timestamp() + " test hook: party create sent, pending invite " + name);
+}
+
+void PollPartyCommands() {
+    if (partyCommands.empty()) {
+        const std::string directory = BridgeDirectory();
+        if (directory.empty()) return;
+        const std::string path = directory + "\\party-cmd.txt";
+        WIN32_FILE_ATTRIBUTE_DATA attributes{};
+        if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attributes)) return;
+        HANDLE file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        std::array<char, 4096> buffer{};
+        DWORD read = 0;
+        ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size() - 1), &read, nullptr);
+        CloseHandle(file);
+        MoveFileExA(path.c_str(), (path + ".done").c_str(), MOVEFILE_REPLACE_EXISTING);
+        const std::string content(buffer.data(), read);
+        std::size_t start = 0;
+        while (start <= content.size()) {
+            const std::size_t newline = content.find('\n', start);
+            const std::size_t end = newline == std::string::npos ? content.size() : newline;
+            partyCommands.push_back(content.substr(start, end - start));
+            if (newline == std::string::npos) break;
+            start = newline + 1;
+        }
+    }
+    if (partyCommands.empty()) return;
+    const std::string command = partyCommands.front();
+    partyCommands.erase(partyCommands.begin());
+    ExecutePartyCommand(command);
 }
 
 void Tick() {
-    PollTestInvite();
+    PollPartyCommands();
     const auto now = static_cast<std::uint64_t>(GetTickCount64());
     if (lastPollAt != 0 && now - lastPollAt < kPollIntervalMs) return;
     lastPollAt = now;
