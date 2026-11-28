@@ -287,6 +287,15 @@ workbenches/workbench dev/NAME skill-up-reconcile 1000 --request-id 0123456789ab
 
 AP 已为 0 时返回 `status=unchanged`；确认同角色 AP 已归零且属性增量合计等于原 AP 时返回 `status=allocated`。两者都返回 `before`、`after`（含 `strength`、`dexterity`、`intelligence`、`luck`、`ability_points`）、`allocated` 和 `remaining_ap`。`unknown` 表示结果未确认，先观察同一角色的属性和剩余 AP，不重复请求。完整职业覆盖不作保证。
 
+## 现金商城（实验性预检）
+
+```bash
+workbenches/workbench dev/NAME cashshop read
+workbenches/workbench dev/NAME cashshop expand --type equip --count 1 --dry-run
+```
+
+`read` 只根据通用 UI 中三个已观察的窗口类型与尺寸返回 `candidate_open`；缺失、重复或观察不可用时 `open=null`（未知，不等于关闭）。余额、商品身份、分类、页码及可点击坐标尚未接入原生观察，均保持未知；本结果不证明商品位置或购买结果。`expand --dry-run` 仅返回供后续校准的商品 SN、价格、候选控件与页码，不发输入、不导航，`candidate_verified=false`。`open`、`close` 和非 dry-run 的 `expand` 目前均以 `cashshop_unverified` 拒绝，不会点击或扣款。背包扩展实际购买尚不可用，未知成交不可重放。
+
 ## 原版 GUI
 
 GUI 镜像包含 CLI、Lua、Wine/VirtualGL 和匹配的桥 DLL。资源路径从公共 `private/workbenches/config/resources.json` 读取；原版客户端只读挂到 `/client`，`game_data` 指向的 `Data/` 只读挂到 `/data`，供 Catalog 使用共享原生解析器。工作目录使用相同入口：

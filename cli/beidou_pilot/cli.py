@@ -194,6 +194,11 @@ def parser() -> Parser:
     q.add_argument("item", nargs="?", type=int)
     q.add_argument("--count", type=int, default=1)
     q.add_argument("--slot", type=int)
+    q = command("cashshop", "现金商城只读探测及扩容预检（尚不派发购买）")
+    q.add_argument("action", choices=["open", "close", "read", "expand"])
+    q.add_argument("--type", choices=["equip", "use", "setup", "etc"])
+    q.add_argument("--count", type=int, default=1)
+    q.add_argument("--dry-run", action="store_true")
     q = command("screenshot", "保存原图及游戏裁剪，不直接向会话加载图片")
     q.add_argument("name", nargs="?")
     q = command("record", "有界采集当前游戏画面与逐帧时间戳，不发送输入")
@@ -288,8 +293,12 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "equip",
         "bind",
         "shop",
+        "cashshop",
         "notifications",
-    } and not (cmd in {"dialog", "ui", "shop", "notifications"} and args.action == "read"):
+    } and not (
+        cmd in {"dialog", "ui", "shop", "cashshop", "notifications"} and args.action == "read"
+        or cmd == "cashshop" and args.action == "expand" and args.dry_run
+    ):
         from .bridge import BridgeClient
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
@@ -645,6 +654,16 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
             if args.action == "buy"
             else shop.sell(backend, args.item, args.count, slot=args.slot)
         )
+    if cmd == "cashshop":
+        from . import cashshop
+
+        if args.action == "read":
+            return cashshop.read_cashshop(backend)
+        if args.action == "expand" and args.dry_run:
+            if args.type is None:
+                raise ClientError("usage", "cashshop expand --dry-run 必须指定 --type。")
+            return cashshop.plan_expand(backend, args.type, args.count)
+        return cashshop.unavailable(backend, args.action)
     if cmd == "screenshot":
         name = args.name or datetime.now(timezone.utc).strftime("shot-%Y%m%dT%H%M%S-") + str(os.getpid())
         return backend.read("desktop", "screenshot", name, "--game-crop")
@@ -775,6 +794,7 @@ def main(argv: list[str] | None = None) -> int:
             or (args.command == "dialog" and args.action == "read")
             or (args.command == "ui" and args.action == "read")
             or (args.command == "shop" and args.action == "read")
+            or (args.command == "cashshop" and (args.action == "read" or args.action == "expand" and args.dry_run))
         )
         if args.command == "close":
             result = dispatch(backend, args)
