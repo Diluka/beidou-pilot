@@ -121,7 +121,7 @@ local function parse_command(path)
     if not fields.id or not fields.id:match("^[%w_-]+$") then return fields, "invalid_id" end
     if not fields.kind then return fields, "missing_kind" end
     if fields.kind ~= "follow" and fields.kind ~= "hunt" and fields.kind ~= "stay"
-        and fields.kind ~= "status" and fields.kind ~= "stop" then
+        and fields.kind ~= "status" and fields.kind ~= "stop" and fields.kind ~= "travel" then
         return fields, "unknown_kind"
     end
     local ttl = fields.ttl and tonumber(fields.ttl)

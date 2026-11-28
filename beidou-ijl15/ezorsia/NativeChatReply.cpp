@@ -598,7 +598,7 @@ void OnPacket(void* packet) {
 void Tick() {
     if (summonPending && !summonResultReady && GetTickCount64() - summonRequestAt > 8000) {
         summonPending = false;
-        SendWhisper(summonRequesterGbk, Utf8ToGbk("无法确认你的位置（查询超时）"));
+        SendWhisper(summonRequesterGbk, "无法确认你的位置（查询超时）");
         AppendLog(Timestamp() + " summon: location lookup timed out for " + summonRequesterUtf8);
         summonRequesterGbk.clear();
         summonRequesterUtf8.clear();
@@ -620,33 +620,34 @@ void Tick() {
         const std::uint32_t targetMap = summonResultField;
         if (targetMap == currentMap) {
             if (WriteBotCommand("follow", requesterUtf8))
-                reply(Utf8ToGbk("我就在你旁边，开始跟随"));
+                reply("我就在你旁边，开始跟随");
             else
-                reply(Utf8ToGbk("指令队列已满，稍后重试"));
+                reply("指令队列已满，稍后重试");
             AppendLog(Timestamp() + " summon: requester on same map, follow queued for " + requesterUtf8);
         } else if (WriteSummonRoute(currentMap, targetMap)) {
             if (WriteBotCommand("travel", requesterUtf8)) {
-                reply(Utf8ToGbk("你在地图 " + std::to_string(targetMap) + "，正在前往"));
+                reply("你在地图 " + std::to_string(targetMap) + "（" + Utf8ToGbk(MapDescription(targetMap))
+                      + "），正在前往");
                 AppendLog(Timestamp() + " summon: travel queued to map " + std::to_string(targetMap));
             } else {
-                reply(Utf8ToGbk("指令队列已满，稍后重试"));
+                reply("指令队列已满，稍后重试");
             }
         } else {
-            reply(Utf8ToGbk("无法找到从当前地图到你的路线"));
+            reply("无法找到从当前地图到你的路线");
             AppendLog(Timestamp() + " summon: no route from " + std::to_string(currentMap) + " to "
                       + std::to_string(targetMap));
         }
     } else if (summonResultType == 3) {
-        reply(Utf8ToGbk("你在另一个频道，跨频道无法寻路，请来到我所在的频道"));
+        reply("你在另一个频道，跨频道无法寻路，请来到我所在的频道");
         AppendLog(Timestamp() + " summon: requester on another channel");
     } else if (summonResultType == 0) {
-        reply(Utf8ToGbk("你在交易中心，无法寻路"));
+        reply("你在交易中心，无法寻路");
         AppendLog(Timestamp() + " summon: requester in ITC");
     } else if (summonResultType == 2) {
-        reply(Utf8ToGbk("你在现金商店，无法寻路"));
+        reply("你在现金商店，无法寻路");
         AppendLog(Timestamp() + " summon: requester in cash shop");
     } else {
-        reply(Utf8ToGbk("无法确认你的位置"));
+        reply("无法确认你的位置");
         AppendLog(Timestamp() + " summon: unknown location result type " + std::to_string(summonResultType));
     }
 }
