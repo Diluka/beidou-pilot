@@ -41,7 +41,7 @@
 
 `data.current_instance` 在暂无所属容器时为 `null`，存在时报告实际容器、镜像、运行身份及 `matches_prepared_image`。`native_inputs_match` 按对应后端原生源码输入比较，文档变更导致镜像 ID 不同时也能判断原生输入是否相同；后端不同或本地缺少来源树时为 `null`。这个比较只覆盖原生输入，CLI、策略与整个镜像的差异另行核对。`build` 只准备产物，切换已有实例仍需明确的 `close/open`。
 
-整个工作目录以一个读写挂载进入容器 `/work`。宿主保存 `runtime/default/host.json`，本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID`；桥、锁、日志和自动生成的账号/服务器快照按此隔离。资源 `/client` 和 `/data` 保持各自现有只读格式和来源。用户脚本直接使用 `/work/scripts`。`cache_dir`（默认 `<workbench>/cache`）在创建新实例时创建并解析，不可用时启动失败（`cache_dir_unavailable`）；该目录读写挂到容器 `/cache`，客户端进程以 `BEIDOU_CACHE_DIR=/cache` 写入版本化世界地图缓存。
+整个工作目录以一个读写挂载进入容器 `/work`。宿主保存 `runtime/default/host.json`，本次 `CLIENT_ROOT=/work/runtime/default/RUN_ID`；桥、锁、日志和自动生成的账号/服务器快照按此隔离。Wine 前缀的宿主数据固定为角色目录 `runtime/default/prefix`，并在容器内覆盖到本次 `$CLIENT_ROOT/runtime/prefix`，由同一角色的 `default` 实例跨运行复用，不与其他角色共享。资源 `/client` 和 `/data` 保持各自现有只读格式和来源。用户脚本直接使用 `/work/scripts`。`cache_dir`（默认 `<workbench>/cache`）在创建新实例时创建并解析，不可用时启动失败（`cache_dir_unavailable`）；该目录读写挂到容器 `/cache`，客户端进程以 `BEIDOU_CACHE_DIR=/cache` 写入版本化世界地图缓存。
 
 普通结果为 JSON 信封，含 `ok/command/data`；客户端结果还含 `backend/instance`。失败含 `error.code/message/details`，已识别失败退出码2、中断130。`list` 和 `notes` 输出文本，`watch/events watch` 输出 JSONL，`resources-check` 输出原生资源检查 JSON；`server dev` 的输出来自 Compose 或服务端 CLI。
 
@@ -301,7 +301,7 @@ workbenches/workbench dev/GUI_NAME close
 
 当前启动器配套的 [GUI Compose](../docker/compose.yaml) 装配角色 `ref` 所选镜像。原客户端只读挂到 `/client`，镜像内的桥位于 `/opt/beidou-pilot/native/ijl15.dll`。容器在 `$CLIENT_ROOT/client` 生成可写运行副本，`Data/` 读取原只读目录，`2ijl15.dll` 图片库仍保留；外部原始文件保持只读。CLI、桌面输入和录制直接使用本容器的桥和显示环境。
 
-GUI 容器在自身网络命名空间启用回环游戏端口 NAT，连接已核验目标，服务端公告地址保持原样。Wine prefix、运行日志和桥数据位于本次 `$CLIENT_ROOT/runtime/` 下，由工作台持久化，需允许 `1000:1000` 读写。硬件路径使用 `/dev/dri/renderD128`、`DISPLAY=:97` 的 `1920x1080x24` Xvfb 和窗口管理器、VirtualGL EGL；Wine 虚拟桌面提供原客户端所需显示模式。GUI启动诊断日志写入本次运行目录。
+GUI 容器在自身网络命名空间启用回环游戏端口 NAT，连接已核验目标，服务端公告地址保持原样。Wine prefix 的宿主数据位于角色级 `/work/runtime/default/prefix`，并以独立 bind mount 映射到本次 `$CLIENT_ROOT/runtime/prefix`，因此旧提交镜像也能按原路径使用同一角色的持久前缀；运行日志和桥数据仍位于本次 `$CLIENT_ROOT/runtime/`，均需允许 `1000:1000` 读写。旧版运行布局会在所属客户端正常 `close`、下一次启动或 `workbenches/cleanup-runtime --apply` 时迁移最后一次登记的前缀；角色级稳定前缀是后续保留副本，更早的前缀随历史 `RUN_ID` 目录由清理入口显式回收，活动实例始终保留。硬件路径使用 `/dev/dri/renderD128`、`DISPLAY=:97` 的 `1920x1080x24` Xvfb 和窗口管理器、VirtualGL EGL；Wine 虚拟桌面提供原客户端所需显示模式。GUI 启动诊断日志写入本次运行目录。
 
 构建成功、环境检查和实际入图分别记录；涉及动作时另核对实际游戏结果。GUI 输入仍只允许一名明确操作者。
 

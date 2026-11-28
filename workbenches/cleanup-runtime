@@ -1,0 +1,209 @@
+#!/bin/bash
+# 删除已退出的工作台运行快照；活动实例与角色级 Wine 前缀始终保留。
+set -euo pipefail
+umask 077
+shopt -s nullglob
+
+usage() {
+    cat <<'EOF'
+用法：workbenches/cleanup-runtime [--apply] [live|dev|{live|dev}/角色]
+
+默认只预览将迁移的旧 Wine 前缀和将删除的历史运行目录。
+传入 --apply 后执行迁移与删除。活动客户端的运行目录不会删除。
+EOF
+}
+
+apply=0
+scope=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --apply) apply=1 ;;
+        --help|-h) usage; exit 0 ;;
+        live|dev|live/*|dev/*)
+            [ -z "$scope" ] || { echo '只能指定一个清理范围。' >&2; exit 2; }
+            scope=$1 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+    shift
+done
+if [[ -n "$scope" && ! "$scope" =~ ^(live|dev)(/[[:alnum:]][[:alnum:]_.-]*)?$ ]]; then
+    echo '清理范围须为 live、dev 或 live/角色、dev/角色。' >&2
+    exit 2
+fi
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+repository=$(git -C "$here" rev-parse --show-toplevel)
+main_root=$(git -C "$repository" worktree list --porcelain | sed -n 's/^worktree //p' | head -n1)
+private_root="$main_root/private/workbenches"
+[ -d "$private_root" ] && [ "$(realpath "$private_root")" = "$private_root" ] || {
+    echo "工作台私有目录不可用：$private_root" >&2
+    exit 2
+}
+
+roles=()
+if [[ "$scope" == */* ]]; then
+    role="$private_root/$scope"
+    [ -d "$role" ] && [ ! -L "$role" ] && [ "$(realpath "$role")" = "$role" ] || {
+        echo "角色工作台不可用：$scope" >&2
+        exit 2
+    }
+    roles+=("$role")
+else
+    zones=(live dev)
+    [ -n "$scope" ] && zones=("$scope")
+    for zone in "${zones[@]}"; do
+        for role in "$private_root/$zone"/*; do
+            [ -d "$role" ] && [ ! -L "$role" ] || continue
+            roles+=("$role")
+        done
+    done
+fi
+
+lock_fds=()
+for role in "${roles[@]}"; do
+    default="$role/runtime/default"
+    [ -d "$default" ] || continue
+    [ ! -L "$default" ] && [ "$(realpath "$default")" = "$default" ] || {
+        echo "运行目录不是角色内的实际目录：$default" >&2
+        exit 2
+    }
+    exec {fd}>"$default/lifecycle.lock"
+    flock -n "$fd" || { echo "角色正在启停，未执行清理：${role#"$private_root/"}" >&2; exit 2; }
+    lock_fds+=("$fd")
+done
+exec {global_fd}>"$private_root/.start.lock"
+flock -n "$global_fd" || { echo '有客户端正在启动，未执行清理。' >&2; exit 2; }
+
+command -v docker >/dev/null || { echo 'Docker 不可用，无法核对活动客户端。' >&2; exit 2; }
+declare -A active_roots=()
+client_ids=$(docker ps -q --filter 'label=beidou.client.root') || {
+    echo '无法查询活动客户端，未执行清理。' >&2
+    exit 2
+}
+while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    active=$(docker inspect "$id" --format '{{index .Config.Labels "beidou.client.root"}}')
+    case "$active" in
+        "$private_root"/live/*/runtime/default/*|"$private_root"/dev/*/runtime/default/*)
+            [ -d "$active" ] && [ ! -L "$active" ] || {
+                echo "活动客户端运行目录不可用：$active" >&2
+                exit 2
+            }
+            resolved=$(realpath "$active")
+            [[ "${resolved##*/}" =~ ^[0-9]{8}T[0-9]{6}\.[0-9]+Z$ ]] || {
+                echo "活动客户端运行 ID 无效：$resolved" >&2
+                exit 2
+            }
+            active_roots["$resolved"]=1
+            ;;
+    esac
+done <<<"$client_ids"
+
+mode=dry-run
+[ "$apply" -eq 1 ] && mode=apply
+printf 'mode=%s scope=%s\n' "$mode" "${scope:-all}"
+
+migrated=0
+declare -A planned_prefixes=()
+for role in "${roles[@]}"; do
+    default="$role/runtime/default"
+    [ -d "$default" ] || continue
+    active_role=0
+    for active in "${!active_roots[@]}"; do
+        [[ "$active" == "$default/"* ]] && active_role=1
+    done
+    stable="$default/prefix"
+    [ ! -L "$stable" ] || { echo "Wine 前缀不能是符号链接：$stable" >&2; exit 2; }
+    if [ -e "$stable" ] && [ ! -d "$stable" ]; then
+        echo "Wine 前缀不是目录：$stable" >&2
+        exit 2
+    fi
+    [ "$active_role" -eq 0 ] || continue
+
+    stable_empty=0
+    if [ -d "$stable" ] && [ -z "$(ls -A -- "$stable")" ]; then stable_empty=1; fi
+    if [ -d "$stable" ] && [ "$stable_empty" -eq 0 ]; then continue; fi
+
+    legacy_prefixes=()
+    for run in "$default"/20*Z; do
+        [ -d "$run" ] && [ ! -L "$run" ] || continue
+        resolved=$(realpath "$run")
+        [ -z "${active_roots[$resolved]-}" ] || continue
+        legacy="$resolved/runtime/prefix"
+        [ -d "$legacy" ] || continue
+        [ ! -L "$legacy" ] && [ "$(realpath "$legacy")" = "$legacy" ] || {
+            echo "旧 Wine 前缀不是角色内的实际目录：$legacy" >&2
+            exit 2
+        }
+        if [ -e "$legacy/system.reg" ] || [ -e "$legacy/user.reg" ] || [ -d "$legacy/drive_c" ]; then
+            legacy_prefixes+=("$legacy")
+        elif [ -n "$(ls -A -- "$legacy")" ]; then
+            echo "旧 Wine 前缀内容无法识别，未执行清理：$legacy" >&2
+            exit 2
+        fi
+    done
+    [ "${#legacy_prefixes[@]}" -gt 0 ] || continue
+
+    chosen=
+    if [ -f "$default/host.json" ]; then
+        run_id=$(jq -r '.run_id // empty | strings | select(test("^[A-Za-z0-9][A-Za-z0-9_.-]*$"))' "$default/host.json")
+        candidate="$default/$run_id/runtime/prefix"
+        for legacy in "${legacy_prefixes[@]}"; do [ "$legacy" = "$candidate" ] && chosen=$legacy; done
+    fi
+    if [ -z "$chosen" ] && [ "${#legacy_prefixes[@]}" -eq 1 ]; then chosen=${legacy_prefixes[0]}; fi
+    if [ -z "$chosen" ]; then
+        echo "存在多份旧 Wine 前缀且无法确定最后一次运行，未执行清理：${role#"$private_root/"}" >&2
+        exit 2
+    fi
+
+    printf 'migrate %s -> %s\n' "$chosen" "$stable"
+    planned_prefixes["$chosen"]=$(du -sk -- "$chosen" | awk '{print $1}')
+    if [ "$apply" -eq 1 ]; then
+        [ "$stable_empty" -eq 0 ] || rmdir -- "$stable"
+        mv -- "$chosen" "$stable"
+    fi
+    migrated=$((migrated+1))
+done
+
+deleted=0
+deleted_kb=0
+preserved=0
+for role in "${roles[@]}"; do
+    default="$role/runtime/default"
+    [ -d "$default" ] || continue
+    for run in "$default"/20*Z; do
+        [ -d "$run" ] || continue
+        [ ! -L "$run" ] || { echo "历史运行目录不能是符号链接：$run" >&2; exit 2; }
+        resolved=$(realpath "$run")
+        case "$resolved" in
+            "$private_root"/live/*/runtime/default/*|"$private_root"/dev/*/runtime/default/*) ;;
+            *) echo "拒绝清理意外路径：$resolved" >&2; exit 2 ;;
+        esac
+        [[ "${resolved##*/}" =~ ^[0-9]{8}T[0-9]{6}\.[0-9]+Z$ ]] || {
+            echo "拒绝清理无效运行 ID：$resolved" >&2
+            exit 2
+        }
+        if [ -n "${active_roots[$resolved]-}" ]; then
+            printf 'preserve active %s\n' "$resolved"
+            preserved=$((preserved+1))
+            continue
+        fi
+        kb=$(du -sk -- "$resolved" | awk '{print $1}')
+        if [ "$apply" -eq 0 ]; then
+            for legacy in "${!planned_prefixes[@]}"; do
+                [[ "$legacy" == "$resolved/"* ]] && kb=$((kb-planned_prefixes[$legacy]))
+            done
+        fi
+        [ "$kb" -ge 0 ] || kb=0
+        printf 'delete %s (%s)\n' "$resolved" "$(numfmt --to=iec --suffix=B $((kb*1024)))"
+        if [ "$apply" -eq 1 ]; then rm -rf -- "$resolved"; fi
+        deleted=$((deleted+1))
+        deleted_kb=$((deleted_kb+kb))
+    done
+done
+
+result=candidate
+[ "$apply" -eq 1 ] && result=deleted
+printf 'summary mode=%s migrated_prefixes=%d %s_runs=%d %s_size=%s preserved_active=%d\n' \
+    "$mode" "$migrated" "$result" "$deleted" "$result" \
+    "$(numfmt --to=iec --suffix=B $((deleted_kb*1024)))" "$preserved"

@@ -39,7 +39,7 @@ elif a[0] == 'run' and '-d' in a:
     s['client'] = {'Id':'client', 'Image':a[-1], 'State':{'Running':True}, 'Config':{'User':'1000:1000', 'Env':env, 'Labels':labels}, 'HostConfig':{'Privileged':False, 'NetworkMode':'fixture_game', 'PortBindings':{}}}
     p.write_text(json.dumps(s))
 elif a[0] == 'compose':
-    keys = ['CLIENT_ROOT', 'CLIENT_RUNTIME_ROOT', 'WORKBENCH_ROOT', 'CLIENT_IMAGE_ID', 'TARGET_CONTAINER_ID', 'TARGET_NETWORK', 'TARGET_IP', 'MAPLE_LOGIN_MODE', 'CHARACTER_ID', 'WORLD_ID', 'MAPLE_INSTANCE']
+    keys = ['CLIENT_ROOT', 'CLIENT_RUNTIME_ROOT', 'BEIDOU_WINEPREFIX_HOST', 'WORKBENCH_ROOT', 'CLIENT_IMAGE_ID', 'TARGET_CONTAINER_ID', 'TARGET_NETWORK', 'TARGET_IP', 'MAPLE_LOGIN_MODE', 'CHARACTER_ID', 'WORLD_ID', 'MAPLE_INSTANCE']
     values = {key: os.environ[key] for key in keys}
     s['compose_env'] = values
     root = Path(values['CLIENT_ROOT'])
@@ -47,6 +47,14 @@ elif a[0] == 'compose':
     (root / 'state/container.json').write_text('{}')
     labels = {'beidou.workbench': values['WORKBENCH_ROOT'], 'beidou.client.root': str(root), 'beidou.client.instance': values['MAPLE_INSTANCE'], 'beidou.task': 'client-v17-maintained', 'beidou.backend': 'beidou', 'beidou.character.id': values['CHARACTER_ID']}
     s['client'] = {'Id': 'client', 'Image': values['CLIENT_IMAGE_ID'], 'State': {'Running': True}, 'Config': {'User': '1000:1000', 'Env': ['CLIENT_ROOT=' + values['CLIENT_RUNTIME_ROOT']], 'Labels': labels}, 'HostConfig': {'Privileged': False, 'NetworkMode': 'fixture_game', 'PortBindings': {}}}
+    p.write_text(json.dumps(s))
+elif a[0] == 'stop':
+    s['client']['State'] = {'Running': False, 'Pid': 0, 'ExitCode': 0, 'FinishedAt': '2026-11-28T00:00:00Z'}
+    p.write_text(json.dumps(s))
+elif a[0] == 'logs':
+    print('{"event":"closed","reason":"sigterm"}')
+elif a[0] == 'rm':
+    s['client'] = None
     p.write_text(json.dumps(s))
 elif a[0] == 'exec':
     root = Path(s['client']['Config']['Labels']['beidou.client.root'])
@@ -117,6 +125,8 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         self.assertEqual(['--mode', 'account'], profile[-2:])
         client = state['client']
         self.assertEqual('account', state['compose_env']['MAPLE_LOGIN_MODE'])
+        self.assertEqual(str(self.workbench / 'runtime/default/prefix'),
+                         state['compose_env']['BEIDOU_WINEPREFIX_HOST'])
         self.assertEqual('', state['compose_env']['CHARACTER_ID'])
         self.assertEqual(str(self.workbench), client['Config']['Labels']['beidou.workbench'])
         self.assertEqual('default', client['Config']['Labels']['beidou.client.instance'])
@@ -169,6 +179,97 @@ class WorkbenchLoginStartContract(WorkbenchFixture):
         execution = [c for c in calls if c[0] == 'exec']
         self.assertEqual(1, len(execution))
         self.assertEqual(['beidou-pilot', '--json', 'login', '--timeout', '37'], execution[0][execution[0].index('beidou-pilot'):])
+
+    def test_start_recovers_a_single_legacy_prefix_without_host_record(self):
+        self.prepare_gui(cid=True)
+        default = self.workbench / 'runtime/default'
+        legacy = default / '20261128T010203.123456789Z/runtime/prefix'
+        legacy.mkdir(parents=True)
+        legacy.joinpath('system.reg').write_text('orphaned wine state')
+
+        result = self.invoke('open')
+
+        self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+        self.assertEqual('orphaned wine state', default.joinpath('prefix/system.reg').read_text())
+        self.assertFalse(legacy.exists())
+
+    def test_start_refuses_ambiguous_legacy_prefixes_without_host_record(self):
+        self.prepare_gui(cid=True)
+        default = self.workbench / 'runtime/default'
+        for run_id in ('20261128T010203.123456789Z', '20261128T020304.123456789Z'):
+            legacy = default / run_id / 'runtime/prefix'
+            legacy.mkdir(parents=True)
+            legacy.joinpath('system.reg').write_text(run_id)
+
+        result = self.invoke('open')
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual('runtime_state_invalid', json.loads(result.stdout)['error']['code'])
+        self.assertFalse(default.joinpath('prefix').exists())
+        self.assertIsNone(json.loads(self.state_path.read_text()).get('client'))
+
+    def test_start_migrates_the_previous_run_prefix_to_the_role_instance(self):
+        self.prepare_gui(cid=True)
+        default = self.workbench / 'runtime/default'
+        legacy = default / '20261128T010203.123456789Z/runtime/prefix'
+        legacy.mkdir(parents=True)
+        (legacy / 'system.reg').write_text('persistent wine state')
+        default.joinpath('host.json').write_text(json.dumps({
+            'container_id': 'old-client', 'image': 'old-image',
+            'run_id': '20261128T010203.123456789Z'}))
+
+        result = self.invoke('open')
+
+        self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+        stable = default / 'prefix'
+        self.assertEqual('persistent wine state', stable.joinpath('system.reg').read_text())
+        self.assertFalse(legacy.exists())
+        self.assertEqual(str(stable),
+                         json.loads(self.state_path.read_text())['compose_env']['BEIDOU_WINEPREFIX_HOST'])
+        compose = (Path(__file__).resolve().parents[2] / 'docker/compose.yaml').read_text()
+        self.assertIn('source: ${BEIDOU_WINEPREFIX_HOST:', compose)
+        self.assertIn('target: ${CLIENT_RUNTIME_ROOT:', compose)
+
+    def test_close_migrates_an_active_legacy_prefix_before_removing_container(self):
+        self.prepare_gui(cid=True)
+        opened = self.invoke('open')
+        self.assertEqual(0, opened.returncode, opened.stderr + opened.stdout)
+        state = json.loads(self.state_path.read_text())
+        run_root = Path(state['client']['Config']['Labels']['beidou.client.root'])
+        stable = self.workbench / 'runtime/default/prefix'
+        stable.rmdir()
+        legacy = run_root / 'runtime/prefix'
+        legacy.mkdir(parents=True)
+        legacy.joinpath('system.reg').write_text('active legacy state')
+
+        closed = self.invoke('close')
+
+        self.assertEqual(0, closed.returncode, closed.stderr + closed.stdout)
+        self.assertEqual('active legacy state', stable.joinpath('system.reg').read_text())
+        self.assertFalse(legacy.exists())
+        self.assertIsNone(json.loads(self.state_path.read_text())['client'])
+
+    def test_restart_uses_stopped_container_root_when_host_record_is_missing(self):
+        self.prepare_gui(cid=True)
+        opened = self.invoke('open')
+        self.assertEqual(0, opened.returncode, opened.stderr + opened.stdout)
+        state = json.loads(self.state_path.read_text())
+        run_root = Path(state['client']['Config']['Labels']['beidou.client.root'])
+        state['client']['State'] = {
+            'Running': False, 'Pid': 0, 'ExitCode': 0, 'FinishedAt': '2026-11-28T00:00:00Z'}
+        self.state_path.write_text(json.dumps(state))
+        self.workbench.joinpath('runtime/default/host.json').unlink()
+        stable = self.workbench / 'runtime/default/prefix'
+        stable.rmdir()
+        legacy = run_root / 'runtime/prefix'
+        legacy.mkdir(parents=True)
+        legacy.joinpath('system.reg').write_text('stopped container state')
+
+        restarted = self.invoke('open')
+
+        self.assertEqual(0, restarted.returncode, restarted.stderr + restarted.stdout)
+        self.assertEqual('stopped container state', stable.joinpath('system.reg').read_text())
+        self.assertFalse(legacy.exists())
 
     def test_live_gui_uses_host_gateway_and_does_not_require_game_network(self):
         self.prepare_gui(env='live')

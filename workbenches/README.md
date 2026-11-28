@@ -21,6 +21,8 @@ private/workbenches/                 # 整体忽略，不进镜像
     HANDOFF.md                       # 有需要时才写
     scripts/                         # 此角色自己的 Lua 文件/目录包
     runtime/                         # 运行时生成，不手工填写
+      default/prefix/                # 此角色 default 实例持久复用的 Wine 前缀
+      default/RUN_ID/                # 单次账号/服务器快照、桥状态和日志
     cache/                           # 可重建
   dev/movement-probe/                # 可重建的测试角色；同样使用 account.json 等文件
     README.md                        # 角色用途、配对工作台、常用操作
@@ -44,7 +46,11 @@ workbenches/workbench dev/movement-probe snapshot
 workbenches/workbench dev/movement-probe script describe observe.lua
 workbenches/workbench dev/movement-probe script run observe.lua --seconds 10
 workbenches/workbench dev/movement-probe close   # 只关闭所属客户端
+workbenches/cleanup-runtime                       # 预览全部分区的已退出运行历史
+workbenches/cleanup-runtime --apply dev           # 删除开发角色历史，保留活动实例
 ```
+
+`cleanup-runtime` 默认只预览，也可限定 `live`、`dev` 或单个 `live/NAME`、`dev/NAME`；只有 `--apply` 才删除。脚本与启动器使用相同生命周期锁，活动客户端目录始终保留。旧布局最后一次运行中的 Wine 前缀会在正常关闭、下一次启动或清理时迁移到角色的 `runtime/default/prefix/`；清理入口随后删除已退出的 `RUN_ID` 目录。角色级稳定前缀或 `host.json` 登记的最后一次运行是保留副本；更早的前缀随历史目录删除。多份旧前缀无法由运行登记确定最新副本时，脚本中止而不删除。
 
 角色目录挂载到 `/work`。`script describe/run/start` 的相对名都从该角色的 `/work/scripts/` 解析，目录包从自身 `main.lua` 加载；不存在就报错，不回退到其他角色或镜像同名示例。镜像里的示例须显式指定容器绝对路径。`open` 不会自动运行脚本。
 
