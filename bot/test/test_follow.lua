@@ -138,7 +138,7 @@ ctx.state.bot = {mode = "follow", target = "12", config = {metrics_enabled = 0}}
 ctx.scene = {terrain = {status = "available", navigation = navigation}}
 -- Start on the wide platform 1, remove outgoing edges, and place the owner on 4.
 navigation.candidates = {walk = {}, step = {}, jumpup = {}, drop = {}, rope = {}}
-ctx.game.character = {x = 1, y = 100, hp = 50, max_hp = 50, mp = 10, max_mp = 10,
+ctx.game.character = {x = 1, y = 100, on_ground = true, hp = 50, max_hp = 50, mp = 10, max_mp = 10,
     movement = {max_speed = 100, max_jump_height = 50}}
 ctx.game.world = {ready = true, map_id = 102000000, scene_generation = 1}
 ctx.game.inventory = {items = {}}
@@ -153,27 +153,88 @@ for now = 0, 31 do
     ctx.tick.time = now
     owner.x = now % 2 == 0 and 275 or 290
     tick(ctx)
-    assert(ctx.state.bot.mode == "follow" and ctx.state.bot.last_error == nil,
-        "no path to the owner is a wait, not a follow error")
+    assert(ctx.state.bot.mode == "follow" and ctx.state.bot.last_error == "no_path",
+        "no path must retain follow mode and report the reason")
     assert(#inputs == 0 and plans == 1, "do not move or replan for the same unreachable platform")
     if now == 0 then
-        assert(#events == 1 and events[1].data.reason == "owner_platform_unreachable")
+        assert(#events == 2 and events[1].data.reason == "no_path"
+            and events[2].data.reason == "owner_platform_unreachable")
     end
 end
-assert(#events == 2 and events[2].data.reason == "owner_platform_unreachable", "throttle the wait event")
+assert(#events == 3 and events[3].data.reason == "owner_platform_unreachable", "throttle the wait event")
 ctx.game.world.scene_generation = 2
 tick(ctx)
 assert(plans == 2 and #inputs == 0, "a new scene generation must recheck the same platform pair")
 owner.x, owner.y = 98, 100
 tick(ctx)
 assert(plans == 3 and inputs[1] == "right", "follow must resume walking when the owner returns to platform 1")
-assert(ctx.state.bot.mode == "follow" and ctx.state.bot.last_error == nil)
+assert(ctx.state.bot.mode == "follow")
 -- An empty cross-platform result must also stop the old walk, not signal arrival.
 terrain.plan = function() plans = plans + 1; return {} end
 owner.x, owner.y, ctx.tick.time = 275, 160, 62
 tick(ctx)
 assert(plans == 4 and #inputs == 1 and ctx.state.mover.status == "done" and ctx.state.path_target == nil)
-assert(events[#events].data.reason == "owner_platform_unreachable" and ctx.state.bot.last_error == nil)
+assert(events[#events].data.reason == "owner_platform_unreachable" and ctx.state.bot.last_error == "no_path")
+-- A failed edge is excluded from the next plan, and no-path waits without retrying.
+local move = require("lib.move")
+local raw_step = move.step
+local failed_edge = {kind = "drop", from = 1, to = 4, x = 50, destination = 275, rise = -60}
+local planned_blocked = {}
+terrain.plan = function(_, _, _, options)
+    planned_blocked[#planned_blocked + 1] = options.blocked
+    if options.blocked["1:4:drop"] then return nil, "no_path" end
+    return {failed_edge}
+end
+move.step = function(mover)
+    mover.status = "failed"
+    return "failed", "timeout"
+end
+ctx.state = {bot = {mode = "follow", target = "12", config = {metrics_enabled = 0}}}
+ctx.tick.time = 100
+owner.x, owner.y = 275, 160
+events = {}
+tick(ctx)
+assert(ctx.state.follow_blocked["1:4:drop"] and ctx.state.path_target == nil,
+    "a failed edge must be blocked and its active target cleared")
+assert(ctx.state.bot.last_error == "timeout" and events[#events].data.reason == "timeout")
+ctx.tick.time = 101
+tick(ctx)
+assert(#planned_blocked == 2 and planned_blocked[2]["1:4:drop"], "retry must exclude the failed edge")
+assert(ctx.state.follow_unreachable and ctx.state.bot.last_error == "no_path")
+assert(events[#events - 1].data.reason == "no_path"
+    and events[#events - 1].data.attempted_edges["1:4:drop"])
+ctx.tick.time = 102
+tick(ctx)
+assert(#planned_blocked == 2 and ctx.state.bot.mode == "follow", "unreachable pair must wait without replanning")
+ctx.game.world.scene_generation = 3
+ctx.tick.time = 103
+tick(ctx)
+assert(#planned_blocked == 3 and not planned_blocked[3]["1:4:drop"],
+    "a new scene must discard failed edges and retry the pair")
+move.step = raw_step
+
+-- Starting in air or on a rope must wait for grounded observation before planning.
+ctx.state = {bot = {mode = "follow", target = "12", config = {metrics_enabled = 0}}}
+ctx.game.character.on_ground = false
+ctx.tick.time = 200
+local before_plans, before_inputs = #planned_blocked, #inputs
+events = {}
+tick(ctx)
+assert(#planned_blocked == before_plans and #inputs == before_inputs)
+assert(ctx.state.bot.last_error == "character_not_grounded" and events[#events].data.reason == "character_not_grounded")
+ctx.tick.time = 201
+tick(ctx)
+assert(#events == 1 and #planned_blocked == before_plans, "airborne wait should not spam or plan")
+ctx.tick.time = 202
+tick(ctx)
+assert(ctx.state.bot.last_error == "follow_ground_timeout" and events[#events].data.reason == "follow_ground_timeout")
+ctx.game.character.on_ground = true
+ctx.tick.time = 203
+move.step = function() return "running" end
+tick(ctx)
+assert(#planned_blocked == before_plans + 1 and ctx.state.follow_air_since == nil,
+    "landing must resume planning and clear the airborne timer")
+move.step = raw_step
 terrain.plan, io_module.poll, io_module.publish, game = raw_plan, raw_poll, raw_publish, raw_game
 io_module.event = saved_event
 print("follow tests ok")

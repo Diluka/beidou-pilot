@@ -260,7 +260,7 @@ local function step(mover, ctx, world)
                 if type(rope) == "table" and type(rope.y1) == "number" and type(rope.y2) == "number" then
                     local top = math.min(rope.y1, rope.y2)
                     -- 靠近绳顶时继续按上，让原版顶端退出把角色放到上层平台。
-                    mover.climb_top_exit = math.abs(edge.target_y - top) <= 10
+                    mover.climb_top_exit = edge.target_y < character.y and math.abs(edge.target_y - top) <= 10
                 else
                     mover.climb_top_exit = nil
                 end

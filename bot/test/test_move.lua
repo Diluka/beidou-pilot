@@ -1013,6 +1013,13 @@ assert(step(mover, ctx, world) == "running" and direction == "down" and mover.ph
 assert(rope_tick(0.55, 100, 180, false) == "running" and direction == "down")
 assert(rope_tick(0.58, 100, 189, false) == "done" and direction == nil and mover.status == "done",
     "downward rope_climb completes within 6px of the target height")
+-- Downward movement near the top must not trigger the upward top-exit path.
+mover = move.new(rope_graph)
+rope_reset({{kind="rope_climb",from=3,to=4,x=100,destination=100,rise=9,target_y=9,rope_index=1}})
+mover.on_rope, mover.rope_index = true, 1
+world.character = {x=100,y=0,on_ground=false}
+assert(step(mover,ctx,world)=="running" and direction=="down" and not mover.climb_top_exit)
+assert(rope_tick(0.1,100,9,false)=="done" and direction==nil)
 -- 目标接近绳顶：继续按上直到原版顶端退出把角色放到上层平台。
 mover = move.new(rope_graph)
 rope_reset({grab_edge, {kind = "rope_climb", from = 3, to = 4, x = 100, destination = 100,
