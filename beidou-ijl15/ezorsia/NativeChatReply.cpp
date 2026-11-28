@@ -367,7 +367,10 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
         return true;
     }
     if (command == "帮助" || lowered == "help") {
-        reply("可用指令：@位置 @状态 @跟随 @打猎 @停下 @停止");
+        // The server rejects whispers over 127 characters, so one line cannot
+        // carry every command with its usage; the shared queue paces the parts.
+        reply("指令：@位置 @状态 @帮助 @跟随 @打猎 @停下 @停止");
+        reply("用法：查询直接回；@跟随 玩家名；动作类仅主人可用，支持英文别名");
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": help");
         return true;
     }
