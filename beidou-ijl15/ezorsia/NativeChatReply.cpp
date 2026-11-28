@@ -17,7 +17,9 @@
 
 #include "../../shared/img/ImgResources.h"
 
+#include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <sstream>
 #include <cstdint>
 #include <cstdio>
@@ -227,6 +229,48 @@ std::string MapDescription(std::uint32_t mapId) {
         description = "map " + std::to_string(mapId);
     cache[mapId] = description;
     return description;
+}
+
+// Reads one skill's display name from the local String/Skill resource. Names
+// are cached per skill id; the IMG decoder returns UTF-8 text.
+std::string ReadSkillName(std::uint32_t skillId) {
+    static std::unordered_map<std::uint32_t, std::string> cache;
+    const auto cached = cache.find(skillId);
+    if (cached != cache.end()) return cached->second;
+    std::string name;
+    const std::string root = DataRoot();
+    if (!root.empty() && skillId != 0) {
+        const std::string path = root + "\\String\\Skill.img";
+        std::array<char, 512> message{};
+        BeidouImgDirectory* opened = nullptr;
+        if (beidou_img_file_open(path.c_str(), &opened, message.data(), message.size())) {
+            const std::unique_ptr<BeidouImgDirectory, decltype(&beidou_img_directory_close)> image(
+                opened, beidou_img_directory_close);
+            BeidouImgNodeInfo imageRoot{};
+            BeidouImgNodeInfo skillNode{};
+            if (beidou_img_directory_node(image.get(), 0, &imageRoot)
+                && FindMapNode(image.get(), imageRoot.children, imageRoot.child_count, std::to_string(skillId),
+                               skillNode)) {
+                for (std::uint32_t child = skillNode.children; child < skillNode.children + skillNode.child_count;
+                     ++child) {
+                    BeidouImgNodeInfo property{};
+                    if (!beidou_img_directory_node(image.get(), child, &property)) continue;
+                    if (property.type != BEIDOU_IMG_NODE_STRING) continue;
+                    std::size_t propertyNameLength = 0;
+                    const char* propertyName =
+                        beidou_img_directory_string(image.get(), property.name_string_id, &propertyNameLength);
+                    std::size_t valueLength = 0;
+                    const char* value =
+                        beidou_img_directory_string(image.get(), property.value_string_id, &valueLength);
+                    if (propertyName != nullptr && value != nullptr
+                        && std::string(propertyName, propertyNameLength) == "name")
+                        name.assign(value, valueLength);
+                }
+            }
+        }
+    }
+    cache[skillId] = name;
+    return name;
 }
 
 bool ContainsKeyword(const std::string& text, const char* keyword) {
@@ -525,11 +569,62 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
     if (verb == "帮助" || lowered == "help") {
         // The server rejects whispers over 127 characters, so one line cannot
         // carry every command with its usage; the shared queue paces the parts.
-        reply("指令：@位置 @状态 @帮助 @跟随 @过来 @打猎 @停止");
+        reply("指令：@位置 @状态 @技能 @帮助 @跟随 @过来 @打猎 @停止");
         reply("用法：@跟随 [玩家名] 省略跟随你；@过来 跨图召唤；动作类仅主人可用");
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": help");
         return true;
     }
+    if (verb == "技能" || lowered == "skill" || lowered == "skills") {
+        const auto stats = AgentBridge::CurrentCharacterStats();
+
+        struct LearnedSkill {
+            std::uint32_t id = 0;
+            std::uint32_t level = 0;
+        };
+
+        std::vector<LearnedSkill> learned;
+        const auto character = NativeObservation::Collect("character");
+        if (character.status == "ok") {
+            const auto* skills = Member(character.data, "skills");
+            if (skills != nullptr && skills->Type() == MapleControl::Value::Kind::Object) {
+                for (const auto& member : skills->Members()) {
+                    const auto id = static_cast<std::uint32_t>(std::strtoul(member.first.c_str(), nullptr, 10));
+                    if (id == 0) continue;
+                    // Beginner skills sit in the job-0 segment (e.g. 1000xxx);
+                    // only first to fourth job skills are reported.
+                    if (id / 10000 == 0) continue;
+                    const auto* level = Member(member.second, "level");
+                    if (level == nullptr || level->Type() != MapleControl::Value::Kind::Number) continue;
+                    learned.push_back({id, static_cast<std::uint32_t>(level->Number())});
+                }
+            }
+        }
+        std::sort(learned.begin(), learned.end(),
+                  [](const LearnedSkill& left, const LearnedSkill& right) { return left.id < right.id; });
+        reply("技能点 " + std::to_string(stats.skillPoints) + " 已学 " + std::to_string(learned.size()) + " 个");
+        if (learned.empty()) {
+            reply("暂无转职技能");
+        } else {
+            std::string line;
+            for (const auto& skill : learned) {
+                std::string name = Utf8ToGbk(ReadSkillName(skill.id));
+                if (name.empty()) name = "技能" + std::to_string(skill.id);
+                const std::string entry = name + " Lv." + std::to_string(skill.level);
+                if (line.empty()) {
+                    line = entry;
+                } else if (line.size() + entry.size() + 3 > 100) {
+                    reply(line);
+                    line = entry;
+                } else {
+                    line += "、" + entry;
+                }
+            }
+            if (!line.empty()) reply(line);
+        }
+        AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": skills");
+        return true;
+    }
+
     if (verb == "过来" || lowered == "come" || lowered == "summon") {
         const std::string owner = ReadBotConfig("owner_name");
         if (!owner.empty() && owner != senderUtf8) {

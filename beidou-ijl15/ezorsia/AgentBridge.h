@@ -20,6 +20,7 @@ struct CharacterStats {
     std::uint32_t mp = 0;
     std::uint32_t maxMp = 0;
     std::uint32_t experience = 0;
+    std::uint32_t skillPoints = 0;
     bool known = false;
 };
 

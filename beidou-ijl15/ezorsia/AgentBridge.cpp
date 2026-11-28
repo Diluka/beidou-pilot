@@ -2057,6 +2057,7 @@ AgentBridge::CharacterStats AgentBridge::CurrentCharacterStats() {
     stats.mp = character.values[8];
     stats.maxMp = character.values[9];
     stats.experience = character.values[12];
+    stats.skillPoints = character.values[11];
     stats.known = character.known[0] && character.known[6] && character.known[7] && character.known[12];
     return stats;
 }
