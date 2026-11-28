@@ -512,7 +512,7 @@ local function main(context)
         local priority_drop
         if character.on_ground == true and type(world.drops) == "table" and #world.drops > 0 then
             priority_drop = loot.select(world, {local_only = true, radius = 60,
-                abandoned = memory.loot_abandoned})
+                abandoned = memory.loot_abandoned, context = context})
         end
         local mob = not priority_drop and combat.select(world, {hunt = true, platform_only = local_only,
             config = bot.config or defaults, graph = memory.graph, context = context}) or nil
@@ -525,12 +525,13 @@ local function main(context)
                 for _, edge in ipairs(memory.mover.edges) do route[edge.to] = true end
             end
             local options = {graph = memory.graph, route_platforms = route, abandoned = memory.loot_abandoned,
-                local_only = local_only}
+                local_only = local_only, context = context}
             if memory.hunt_drop then
                 for _, observed in ipairs(world.drops or {}) do
                     if observed.object_id == memory.hunt_drop.object_id then
                         local filtered = {character = world.character, owner = world.owner, mobs = world.mobs,
-                            drops = {observed}}
+                            map_id = world.map_id, scene_generation = world.scene_generation,
+                            inventory_info = world.inventory_info, nearby_drops = world.drops, drops = {observed}}
                         drop = loot.select(filtered, options)
                         break
                     end

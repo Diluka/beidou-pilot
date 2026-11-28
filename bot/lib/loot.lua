@@ -43,6 +43,67 @@ local function mob_near(world)
     return false
 end
 
+-- Only allow stacking if the observer actually supplies a per-item stack limit.
+local function capacity_check(world, drop)
+    local inventory = world.inventory_info
+    if type(inventory) ~= "table" or inventory.status ~= "ok" or inventory.checksums_valid ~= true
+        or type(inventory.items) ~= "table" or type(inventory.capacities) ~= "table"
+        or type(inventory.unavailable) ~= "table" or #inventory.unavailable > 0 then
+        return false, {reason = "inventory_unavailable", item_id = drop.item_id}
+    end
+    if type(drop.money) == "number" and drop.money > 0 then return true end
+    local id = tonumber(drop.item_id)
+    local kind = id and math.floor(id / 1000000)
+    if not id or id % 1 ~= 0 or not kind or kind < 1 or kind > 5 then
+        return false, {reason = "item_type_unknown", item_id = drop.item_id}
+    end
+    local capacity = tonumber(inventory.capacities[tostring(kind)] or inventory.capacities[kind])
+    local info = {inventory_type = kind, capacity = capacity, item_id = id}
+    if not capacity or capacity < 1 or capacity % 1 ~= 0 then info.reason = "capacity_unknown"; return false, info end
+    local used, slots, can_stack, stack_unknown, stack_supported = 0, {}, false, false, false
+    for _, item in ipairs(inventory.items) do
+        local item_kind = tonumber(item.inventory_type)
+        if not item_kind or item_kind % 1 ~= 0 or item_kind < 1 or item_kind > 5 then
+            info.reason = "slots_unknown"; return false, info
+        end
+        if item_kind == kind then
+            local slot = tonumber(item.slot)
+            if not slot or slot < 1 or slot > capacity or slot % 1 ~= 0 or slots[slot] then
+                info.reason = "slots_unknown"; return false, info
+            end
+            slots[slot], used = true, used + 1
+            if kind ~= 1 and tonumber(item.item_id) == id then
+                local quantity, maximum = tonumber(item.quantity), tonumber(item.stack_max)
+                if quantity and maximum and maximum > 0 then
+                    stack_supported = true
+                    if quantity < maximum then can_stack = true end
+                else
+                    stack_unknown = true
+                end
+            end
+        end
+    end
+    info.used = used
+    if used < capacity or can_stack then return true end
+    info.stack_max_supported = stack_supported
+    info.reason = stack_unknown and "stack_capacity_unknown" or "full"
+    return false, info
+end
+
+local function capacity_event(context, world, info)
+    if not context or not context.state then return end
+    local state = context.state
+    local scope = tostring(world.map_id) .. ":" .. tostring(world.scene_generation)
+    if state.loot_capacity_scope ~= scope then state.loot_capacity_scope, state.loot_capacity_events = scope, {} end
+    local key = tostring(info.inventory_type) .. ":" .. info.reason
+    local now = context.tick.time
+    local previous = state.loot_capacity_events[key]
+    if previous and now - previous < 10 then return end
+    state.loot_capacity_events[key] = now
+    local full = info.reason == "full" or info.reason == "stack_capacity_unknown"
+    require("lib.io").event(context, full and "loot/inventory_full" or "loot/inventory_unknown", info)
+end
+
 function M.select(world, options)
     options = type(options) == "table" and options or {}
     if low_hp(world) then return nil, "unsafe" end
@@ -54,13 +115,28 @@ function M.select(world, options)
         or type(world.drops) ~= "table" then
         return nil
     end
+    -- Pickup is untargeted: a blocked nearby object can be chosen even when a
+    -- different object is selected. Do not sweep or pick through that cluster.
+    for _, drop in ipairs(world.nearby_drops or world.drops) do
+        local range = distance(character, drop)
+        if drop.landed == true and not range then
+            capacity_event(options.context, world, {reason = "drop_position_unknown", item_id = drop.item_id})
+            return nil, "drop_position_unknown"
+        end
+        if drop.landed == true and range <= SWEEP_RADIUS then
+            local allowed, info = capacity_check(world, drop)
+            if not allowed then capacity_event(options.context, world, info); return nil, info.reason end
+        end
+    end
     local candidates = {}
     for _, drop in ipairs(world.drops) do
         if drop.landed == true and drop.platform ~= nil
             and (drop.platform == character.platform or (options.graph and not options.local_only))
             and drop.object_id ~= nil and not (options.abandoned and options.abandoned[drop.object_id]) then
             local drop_distance = distance(character, drop)
-            if drop_distance and (drop_distance <= radius or options.graph) then
+            local allowed, info = capacity_check(world, drop)
+            if not allowed then capacity_event(options.context, world, info) end
+            if allowed and drop_distance and (drop_distance <= radius or options.graph) then
                 local priority = drop.platform == character.platform and 1
                     or options.route_platforms and options.route_platforms[drop.platform] and 2 or 3
                 candidates[#candidates + 1] = {drop = drop, distance = drop_distance, priority = priority}
@@ -196,6 +272,28 @@ function M.step(ctx, world, drop, mover)
     if mover.loot and mover.loot.sweep and mob_near(world) then return end_sweep("unsafe", true) end
     if low_hp(world) then
         return fail(ctx, world, drop, mover, mover.loot or {attempt = 0}, "unsafe")
+    end
+    local blocked_info
+    local allowed, info = capacity_check(world, drop)
+    if not allowed then blocked_info = info end
+    for _, current in ipairs(world.drops or {}) do
+        local range = distance(character, current)
+        if current.landed == true and not range then
+            blocked_info = {reason = "drop_position_unknown", item_id = current.item_id}; break
+        end
+        if current.landed == true and range <= SWEEP_RADIUS then
+            local can_pick, detail = capacity_check(world, current)
+            if not can_pick then blocked_info = detail; break end
+        end
+    end
+    if blocked_info then
+        capacity_event(ctx, world, blocked_info)
+        local reason = (blocked_info.reason == "full" or blocked_info.reason == "stack_capacity_unknown")
+            and "inventory_full" or "inventory_unknown"
+        if mover.loot and mover.loot.sweep then return end_sweep(reason, true) end
+        clear_input(ctx, mover)
+        mover.loot = nil
+        return "failed", reason
     end
     local close_distance = distance(character, drop)
     if mob_near(world) and (close_distance == nil or close_distance > CLOSE_PICKUP_RADIUS) then

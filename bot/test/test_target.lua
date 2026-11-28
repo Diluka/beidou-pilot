@@ -66,7 +66,8 @@ local function scenario(kind, target, x, y)
         character = {x = x, y = y, on_ground = true, action_idle = true, hp = 100, max_hp = 100, mp = 100, max_mp = 100,
             movement = {max_speed = 125, max_jump_height = 75}},
         scene = {npcs = {}, monsters = {}, drops = {}, players = {}, players_complete = true},
-        inventory = {items = {}},
+        inventory = {status = "ok", checksums_valid = true, unavailable = {}, items = {},
+            capacities = {["1"] = 28, ["2"] = 28, ["3"] = 28, ["4"] = 28, ["5"] = 96}},
     }
     return {state = {bot_root = root}, game = game, tick = {time = 0, index = 0, scene_generation = fixture.scene_generation},
         scene = {instance_id = "target-test", map_id = fixture.map_id, scene_generation = fixture.scene_generation,
@@ -188,7 +189,7 @@ assert(event_count("target/arrived") == 0 and input.direction == nil and ctx.sta
 -- No selectable mob or loot starts patrol; a newly landed drop preempts it.
 ctx = scenario("hunt", nil, 10, 100)
 ctx.game.scene.monsters = {{object_id = 9, template_id = 100, active = false, x = 10, y = 100}}
-ctx.game.scene.drops = {{object_id = 11, item_id = 400, landed = false, x = 15, y = 100}}
+ctx.game.scene.drops = {{object_id = 11, item_id = 4000000, landed = false, x = 15, y = 100}}
 tick(ctx)
 assert(ctx.state.bot.mode == "hunt" and event_count("hunt/patrol") == 1)
 ctx.game.scene.drops[1].landed = true

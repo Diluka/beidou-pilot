@@ -50,6 +50,8 @@ local function world_with(drops, x)
         character = {x = x or 0, y = 0, hp = 40, max_hp = 100, platform = 1},
         owner = {present = false}, mobs = {}, drops = drops or {},
         inventory = {{item_id = 4001007, quantity = 10}},
+        inventory_info = {status = "ok", checksums_valid = true, unavailable = {}, items = {},
+            capacities = { ["1"] = 28, ["2"] = 28, ["3"] = 28, ["4"] = 28, ["5"] = 96 }},
     }
 end
 
@@ -342,6 +344,67 @@ loot.step(ctx, world, {sweep_abort = true, preserve_action = true}, mover)
 assert(cleared_actions == cleared_before and not mover.loot and events[#events].data.reason == "interrupted",
     "sustain preemption must not clear the newly installed action")
 
+-- Capacity uses observed occupied slots, never a guessed stack maximum.
+for _, case in ipairs({{kind = 1, item = 1000001}, {kind = 2, item = 2000000},
+    {kind = 4, item = 4000000}}) do
+    local d = drop(301 + case.kind, 10); d.item_id = case.item
+    world = world_with({d}); world.map_id, world.scene_generation = 300 + case.kind, 1
+    world.inventory_info.capacities[tostring(case.kind)] = 2
+    world.inventory_info.items = {{inventory_type = case.kind, slot = 1, item_id = case.item, quantity = 1},
+        {inventory_type = case.kind, slot = 2, item_id = case.item + 1, quantity = 1}}
+    ctx, mover = context(100), {status = "done"}; ctx.state = {}
+    local before_count, before_events = pickup_count, #events
+    assert(loot.select(world, {context = ctx}) == nil, "full category must be skipped")
+    local e = events[#events]
+    assert(e.kind == "loot/inventory_full" and e.data.inventory_type == case.kind and e.data.capacity == 2
+        and e.data.used == 2 and e.data.item_id == case.item and e.data.stack_max_supported == false)
+    loot.select(world, {context = ctx})
+    assert(#events == before_events + 1, "full inventory event must be rate limited")
+    ctx.tick.time = 110
+    loot.select(world, {context = ctx})
+    assert(#events == before_events + 2, "persistent full inventory must be reported after the interval")
+    world.scene_generation = 2
+    loot.select(world, {context = ctx})
+    assert(#events == before_events + 3, "new scene resets event rate limiting")
+    status, reason = loot.step(ctx, world, d, mover)
+    assert(status == "failed" and reason == "inventory_full" and pickup_count == before_count)
+    if case.kind ~= 1 then
+        world.inventory_info.items[1].stack_max = 100
+        assert(loot.select(world, {context = ctx}) == d, "proven stack space must allow pickup")
+        world.inventory_info.items[1].stack_max = nil
+    end
+    world.inventory_info.items[2] = nil
+    assert(loot.select(world, {context = ctx}) == d, "freeing a slot must immediately restore pickup")
+end
+local local_item, blocked_item = drop(320, 10), drop(321, 20)
+local_item.item_id, blocked_item.item_id = 2000000, 4000000
+world = world_with({local_item, blocked_item}); world.map_id, world.scene_generation = 400, 1
+world.inventory_info.capacities["4"] = 1
+world.inventory_info.items = {{inventory_type = 4, slot = 1, item_id = 4000001, quantity = 1}}
+ctx, mover = context(200), {status = "done"}; ctx.state = {}
+assert(loot.select(world, {context = ctx}) == nil, "a blocked nearby drop must block the whole untargeted cluster")
+blocked_item.platform = 2
+assert(loot.select(world, {context = ctx}) == nil, "nearby cross-platform items must not evade the global pickup check")
+local before_pickup = pickup_count
+assert(select(2, loot.step(ctx, world, local_item, mover)) == "inventory_full" and pickup_count == before_pickup)
+world.inventory_info.items = {}
+assert(loot.select(world, {context = ctx}) == local_item, "cluster must recover after clearing a slot")
+assert(select(2, loot.step(ctx, world, local_item, mover)) == "sweeping")
+world.inventory_info.items = {{inventory_type = 4, slot = 1, item_id = 4000001, quantity = 1}}
+before_pickup = pickup_count
+assert(select(2, loot.step(ctx, world, local_item, mover)) == "inventory_full"
+    and pickup_count == before_pickup and mover.loot == nil, "mid-sweep capacity loss must release action")
+world.inventory_info = nil
+assert(loot.select(world, {context = ctx}) == nil and events[#events].kind == "loot/inventory_unknown",
+    "missing inventory observations must fail closed")
+local world_view = require("lib.world").observe({tick = {time = 1}, state = {}, game = {
+    character = {x = 0, y = 0}, world = {ready = true},
+    scene = {drops = {{object_id = 10, money = 5, landed = true, x = 0, y = 0}}},
+    inventory = {status = "ok", checksums_valid = true, unavailable = {}, items = {}, capacities = {["4"] = 2}},
+}})
+assert(world_view.drops[1].money == 5 and world_view.inventory_info.capacities["4"] == 2,
+    "world projection must retain currency and real capacity observations")
+
 -- Main action-slot preemption must emit the summary before discarding the sweep.
 local world_module, sustain, combat = require("lib.world"), require("lib.sustain"), require("lib.combat")
 local old_observe, old_sustain, old_select, old_poll, old_publish = world_module.observe, sustain.step,
@@ -387,6 +450,17 @@ for _, hazard in ipairs({"owner", "hp"}) do
     end
     assert(summaries == 1 and not ctx.state.mover.loot, hazard .. " must summarize the interrupted sweep")
 end
+world.owner = {present = false}
+world.character.hp = 100
+world.drops = {drop(240, 55)}; world.drops[1].y = 100
+world.inventory_info.capacities["4"] = 1
+world.inventory_info.items = {{inventory_type = 4, slot = 1, item_id = 4001008, quantity = 1}}
+combat.select = function() return {object_id = 500} end
+ctx.state.hunt_action, ctx.state.hunt_drop, ctx.state.mover.loot = "loot", world.drops[1], nil
+local pickups_before_full = pickup_count
+tick(ctx)
+assert(ctx.state.hunt_action == "combat" and pickup_count == pickups_before_full,
+    "full inventory must yield to combat without pickup")
 world_module.observe, sustain.step, combat.select, io_module.poll, io_module.publish = old_observe, old_sustain,
     old_select, old_poll, old_publish
 
