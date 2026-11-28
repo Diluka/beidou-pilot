@@ -678,45 +678,61 @@ function M.plan(graph, from_index, to_index, options)
         return left.index < right.index
     end
 
-    local distances = {[from_index] = 0}
-    local previous = {}
-    local open = {{index = from_index, from = from_index, to = from_index, kind = "", cost = 0,
-        estimate = heuristic(from_index)}}
-    local closed = {}
-    while #open > 0 do
-        table.sort(open, entry_before)
-        local current = table.remove(open, 1)
-        if not closed[current.index] and current.cost == distances[current.index] then
-            if current.index == to_index then
-                local path, index = {}, to_index
-                while index ~= from_index do
-                    local parent = previous[index]
-                    table.insert(path, 1, parent.edge)
-                    index = parent.from
+    -- For a lower destination, first search without descending rope transitions.
+    -- Fall back to the full graph only if no such path exists; this avoids a
+    -- magic penalty that can be outweighed by map size or walking speed.
+    local source_y = height_range(platforms[from_index], platform_x[from_index], platform_x[from_index])
+    local target_y = height_range(platforms[to_index], platform_x[to_index], platform_x[to_index])
+    local prefer_fall = source_y and target_y and target_y > source_y
+    local function search(avoid_descending_rope)
+        local distances = {[from_index] = 0}
+        local previous = {}
+        local open = {{index = from_index, from = from_index, to = from_index, kind = "", cost = 0,
+            estimate = heuristic(from_index)}}
+        local closed = {}
+        while #open > 0 do
+            table.sort(open, entry_before)
+            local current = table.remove(open, 1)
+            if not closed[current.index] and current.cost == distances[current.index] then
+                if current.index == to_index then
+                    local path, index = {}, to_index
+                    while index ~= from_index do
+                        local parent = previous[index]
+                        table.insert(path, 1, parent.edge)
+                        index = parent.from
+                    end
+                    for _, edge in ipairs(path) do edge.cost = nil end
+                    return path
                 end
-                for _, edge in ipairs(path) do edge.cost = nil end
-                return path
-            end
-            closed[current.index] = true
-            for _, edge in ipairs(adjacency[current.index] or {}) do
-                if not closed[edge.to] then
-                    local distance = current.cost + edge.cost
-                    if distances[edge.to] == nil or distance < distances[edge.to] then
-                        distances[edge.to] = distance
-                        previous[edge.to] = {from = current.index, edge = edge}
-                        open[#open + 1] = {
-                            index = edge.to,
-                            from = edge.from,
-                            to = edge.to,
-                            kind = edge.kind,
-                            cost = distance,
-                            estimate = distance + heuristic(edge.to),
-                        }
+                closed[current.index] = true
+                for _, edge in ipairs(adjacency[current.index] or {}) do
+                    local descending_rope = (edge.kind == "rope" or edge.kind == "rope_climb"
+                        or edge.kind == "rope_grab" or edge.kind == "rope_leave" or edge.kind == "rope_hop")
+                        and edge.rise and edge.rise > 0
+                    local kind_key = string.format("%d:%d:%s", edge.from, edge.to, edge.kind)
+                    if not closed[edge.to] and not blocked[kind_key] and not (avoid_descending_rope and descending_rope) then
+                        local distance = current.cost + edge.cost
+                        if distances[edge.to] == nil or distance < distances[edge.to] then
+                            distances[edge.to] = distance
+                            previous[edge.to] = {from = current.index, edge = edge}
+                            open[#open + 1] = {
+                                index = edge.to,
+                                from = edge.from,
+                                to = edge.to,
+                                kind = edge.kind,
+                                cost = distance,
+                                estimate = distance + heuristic(edge.to),
+                            }
+                        end
                     end
                 end
             end
         end
+        return nil
     end
+    local path = prefer_fall and search(true) or nil
+    if not path then path = search(false) end
+    if path then return path end
     return nil, "no_path"
 end
 

@@ -670,7 +670,28 @@ local function main(context)
     if terrain_ready then
         local skip_movement = false
         if bot.mode == "follow" then
+            if memory.follow_blocked_generation ~= generation then
+                memory.follow_blocked_generation, memory.follow_blocked = generation, {}
+                memory.follow_unreachable, memory.follow_unreachable_event_at = nil, nil
+                memory.follow_air_since = nil
+            end
+            -- A character already on a rope is not a valid grounded planner start.
+            -- Do not disturb an edge that this mover itself is executing.
             local action, follow_error = follow.update(context, world)
+            local active = memory.mover and memory.mover.status == "running" and memory.path_target
+            if action and action.kind == "move" and character.on_ground ~= true and not active then
+                if memory.mover then move.stop(memory.mover) else context.game.player.move(nil) end
+                memory.follow_air_since = memory.follow_air_since or now
+                local reason = now - memory.follow_air_since >= 2 and "follow_ground_timeout" or "character_not_grounded"
+                if memory.follow_air_reason ~= reason then
+                    io_module.event(context, "follow/wait", {reason = reason, scene_generation = generation})
+                    memory.follow_air_reason = reason
+                end
+                bot.last_error = reason
+                io_module.publish(context, world, now)
+                return
+            end
+            if character.on_ground == true then memory.follow_air_since, memory.follow_air_reason = nil, nil end
             if action and action.kind == "move" then
                 local from = world.character and world.character.platform
                 local to = terrain.platform_at(memory.graph, action.x, action.y, tolerance)
@@ -701,9 +722,11 @@ local function main(context)
                             memory.path_target = nil
                             skip_movement = true
                         else
+                            local blocked = {}
+                            for key, value in pairs(memory.blocked or {}) do blocked[key] = value end
+                            for key, value in pairs(memory.follow_blocked) do blocked[key] = value end
                             local edges, plan_error = terrain.plan(memory.graph, from, to, {
-                                speed = speed, max_jump_height = max_jump_height,
-                                blocked = memory.blocked or {},
+                                speed = speed, max_jump_height = max_jump_height, blocked = blocked,
                             })
                             if edges and #edges == 0 and from == to and type(action.x) == "number" then
                                 local character = world.character or {}
@@ -716,6 +739,9 @@ local function main(context)
                             end
                             if from ~= to and (plan_error == "no_path" or (edges and #edges == 0)) then
                                 memory.follow_unreachable = {from = from, to = to}
+                                bot.last_error = "no_path"
+                                io_module.event(context, "follow/wait", {reason = "no_path", from = from, to = to,
+                                    scene_generation = generation, attempted_edges = memory.follow_blocked})
                                 action = follow.update(context, world)
                             elseif edges then
                                 local set, set_error = move.set_path(memory.mover, edges)
@@ -755,8 +781,20 @@ local function main(context)
             local movement_error
             movement_status, movement_error = move.step(memory.mover, context, world)
             if movement_status == "failed" and movement_error and movement_error ~= "not_implemented" then
+                local edge = memory.mover.edges and memory.mover.edges[memory.mover.index or 1]
+                if edge and type(edge.from) == "number" and type(edge.to) == "number" and type(edge.kind) == "string" then
+                    local key = string.format("%d:%d:%s", edge.from, edge.to, edge.kind)
+                    memory.follow_blocked[key] = true
+                elseif memory.path_target and character.platform then
+                    memory.follow_unreachable = {from = character.platform, to = memory.path_target.platform}
+                    io_module.event(context, "follow/wait", {reason = "no_path", from = character.platform,
+                        to = memory.path_target.platform, scene_generation = generation,
+                        attempted_edges = memory.follow_blocked})
+                end
                 bot.last_error = movement_error
-                io_module.event(context, "error", {reason = movement_error})
+                io_module.event(context, "error", {reason = movement_error, edge = edge})
+                move.stop(memory.mover)
+                memory.path_target = nil
             end
         end
 
