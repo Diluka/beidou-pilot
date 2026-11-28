@@ -145,7 +145,7 @@ local function step(mover, ctx, world)
                 p.move(nil)
                 if mover.jump_held then p.skill(nil); mover.jump_held = nil end
                 local platform = terrain.platform_at(mover.graph, character.x, character.y, 20)
-                if platform ~= edge.to or math.abs(character.x - edge.destination) > 20 then
+                if platform ~= edge.to or math.abs(character.x - edge.destination) > 32 then
                     failure = "landing_mismatch"
                 else
                     mover.phase = "complete"
@@ -236,7 +236,7 @@ local function step(mover, ctx, world)
             if mover.retries == 0 then mover.edge_started, mover.airborne = now, nil end
             mover.started, mover.phase_time = now, now
             mover.rope_last_y, mover.rope_step_streak = nil, 0
-            mover.leave_preheld = nil
+            mover.leave_preheld, mover.rope_align_wait = nil, nil
             if edge.kind == "rope_grab" then
                 local rope = rope_at(mover.graph, edge.rope_index)
                 local top, bottom
@@ -299,14 +299,24 @@ local function step(mover, ctx, world)
                 -- 起跳前先落回平台；不在地面时不推进相位，超时兜底。
                 if not p.move(nil) then failure = "unsupported_edge" end
             elseif math.abs(character.x - edge.x) > 8 then
+                mover.rope_align_wait = nil
                 if not p.move(character.x < edge.x and "right" or "left") then failure = "unsupported_edge" end
             else
-                local direction
-                if edge.destination - edge.x > 6 then direction = "right"
-                elseif edge.x - edge.destination > 6 then direction = "left" end
-                if not (p.move(direction) and p.jump()) then failure = "unsupported_edge" else
-                    mover.phase, mover.phase_time, mover.jump_held = "grab", now, true
-                    mover.airborne = nil
+                -- 走动惯性会把起跳点带离绳轴，导致下落段错过 ±10 抓取窗口；先刹停再跳。
+                local physics = ctx.game.character and ctx.game.character.physics
+                local velocity_x = physics and physics.velocity and physics.velocity.x
+                local settled = type(velocity_x) ~= "number" or math.abs(velocity_x) <= 1
+                if not settled and (mover.rope_align_wait or 0) < 10 then
+                    mover.rope_align_wait = (mover.rope_align_wait or 0) + 1
+                    if not p.move(nil) then failure = "unsupported_edge" end
+                else
+                    local direction
+                    if edge.destination - edge.x > 6 then direction = "right"
+                    elseif edge.x - edge.destination > 6 then direction = "left" end
+                    if not (p.move(direction) and p.jump()) then failure = "unsupported_edge" else
+                        mover.phase, mover.phase_time, mover.jump_held = "grab", now, true
+                        mover.airborne, mover.rope_align_wait = nil, nil
+                    end
                 end
             end
         elseif not failure and mover.phase == "walkoff" then
