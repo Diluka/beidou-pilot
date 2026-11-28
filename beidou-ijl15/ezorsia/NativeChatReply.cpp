@@ -437,7 +437,8 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
         return true;
     }
     const std::string owner = ReadBotConfig("owner_name");
-    if (owner.empty() || owner != senderUtf8) {
+    // owner_name 为空表示不限制（任何私聊均可触发操作指令）；非空时只接受该角色名。
+    if (!owner.empty() && owner != senderUtf8) {
         reply("只有主人可以下达操作指令");
         AppendLog(Timestamp() + " chat command rejected from non-owner " + senderUtf8);
         return true;
