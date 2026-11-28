@@ -103,6 +103,11 @@ def parser() -> Parser:
     result.add_argument("--instance-id", required=True, help="提交时的原生实例身份")
     command("status", "当前客户端阶段与角色，不启动、不输入")
     command("capabilities", "读取原生动作能力与静态观察支持范围，不启动客户端")
+    q = command("cashshop", "只读现金商城及扩容预检；购买尚未验证", allow_abbrev=False)
+    q.add_argument("action", choices=["read", "expand"])
+    q.add_argument("--type", choices=["equip", "use", "setup", "etc"])
+    q.add_argument("--count", type=int, default=1)
+    q.add_argument("--dry-run", action="store_true")
     q = command("world-map", "只读查询原生世界地图的跨图路线，不控制客户端")
     actions = q.add_subparsers(dest="world_map_action", required=True, parser_class=Parser)
     route = actions.add_parser("route", parents=[common], allow_abbrev=False)
@@ -288,8 +293,15 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
         "equip",
         "bind",
         "shop",
+        "cashshop",
         "notifications",
-    } and not (cmd in {"dialog", "ui", "shop", "notifications"} and args.action == "read"):
+    } and not (
+        cmd in {"dialog", "ui", "shop", "cashshop", "notifications"}
+        and args.action == "read"
+        or cmd == "cashshop"
+        and args.action == "expand"
+        and args.dry_run
+    ):
         from .bridge import BridgeClient
 
         bridge = BridgeClient(backend.root, backend.name, backend.instance)
@@ -302,6 +314,16 @@ def dispatch(backend: Backend, args: argparse.Namespace) -> JsonObject | None:
                     "Lua仍在控制客户端；先显式取消对应脚本再操作窗口。",
                     {"script_id": script["id"]},
                 )
+    if cmd == "cashshop":
+        from . import cashshop
+
+        if args.action == "read":
+            if args.type is not None or args.count != 1 or args.dry_run:
+                raise ClientError("usage", "cashshop read 不接收扩容选项。")
+            return cashshop.read_cashshop(backend)
+        if args.type is None:
+            raise ClientError("usage", "cashshop expand 必须指定 --type。")
+        return cashshop.expand(backend, args.type, args.count, args.dry_run)
     if cmd == "status":
         return status(backend)
     if cmd == "capabilities":
@@ -775,6 +797,7 @@ def main(argv: list[str] | None = None) -> int:
             or (args.command == "dialog" and args.action == "read")
             or (args.command == "ui" and args.action == "read")
             or (args.command == "shop" and args.action == "read")
+            or (args.command == "cashshop" and (args.action == "read" or args.dry_run))
         )
         if args.command == "close":
             result = dispatch(backend, args)

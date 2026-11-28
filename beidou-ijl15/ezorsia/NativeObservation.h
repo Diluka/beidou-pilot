@@ -56,6 +56,7 @@ bool WindowActive(std::uintptr_t address, bool& known);
 Value Ui();
 Value StageWindows(std::uintptr_t loginStage);
 Value Shop();
+Value CashShop();
 Value Notifications();
 void PollNotifications(MapleControl::EventTransport& events, const MapleControl::State& state);
 MapleControl::Observation Collect(const std::string& domain);
