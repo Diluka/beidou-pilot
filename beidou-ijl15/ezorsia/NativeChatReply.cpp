@@ -224,6 +224,10 @@ bool ContainsKeyword(const std::string& text, const char* keyword) {
 // bytes; match them against the raw CP936 message body instead of its UTF-8
 // projection. ASCII matching ignores case so the keyword list stays small.
 bool AsksLocation(const std::string& cp936) {
+    // Only short lines can be a location question. Longer lines are ordinary
+    // chat or help text that merely contains words like 位置/@位置 and must not
+    // trigger a location reply.
+    if (cp936.size() > 40) return false;
     static const char* const keywords[] = {"在哪", "哪里", "哪儿",  "什么地方", "什么图",    "哪张图",  "哪个图",
                                            "位置", "坐标", "where", "location", "which map", "what map"};
     std::string lowered = cp936;
@@ -367,7 +371,10 @@ bool HandleChatCommand(const std::string& sender, const std::string& message, co
         return true;
     }
     if (command == "帮助" || lowered == "help") {
-        reply("可用指令：@位置 @状态 @跟随 @打猎 @停下 @停止");
+        // The server rejects whispers over 127 characters, so one line cannot
+        // carry every command with its usage; the shared queue paces the parts.
+        reply("指令：@位置 @状态 @帮助 @跟随 @打猎 @停下 @停止");
+        reply("用法：查询直接回；@跟随 玩家名；动作类仅主人可用，支持英文别名");
         AppendLog(Timestamp() + " chat command from " + senderUtf8 + ": help");
         return true;
     }
