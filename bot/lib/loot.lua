@@ -112,9 +112,30 @@ local function clear_input(ctx, mover)
 end
 
 -- The caller may already have installed a sustain action in the shared slot.
-local function abort_sweep(ctx, mover, reason, preserve_action)
+local function abort_sweep(ctx, mover, reason, preserve_action, world)
     local sweep = mover and mover.loot
     if not sweep or not sweep.sweep then return false end
+    -- Reconcile a final observation before main discards the sweep on preemption.
+    if world and type(world.drops) == "table" and sweep.seen and sweep.pickup_requested then
+        for id, entry in pairs(sweep.seen) do
+            if entry.present and drop_is_present(world, id) == false then
+                entry.present = false
+                sweep.count = sweep.count + 1
+                sweep.items[#sweep.items + 1] = {object_id = id, item_id = entry.item_id}
+            end
+        end
+        if reason == "interrupted" and world.character and world.character.platform == sweep.platform then
+            local remaining = 0
+            for _, item in ipairs(world.drops) do
+                local d = distance(world.character, item)
+                if item.landed and item.platform == sweep.platform and d and d <= SWEEP_RADIUS then
+                    remaining = remaining + 1
+                end
+            end
+            sweep.remaining_drops = remaining
+            if remaining == 0 and sweep.count > 0 then reason = "cleared" end
+        end
+    end
     if preserve_action then
         ctx.game.player.move(nil)
     else
@@ -157,7 +178,7 @@ end
 
 function M.step(ctx, world, drop, mover)
     if type(drop) == "table" and drop.sweep_abort then
-        abort_sweep(ctx, mover, "interrupted", drop.preserve_action)
+        abort_sweep(ctx, mover, "interrupted", drop.preserve_action, world)
         return "done", "interrupted"
     end
     local player = ctx and ctx.game and ctx.game.player

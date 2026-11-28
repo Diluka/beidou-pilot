@@ -323,6 +323,17 @@ for _, hazard in ipairs({"owner", "hp"}) do
         and events[#events].data.reason == (hazard == "owner" and "owner_near" or "hp_low"))
 end
 
+-- Main may preempt before step sees the final disappearance.
+local final_drop = drop(219, 10)
+world = world_with({final_drop})
+ctx, mover = context(61), {status = "done"}
+loot.step(ctx, world, final_drop, mover)
+world.drops = {}
+ctx.tick.time = 61.2
+loot.step(ctx, world, {sweep_abort = true}, mover)
+assert(events[#events].data.reason == "cleared" and events[#events].data.count == 1
+    and events[#events].data.remaining_drops == 0, "preemption must reconcile a cleared observed cluster")
+
 world = world_with({drop(221, 10)})
 ctx, mover = context(62), {status = "done"}
 loot.step(ctx, world, world.drops[1], mover)
