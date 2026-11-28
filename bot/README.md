@@ -150,6 +150,8 @@ follow 返回 `wait` 时主流程停止现有 mover；目标平台或场景代�
 
 `hunt` 优先攻击观察到的怪，其次处理安全的掉落；无目标时在当前地图按平台候选顺序逐次规划巡逻，路径失败则记录并跳过，覆盖一轮后等待刷新。跨平台拾取依赖地形路径；当前保护仅按 owner 距离判断，不包含掉落归属判断。`hunt/patrol`、`hunt/platform`、`hunt/skip`、`hunt/recover`、`hunt/cycle` 和 `loot/navigate` 事件记录规划与实际状态，路径受地形和移动能力限制，GUI 实际效果需按地图验证。
 
+同平台 100px 内有安全掉落时进入扫荡，沿掉落簇往返并每三 tick 在独立 tick 放开、重新提交拾取意图，区域清空或 5 秒超时退出；超时后对仍在区域内的对象暂缓再次扫荡 15 秒，先使用逐目标拾取路径；HP 低于 40%、附近有怪或 owner 靠近时不进入或中止扫荡。`loot/sweep` 汇总对象消失数、起止掉落数、意图提交受理/拒绝数、回退与耗时；受理仅指 Lua 意图受理，不能判断原生是否处于冷却，对象消失不一定代表成功入包；主流程抢占或切换时会撤销并汇总，外部取消脚本不保证输出汇总。`pickup()` 的成功仅代表意图受理；当前 GUI 开发场景中单次保持未连续拾取，跨 tick 放开并重按时沿途拾到多件，但实际范围、其他环境和掉落归属仍需验证。
+
 `/work/bot/state.json` 常规间隔约 1 秒更新，Windows 覆盖回退时有短暂缺失窗口；`/work/bot/events.jsonl` 记录命令、模式和错误事件，单文件达到 1 MiB 时滚动到 `events.1.jsonl`。启动进入 `recover`；世界就绪且当前场景有可用地形图时转为 `idle`，不要求 `move.new` 已实现。mover 仅在 follow/hunt 产生实际移动或目标动作时才按场景代次尝试创建。checkpoint 当前只校验并保留，不重放上次动作或恢复旧模式/目标。
 
 `tick/slow` 是状态发布间隔候选：两次成功发布的 `os.time()` 整数秒之差至少 3 时最多每 60 秒记录一次，包含 tick index、delta、动作类别和 `reason=unknown`。它使用系统墙钟且只有秒级精度，可能受调度、钟表调整或发布节流影响，不表示单次 tick 超时，也不区分 CPU 和 IO；Lua tick 上下文不暴露预算值，`budget_ms` 为 null。\n\n`state.json.session_id` 取自只读 `context.tick.script_id`，即当前 Runtime tick 会话 ID。

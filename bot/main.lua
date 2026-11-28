@@ -84,6 +84,12 @@ local function main(context)
         return
     end
 
+    local function abort_sweep(preserve_action)
+        if memory.mover and memory.mover.loot and memory.mover.loot.sweep then
+            loot.step(context, world, {sweep_abort = true, preserve_action = preserve_action}, memory.mover)
+        end
+    end
+
     if memory.last_poll == nil or now - memory.last_poll >= 0.5 then
         memory.last_poll = now
         local commands, poll_error = io_module.poll(context, now)
@@ -112,6 +118,7 @@ local function main(context)
                 end
                 if command._ok and (command.kind == "stop" or command.kind == "stay"
                     or bot.mode ~= previous_mode or bot.target ~= previous_target) then
+                    abort_sweep()
                     if memory.mover then move.stop(memory.mover) end
                     if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
                     memory.travel_failed = nil
@@ -139,6 +146,7 @@ local function main(context)
     local character = world.character or {}
     if character.hp ~= nil and character.hp <= 0 and bot.mode ~= "dead" then
         local previous = bot.mode
+        abort_sweep()
         bot.player.stop()
         if memory.mover then move.stop(memory.mover) end
         if memory.travel then travel.stop(memory.travel, context); memory.travel = nil end
@@ -156,6 +164,7 @@ local function main(context)
             and world.inventory or nil
         local low = supply.check(memory.bot_root or "/work/bot", items)
         if low then
+            abort_sweep()
             metric_call("observe", context, {ready = false})
             metric_call("target", nil)
             if memory.mover then move.stop(memory.mover) end
@@ -175,6 +184,7 @@ local function main(context)
     local terrain_scene = scene and scene.terrain
     local generation = world.scene_generation
     if memory.graph_generation ~= generation then
+        abort_sweep()
         if memory.mover then move.stop(memory.mover) end
         memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
         memory.loot_abandoned, memory.loot_abandoned_scope = nil, nil
@@ -250,6 +260,7 @@ local function main(context)
             memory.travel.graph, memory.travel.mover, memory.travel.path = nil, nil, nil
         end
         if bot.mode == "hunt" and memory.hunt_action then
+            abort_sweep(true)
             context.game.player.move(nil)
             memory.mover, memory.mover_attempt_generation = nil, nil
             memory.hunt_action, memory.hunt_drop = nil, nil
@@ -398,12 +409,14 @@ local function main(context)
         if not memory.travel and not memory.travel_failed then
             local legs, goal = travel.load_route(route_path)
             if legs and goal == hunt_map and legs[1] and legs[1].map == world.map_id then
+                abort_sweep()
                 if memory.mover then move.stop(memory.mover); memory.mover = nil end
                 context.game.player.stop()
                 memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
                 memory.travel = travel.new(legs, goal)
                 io_module.event(context, "travel/start", {map_id = world.map_id, goal = goal})
             else
+                abort_sweep()
                 if memory.mover then move.stop(memory.mover); memory.mover = nil end
                 memory.hunt_action, memory.hunt_drop, memory.hunt_patrol = nil, nil, nil
                 context.game.player.stop()
@@ -481,6 +494,7 @@ local function main(context)
                 and memory.mover.edges[memory.mover.index or 1]
             if memory.hunt_last_platform and memory.hunt_last_platform ~= character.platform
                 and not (memory.hunt_action == "patrol" and edge and edge.to == character.platform) then
+                abort_sweep()
                 if memory.mover and memory.mover.status == "running" then move.stop(memory.mover) end
                 io_module.event(context, "hunt/recover", {reason = "platform_changed",
                     from = memory.hunt_last_platform, to = character.platform})
@@ -547,6 +561,7 @@ local function main(context)
         local action = mob and "combat" or drop and "loot" or "patrol"
         if memory.hunt_action and memory.hunt_action ~= action then
             if memory.mover then
+                abort_sweep()
                 move.stop(memory.mover)
                 memory.mover.loot = nil
             end
