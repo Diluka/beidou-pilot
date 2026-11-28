@@ -1,5 +1,9 @@
 """bot_supply 补给/卖垃圾/装备建议的离线合同。"""
 
+import json
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -86,7 +90,26 @@ class BotSupplyContract(unittest.TestCase):
             patch.object(bot_supply, "close_shop") as close,
             patch.object(bot_supply, "read_character", return_value={"mesos": 1000}),
             patch.object(bot_supply, "read_shop", return_value=shop),
-            patch.object(bot_supply, "buy", return_value={}) as buy,
+            patch.object(
+                bot_supply,
+                "buy",
+                side_effect=[
+                    {
+                        "completed": True,
+                        "quantity_before": 0,
+                        "quantity_after": 2,
+                        "mesos_before": 1000,
+                        "mesos_after": 980,
+                    },
+                    {
+                        "completed": True,
+                        "quantity_before": 0,
+                        "quantity_after": 5,
+                        "mesos_before": 980,
+                        "mesos_after": 970,
+                    },
+                ],
+            ) as buy,
             patch.object(bot_supply, "travel") as travel,
         ):
             with self.assertRaisesRegex(SystemExit, "上限不足"):
@@ -113,7 +136,20 @@ class BotSupplyContract(unittest.TestCase):
                 return_value={"buy_items": [{"item_id": bot_supply.ARROW, "unit_price": 1, "bundle_quantity": 1}]},
             ),
             patch.object(bot_supply, "sell", side_effect=lambda *args: calls.append("sell")),
-            patch.object(bot_supply, "buy", side_effect=lambda *args: calls.append("buy")),
+            patch.object(
+                bot_supply,
+                "buy",
+                side_effect=lambda *args: (
+                    calls.append("buy")
+                    or {
+                        "completed": True,
+                        "quantity_before": 0,
+                        "quantity_after": 3,
+                        "mesos_before": 10,
+                        "mesos_after": 7,
+                    }
+                ),
+            ),
         ):
             report = bot_supply.restock("dev/test", False, sell_etc=(4000999,))
         self.assertEqual(["sell", "buy"], calls)
@@ -147,6 +183,303 @@ class BotSupplyContract(unittest.TestCase):
         ):
             with self.assertRaisesRegex(SystemExit, "未确认到达目标"):
                 bot_supply.travel("dev/test", 2, 240)
+
+    def test_supervisor_detects_current_session_low_event(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bot_dir = root / "private/workbenches/dev/test/bot"
+            bot_dir.mkdir(parents=True)
+            (bot_dir / "supply_host.json").write_text("{}")
+            (bot_dir / "state.json").write_text(json.dumps({"session_id": "active"}))
+            (bot_dir / "events.jsonl").write_text(
+                json.dumps({"type": "supply/low", "data": {"session_id": "active"}}) + "\n"
+            )
+            with (
+                patch.object(bot_supply, "REPO_ROOT", root),
+                patch.object(bot_supply, "supply_cycle", return_value={"status": "resume_requested"}) as cycle,
+                patch.object(bot_supply.time, "sleep", side_effect=KeyboardInterrupt),
+                patch("builtins.print"),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    bot_supply.supervise("dev/test", True)
+            cycle.assert_called_once_with("dev/test", "active", True, 3600)
+
+    def test_authorized_route_enforces_every_portal(self) -> None:
+        route = {"from": 1, "goal": 3, "legs": [{"map": 1, "portal": "a"}, {"map": 2, "portal": "b"}]}
+        allowed = [{"from": 1, "to": 2, "portal": "a"}, {"from": 2, "to": 3, "portal": "b"}]
+        result = subprocess.CompletedProcess([], 0, json.dumps(route), "")
+        with patch.object(bot_supply.subprocess, "run", return_value=result):
+            self.assertEqual(route, bot_supply.authorized_route("dev/test", 1, 3, allowed))
+            with self.assertRaisesRegex(SystemExit, "未授权"):
+                bot_supply.authorized_route("dev/test", 1, 3, allowed[:1])
+
+    def test_cycle_requires_whitelist_and_confirmed_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bot_dir = root / "private/workbenches/dev/test/bot"
+            bot_dir.mkdir(parents=True)
+            with patch.object(bot_supply, "REPO_ROOT", root):
+                with self.assertRaisesRegex(SystemExit, "未配置安全城镇"):
+                    bot_supply.supply_cycle("dev/test", "session1", True, 0)
+                (bot_dir / "supply_host.json").write_text(json.dumps({"safe_towns": [1], "allowed_legs": []}))
+                (bot_dir / "events.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "type": "supply/low",
+                            "data": {
+                                "session_id": "session1",
+                                "reason": "low",
+                                "map_id": 1,
+                                "items": [{"item_id": bot_supply.ARROW, "threshold": 50}],
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+                with self.assertRaisesRegex(SystemExit, "撤退到达事件"):
+                    bot_supply.supply_cycle("dev/test", "session1", True, 0)
+                with (bot_dir / "events.jsonl").open("a") as file:
+                    file.write(
+                        json.dumps(
+                            {
+                                "type": "supply/retreat",
+                                "data": {"session_id": "session1", "result": "arrived", "map_id": 1, "goal": 1},
+                            }
+                        )
+                        + "\n"
+                    )
+                with patch.object(
+                    bot_supply,
+                    "cli_json",
+                    return_value={
+                        "script": {"id": "session1", "status": "completed", "control_released": False},
+                        "scripts": [],
+                    },
+                ):
+                    with self.assertRaisesRegex(SystemExit, "确认放键"):
+                        bot_supply.supply_cycle("dev/test", "session1", True, 0)
+                self.assertFalse((bot_dir / "supply-cycle-session1.json").exists())
+
+    def test_cycle_rejects_unapproved_route_before_start(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bot_dir = root / "private/workbenches/dev/test/bot"
+            bot_dir.mkdir(parents=True)
+            (bot_dir / "supply_host.json").write_text(json.dumps({"safe_towns": [1], "allowed_legs": []}))
+            (bot_dir / "plan.conf").write_text("hunt_map=2\nsafe_map=1\n")
+            (bot_dir / "events.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "supply/low",
+                        "data": {
+                            "session_id": "session1",
+                            "reason": "low",
+                            "map_id": 1,
+                            "items": [{"item_id": bot_supply.ARROW, "threshold": 50}],
+                        },
+                    }
+                )
+                + "\n"
+            )
+            with (bot_dir / "events.jsonl").open("a") as file:
+                file.write(
+                    json.dumps(
+                        {
+                            "type": "supply/retreat",
+                            "data": {"session_id": "session1", "result": "arrived", "map_id": 1, "goal": 1},
+                        }
+                    )
+                    + "\n"
+                )
+            (bot_dir / "route.json").write_text(
+                json.dumps({"from": 1, "goal": 2, "legs": [{"map": 1, "portal": "east", "x": 0, "y": 0}]})
+            )
+            status = {"script": {"id": "session1", "status": "completed", "control_released": True}, "scripts": []}
+            with (
+                patch.object(bot_supply, "REPO_ROOT", root),
+                patch.object(bot_supply, "cli_json", return_value=status),
+                patch.object(bot_supply, "read_character", return_value={"map_id": 1}),
+                patch.object(bot_supply, "nearest_potion_shop", return_value=(1, {})),
+                patch.object(bot_supply, "restock", return_value={}),
+                patch.object(bot_supply, "authorized_route", side_effect=SystemExit("未授权")),
+                patch.object(bot_supply, "read_items", return_value=[{"item_id": bot_supply.ARROW, "quantity": 50}]),
+                patch.object(
+                    bot_supply.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")
+                ) as call,
+            ):
+                with self.assertRaisesRegex(SystemExit, "未授权"):
+                    bot_supply.supply_cycle("dev/test", "session1", True, 0)
+                self.assertEqual(0, call.call_count)  # rejected before transaction and movement
+                self.assertFalse((bot_dir / "supply-cycle-session1.json").exists())
+
+    def test_cycle_resumes_only_with_authorized_route(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bot_dir = root / "private/workbenches/dev/test/bot"
+            bot_dir.mkdir(parents=True)
+            allowed = [{"from": 1, "to": 2, "portal": "east"}]
+            (bot_dir / "supply_host.json").write_text(json.dumps({"safe_towns": [1], "allowed_legs": allowed}))
+            (bot_dir / "plan.conf").write_text("hunt_map=2\nsafe_map=1\n")
+            (bot_dir / "events.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "supply/low",
+                        "data": {
+                            "session_id": "session1",
+                            "reason": "low",
+                            "map_id": 1,
+                            "items": [{"item_id": bot_supply.ARROW, "threshold": 50}],
+                        },
+                    }
+                )
+                + "\n"
+            )
+            with (bot_dir / "events.jsonl").open("a") as file:
+                file.write(
+                    json.dumps(
+                        {
+                            "type": "supply/retreat",
+                            "data": {"session_id": "session1", "result": "arrived", "map_id": 1, "goal": 1},
+                        }
+                    )
+                    + "\n"
+                )
+            (bot_dir / "route.json").write_text(
+                json.dumps({"from": 1, "goal": 2, "legs": [{"map": 1, "portal": "east", "x": 0, "y": 0}]})
+            )
+            status = {"script": {"id": "session1", "status": "completed", "control_released": True}, "scripts": []}
+            with (
+                patch.object(bot_supply, "REPO_ROOT", root),
+                patch.object(bot_supply, "cli_json", return_value=status),
+                patch.object(bot_supply, "read_character", return_value={"map_id": 1}),
+                patch.object(bot_supply, "nearest_potion_shop", return_value=(1, {})),
+                patch.object(bot_supply, "restock", return_value={}) as restock,
+                patch.object(bot_supply, "authorized_route", return_value={}),
+                patch.object(bot_supply, "read_items", return_value=[{"item_id": bot_supply.ARROW, "quantity": 50}]),
+                patch.object(
+                    bot_supply.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")
+                ) as call,
+            ):
+                report = bot_supply.supply_cycle("dev/test", "session1", True, 0)
+            self.assertEqual("resume_requested", report["status"])
+            self.assertEqual(1, restock.call_args.kwargs["town_only"])
+            self.assertEqual(["plan", "start", "send"], [c.args[0][2] for c in call.call_args_list])
+            self.assertEqual(
+                "resume_requested", json.loads((bot_dir / "supply-cycle-session1.json").read_text())["status"]
+            )
+
+    def test_cycle_outbound_failure_persists_failure_without_buying(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bot_dir = root / "private/workbenches/dev/test/bot"
+            bot_dir.mkdir(parents=True)
+            (bot_dir / "supply_host.json").write_text(json.dumps({"safe_towns": [1, 2], "allowed_legs": []}))
+            (bot_dir / "plan.conf").write_text("hunt_map=3\nsafe_map=1\n")
+            events = [
+                {
+                    "type": "supply/low",
+                    "data": {
+                        "session_id": "session1",
+                        "reason": "low",
+                        "items": [{"item_id": bot_supply.ARROW, "threshold": 50}],
+                    },
+                },
+                {
+                    "type": "supply/retreat",
+                    "data": {"session_id": "session1", "result": "arrived", "map_id": 1, "goal": 1},
+                },
+            ]
+            (bot_dir / "events.jsonl").write_text("".join(json.dumps(event) + "\n" for event in events))
+            status = {"script": {"id": "session1", "status": "completed", "control_released": True}, "scripts": []}
+            with (
+                patch.object(bot_supply, "REPO_ROOT", root),
+                patch.object(bot_supply, "cli_json", return_value=status),
+                patch.object(bot_supply, "read_character", return_value={"map_id": 1}),
+                patch.object(bot_supply, "nearest_potion_shop", return_value=(2, {})),
+                patch.object(bot_supply, "authorized_route", return_value={"from": 1, "goal": 2, "legs": [{"map": 1}]}),
+                patch.object(bot_supply, "travel", side_effect=SystemExit("跨图失败，尚未购买")),
+                patch.object(bot_supply, "restock") as restock,
+            ):
+                with self.assertRaisesRegex(SystemExit, "尚未购买"):
+                    bot_supply.supply_cycle("dev/test", "session1", True, 0)
+            restock.assert_not_called()
+            receipt = json.loads((bot_dir / "supply-cycle-session1.json").read_text())
+            self.assertEqual("failed", receipt["status"])
+            self.assertIn("尚未购买", receipt["error"])
+
+    def test_open_shop_approaches_on_same_platform_then_talks(self) -> None:
+        responses = [{"status": "completed", "script": {"control_released": True}}, {}, {"open": True}]
+        with (
+            patch.object(bot_supply, "read_character", return_value={"map_id": 100000102}),
+            patch.object(bot_supply, "cli_json", side_effect=responses) as cli,
+        ):
+            bot_supply.open_shop("dev/test", "卢娜")
+        self.assertEqual(
+            [("script", "run", "bot/shop_approach.lua", "--seconds", "40"), ("talk", "卢娜"), ("shop", "read")],
+            [call.args[1:] for call in cli.call_args_list],
+        )
+
+    def test_unconfirmed_purchase_stops_and_closes_shop(self) -> None:
+        plan = {"map_id": 1, "gaps": {"red": 0, "blue": 0, "arrow": 3}}
+        with (
+            patch.object(bot_supply, "supply_plan", return_value=plan),
+            patch.object(bot_supply, "nearest_potion_shop", return_value=(1, {"npc": "shop"})),
+            patch.object(bot_supply, "junk_list", return_value=[]),
+            patch.object(bot_supply, "open_shop"),
+            patch.object(bot_supply, "close_shop") as close,
+            patch.object(bot_supply, "read_character", return_value={"mesos": 10}),
+            patch.object(
+                bot_supply,
+                "read_shop",
+                return_value={"buy_items": [{"item_id": bot_supply.ARROW, "unit_price": 1, "bundle_quantity": 1}]},
+            ),
+            patch.object(bot_supply, "buy", return_value={"completed": False}),
+        ):
+            with self.assertRaisesRegex(SystemExit, "购买结果未确认"):
+                bot_supply.restock("dev/test", False)
+        close.assert_called_once()
+
+    def test_restock_fails_when_inventory_remains_short(self) -> None:
+        plan = {"map_id": 1, "gaps": {"red": 0, "blue": 0, "arrow": 3}}
+        with (
+            patch.object(bot_supply, "supply_plan", return_value=plan),
+            patch.object(bot_supply, "nearest_potion_shop", return_value=(1, {"npc": "shop"})),
+            patch.object(bot_supply, "junk_list", return_value=[]),
+            patch.object(bot_supply, "open_shop"),
+            patch.object(bot_supply, "close_shop") as close,
+            patch.object(bot_supply, "read_character", return_value={"mesos": 10}),
+            patch.object(
+                bot_supply,
+                "read_shop",
+                return_value={"buy_items": [{"item_id": bot_supply.ARROW, "unit_price": 1, "bundle_quantity": 1}]},
+            ),
+            patch.object(
+                bot_supply,
+                "buy",
+                return_value={
+                    "completed": True,
+                    "quantity_before": 0,
+                    "quantity_after": 3,
+                    "mesos_before": 10,
+                    "mesos_after": 7,
+                },
+            ),
+        ):
+            with self.assertRaisesRegex(SystemExit, "库存仍有缺口"):
+                bot_supply.restock("dev/test", False)
+        close.assert_called_once()
+
+    def test_close_shop_requires_closed_confirmation(self) -> None:
+        with patch.object(
+            bot_supply, "workbench", return_value=subprocess.CompletedProcess([], 0, '{"data":{"closed":false}}', "")
+        ):
+            with self.assertRaisesRegex(SystemExit, "关闭未确认"):
+                bot_supply.close_shop("dev/test")
+        with patch.object(
+            bot_supply, "workbench", return_value=subprocess.CompletedProcess([], 1, "shop_close_not_confirmed", "")
+        ):
+            with self.assertRaisesRegex(SystemExit, "shop_close_not_confirmed"):
+                bot_supply.close_shop("dev/test")
 
     def test_gear_advice_filters_by_level(self) -> None:
         with patch.object(bot_supply, "read_character", return_value={"level": 15, "job": 300}):
